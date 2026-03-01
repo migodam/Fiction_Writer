@@ -1,7 +1,7 @@
 import streamlit as st
 from src.core.persistence import ProjectMemory
 
-def render_timeline_page(memory: ProjectMemory):
+def render(memory: ProjectMemory):
     st.header("Timeline Editor")
     st.caption("Map the chronological events of your story.")
 
@@ -17,14 +17,14 @@ def render_timeline_page(memory: ProjectMemory):
                 cols = st.columns([1, 4, 1])
                 cols[0].markdown(f"**{event['time']}**")
                 cols[1].markdown(f"**{event['title']}**\n\n{event['summary']}")
-                if cols[2].button("Delete", key=f"del_{event['id']}"):
+                if cols[2].button("Delete", key=f"del_ev_{event['id']}"):
                     memory.delete_timeline_event(event['id'])
                     st.rerun()
                 st.write("---")
 
     # Add Event Form
     with st.expander("Add New Event"):
-        with st.form("new_event_form"):
+        with st.form("new_event_form_v2"):
             title = st.text_input("Event Title")
             time = st.text_input("Time / Era (e.g., Year 182)")
             participants = st.text_input("Participants (comma separated)")

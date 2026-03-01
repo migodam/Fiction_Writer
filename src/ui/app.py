@@ -13,13 +13,17 @@ from src.core.persistence import ProjectMemory
 
 # Import Modular Pages
 try:
-    from src.ui.pages.workshop import render_workshop_page
-    from src.ui.pages.timeline import render_timeline_page
-    from src.ui.pages.background_settings import render_background_settings_page
-    from src.ui.pages.characters import render_characters_page
-    from src.ui.pages.relationships import render_relationships_page
-    from src.ui.pages.project_structure import render_project_structure
-    from src.ui.pages.chapter_preview import render_chapter_preview
+    from src.ui.pages import (
+        workshop,
+        timeline,
+        background_settings,
+        characters,
+        relationships,
+        project_structure,
+        chapter_preview,
+        chat_assistant,
+        map
+    )
 except ImportError as e:
     st.error(f"Page Import Error: {e}")
 
@@ -37,69 +41,92 @@ load_css()
 # ----------------- State Initialization -----------------
 if "memory" not in st.session_state:
     st.session_state.memory = ProjectMemory()
-if "workflow" not in st.session_state:
-    st.session_state.workflow = NarrativeWorkflow(model="llama3.1:8b")
-if "nl_nav" not in st.session_state:
-    st.session_state.nl_nav = "Narrative Workshop"
 
-memory = st.session_state.memory
-workflow = st.session_state.workflow
-
-# ----------------- Unified Sidebar -----------------
-# We use standard Streamlit sidebar buttons to control navigation state.
-def set_page(name):
-    st.session_state.nl_nav = name
+# ----------------- Sidebar Routing -----------------
+pages = [
+    "app",
+    "chapter preview",
+    "project structure",
+    "timeline",
+    "characters",
+    "relationships",
+    "map",
+    "background settings",
+    "chat assistant"
+]
 
 with st.sidebar:
     st.title("Narrative Lab")
     st.caption("Creative Production Line")
+    st.write("---")
     
-    st.write("---")
-    st.markdown("**CREATION**")
-    st.button("Narrative Workshop", on_click=set_page, args=("Narrative Workshop",), use_container_width=True)
-    
-    st.write("---")
-    st.markdown("**STRUCTURE**")
-    st.button("Project Structure", on_click=set_page, args=("Project Structure",), use_container_width=True)
-    st.button("Timeline", on_click=set_page, args=("Timeline",), use_container_width=True)
-    st.button("Characters", on_click=set_page, args=("Characters",), use_container_width=True)
-    st.button("Relationships", on_click=set_page, args=("Relationships",), use_container_width=True)
-    st.button("Background Settings", on_click=set_page, args=("Background Settings",), use_container_width=True)
-
-    st.write("---")
-    st.markdown("**OUTPUT**")
-    st.button("Chapter Preview", on_click=set_page, args=("Chapter Preview",), use_container_width=True)
+    selected_page = st.radio(
+        "Navigation",
+        pages,
+        key="nl_page"
+    )
     
     st.write("---")
     if st.button("Force Save JSON", use_container_width=True):
-        memory.save()
+        st.session_state.memory.save()
         st.success("Saved!")
-    st.caption("v0.2.3-unified | Ollama Llama 3.1")
+    st.caption("v0.2.3.2 | OpenAI Engine")
 
-# ----------------- Router -----------------
-active_page = st.session_state.nl_nav
+memory = st.session_state.memory
 
-if active_page == "Narrative Workshop":
-    render_workshop_page(memory, workflow)
+# ----------------- Page Dispatcher -----------------
 
-elif active_page == "Project Structure":
-    render_project_structure(memory)
+def show_app():
+    st.header("Project & LLM Settings")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        api_key = st.text_input(
+            "OpenAI API Key",
+            value=st.session_state.get("openai_api_key", ""),
+            type="password"
+        )
+        st.session_state["openai_api_key"] = api_key
+    with col2:
+        model = st.selectbox(
+            "Model",
+            ["gpt-4o-mini", "gpt-4o", "o3-mini"],
+            index=0
+        )
+        st.session_state["openai_model"] = model
+    with col3:
+        language = st.selectbox(
+            "Creative Language",
+            ["English", "Chinese", "Japanese", "French", "German", "Spanish"],
+            index=0 if st.session_state.get("creative_language") is None else ["English", "Chinese", "Japanese", "French", "German", "Spanish"].index(st.session_state.get("creative_language"))
+        )
+        st.session_state["creative_language"] = language
+    
+    st.write("---")
+    
+    # Always re-initialize workflow with latest keys/model/language
+    workflow = NarrativeWorkflow(
+        api_key=st.session_state.get("openai_api_key"),
+        model=st.session_state.get("openai_model", "gpt-4o-mini"),
+        language=st.session_state.get("creative_language", "English")
+    )
+    
+    workshop.render_workshop_page(memory, workflow)
 
-elif active_page == "Timeline":
-    render_timeline_page(memory)
-
-elif active_page == "Characters":
-    render_characters_page(memory)
-
-elif active_page == "Relationships":
-    render_relationships_page(memory)
-
-elif active_page == "Background Settings":
-    render_background_settings_page(memory)
-
-elif active_page == "Chapter Preview":
-    render_chapter_preview(memory)
-
-else:
-    st.title(active_page)
-    st.info("Module under development.")
+if selected_page == "app":
+    show_app()
+elif selected_page == "chapter preview":
+    chapter_preview.render(memory)
+elif selected_page == "project structure":
+    project_structure.render(memory)
+elif selected_page == "timeline":
+    timeline.render(memory)
+elif selected_page == "characters":
+    characters.render(memory)
+elif selected_page == "relationships":
+    relationships.render(memory)
+elif selected_page == "map":
+    map.render(memory)
+elif selected_page == "background settings":
+    background_settings.render(memory)
+elif selected_page == "chat assistant":
+    chat_assistant.render(memory)

@@ -5,7 +5,7 @@ SETTING_CATEGORIES = [
     "faction", "religion", "artifact", "place", "organization", "custom"
 ]
 
-def render_background_settings_page(memory: ProjectMemory):
+def render(memory: ProjectMemory):
     st.header("Background Settings")
     st.caption("Deep dive into the lore, systems, and organizations of your universe.")
 
@@ -19,14 +19,14 @@ def render_background_settings_page(memory: ProjectMemory):
             st.info("No pages yet.")
         else:
             for page in pages:
-                if st.button(f"[{page['category'].upper()}] {page['title']}", key=f"nav_{page['id']}", use_container_width=True):
+                if st.button(f"[{page['category'].upper()}] {page['title']}", key=f"nav_bg_{page['id']}", use_container_width=True):
                     st.session_state.nl_selected_setting_page = page['id']
 
         st.write("---")
         with st.expander("Add New Page"):
-            new_title = st.text_input("Page Title", key="new_page_title")
-            new_cat = st.selectbox("Category", SETTING_CATEGORIES)
-            if st.button("Create"):
+            new_title = st.text_input("Page Title", key="new_bg_page_title")
+            new_cat = st.selectbox("Category", SETTING_CATEGORIES, key="new_bg_page_cat")
+            if st.button("Create", key="btn_create_bg_page"):
                 if new_title:
                     new_page = memory.create_setting_page(new_title, new_cat)
                     st.session_state.nl_selected_setting_page = new_page['id']
@@ -40,13 +40,13 @@ def render_background_settings_page(memory: ProjectMemory):
             st.subheader(active_page['title'])
             st.caption(f"Category: {active_page['category']}")
             
-            content = st.text_area("Content (Markdown)", value=active_page['content_markdown'], height=400)
+            content = st.text_area("Content (Markdown)", value=active_page['content_markdown'], height=400, key=f"txt_bg_{active_id}")
             
             c1, c2 = st.columns(2)
-            if c1.button("Save Changes", key=f"save_{active_id}"):
+            if c1.button("Save Changes", key=f"save_bg_{active_id}"):
                 memory.update_setting_page(active_id, {"content_markdown": content})
                 st.success("Page updated.")
-            if c2.button("Delete Page", type="secondary", key=f"del_{active_id}"):
+            if c2.button("Delete Page", type="secondary", key=f"del_bg_{active_id}"):
                 memory.delete_setting_page(active_id)
                 st.session_state.nl_selected_setting_page = None
                 st.rerun()

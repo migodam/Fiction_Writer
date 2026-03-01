@@ -1,7 +1,7 @@
 import streamlit as st
 from src.core.persistence import ProjectMemory
 
-def render_relationships_page(memory: ProjectMemory):
+def render(memory: ProjectMemory):
     st.header("Relationships")
     st.caption("Map the connections and conflicts between characters.")
 
@@ -14,10 +14,10 @@ def render_relationships_page(memory: ProjectMemory):
     rels = memory.data.get("relationships", [])
 
     with st.expander("Add New Relationship", expanded=True):
-        with st.form("new_rel_form"):
+        with st.form("new_rel_form_v2"):
             col1, col2 = st.columns(2)
-            char_a = col1.selectbox("Character A", char_names, key="rel_a")
-            char_b = col2.selectbox("Character B", char_names, key="rel_b")
+            char_a = col1.selectbox("Character A", char_names, key="sel_rel_a")
+            char_b = col2.selectbox("Character B", char_names, key="sel_rel_b")
             
             rel_type = st.selectbox("Type", ["Family", "Friend", "Rival", "Enemy", "Romantic", "Mentor", "Other"])
             strength = st.slider("Strength (1-10)", 1, 10, 5)
@@ -42,6 +42,6 @@ def render_relationships_page(memory: ProjectMemory):
                 c1, c2, c3 = st.columns([2, 3, 1])
                 c1.markdown(f"**{rel['character_a']}** & **{rel['character_b']}**")
                 c2.markdown(f"[{rel['relationship_type']} - Strength: {rel['strength']}] {rel['notes']}")
-                if c3.button("Delete", key=f"del_rel_{rel['id']}"):
+                if c3.button("Delete", key=f"btn_del_rel_{rel['id']}"):
                     memory.delete_relationship(rel['id'])
                     st.rerun()

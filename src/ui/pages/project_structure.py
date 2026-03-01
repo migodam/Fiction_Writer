@@ -1,7 +1,7 @@
 import streamlit as st
 from src.core.persistence import ProjectMemory
 
-def render_project_structure(memory: ProjectMemory):
+def render(memory: ProjectMemory):
     st.header("Project Structure")
     st.caption("A high-level view of your narrative entities.")
 
@@ -21,9 +21,13 @@ def render_project_structure(memory: ProjectMemory):
 
     st.write("---")
     st.subheader("Data Export")
-    st.download_button(
-        label="Download Project JSON",
-        data=open(memory.file_path, "rb").read(),
-        file_name="narrative_lab_export.json",
-        mime="application/json"
-    )
+    try:
+        json_data = open(memory.file_path, "rb").read()
+        st.download_button(
+            label="Download Project JSON",
+            data=json_data,
+            file_name="narrative_lab_export.json",
+            mime="application/json"
+        )
+    except Exception as e:
+        st.error(f"Could not prepare export: {e}")

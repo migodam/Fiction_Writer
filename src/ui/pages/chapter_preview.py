@@ -1,14 +1,14 @@
 import streamlit as st
 from src.core.persistence import ProjectMemory
 
-def render_chapter_preview(memory: ProjectMemory):
+def render(memory: ProjectMemory):
     st.header("Chapter Preview")
     st.caption("Read and review your generated chapters.")
 
     chapters = memory.data.get("chapters", [])
     
     if not chapters:
-        st.info("No chapters written yet. Use the Chapter Workshop to start writing.")
+        st.info("No chapters written yet.")
         return
 
     col_list, col_content = st.columns([1, 3])
@@ -16,7 +16,7 @@ def render_chapter_preview(memory: ProjectMemory):
     with col_list:
         st.subheader("Chapters")
         for idx, chap in enumerate(chapters):
-            if st.button(f"Chapter {idx+1}: {chap.get('title', 'Untitled')}", use_container_width=True):
+            if st.button(f"Chapter {idx+1}: {chap.get('title', 'Untitled')}", key=f"prev_chap_{idx}", use_container_width=True):
                 st.session_state.nl_selected_chapter_id = chap.get("id")
 
     with col_content:

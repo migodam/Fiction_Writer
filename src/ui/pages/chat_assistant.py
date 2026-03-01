@@ -1,10 +1,18 @@
 import streamlit as st
-import requests
 from src.core.persistence import ProjectMemory
+from src.ai.openai_client import OpenAIClient
 
-def render_chat_assistant(memory: ProjectMemory):
+def render(memory: ProjectMemory):
     st.header("Chat Assistant")
-    st.caption("Brainstorm and explore your story universe with Llama 3.1.")
+    st.caption("Brainstorm and explore your story universe with OpenAI.")
+
+    # LLM Config from state
+    api_key = st.session_state.get("openai_api_key")
+    model = st.session_state.get("openai_model", "gpt-4o-mini")
+
+    if not api_key:
+        st.warning("Please configure your OpenAI API Key in the 'App' (Workshop) page.")
+        return
 
     # Display History
     chat_container = st.container(height=500)
@@ -23,37 +31,25 @@ def render_chat_assistant(memory: ProjectMemory):
         # AI Response
         with chat_container:
             with st.chat_message("assistant"):
-                with st.spinner("Llama 3.1 is thinking..."):
+                with st.spinner(f"{model} is thinking..."):
                     try:
-                        # Construct payload for Ollama REST API directly to handle timeouts better
+                        client = OpenAIClient(api_key=api_key, model=model)
+                        
                         newline = "\n"
                         context = newline.join([f"- {f['content']}" for f in memory.data.get("canon_facts", [])[:10]])
                         system_prompt = f"You are a narrative assistant. Known facts:{newline}{context}"
                         
-                        payload = {
-                            "model": "llama3.1:8b",
-                            "messages": [
-                                {"role": "system", "content": system_prompt},
-                                {"role": "user", "content": prompt}
-                            ],
-                            "stream": False
-                        }
+                        messages = [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": prompt}
+                        ]
                         
-                        response = requests.post("http://localhost:11434/api/chat", json=payload, timeout=60)
-                        
-                        if response.status_code == 200:
-                            ai_reply = response.json()["message"]["content"]
-                            st.markdown(ai_reply)
-                            memory.add_assistant_chat_msg("assistant", ai_reply, provenance="llama3.1:8b")
-                        else:
-                            st.error(f"Ollama Error: {response.text}")
-                    except requests.exceptions.ConnectionError:
-                        st.error("Connection Error: Is Ollama running on localhost:11434?")
-                    except requests.exceptions.Timeout:
-                        st.error("Timeout: The model took too long to respond.")
+                        ai_reply = client.chat(messages)
+                        st.markdown(ai_reply)
+                        memory.add_assistant_chat_msg("assistant", ai_reply, provenance=model)
                     except Exception as e:
-                        st.error(f"Unexpected error: {e}")
+                        st.error(f"OpenAI Error: {e}")
 
-    if st.button("Clear Chat History"):
+    if st.button("Clear Chat History", key="btn_clear_chat"):
         memory.clear_chat_history()
         st.rerun()

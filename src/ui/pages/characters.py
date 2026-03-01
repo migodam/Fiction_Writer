@@ -1,7 +1,7 @@
 import streamlit as st
 from src.core.persistence import ProjectMemory
 
-def render_characters_page(memory: ProjectMemory):
+def render(memory: ProjectMemory):
     st.header("Characters")
     st.caption("Manage your cast of characters.")
 
@@ -15,11 +15,11 @@ def render_characters_page(memory: ProjectMemory):
             st.info("No characters added yet.")
         else:
             for char in characters:
-                if st.button(char["name"], key=f"char_{char['id']}", use_container_width=True):
+                if st.button(char["name"], key=f"btn_char_{char['id']}", use_container_width=True):
                     st.session_state.nl_selected_character = char['id']
                     
         st.write("---")
-        if st.button("+ Add New Character", use_container_width=True):
+        if st.button("+ Add New Character", use_container_width=True, key="btn_add_char"):
             st.session_state.nl_selected_character = "NEW"
 
     with col_form:
@@ -27,7 +27,7 @@ def render_characters_page(memory: ProjectMemory):
         
         if active_id == "NEW":
             st.subheader("Create New Character")
-            with st.form("new_char_form"):
+            with st.form("new_char_form_v2"):
                 name = st.text_input("Name")
                 desc = st.text_area("Description / Background")
                 traits = st.text_input("Personality Traits")
@@ -45,7 +45,7 @@ def render_characters_page(memory: ProjectMemory):
             active_char = next((c for c in characters if c['id'] == active_id), None)
             if active_char:
                 st.subheader(f"Edit: {active_char['name']}")
-                with st.form(f"edit_char_{active_id}"):
+                with st.form(f"edit_char_form_{active_id}"):
                     name = st.text_input("Name", value=active_char["name"])
                     desc = st.text_area("Description / Background", value=active_char["description"])
                     traits = st.text_input("Personality Traits", value=active_char["traits"])
@@ -60,7 +60,7 @@ def render_characters_page(memory: ProjectMemory):
                         })
                         st.success("Updated.")
                         st.rerun()
-                if st.button("Delete Character", type="secondary", key=f"del_char_{active_id}"):
+                if st.button("Delete Character", type="secondary", key=f"del_btn_char_{active_id}"):
                     memory.delete_character(active_id)
                     st.session_state.nl_selected_character = None
                     st.rerun()
