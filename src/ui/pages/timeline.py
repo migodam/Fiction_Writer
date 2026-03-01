@@ -23,7 +23,7 @@ def render_timeline_page(memory: ProjectMemory):
                 st.write("---")
 
     # Add Event Form
-    with st.expander("➕ Add New Event"):
+    with st.expander("Add New Event"):
         with st.form("new_event_form"):
             title = st.text_input("Event Title")
             time = st.text_input("Time / Era (e.g., Year 182)")

@@ -11,9 +11,13 @@ class ProjectMemory:
             "project_info": {"name": "Untitled Project", "style": "Modern"},
             "canon_facts": [],
             "clarifier_history": [],
+            "chat_history": [],
             "chapters": [],
             "timeline_events": [],
-            "setting_pages": []
+            "setting_pages": [],
+            "characters": [],
+            "relationships": [],
+            "map_settings": {"image_path": ""}
         }
         self.load()
 
@@ -22,7 +26,6 @@ class ProjectMemory:
             try:
                 with open(self.file_path, "r", encoding="utf-8") as f:
                     loaded_data = json.load(f)
-                    # Merge loaded data with defaults to ensure all keys exist
                     for key in self.data.keys():
                         if key in loaded_data:
                             self.data[key] = loaded_data[key]
@@ -31,85 +34,102 @@ class ProjectMemory:
 
     def save(self):
         os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
-        with open(self.file_path, "w", encoding="utf-8") as f:
+        # Use a temporary file for safe writing
+        temp_path = self.file_path + ".tmp"
+        with open(temp_path, "w", encoding="utf-8") as f:
             json.dump(self.data, f, indent=4, ensure_ascii=False)
+        os.replace(temp_path, self.file_path)
 
-    # --- Canon Facts ---
-    def add_fact(self, content: str, category: str, provenance: str = "user"):
-        fact = {
-            "id": str(uuid.uuid4()),
-            "content": content,
-            "category": category,
-            "provenance": provenance,
-            "version": 1,
-            "timestamp": datetime.now().isoformat()
+    # --- Unified Update API ---
+    def apply_project_updates(self, updates: Dict[str, Any]) -> Dict[str, int]:
+        """
+        Applies a 'project_updates' JSON from the Core Agent.
+        Returns counts of changes.
+        """
+        stats = {"upserted": 0, "deleted": 0}
+        
+        mapping = {
+            "characters": "characters",
+            "relationships": "relationships",
+            "timeline_events": "timeline_events",
+            "setting_pages": "setting_pages",
+            "canon_facts": "canon_facts"
         }
-        self.data["canon_facts"].append(fact)
+
+        for agent_key, data_key in mapping.items():
+            if agent_key not in updates:
+                continue
+            
+            section = updates[agent_key]
+            
+            # 1. Handle Deletes
+            if "delete" in section:
+                original_count = len(self.data[data_key])
+                self.data[data_key] = [item for item in self.data[data_key] if item.get("id") not in section["delete"]]
+                stats["deleted"] += (original_count - len(self.data[data_key]))
+
+            # 2. Handle Upserts
+            if "upsert" in section:
+                for item in section["upsert"]:
+                    # Check if ID exists
+                    existing_idx = -1
+                    for i, existing in enumerate(self.data[data_key]):
+                        if existing.get("id") == item.get("id"):
+                            existing_idx = i
+                            break
+                    
+                    if existing_idx >= 0:
+                        # Update existing
+                        self.data[data_key][existing_idx].update(item)
+                        self.data[data_key][existing_idx]["updated_at"] = datetime.now().isoformat()
+                    else:
+                        # Create new
+                        if "id" not in item:
+                            item["id"] = str(uuid.uuid4())
+                        item["created_at"] = datetime.now().isoformat()
+                        self.data[data_key].append(item)
+                    stats["upserted"] += 1
+        
         self.save()
-        return fact
+        return stats
 
-    # --- Timeline CRUD ---
-    def add_timeline_event(self, title: str, time: str, participants: str, summary: str):
-        event = {
-            "id": str(uuid.uuid4()),
-            "title": title,
-            "time": time,
-            "participants": [p.strip() for p in participants.split(",") if p.strip()],
-            "summary": summary,
-            "linked_fact_ids": [],
-            "created_at": datetime.now().isoformat()
-        }
-        self.data["timeline_events"].append(event)
+    # --- Existing Helper Methods (Extended) ---
+    def add_assistant_chat_msg(self, role: str, content: str, provenance: str = "user"):
+        msg = {"role": role, "content": content, "timestamp": datetime.now().isoformat(), "provenance": provenance}
+        self.data["chat_history"].append(msg)
         self.save()
-        return event
+        return msg
 
-    def update_timeline_event(self, event_id: str, updates: Dict[str, Any]):
-        for i, event in enumerate(self.data["timeline_events"]):
-            if event["id"] == event_id:
-                self.data["timeline_events"][i].update(updates)
-                self.save()
-                return self.data["timeline_events"][i]
-        return None
-
-    def delete_timeline_event(self, event_id: str):
-        self.data["timeline_events"] = [e for e in self.data["timeline_events"] if e["id"] != event_id]
-        self.save()
-
-    # --- Setting Pages CRUD ---
     def create_setting_page(self, title: str, category: str, content: str = ""):
         page = {
-            "id": str(uuid.uuid4()),
-            "title": title,
-            "category": category,
-            "content_markdown": content,
-            "linked_fact_ids": [],
-            "created_at": datetime.now().isoformat(),
-            "updated_at": datetime.now().isoformat(),
-            "version": 1
+            "id": str(uuid.uuid4()), "title": title, "category": category, "content_markdown": content,
+            "created_at": datetime.now().isoformat(), "updated_at": datetime.now().isoformat()
         }
         self.data["setting_pages"].append(page)
         self.save()
         return page
 
-    def update_setting_page(self, page_id: str, updates: Dict[str, Any]):
-        for i, page in enumerate(self.data["setting_pages"]):
-            if page["id"] == page_id:
-                updates["updated_at"] = datetime.now().isoformat()
-                self.data["setting_pages"][i].update(updates)
-                self.save()
-                return self.data["setting_pages"][i]
-        return None
-
-    def delete_setting_page(self, page_id: str):
-        self.data["setting_pages"] = [p for p in self.data["setting_pages"] if p["id"] != page_id]
+    def add_timeline_event(self, title: str, time: str, participants: str, summary: str):
+        event = {
+            "id": str(uuid.uuid4()), "title": title, "time": time, 
+            "participants": [p.strip() for p in participants.split(",") if p.strip()],
+            "summary": summary, "created_at": datetime.now().isoformat()
+        }
+        self.data["timeline_events"].append(event)
         self.save()
+        return event
 
-    # --- Chat History ---
-    def add_chat_msg(self, role: str, content: str, provenance: str = "user"):
-        self.data["clarifier_history"].append({
-            "role": role,
-            "content": content,
-            "timestamp": datetime.now().isoformat(),
-            "provenance": provenance
-        })
+    def add_character(self, name: str, description: str, traits: str, goals: str, secrets: str):
+        char = {
+            "id": str(uuid.uuid4()), "name": name, "description": description, 
+            "traits": traits, "goals": goals, "secrets": secrets, "created_at": datetime.now().isoformat()
+        }
+        self.data["characters"].append(char)
         self.save()
+        return char
+    
+    def add_fact(self, content: str, category: str, provenance: str = "user"):
+        fact = {"id": str(uuid.uuid4()), "content": content, "category": category, "provenance": provenance, "timestamp": datetime.now().isoformat()}
+        self.data["canon_facts"].append(fact)
+        self.save()
+        return fact

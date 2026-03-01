@@ -8,18 +8,23 @@ root_path = Path(__file__).parent.parent.parent
 if str(root_path) not in sys.path:
     sys.path.insert(0, str(root_path))
 
+from src.ai.workflow import NarrativeWorkflow
+from src.core.persistence import ProjectMemory
+
+# Import Modular Pages
 try:
-    from src.ai.clarifier import CORE_SLOTS, analyze_coverage_from_memory, ClarifierAgent
-    from src.core.persistence import ProjectMemory
-    from src.ui.pages.chat_panel import render_chat_panel
+    from src.ui.pages.workshop import render_workshop_page
     from src.ui.pages.timeline import render_timeline_page
-    from src.ui.pages.world_settings import render_world_settings_page
+    from src.ui.pages.background_settings import render_background_settings_page
+    from src.ui.pages.characters import render_characters_page
+    from src.ui.pages.relationships import render_relationships_page
+    from src.ui.pages.project_structure import render_project_structure
+    from src.ui.pages.chapter_preview import render_chapter_preview
 except ImportError as e:
-    st.error(f"Import Error: {e}")
-    st.stop()
+    st.error(f"Page Import Error: {e}")
 
 # ----------------- Configuration & Styling -----------------
-st.set_page_config(page_title="Narrative Lab", page_icon="馃帠", layout="wide")
+st.set_page_config(page_title="Narrative Lab", layout="wide")
 
 def load_css():
     css_path = os.path.join(os.path.dirname(__file__), "style.css")
@@ -29,103 +34,72 @@ def load_css():
 
 load_css()
 
-# ----------------- State Management -----------------
+# ----------------- State Initialization -----------------
 if "memory" not in st.session_state:
     st.session_state.memory = ProjectMemory()
-if "agent" not in st.session_state:
-    st.session_state.agent = ClarifierAgent(model="llama3.1:8b")
-if "current_questions" not in st.session_state:
-    st.session_state.current_questions = []
+if "workflow" not in st.session_state:
+    st.session_state.workflow = NarrativeWorkflow(model="llama3.1:8b")
+if "nl_nav" not in st.session_state:
+    st.session_state.nl_nav = "Narrative Workshop"
 
 memory = st.session_state.memory
+workflow = st.session_state.workflow
 
-# ----------------- Sidebar Navigation -----------------
+# ----------------- Unified Sidebar -----------------
+# We use standard Streamlit sidebar buttons to control navigation state.
+def set_page(name):
+    st.session_state.nl_nav = name
+
 with st.sidebar:
     st.title("Narrative Lab")
-    st.caption("AI-Powered Fiction Workshop")
+    st.caption("Creative Production Line")
     
     st.write("---")
-    # Organized Navigation Categories
-    st.markdown("**PLANNING**")
-    page = st.radio("Navigation", [
-        "馃摑 Project Overview", 
-        "馃摉 Canon Facts", 
-        "馃 Clarifier Interview",
-        "馃摎 Chat Assistant"
-    ], label_visibility="collapsed")
-
+    st.markdown("**CREATION**")
+    st.button("Narrative Workshop", on_click=set_page, args=("Narrative Workshop",), use_container_width=True)
+    
     st.write("---")
     st.markdown("**STRUCTURE**")
-    struct_page = st.radio("Structure", [
-        "馃搱 Timeline",
-        "馃摎 World Settings",
-        "馃懆 Characters",
-        "馃🔗 Relationships"
-    ], label_visibility="collapsed")
+    st.button("Project Structure", on_click=set_page, args=("Project Structure",), use_container_width=True)
+    st.button("Timeline", on_click=set_page, args=("Timeline",), use_container_width=True)
+    st.button("Characters", on_click=set_page, args=("Characters",), use_container_width=True)
+    st.button("Relationships", on_click=set_page, args=("Relationships",), use_container_width=True)
+    st.button("Background Settings", on_click=set_page, args=("Background Settings",), use_container_width=True)
 
     st.write("---")
-    st.markdown("**WRITING**")
-    write_page = st.radio("Writing", [
-        "馃摎 Chapter Workshop",
-        "馃摓 Preview / Export"
-    ], label_visibility="collapsed")
+    st.markdown("**OUTPUT**")
+    st.button("Chapter Preview", on_click=set_page, args=("Chapter Preview",), use_container_width=True)
     
     st.write("---")
-    if st.button("Save All Data", use_container_width=True):
+    if st.button("Force Save JSON", use_container_width=True):
         memory.save()
-        st.success("JSON Saved!")
-    
-    st.caption("v0.2.5-stable | Ollama Llama 3.1")
+        st.success("Saved!")
+    st.caption("v0.2.3-unified | Ollama Llama 3.1")
 
-# Determine which page to render (using session state to handle cross-sidebar navigation)
-if "current_page" not in st.session_state:
-    st.session_state.current_page = "馃摑 Project Overview"
+# ----------------- Router -----------------
+active_page = st.session_state.nl_nav
 
-# Update logic: If user clicks a different radio, update current_page
-# Note: In Streamlit, separate radio groups act independently. 
-# For this demo, we'll priority-order the groups.
-active_page = page
-if "Timeline" in struct_page: active_page = struct_page
-if "World Settings" in struct_page: active_page = struct_page
-# (This is a simplified multi-category router)
+if active_page == "Narrative Workshop":
+    render_workshop_page(memory, workflow)
 
-# ----------------- Routing -----------------
+elif active_page == "Project Structure":
+    render_project_structure(memory)
 
-if "Overview" in active_page:
-    st.header(f"Project: {memory.data['project_info']['name']}")
-    col1, col2, col3 = st.columns(3)
-    coverage = analyze_coverage_from_memory(memory.data['canon_facts'])
-    total_cov = sum(coverage.values()) / len(coverage) if coverage else 0
-    col1.metric("Canon Facts", len(memory.data['canon_facts']))
-    col2.metric("Blueprint", f"{int(total_cov * 100)}%")
-    col3.metric("Chapters", len(memory.data['chapters']))
-    st.subheader("Narrative Coverage")
-    for slot_key, slot_info in CORE_SLOTS.items():
-        st.write(f"**{slot_info['label']}**")
-        st.progress(coverage.get(slot_key, 0.0))
-
-elif "Canon" in active_page:
-    st.header("Canon Database")
-    # (Existing Canon display logic moved here or simplified)
-    facts = sorted(memory.data['canon_facts'], key=lambda x: x['timestamp'], reverse=True)
-    for fact in facts:
-        st.markdown(f"**[{fact['category'].upper()}]** {fact['content']}")
-
-elif "Clarifier" in active_page:
-    # Existing Clarifier logic
-    st.header("Clarifier Loop")
-    # ... (rest of clarifier code)
-    st.info("Module active. Generate questions to fill gaps.")
-
-elif "Chat" in active_page:
-    render_chat_panel(memory)
-
-elif "Timeline" in active_page:
+elif active_page == "Timeline":
     render_timeline_page(memory)
 
-elif "World Settings" in active_page:
-    render_world_settings_page(memory)
+elif active_page == "Characters":
+    render_characters_page(memory)
+
+elif active_page == "Relationships":
+    render_relationships_page(memory)
+
+elif active_page == "Background Settings":
+    render_background_settings_page(memory)
+
+elif active_page == "Chapter Preview":
+    render_chapter_preview(memory)
 
 else:
     st.title(active_page)
-    st.info("This module is under development.")
+    st.info("Module under development.")
