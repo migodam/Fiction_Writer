@@ -14,7 +14,7 @@ from src.core.persistence import ProjectMemory
 # Import Modular Pages
 try:
     from src.ui.pages import (
-        workshop,
+        workbench,
         timeline,
         background_settings,
         characters,
@@ -70,7 +70,7 @@ with st.sidebar:
     if st.button("Force Save JSON", use_container_width=True):
         st.session_state.memory.save()
         st.success("Saved!")
-    st.caption("v0.2.3.2 | OpenAI Engine")
+    st.caption("v0.2.4 | Multi-Agent Engine")
 
 memory = st.session_state.memory
 
@@ -110,7 +110,7 @@ def show_app():
         language=st.session_state.get("creative_language", "English")
     )
     
-    workshop.render_workshop_page(memory, workflow)
+    workbench.render(memory, workflow)
 
 if selected_page == "app":
     show_app()

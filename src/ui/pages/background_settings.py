@@ -1,57 +1,92 @@
 import streamlit as st
+import uuid
 from src.core.persistence import ProjectMemory
-
-SETTING_CATEGORIES = [
-    "faction", "religion", "artifact", "place", "organization", "custom"
-]
 
 def render(memory: ProjectMemory):
     st.header("Background Settings")
-    st.caption("Deep dive into the lore, systems, and organizations of your universe.")
+    st.caption("Notebook-style lore management with dynamic fields.")
 
     pages = memory.data.get("setting_pages", [])
     
-    col_list, col_content = st.columns([1, 2])
+    col_nav, col_items, col_editor = st.columns([1, 1, 2])
 
-    with col_list:
-        st.subheader("Pages")
-        if not pages:
-            st.info("No pages yet.")
-        else:
-            for page in pages:
-                if st.button(f"[{page['category'].upper()}] {page['title']}", key=f"nav_bg_{page['id']}", use_container_width=True):
-                    st.session_state.nl_selected_setting_page = page['id']
-
+    # 1. Page Navigation
+    with col_nav:
+        st.subheader("Notebooks")
+        for p in pages:
+            if st.button(p["title"], key=f"pg_btn_{p['id']}", use_container_width=True):
+                st.session_state.nl_active_page_id = p["id"]
+                st.session_state.nl_active_item_id = None
+        
         st.write("---")
-        with st.expander("Add New Page"):
-            new_title = st.text_input("Page Title", key="new_bg_page_title")
-            new_cat = st.selectbox("Category", SETTING_CATEGORIES, key="new_bg_page_cat")
-            if st.button("Create", key="btn_create_bg_page"):
-                if new_title:
-                    new_page = memory.create_setting_page(new_title, new_cat)
-                    st.session_state.nl_selected_setting_page = new_page['id']
+        with st.expander("New Notebook"):
+            new_t = st.text_input("Title")
+            if st.button("Create Notebook"):
+                if new_t:
+                    memory.create_setting_page(new_t, "custom")
                     st.rerun()
 
-    with col_content:
-        active_id = st.session_state.get("nl_selected_setting_page")
-        active_page = next((p for p in pages if p['id'] == active_id), None)
-
+    # 2. Item Navigation
+    active_page_id = st.session_state.get("nl_active_page_id")
+    active_page = next((p for p in pages if p["id"] == active_page_id), None)
+    
+    with col_items:
+        st.subheader("Items")
         if active_page:
-            st.subheader(active_page['title'])
-            st.caption(f"Category: {active_page['category']}")
-            
-            content = st.text_area("Content (Markdown)", value=active_page['content_markdown'], height=400, key=f"txt_bg_{active_id}")
-            
-            c1, c2 = st.columns(2)
-            if c1.button("Save Changes", key=f"save_bg_{active_id}"):
-                memory.update_setting_page(active_id, {"content_markdown": content})
-                st.success("Page updated.")
-            if c2.button("Delete Page", type="secondary", key=f"del_bg_{active_id}"):
-                memory.delete_setting_page(active_id)
-                st.session_state.nl_selected_setting_page = None
-                st.rerun()
+            for it in active_page.get("items", []):
+                if st.button(it["name"], key=f"it_btn_{it['id']}", use_container_width=True):
+                    st.session_state.nl_active_item_id = it["id"]
             
             st.write("---")
-            st.markdown(content)
+            if st.button("+ Add Item"):
+                new_item = {
+                    "id": str(uuid.uuid4()), "name": "New Item", "content": "", 
+                    "fields": {}, "tags": [], "page_id": active_page_id
+                }
+                active_page["items"].append(new_item)
+                memory.save()
+                st.session_state.nl_active_item_id = new_item["id"]
+                st.rerun()
         else:
-            st.info("Select a page from the left to view or edit.")
+            st.info("Select a notebook.")
+
+    # 3. Item Editor
+    with col_editor:
+        st.subheader("Editor")
+        active_item_id = st.session_state.get("nl_active_item_id")
+        if active_page and active_item_id:
+            item = next((it for it in active_page["items"] if it["id"] == active_item_id), None)
+            if item:
+                # Basic Info
+                item["name"] = st.text_input("Item Name", value=item["name"])
+                item["content"] = st.text_area("Content / Description", value=item["content"], height=200)
+                
+                # Dynamic Fields
+                st.write("**Custom Fields**")
+                fields = item.get("fields", {})
+                new_fields = {}
+                for k, v in fields.items():
+                    c1, c2, c3 = st.columns([2, 3, 1])
+                    fk = c1.text_input("Key", value=k, key=f"f_k_{k}_{item['id']}")
+                    fv = c2.text_input("Value", value=v, key=f"f_v_{k}_{item['id']}")
+                    if not c3.button("X", key=f"f_d_{k}_{item['id']}"):
+                        new_fields[fk] = fv
+                
+                item["fields"] = new_fields
+                
+                if st.button("Add Field"):
+                    item["fields"]["new_key"] = "new_value"
+                    st.rerun()
+                
+                st.write("---")
+                if st.button("Save Item"):
+                    memory.save()
+                    st.success("Item Saved")
+                
+                if st.button("Delete Item", type="secondary"):
+                    active_page["items"] = [it for it in active_page["items"] if it["id"] != active_item_id]
+                    memory.save()
+                    st.session_state.nl_active_item_id = None
+                    st.rerun()
+        else:
+            st.info("Select an item to edit.")

@@ -3,66 +3,65 @@ from src.core.persistence import ProjectMemory
 
 def render(memory: ProjectMemory):
     st.header("Characters")
-    st.caption("Manage your cast of characters.")
+    st.caption("Confirm generated candidates or manage active roster.")
 
-    characters = memory.data.get("characters", [])
-    
-    col_list, col_form = st.columns([1, 2])
+    chars = memory.data.get("characters", [])
+    candidates = [c for c in chars if c.get("status") == "candidate"]
+    active = [c for c in chars if c.get("status") == "active"]
 
-    with col_list:
-        st.subheader("Roster")
-        if not characters:
-            st.info("No characters added yet.")
-        else:
-            for char in characters:
-                if st.button(char["name"], key=f"btn_char_{char['id']}", use_container_width=True):
-                    st.session_state.nl_selected_character = char['id']
-                    
-        st.write("---")
-        if st.button("+ Add New Character", use_container_width=True, key="btn_add_char"):
-            st.session_state.nl_selected_character = "NEW"
-
-    with col_form:
-        active_id = st.session_state.get("nl_selected_character")
-        
-        if active_id == "NEW":
-            st.subheader("Create New Character")
-            with st.form("new_char_form_v2"):
-                name = st.text_input("Name")
-                desc = st.text_area("Description / Background")
-                traits = st.text_input("Personality Traits")
-                goals = st.text_input("Goals / Motivations")
-                secrets = st.text_area("Secrets / Fears")
-                if st.form_submit_button("Save Character"):
-                    if name:
-                        new_char = memory.add_character(name, desc, traits, goals, secrets)
-                        st.session_state.nl_selected_character = new_char['id']
-                        st.rerun()
-                    else:
-                        st.error("Name is required.")
-        
-        elif active_id:
-            active_char = next((c for c in characters if c['id'] == active_id), None)
-            if active_char:
-                st.subheader(f"Edit: {active_char['name']}")
-                with st.form(f"edit_char_form_{active_id}"):
-                    name = st.text_input("Name", value=active_char["name"])
-                    desc = st.text_area("Description / Background", value=active_char["description"])
-                    traits = st.text_input("Personality Traits", value=active_char["traits"])
-                    goals = st.text_input("Goals / Motivations", value=active_char["goals"])
-                    secrets = st.text_area("Secrets / Fears", value=active_char["secrets"])
-                    
-                    c1, c2 = st.columns(2)
-                    if c1.form_submit_button("Update Character"):
-                        memory.update_character(active_id, {
-                            "name": name, "description": desc, 
-                            "traits": traits, "goals": goals, "secrets": secrets
-                        })
-                        st.success("Updated.")
-                        st.rerun()
-                if st.button("Delete Character", type="secondary", key=f"del_btn_char_{active_id}"):
-                    memory.delete_character(active_id)
-                    st.session_state.nl_selected_character = None
+    # 1. Candidates Section
+    if candidates:
+        st.subheader("New Candidates")
+        st.info("These characters were proposed by AI. Confirm them to use in generation.")
+        for can in candidates:
+            with st.container():
+                c1, c2, c3 = st.columns([4, 1, 1])
+                c1.markdown(f"**{can['name']}** - {can.get('traits', 'No traits listed')}")
+                if c2.button("Confirm", key=f"conf_{can['id']}", use_container_width=True):
+                    memory.confirm_character(can['id'])
                     st.rerun()
+                if c3.button("Reject", key=f"rej_{can['id']}", use_container_width=True):
+                    memory.delete_character(can['id'])
+                    st.rerun()
+        st.write("---")
+
+    # 2. Active Roster
+    col_list, col_details = st.columns([1, 2])
+    
+    with col_list:
+        st.subheader("Active Roster")
+        if not active:
+            st.info("No active characters.")
         else:
-            st.info("Select a character or create a new one.")
+            for char in active:
+                if st.button(char["name"], key=f"act_{char['id']}", use_container_width=True):
+                    st.session_state.nl_selected_char_id = char['id']
+        
+        if st.button("+ Manual Add"):
+            st.session_state.nl_selected_char_id = "NEW"
+
+    with col_details:
+        sel_id = st.session_state.get("nl_selected_char_id")
+        if sel_id == "NEW":
+            with st.form("manual_char"):
+                name = st.text_input("Name")
+                desc = st.text_area("Description")
+                if st.form_submit_button("Save"):
+                    new_c = memory.add_character(name, desc, "", "", "")
+                    memory.confirm_character(new_c['id'])
+                    st.rerun()
+        elif sel_id:
+            char = next((c for c in active if c['id'] == sel_id), None)
+            if char:
+                st.subheader(char["name"])
+                char["description"] = st.text_area("Background", value=char.get("description", ""))
+                char["traits"] = st.text_input("Traits", value=str(char.get("traits", "")))
+                char["goals"] = st.text_input("Goals", value=str(char.get("goals", "")))
+                char["secrets"] = st.text_area("Secrets", value=str(char.get("secrets", "")))
+                if st.button("Save Changes"):
+                    memory.save()
+                    st.success("Updated")
+                if st.button("Move back to Candidates"):
+                    char["status"] = "candidate"
+                    memory.save()
+                    st.rerun()
