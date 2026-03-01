@@ -1,0 +1,25 @@
+# Core AI/LLM
+langchain>=0.1.0
+langchain-community
+ollama>=0.1.0
+llama-cpp-python
+
+# Web/UI
+streamlit
+fastapi
+uvicorn
+
+# Utils
+python-dotenv
+pydantic>=2.0
+PyPDF2
+python-docx
+
+# Vector Store (Optional but useful for long context)
+chromadb
+faiss-cpu
+
+# Dev
+pytest
+black
+flake8
