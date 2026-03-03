@@ -97,7 +97,7 @@ if selected_page == "app":
         model=st.session_state.get("openai_model", "gpt-4o-mini"),
         language=st.session_state.get("creative_language", "English")
     )
-    workbench.render(memory, workflow)
+    workbench.render_workbench(memory, workflow)
 
 elif selected_page == "chapter preview":
     chapter_preview.render(memory)

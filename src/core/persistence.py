@@ -110,21 +110,56 @@ class ProjectMemory:
         res = {
             "timeline_upserted": 0,
             "characters_created": 0,
+            "characters_updated": 0,
             "relationships_created": 0,
             "setting_items_created": 0
         }
 
         # Characters
         char_upserts = updates.get("characters", {}).get("upsert", [])
-        for char in char_upserts:
-            if "id" not in char: char["id"] = str(uuid.uuid4())
-            char["status"] = char.get("status", "candidate")
-            existing = next((c for c in self.data["characters"] if c["id"] == char["id"]), None)
-            if existing: existing.update(char)
-            else:
-                self.data["characters"].append(char)
-                res["characters_created"] += 1
+        for char_data in char_upserts:
+            # Check by ID or Name
+            target_id = char_data.get("id") or char_data.get("id_or_name")
+            target_name = char_data.get("name") or char_data.get("id_or_name")
 
+            existing = None
+            if target_id:
+                existing = next((c for c in self.data["characters"] if c["id"] == target_id), None)
+            if not existing and target_name:
+                existing = next((c for c in self.data["characters"] if c["name"] == target_name), None)
+
+            if existing:
+                # Merge Fields
+                fields_to_update = char_data.get("fields", {})
+                if not fields_to_update:
+                    # Fallback if AI didn't use 'fields' key but provided direct keys
+                    fields_to_update = {k: v for k, v in char_data.items() if k not in ["id", "id_or_name", "name"]}
+
+                updated = False
+                for k, v in fields_to_update.items():
+                    if v and v != "..." and existing.get(k) != v:
+                        existing[k] = v
+                        updated = True
+
+                if updated:
+                    existing["updated_at"] = datetime.now().isoformat()
+                    res["characters_updated"] += 1
+            else:
+                # Create Candidate
+                new_char = {
+                    "id": str(uuid.uuid4()),
+                    "name": target_name or "Unknown Character",
+                    "status": "candidate",
+                    "created_at": datetime.now().isoformat()
+                }
+                # Merge fields
+                fields = char_data.get("fields", {}) or char_data
+                for k, v in fields.items():
+                    if k not in ["id", "id_or_name", "name"]:
+                        new_char[k] = v
+
+                self.data["characters"].append(new_char)
+                res["characters_created"] += 1
         # Timeline
         tl_upserts = updates.get("timeline_events", {}).get("upsert", [])
         for ev in tl_upserts:
@@ -200,3 +235,22 @@ class ProjectMemory:
         self.data["characters"].append(char)
         self.save()
         return char
+
+    def add_relationship(self, char_a: str, char_b: str, rel_type: str, strength: str, notes: str):
+        rel = {
+            "id": str(uuid.uuid4()),
+            "character_a": char_a,
+            "character_b": char_b,
+            "relationship_type": rel_type,
+            "strength": strength,
+            "notes": notes,
+            "hidden_truth": "",
+            "evidence_event_ids": []
+        }
+        self.data["relationships"].append(rel)
+        self.save()
+        return rel
+
+    def delete_relationship(self, rel_id: str):
+        self.data["relationships"] = [r for r in self.data["relationships"] if r["id"] != rel_id]
+        self.save()

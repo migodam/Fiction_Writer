@@ -37,11 +37,23 @@ def render(memory: ProjectMemory):
     if not rels:
         st.info("No relationships recorded yet.")
     else:
+        # Create a lookup map for ID -> Name
+        char_lookup = {c["id"]: c["name"] for c in characters}
+        
         for rel in rels:
             with st.container():
                 c1, c2, c3 = st.columns([2, 3, 1])
-                c1.markdown(f"**{rel['character_a']}** & **{rel['character_b']}**")
-                c2.markdown(f"[{rel['relationship_type']} - Strength: {rel['strength']}] {rel['notes']}")
+                
+                # Resolve IDs to Names if applicable
+                name_a = char_lookup.get(rel.get("character_a"), rel.get("character_a"))
+                name_b = char_lookup.get(rel.get("character_b"), rel.get("character_b"))
+                
+                c1.markdown(f"**{name_a}** & **{name_b}**")
+                
+                rel_info = f"[{rel.get('relationship_type', 'Unknown')} - Strength: {rel.get('strength', '5')}]"
+                rel_desc = rel.get('notes') or rel.get('hidden_truth', '')
+                c2.markdown(f"{rel_info} {rel_desc}")
+                
                 if c3.button("Delete", key=f"btn_del_rel_{rel['id']}"):
                     memory.delete_relationship(rel['id'])
                     st.rerun()

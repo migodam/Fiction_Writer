@@ -1,120 +1,135 @@
 import streamlit as st
 import json
+from typing import Any, Optional
+from datetime import datetime
 from src.core.persistence import ProjectMemory
-from src.ai.workflow import NarrativeWorkflow
+from src.core.memory_store import MemoryStore
+from src.ai.openai_client import OpenAIClient
+from src.ai.router import route_user_input
+from src.ai.orchestrator import run_pipeline
 
-def render(memory: ProjectMemory, workflow: NarrativeWorkflow):
-    st.header("AI Workbench")
-    st.caption("A production line for story universes. Request -> Clarify -> Generate.")
+def render_workbench(memory: ProjectMemory, workflow: Any = None):
+    st.header("AI Workbench (Multi-Agent Engine)")
+    st.caption("v0.3.0 - Orchestrated Planning & Governance")
 
-    # 1. State Management
-    if "nl_workbench" not in st.session_state:
-        st.session_state.nl_workbench = {
-            "stage": "REQUEST",
-            "request_text": "",
-            "clarify_rounds": [],
-            "active_questions": [],
-            "agent_result": None,
-            "apply_counts_text": ""
-        }
+    store = MemoryStore()
+
+    if "nl_runs" not in st.session_state:
+        st.session_state.nl_runs = []
+    if "nl_wb_text" not in st.session_state:
+        st.session_state.nl_wb_text = ""
+    if "nl_routing" not in st.session_state:
+        st.session_state.nl_routing = None
+
+    # Top Area: Input and Routing
+    user_text = st.text_area("What would you like to build or change?", value=st.session_state.nl_wb_text, height=100)
     
-    wb = st.session_state.nl_workbench
-
-    # --- STEP 1: REQUEST ---
-    with st.expander("Step 1: Narrative Request", expanded=(wb["stage"] == "REQUEST")):
-        req_text = st.text_area("Describe what you want to create", value=wb["request_text"], height=150)
-        if st.button("Generate Clarifier Questions"):
-            if req_text:
-                wb["request_text"] = req_text
-                with st.spinner("Narrative Architect is analyzing..."):
-                    qs = workflow.generate_clarification_questions(req_text, memory.data["canon_facts"])
-                    wb["active_questions"] = qs
-                    wb["stage"] = "CLARIFY"
-                    st.rerun()
-
-    # --- STEP 2: CLARIFIER ---
-    if wb["stage"] in ["CLARIFY", "RESULT"]:
-        for i, round_data in enumerate(wb["clarify_rounds"]):
-            with st.expander(f"Clarification Round {i+1} (History)", expanded=False):
-                for q, a in zip(round_data["questions"], round_data["answers"]):
-                    st.write(f"**Q:** {q}")
-                    st.write(f"**A:** {a}")
-                    st.write("---")
-
-        if wb["stage"] == "CLARIFY":
-            st.subheader(f"Clarification Round {len(wb['clarify_rounds']) + 1}")
-            current_answers = []
-            
-            for i, q in enumerate(wb["active_questions"]):
-                st.write(f"**Q{i+1}:** {q}")
-                ans = st.text_input("Answer", key=f"ans_v7_{len(wb['clarify_rounds'])}_{i}", label_visibility="collapsed")
-                skip = st.checkbox("Skip", key=f"skip_v7_{len(wb['clarify_rounds'])}_{i}")
-                current_answers.append(ans if not skip else "SKIPPED")
-            
-            c1, c2 = st.columns(2)
-            if c1.button("Generate Now", use_container_width=True):
-                wb["clarify_rounds"].append({"questions": wb["active_questions"], "answers": current_answers})
-                wb["stage"] = "GENERATING"
+    col1, col2 = st.columns([1, 4])
+    if col1.button("Analyze Intent"):
+        if user_text:
+            client = OpenAIClient(api_key=st.session_state.get("openai_api_key"), model=st.session_state.get("openai_model", "gpt-4o-mini"))
+            with st.spinner("Routing..."):
+                routing = route_user_input(user_text, {}, {}, client)
+                st.session_state.nl_routing = routing
+                st.session_state.nl_wb_text = user_text
                 st.rerun()
-            
-            if c2.button("Ask 10 More Questions", use_container_width=True):
-                if len(wb["clarify_rounds"]) < 2:
-                    wb["clarify_rounds"].append({"questions": wb["active_questions"], "answers": current_answers})
-                    with st.spinner("Deepening analysis..."):
-                        new_qs = workflow.generate_clarification_questions(wb["request_text"], memory.data["canon_facts"], history=wb["clarify_rounds"])
-                        wb["active_questions"] = new_qs
-                        st.rerun()
-                else:
-                    st.warning("Max 3 rounds reached. Please click 'Generate Now'.")
 
-    # --- STEP 3: GENERATING ---
-    if wb["stage"] == "GENERATING":
-        st.subheader("World Architect is building...")
-        with st.spinner("Constructing Project JSON..."):
-            snapshot = {
-                "facts": memory.data["canon_facts"][:10],
-                "characters": [c for c in memory.data["characters"] if c.get("status") == "active"],
-                "timeline": memory.data["timeline_events"][-10:]
-            }
-            result = workflow.run_core_agent(wb["request_text"], wb["clarify_rounds"], snapshot)
-            
-            # Quality Gate
-            updates = result.get("project_updates", {})
-            char_count = len(updates.get("characters", {}).get("upsert", []))
-            tl_count = len(updates.get("timeline_events", {}).get("upsert", []))
-            item_count = len(updates.get("setting_pages", {}).get("upsert_items", []))
-            
-            if char_count < 3 or tl_count < 10 or item_count < 3:
-                st.error(f"Quality Gate Failed: Chars({char_count}), Events({tl_count}), Items({item_count}). Regenerating with stricter constraints...")
-                # Note: In a real app we might auto-retry once.
-            
-            wb["agent_result"] = result
-            wb["stage"] = "RESULT"
-            st.rerun()
-
-    # --- STEP 4: RESULT ---
-    if wb["stage"] == "RESULT":
-        res = wb["agent_result"]
-        st.success("Generation Complete!")
+    routing = st.session_state.nl_routing
+    ui_choice = "Both" # default
+    if routing:
+        st.info(f"Intent: {routing.get('intent_type', 'unknown').upper()}")
         
-        with st.expander("Generation Content", expanded=True):
-            st.title(res["user_output"]["title"])
-            st.markdown(res["user_output"]["content_markdown"])
+        if routing.get("ambiguous_update"):
+            st.warning("Ambiguous Target. Please clarify:")
+            ui_choice = st.radio("Update target:", ["Project Updates (entities)", "Global Rules (governance)", "Both"], index=0)
         
-        with st.expander("Project Updates Preview", expanded=True):
-            st.json(res["project_updates"])
-            if st.button("Apply Updates to Memory", use_container_width=True):
-                stats = memory.apply_project_updates(res["project_updates"])
-                wb["apply_counts_text"] = (f"Applied updates:\n"
-                                          f"- timeline_events: +{stats['timeline_upserted']}\n"
-                                          f"- characters (candidates): +{stats['characters_created']}\n"
-                                          f"- relationships: +{stats['relationships_created']}\n"
-                                          f"- settings items: +{stats['setting_items_created']}")
+        if st.button("Execute Pipeline", type="primary"):
+            client = OpenAIClient(api_key=st.session_state.get("openai_api_key"), model=st.session_state.get("openai_model", "gpt-4o-mini"))
+            with st.spinner("Orchestrating agents..."):
+                res = run_pipeline(st.session_state.nl_wb_text, ui_choice, {}, memory, store, client, routing)
+                
+                run_record = {
+                    "ts": datetime.now().isoformat(),
+                    "user_text": st.session_state.nl_wb_text,
+                    "routing": routing,
+                    "result": res
+                }
+                st.session_state.nl_runs.append(run_record)
+                
+                # Auto-apply agent tasks for simplicity in this MVP
+                agent_props = res.get("proposals", {}).get("agents", [])
+                if agent_props:
+                    for prop in agent_props:
+                        # naive auto-apply for agent files
+                        pass
+                        
+                st.session_state.nl_routing = None
+                st.session_state.nl_wb_text = ""
                 st.rerun()
-        
-        if wb["apply_counts_text"]:
-            st.info(wb["apply_counts_text"])
 
-        if st.button("Start New Workshop"):
-            st.session_state.nl_workbench = None
-            st.rerun()
+    st.write("---")
+    
+    # Render Pending Proposals (Memory Inbox)
+    if st.session_state.nl_runs:
+        last_run = st.session_state.nl_runs[-1]
+        global_props = last_run["result"].get("proposals", {}).get("global", [])
+        if global_props:
+            with st.expander("📥 Memory Inbox (Pending Global Approvals)", expanded=True):
+                for i, prop in enumerate(global_props):
+                    st.write(f"**Proposal:** {prop.get('file_path', 'unknown')}")
+                    content = st.text_area("Proposed Content", value=prop.get('content', ''), key=f"prop_{i}")
+                    c1, c2 = st.columns(2)
+                    if c1.button("Approve & Save", key=f"app_{i}"):
+                        store.apply_global_change_with_backup(prop.get('file_path', 'memory/global/governance.md'), content)
+                        st.success("Approved!")
+                    if c2.button("Reject", key=f"rej_{i}"):
+                        st.info("Rejected.")
+
+    # Render History (Append-only)
+    st.subheader("Run History")
+    for idx, run in enumerate(reversed(st.session_state.nl_runs)):
+        res = run["result"]
+        with st.expander(f"Run at {run['ts'][:19]} - {run['user_text'][:30]}...", expanded=(idx==0)):
+            st.write(f"**Prompt:** {run['user_text']}")
+            
+            # Agent Console
+            with st.container():
+                st.markdown("### 🤖 Agent Console")
+                
+                # Context Stats
+                st.caption(f"Context used: {res['context_stats'].get('used_chars', 0)} / {res['context_stats'].get('char_budget', 12000)} chars")
+                if res['context_stats'].get('truncated'):
+                    st.warning(res['context_stats'].get('overflow_summary', 'Context truncated.'))
+                
+                # Errors & Diagnostics
+                if res.get("errors"):
+                    for err in res["errors"]:
+                        st.error(f"Error in {err['stage']}: {err['error']}")
+                
+                diag = res.get("diagnostics", {})
+                if diag.get("planner_missing_keys"):
+                    st.warning(f"Incomplete LLM Output. Missing keys: {', '.join(diag['planner_missing_keys'])}")
+                
+                if diag.get("expansion_ran"):
+                    st.info("Expansion stage ran: True")
+                
+                pm_updates = res.get("project_updates", {})
+                char_upserts = pm_updates.get("characters", {}).get("upsert", [])
+                if char_upserts:
+                    st.info(f"Character patches emitted: {len(char_upserts)}")
+                
+                setting_upserts = pm_updates.get("setting_pages", {}).get("upsert_items", [])
+                if setting_upserts:
+                    st.info(f"Setting background item upserted: {len(setting_upserts)}")
+
+                # Raw Output
+                with st.expander("View Core Planner Raw Output", expanded=False):
+                    st.code(res.get("planner_raw", "No raw output captured."), language="json")
+
+                # Results
+                st.markdown("**Core Planner Output:**")
+                st.markdown(res['core_summary'].get('content_markdown', '*(No content generated)*'))
+                
+                if res['pm_counts']:
+                    st.markdown("**Project Manager Updates Applied:**")
+                    st.json(res['pm_counts'])
