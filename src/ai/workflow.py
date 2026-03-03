@@ -1,5 +1,6 @@
 import json
 import uuid
+import os
 from typing import List, Dict, Any
 from src.ai.openai_client import OpenAIClient
 
@@ -9,63 +10,83 @@ class NarrativeWorkflow:
         self.model = model
         self.language = language
         self.client = OpenAIClient(api_key=api_key, model=model) if api_key else None
+        self.prompts = self._load_prompts()
+
+    def _load_prompts(self):
+        path = "config/prompts.json"
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except:
+                return {}
+        return {}
 
     def _ensure_client(self):
         if not self.client:
-            raise ValueError("OpenAI API Key is missing. Please configure it in the App page.")
+            raise ValueError("OpenAI API Key is missing.")
 
-    def generate_clarification_questions(self, idea: str, existing_facts: List[Dict], count: int = 10) -> List[str]:
+    def generate_clarification_questions(self, idea: str, existing_facts: List[Dict], history: List[Dict] = None, count: int = 10) -> List[str]:
         self._ensure_client()
-        prompt = f"""
-        Idea: {idea}
-        Task: You are a professional Narrative Architect. 
-        Generate {count} specific questions in {self.language}.
-        Rules: Return ONLY a JSON list of strings.
-        """
-        messages = [{"role": "system", "content": f"You are a professional Narrative Architect in {self.language}."},
-                    {"role": "user", "content": prompt}]
-        response_text = self.client.chat(messages)
-        clean_json = response_text.strip().replace("```json", "").replace("```", "")
-        return json.loads(clean_json)[:count]
-
-    def run_packager(self, idea: str, qa_results: List[Dict]) -> Dict:
-        self._ensure_client()
-        prompt = f"""
-        User Idea: {idea}
-        Q&A: {json.dumps(qa_results)}
-        Task: Create a structured GenerationRequest in {self.language}.
-        Output Schema: {{ "intent": "...", "target_output": "outline|chapter|scene", "timeline_granularity": 20 }}
-        """
-        messages = [{"role": "system", "content": "You output only JSON."},
-                    {"role": "user", "content": prompt}]
-        response_text = self.client.chat(messages)
-        return json.loads(response_text.strip().replace("```json", "").replace("```", ""))
-
-    def run_core_agent(self, spec: Dict, memory_snapshot: Dict) -> Dict:
-        self._ensure_client()
-        granularity = spec.get("timeline_granularity", 20)
+        history_str = json.dumps(history) if history else "No history yet."
+        system_p = self.prompts.get("clarifier_prompt", "You are a professional Narrative Architect.")
         
         prompt = f"""
-        Execute Spec: {json.dumps(spec)}
-        Context: {json.dumps(memory_snapshot)}
-        
-        Rules for PROJECT_UPDATES:
-        1. Timeline: Generate EXACTLY {granularity} events for a fine-grained chronology.
-        2. Characters: ALL new characters MUST have "status": "candidate".
-        3. Settings: Use 'setting_pages' structure with 'upsert_pages' and 'upsert_items'. Items must have 'fields' (dict).
-        4. Language: Everything must be in {self.language}.
-        
-        Output MUST be dual-part JSON:
-        {{
-          "user_output": {{ "title": "...", "content_markdown": "..." }},
-          "project_updates": {{
-            "timeline_events": {{ "upsert": [] }},
-            "characters": {{ "upsert": [] }},
-            "setting_pages": {{ "upsert_pages": [], "upsert_items": [] }}
-          }}
-        }}
+        Role Instruction: {system_p}
+        Language: {self.language}
+        Input Idea: {idea}
+        Interview History: {history_str}
+        Task: Generate exactly {count} deep, probing questions.
         """
-        messages = [{"role": "system", "content": f"You are a Lead Narrative Scientist. Output ONLY strict JSON in {self.language}."},
-                    {"role": "user", "content": prompt}]
-        response_text = self.client.chat(messages)
-        return json.loads(response_text.strip().replace("```json", "").replace("```", ""))
+        messages = [
+            {"role": "system", "content": f"{system_p}. You speak and output JSON in {self.language}."},
+            {"role": "user", "content": prompt}
+        ]
+        resp = self.client.chat(messages)
+        clean = resp.strip().replace("```json", "").replace("```", "")
+        return json.loads(clean)[:count]
+
+    def run_packager(self, idea: str, qa_history: List[Dict]) -> Dict:
+        self._ensure_client()
+        system_p = self.prompts.get("packager_prompt", "You are a requirements analyst.")
+        prompt = f"""
+        Role: {system_p}
+        Input: {idea}
+        QA: {json.dumps(qa_history)}
+        Language: {self.language}
+        """
+        messages = [{"role": "system", "content": "Output ONLY JSON."}, {"role": "user", "content": prompt}]
+        resp = self.client.chat(messages)
+        return json.loads(resp.strip().replace("```json", "").replace("```", ""))
+
+    def run_core_agent(self, idea: str, qa_history: List[Dict], memory_snapshot: Dict) -> Dict:
+        self._ensure_client()
+        system_p = self.prompts.get("core_agent_prompt", "You are a world architect.")
+        prompt = f"""
+        Role: {system_p}
+        Language: {self.language}
+        Input Idea: {idea}
+        Interview Context: {json.dumps(qa_history)}
+        Memory: {json.dumps(memory_snapshot)}
+        """
+        messages = [{"role": "system", "content": f"{system_p}. Output strictly in {self.language}."}, {"role": "user", "content": prompt}]
+        resp = self.client.chat(messages)
+        return json.loads(resp.strip().replace("```json", "").replace("```", ""))
+
+    def generate_pov_timeline(self, char_name: str, events: List[Dict]) -> List[Dict]:
+        self._ensure_client()
+        prompt = f"""
+        Character: {char_name}
+        Events: {json.dumps(events)}
+        
+        Task: For each event, describe:
+        1. What the character knows.
+        2. What they want.
+        3. How they changed.
+        
+        Language: {self.language}
+        Output Schema: [{"event_id": "...", "perspective": "..."}]
+        """
+        messages = [{"role": "system", "content": f"Output ONLY JSON in {self.language}."}, {"role": "user", "content": prompt}]
+        resp = self.client.chat(messages)
+        return json.loads(resp.strip().replace("```json", "").replace("```", ""))
