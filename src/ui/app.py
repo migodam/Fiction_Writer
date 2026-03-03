@@ -40,26 +40,29 @@ def load_css():
 load_css()
 
 # ----------------- State Initialization -----------------
-if "memory" not in st.session_state:
-    st.session_state.memory = ProjectMemory()
+# Ensure a consistent memory object in session state
+if "nl_memory" not in st.session_state:
+    st.session_state.nl_memory = ProjectMemory()
+
+memory = st.session_state.nl_memory
 
 # ----------------- Sidebar Routing -----------------
 pages = [
-    "AI Workbench",
-    "Chapter Preview",
-    "Project Structure",
-    "Timeline",
-    "Characters",
-    "Relationships",
-    "Map",
-    "Background Settings",
-    "Chat Assistant",
-    "Prompt Manager"
+    "app",
+    "chapter preview",
+    "project structure",
+    "timeline",
+    "characters",
+    "relationships",
+    "map",
+    "background settings",
+    "chat assistant",
+    "Prompt Management"
 ]
 
 with st.sidebar:
     st.title("Narrative Lab")
-    st.caption("v0.2.7 | Architect Engine")
+    st.caption("v0.2.8 | Stability Engine")
     st.write("---")
     
     selected_page = st.radio(
@@ -69,11 +72,11 @@ with st.sidebar:
     )
     
     st.write("---")
-    if st.button("Force Save JSON", use_container_width=True):
-        st.session_state.memory.save()
-        st.success("Saved!")
-
-memory = st.session_state.memory
+    if st.button("Force Save & Reload", use_container_width=True):
+        memory.save()
+        st.session_state.nl_memory = ProjectMemory() # Force full reload
+        st.success("JSON Persisted & Normalized.")
+        st.rerun()
 
 # ----------------- Page Dispatcher -----------------
 
@@ -87,7 +90,7 @@ def show_settings_header():
         with col3:
             st.session_state["creative_language"] = st.selectbox("Language", ["English", "Chinese", "Japanese"], index=0)
 
-if selected_page == "AI Workbench":
+if selected_page == "app":
     show_settings_header()
     workflow = NarrativeWorkflow(
         api_key=st.session_state.get("openai_api_key"),
@@ -96,22 +99,22 @@ if selected_page == "AI Workbench":
     )
     workbench.render(memory, workflow)
 
-elif selected_page == "Chapter Preview":
+elif selected_page == "chapter preview":
     chapter_preview.render(memory)
-elif selected_page == "Project Structure":
+elif selected_page == "project structure":
     project_structure.render(memory)
-elif selected_page == "Timeline":
+elif selected_page == "timeline":
     timeline.render(memory)
-elif selected_page == "Characters":
+elif selected_page == "characters":
     characters.render(memory)
-elif selected_page == "Relationships":
+elif selected_page == "relationships":
     relationships.render(memory)
-elif selected_page == "Map":
+elif selected_page == "map":
     map.render(memory)
-elif selected_page == "Background Settings":
+elif selected_page == "background settings":
     background_settings.render(memory)
-elif selected_page == "Chat Assistant":
+elif selected_page == "chat assistant":
     show_settings_header()
     chat_assistant.render(memory)
-elif selected_page == "Prompt Manager":
+elif selected_page == "Prompt Management":
     prompts.render(memory)
