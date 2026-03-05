@@ -1,44 +1,66 @@
-# Fiction Writer - 纯本地 AI 小说创作助手
+# Narrative IDE — Desktop Narrative IDE (Windows Demo)
 
-本项目旨在构建一个完全运行在本地的 AI 小说创作助手，利用大语言模型（LLM）协助作家进行大纲构思、情节生成、角色设计以及全文润色。
+This is a commercial-grade **Local-First AI Narrative IDE** built for professional fiction writers. It provides a VS Code / Premiere-style interface for managing complex story structures, characters, timelines, and world-building.
 
-## 功能特点
+## Key Features (P0/P1 Implemented)
 
-- **全本地运行**：通过 Ollama 或本地加载的 GGUF 模型运行，确保创作内容的绝对隐私。
-- **长文本支持**：优化长文档的创作流程，支持章节管理。
-- **角色关系图**：可视化管理小说中的人物及其复杂关系。
-- **自动情节衔接**：基于前文自动推演后续情节逻辑。
+- **IDE Shell**: Full-featured layout with Activity Bar, Sidebar, Workspace, and Global Inspector.
+- **Command Palette (Ctrl+P)**: Fast, fuzzy-search navigation between all modules.
+- **Writing Studio**: 
+  - Serif-based distraction-free editor.
+  - **Debounced Autosave**: Automatic background saving with UI status feedback.
+  - **Context Panel**: Real-time reference to characters and timeline events while writing.
+- **Characters Module**:
+  - Candidate confirmation workflow (AI-generated candidates to confirmed roster).
+  - Detailed character profile management with explicit save.
+- **Timeline Module**:
+  - Multi-branch track system.
+  - Interactive event nodes with deep integration into the Global Inspector.
+- **Global Selection Model**: Unified selection state across the entire IDE.
 
-## 开发进度
+## Tech Stack
 
-- [x] 项目结构初始化
-- [ ] 本地 AI 推理后端集成 (Ollama/llama-cpp-python)
-- [ ] 前端界面开发 (Streamlit / Electron)
-- [ ] 知识库/设定集管理系统
+- **Shell**: [Electron](https://www.electronjs.org/)
+- **Frontend**: [React 18](https://react.dev/) + [Vite](https://vitejs.dev/)
+- **Styling**: [Tailwind CSS](https://tailwindcss.com/) + [Lucide Icons](https://lucide.dev/)
+- **State Management**: [Zustand](https://docs.pmnd.rs/zustand/getting-started/introduction)
+- **Testing**: [Playwright](https://playwright.dev/) (E2E)
+- **Language**: TypeScript
 
-## 快速开始
+## Getting Started
 
-### 1. 环境准备
+### Prerequisites
+- Node.js v20 or higher
+- Windows OS (for targeted UI optimizations)
 
-确保您的电脑已安装 Python 3.10+。
-
-### 2. 创建并激活虚拟环境
-
+### Installation
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+npm install
 ```
 
-### 3. 安装依赖
-
+### Running the Application
+To start the IDE in development mode (Vite + Electron):
 ```powershell
-pip install -r requirements.txt
+npm run electron:dev
 ```
 
-### 4. 运行程序
+To run the web version only (Vite):
+```powershell
+npm run ui:dev
+```
 
-*(待后续开发完善)*
+### Testing
+Run all P0 and smoke tests:
+```powershell
+npm run test:e2e
+```
 
-## 许可证
+## Project Structure
+- `src/ui-react/`: React frontend application.
+- `src/electron/`: Electron main process and IPC logic.
+- `src/ui/`: Legacy Streamlit UI (Reference only).
+- `dev_agent_logs/`: Comprehensive engineering logs, metrics, and architecture notes.
+- `dev_docs/`: Governing specifications and logic definitions.
 
-MIT License
+## License
+MIT

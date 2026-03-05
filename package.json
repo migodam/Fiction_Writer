@@ -1,13 +1,18 @@
 {
   "name": "fiction-writer-ide",
   "version": "0.1.0",
+  "type": "module",
   "description": "Local-First AI Narrative IDE",
   "main": "src/electron/main.js",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "ui:dev": "vite",
+    "ui:build": "tsc && vite build",
+    "ui:lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "ui:format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
+    "build": "npm run ui:build",
     "preview": "vite preview",
-    "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && electron .\"",
+    "electron:dev": "concurrently \"npm run ui:dev\" \"wait-on http://localhost:3000 && electron .\"",
     "test:e2e": "npx playwright test"
   },
   "dependencies": {
@@ -15,7 +20,10 @@
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.23.1",
     "zustand": "^4.5.2",
-    "lucide-react": "^0.378.0"
+    "lucide-react": "^0.378.0",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^2.3.0",
+    "lucide": "^0.378.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",
@@ -26,6 +34,9 @@
     "electron": "^30.0.6",
     "typescript": "^5.4.5",
     "vite": "^5.2.11",
-    "wait-on": "^7.2.0"
+    "wait-on": "^7.2.0",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.4.3"
   }
 }
