@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <title>Narrative IDE Prototype</title>
+    
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#9010da",
+                        "background-light": "#f7f6f8",
+                        "background-dark": "#0B0F14", // Base dark from some screens
+                        "surface": "#1A1D24",
+                        "surface-hover": "#252830",
+                        "border-subtle": "#2D313A",
+                        "text-primary": "#E2E8F0",
+                        "text-secondary": "#94A3B8",
+                        // Mappings for other screen specific colors
+                        "surface-dark": "#2a1e35",
+                        "surface-darker": "#22172b",
+                        "border-dark": "#3d2b4d",
+                        "text-muted": "#9CA3AF"
+                    },
+                    fontFamily: {
+                        "display": ["Inter", "sans-serif"],
+                        "mono": ["JetBrains Mono", "monospace"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+    <style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/history@5/umd/history.development.js"></script>
+    <script src="https://unpkg.com/react-router@6.3.0/umd/react-router.development.js"></script>
+    <script src="https://unpkg.com/react-router-dom@6.3.0/umd/react-router-dom.development.js"></script>
+    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+</head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 font-display min-h-screen flex flex-col overflow-hidden">
+    <div id="root" class="h-full flex flex-col"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+        const { createRoot } = ReactDOM;
+        const { MemoryRouter, Routes, Route, Link, useNavigate, useLocation } = ReactRouterDOM;
+
+        // --- Common Components ---
+        const TopNav = ({ title = "Narrative IDE" }) => {
+            const navigate = useNavigate();
+            return (
+                <header class="flex items-center justify-between border-b border-border-subtle bg-surface px-4 py-2 h-12 shrink-0">
+                    <div class="flex items-center gap-6">
+                        <div class="flex items-center gap-2 text-primary cursor-pointer" onClick={() => navigate('/')}>
+                            <span class="material-symbols-outlined text-xl">auto_awesome</span>
+                            <span class="text-text-primary font-semibold text-sm tracking-tight">{title}</span>
+                        </div>
+                        <nav class="hidden md:flex items-center gap-4">
+                            <Link to="/" class="text-text-secondary hover:text-text-primary text-xs font-medium transition-colors">Dashboard</Link>
+                            <Link to="/editor" class="text-text-secondary hover:text-text-primary text-xs font-medium transition-colors">Story</Link>
+                            <Link to="/timeline" class="text-text-secondary hover:text-text-primary text-xs font-medium transition-colors">Timeline</Link>
+                            <Link to="/graph" class="text-text-secondary hover:text-text-primary text-xs font-medium transition-colors">Graph</Link>
+                            <Link to="/world" class="text-text-secondary hover:text-text-primary text-xs font-medium transition-colors">World</Link>
+                            <Link to="/ai" class="text-text-secondary hover:text-text-primary text-xs font-medium transition-colors">AI</Link>
+                            <Link to="/publishing" class="text-text-secondary hover:text-text-primary text-xs font-medium transition-colors">Publishing</Link>
+                            <Link to="/settings" class="text-text-secondary hover:text-text-primary text-xs font-medium transition-colors">Settings</Link>
+                        </nav>
+                    </div>
+                </header>
+            );
+        };
+
+        const ActivityBar = () => {
+            return (
+                <div class="w-12 bg-surface border-r border-border-subtle flex flex-col items-center py-4 shrink-0 justify-between">
+                    <div class="flex flex-col gap-4">
+                        <Link to="/" class="text-primary flex items-center justify-center p-2 rounded hover:bg-surface-hover relative group">
+                            <span class="material-symbols-outlined text-xl">folder</span>
+                        </Link>
+                        <Link to="/editor" class="text-text-secondary flex items-center justify-center p-2 rounded hover:bg-surface-hover hover:text-text-primary transition-colors group relative">
+                            <span class="material-symbols-outlined text-xl">menu_book</span>
+                        </Link>
+                        <Link to="/timeline" class="text-text-secondary flex items-center justify-center p-2 rounded hover:bg-surface-hover hover:text-text-primary transition-colors group relative">
+                            <span class="material-symbols-outlined text-xl">timeline</span>
+                        </Link>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- Screens ---
+
+        const DashboardScreen = () => (
+            <div className="flex flex-col h-full w-full">
+                <TopNav />
+                <div className="flex flex-1 overflow-hidden">
+                    <ActivityBar />
+                    <div className="flex-1 flex flex-col items-center justify-center bg-background-dark text-slate-400">
+                        <h1 className="text-2xl font-bold mb-4 text-white">Dashboard Placeholder</h1>
+                        <p>Use the top navigation to explore the prototype screens.</p>
+                        <div className="mt-8 flex gap-4 flex-wrap justify-center max-w-2xl">
+                            <Link to="/editor" className="px-4 py-2 bg-primary rounded text-white hover:bg-primary/80">Story Editor</Link>
+                            <Link to="/ai" className="px-4 py-2 bg-primary rounded text-white hover:bg-primary/80">AI Workbench</Link>
+                            <Link to="/timeline" className="px-4 py-2 bg-primary rounded text-white hover:bg-primary/80">Timeline View</Link>
+                            <Link to="/graph" className="px-4 py-2 bg-primary rounded text-white hover:bg-primary/80">Graph Editor</Link>
+                            <Link to="/world" className="px-4 py-2 bg-primary rounded text-white hover:bg-primary/80">World Model</Link>
+                            <Link to="/versioning" className="px-4 py-2 bg-primary rounded text-white hover:bg-primary/80">Versioning</Link>
+                            <Link to="/settings" className="px-4 py-2 bg-primary rounded text-white hover:bg-primary/80">Settings</Link>
+                            <Link to="/characters" className="px-4 py-2 bg-primary rounded text-white hover:bg-primary/80">Characters</Link>
+                            <Link to="/publishing" className="px-4 py-2 bg-primary rounded text-white hover:bg-primary/80">Publishing</Link>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+
+        const StoryEditorScreen = () => (
+             <div className="flex flex-col h-full w-full">
+                <TopNav title="Story Editor" />
+                <div className="flex flex-1 overflow-hidden">
+                    <ActivityBar />
+                    <div className="flex-1 bg-white dark:bg-[#110d14] p-8 overflow-y-auto">
+                         <h1 class="text-3xl font-bold mb-6 text-slate-900 dark:text-slate-100 outline-none" contentEditable="true">Scene 1: Prologue</h1>
+                         <p className="text-slate-300">The rain lashed against the cobblestone streets...</p>
+                    </div>
+                </div>
+            </div>
+        );
+
+        const AiWorkbenchScreen = () => (
+            <div className="flex flex-col h-full w-full">
+                <TopNav title="AI Workbench" />
+                <div className="flex flex-1 overflow-hidden">
+                    <ActivityBar />
+                    <div className="flex-1 bg-background-dark p-6">
+                         <h1 className="text-xl text-white mb-4">AI Workbench Console</h1>
+                         <div className="grid grid-cols-3 gap-4">
+                             <div className="bg-surface-dark p-4 rounded-xl border border-border-dark text-white">Agent Health: 98.5%</div>
+                         </div>
+                    </div>
+                </div>
+            </div>
+        );
+        
+        const TimelineScreen = () => (
+            <div className="flex flex-col h-full w-full">
+                <TopNav title="Timeline" />
+                <div className="flex flex-1 overflow-hidden">
+                    <ActivityBar />
+                    <div className="flex-1 bg-background-dark p-6 flex items-center justify-center text-slate-400">
+                         Timeline Canvas Placeholder
+                    </div>
+                </div>
+            </div>
+        );
+
+        const PlaceholderScreen = ({ title }) => (
+            <div className="flex flex-col h-full w-full">
+                <TopNav title={title} />
+                <div className="flex flex-1 overflow-hidden">
+                    <ActivityBar />
+                    <div className="flex-1 bg-background-dark p-6 flex flex-col items-center justify-center text-slate-400">
+                        <h2 className="text-xl text-white mb-2">{title}</h2>
+                        <p>This screen is a placeholder in the combined prototype.</p>
+                    </div>
+                </div>
+            </div>
+        );
+
+        const App = () => {
+            return (
+                <MemoryRouter>
+                    <Routes>
+                        <Route path="/" element={<DashboardScreen />} />
+                        <Route path="/editor" element={<StoryEditorScreen />} />
+                        <Route path="/ai" element={<AiWorkbenchScreen />} />
+                        <Route path="/timeline" element={<TimelineScreen />} />
+                        <Route path="/graph" element={<PlaceholderScreen title="Graph Editor" />} />
+                        <Route path="/world" element={<PlaceholderScreen title="World Model" />} />
+                        <Route path="/versioning" element={<PlaceholderScreen title="Versioning" />} />
+                        <Route path="/settings" element={<PlaceholderScreen title="Global Settings" />} />
+                        <Route path="/characters" element={<PlaceholderScreen title="Character Hub" />} />
+                        <Route path="/publishing" element={<PlaceholderScreen title="Publishing Studio" />} />
+                    </Routes>
+                </MemoryRouter>
+            );
+        };
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

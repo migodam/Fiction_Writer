@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+
+<html class="dark"><head>
+<meta charset="utf-8"/>
+<title>Narrative IDE - AI Workbench Stage Flow</title>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "primary": "#9010da",
+            "background-light": "#f7f6f8",
+            "background-dark": "#1b1022",
+          },
+          fontFamily: {
+            "display": ["Inter"]
+          },
+          borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+        },
+      },
+    }
+  </script>
+</head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 font-display min-h-screen">
+<div class="relative flex h-screen w-full flex-col group/design-root overflow-hidden">
+<header class="flex items-center justify-between whitespace-nowrap border-b border-primary/20 px-6 py-3 shrink-0">
+<div class="flex items-center gap-4 text-primary">
+<div class="size-6">
+<svg fill="none" viewbox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+<path d="M39.5563 34.1455V13.8546C39.5563 15.708 36.8773 17.3437 32.7927 18.3189C30.2914 18.916 27.263 19.2655 24 19.2655C20.737 19.2655 17.7086 18.916 15.2073 18.3189C11.1227 17.3437 8.44365 15.708 8.44365 13.8546V34.1455C8.44365 35.9988 11.1227 37.6346 15.2073 38.6098C17.7086 39.2069 20.737 39.5564 24 39.5564C27.263 39.5564 30.2914 39.2069 32.7927 38.6098C36.8773 37.6346 39.5563 35.9988 39.5563 34.1455Z" fill="currentColor"></path>
+<path clip-rule="evenodd" d="M10.4485 13.8519C10.4749 13.9271 10.6203 14.246 11.379 14.7361C12.298 15.3298 13.7492 15.9145 15.6717 16.3735C18.0007 16.9296 20.8712 17.2655 24 17.2655C27.1288 17.2655 29.9993 16.9296 32.3283 16.3735C34.2508 15.9145 35.702 15.3298 36.621 14.7361C37.3796 14.246 37.5251 13.9271 37.5515 13.8519C37.5287 13.7876 37.4333 13.5973 37.0635 13.2931C36.5266 12.8516 35.6288 12.3647 34.343 11.9175C31.79 11.0295 28.1333 10.4437 24 10.4437C19.8667 10.4437 16.2099 11.0295 13.657 11.9175C12.3712 12.3647 11.4734 12.8516 10.9365 13.2931C10.5667 13.5973 10.4713 13.7876 10.4485 13.8519ZM37.5563 18.7877C36.3176 19.3925 34.8502 19.8839 33.2571 20.2642C30.5836 20.9025 27.3973 21.2655 24 21.2655C20.6027 21.2655 17.4164 20.9025 14.7429 20.2642C13.1498 19.8839 11.6824 19.3925 10.4436 18.7877V34.1275C10.4515 34.1545 10.5427 34.4867 11.379 35.027C12.298 35.6207 13.7492 36.2054 15.6717 36.6644C18.0007 37.2205 20.8712 37.5564 24 37.5564C27.1288 37.5564 29.9993 37.2205 32.3283 36.6644C34.2508 36.2054 35.702 35.6207 36.621 35.027C37.4573 34.4867 37.5485 34.1546 37.5563 34.1275V18.7877ZM41.5563 13.8546V34.1455C41.5563 36.1078 40.158 37.5042 38.7915 38.3869C37.3498 39.3182 35.4192 40.0389 33.2571 40.5551C30.5836 41.1934 27.3973 41.5564 24 41.5564C20.6027 41.5564 17.4164 41.1934 14.7429 40.5551C12.5808 40.0389 10.6502 39.3182 9.20848 38.3869C7.84205 37.5042 6.44365 36.1078 6.44365 34.1455L6.44365 13.8546C6.44365 12.2684 7.37223 11.0454 8.39581 10.2036C9.43325 9.3505 10.8137 8.67141 12.343 8.13948C15.4203 7.06909 19.5418 6.44366 24 6.44366C28.4582 6.44366 32.5797 7.06909 35.657 8.13948C37.1863 8.67141 38.5667 9.3505 39.6042 10.2036C40.6278 11.0454 41.5563 12.2684 41.5563 13.8546Z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+<h2 class="text-lg font-bold leading-tight tracking-[-0.015em] text-slate-900 dark:text-slate-100">Narrative IDE</h2>
+</div>
+<div class="flex flex-1 justify-end gap-8">
+<div class="bg-center bg-no-repeat aspect-square bg-cover rounded-full size-8" data-alt="User Avatar" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuDnm_SO4Wr3NotbBgvWXmG55TEf3lD5el41xHN4-kAjN6LyBtc790rsXjKq0PlBQShh5UF2Ml48RqsOmM2TpYUUChIWb01C5J4aI-YHdnZE3GgOQ7BzY3mMhyWuWExpop4tyu1POdPK_Vn2ey30iYF0N4ScllizcoS6SKOQifG5GMeYMHdHqkh_EArOTUUqRTmN7GxzyToazEd577E_MbHqOtGGsDqSQdliZslXrxUeAW2AvamAk8vF2IbFzi-dNb10l7lQJhSARB3i");'></div>
+</div>
+</header>
+<div class="flex flex-1 overflow-hidden">
+<!-- Sidebar -->
+<nav class="flex w-64 flex-col border-r border-primary/20 bg-background-light dark:bg-background-dark/50 shrink-0 overflow-y-auto">
+<div class="flex flex-col gap-4 p-4">
+<div class="flex gap-3 items-center">
+<div class="bg-primary/20 aspect-square rounded flex items-center justify-center size-10">
+<span class="material-symbols-outlined text-primary">book</span>
+</div>
+<div class="flex flex-col">
+<h1 class="text-base font-medium leading-normal text-slate-900 dark:text-slate-100">Project Alpha</h1>
+<p class="text-xs font-normal leading-normal text-slate-500 dark:text-slate-400">Active Entities &amp; Anchors</p>
+</div>
+</div>
+<div class="flex flex-col gap-1 mt-4">
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-700 dark:text-slate-300 hover:bg-primary/10 transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">home</span>
+<span class="text-sm font-medium">Home</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg bg-primary/20 text-primary" href="#">
+<span class="material-symbols-outlined text-[20px]">psychology</span>
+<span class="text-sm font-medium">AI Workbench</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-700 dark:text-slate-300 hover:bg-primary/10 transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">group</span>
+<span class="text-sm font-medium">Entities</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-700 dark:text-slate-300 hover:bg-primary/10 transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">schedule</span>
+<span class="text-sm font-medium">Timeline</span>
+</a>
+</div>
+</div>
+</nav>
+<!-- Main Content -->
+<main class="flex flex-1 flex-col overflow-hidden relative">
+<div class="flex flex-1 flex-col overflow-y-auto pb-24">
+<div class="px-6 py-4 flex flex-col gap-6 max-w-5xl mx-auto w-full">
+<!-- Breadcrumbs -->
+<div class="flex flex-wrap gap-2 items-center">
+<a class="text-slate-500 dark:text-slate-400 text-sm font-medium hover:text-primary transition-colors" href="#">Project Alpha</a>
+<span class="text-slate-400 text-sm">/</span>
+<a class="text-slate-500 dark:text-slate-400 text-sm font-medium hover:text-primary transition-colors" href="#">AI Workbench</a>
+<span class="text-slate-400 text-sm">/</span>
+<span class="text-slate-900 dark:text-slate-100 text-sm font-medium">Active Generation</span>
+</div>
+<!-- Persistent Input -->
+<div class="flex flex-col gap-3 p-5 rounded-xl border border-primary/20 bg-background-light dark:bg-[#231b2a]">
+<label class="flex flex-col w-full">
+<span class="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Persistent Request Input</span>
+<textarea class="form-input w-full resize-y rounded-lg border border-primary/30 bg-white dark:bg-[#1b1022] text-slate-900 dark:text-slate-100 focus:border-primary focus:ring-1 focus:ring-primary min-h-[80px] placeholder:text-slate-400 p-3 text-sm" placeholder="Describe the scene or update..."></textarea>
+</label>
+<div class="flex justify-end">
+<button class="flex items-center justify-center rounded-lg px-5 py-2 bg-primary text-white text-sm font-medium hover:bg-primary/90 transition-colors">
+<span class="material-symbols-outlined mr-2 text-[18px]">play_arrow</span>
+                  Run
+                </button>
+</div>
+</div>
+<!-- Stages -->
+<div class="flex flex-col gap-4">
+<h3 class="text-lg font-medium text-slate-900 dark:text-slate-100 mt-2">Workbench Stages</h3>
+<!-- Stage 1: Clarifier (Active) -->
+<div class="rounded-xl border border-primary/30 bg-white dark:bg-[#231b2a] overflow-hidden">
+<div class="flex items-center justify-between p-4 bg-primary/10 border-b border-primary/20">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary">help_center</span>
+<h4 class="font-medium text-slate-900 dark:text-slate-100">Stage 1: Clarifier</h4>
+</div>
+<span class="text-xs font-medium px-2 py-1 rounded bg-primary/20 text-primary">Requires Action</span>
+</div>
+<div class="p-5 flex flex-col gap-4">
+<p class="text-sm text-slate-600 dark:text-slate-400">Please answer or skip the following questions to refine the prompt.</p>
+<div class="flex flex-col gap-3">
+<div class="flex items-start gap-3 p-3 rounded-lg border border-primary/10 bg-background-light dark:bg-background-dark/50">
+<div class="flex-1">
+<p class="text-sm font-medium text-slate-900 dark:text-slate-100 mb-2">1. What is the emotional state of character X entering this scene?</p>
+<input class="form-input w-full rounded border-primary/30 bg-white dark:bg-[#1b1022] text-sm text-slate-900 dark:text-slate-100 p-2" placeholder="Your answer..." type="text"/>
+</div>
+<label class="flex items-center gap-2 mt-1 cursor-pointer">
+<input class="form-checkbox text-primary border-primary/40 rounded bg-transparent" type="checkbox"/>
+<span class="text-xs text-slate-500">Skip</span>
+</label>
+</div>
+<div class="flex items-start gap-3 p-3 rounded-lg border border-primary/10 bg-background-light dark:bg-background-dark/50">
+<div class="flex-1">
+<p class="text-sm font-medium text-slate-900 dark:text-slate-100 mb-2">2. Are there any specific objects in the room you want highlighted?</p>
+<input class="form-input w-full rounded border-primary/30 bg-white dark:bg-[#1b1022] text-sm text-slate-900 dark:text-slate-100 p-2" placeholder="Your answer..." type="text"/>
+</div>
+<label class="flex items-center gap-2 mt-1 cursor-pointer">
+<input class="form-checkbox text-primary border-primary/40 rounded bg-transparent" type="checkbox"/>
+<span class="text-xs text-slate-500">Skip</span>
+</label>
+</div>
+<!-- Additional questions omitted for brevity in MVP view -->
+<p class="text-xs text-slate-500 italic mt-2">+ 8 more questions...</p>
+</div>
+<div class="flex justify-end mt-2">
+<button class="px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary/90">Continue</button>
+</div>
+</div>
+</div>
+<!-- Stage 2 & 3: Collapsed -->
+<div class="rounded-xl border border-primary/20 bg-background-light dark:bg-[#1b1022] p-4 flex items-center justify-between opacity-70">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-slate-500">edit_note</span>
+<h4 class="font-medium text-slate-700 dark:text-slate-300">Stage 2: Drafter</h4>
+</div>
+<span class="material-symbols-outlined text-slate-500">expand_more</span>
+</div>
+<div class="rounded-xl border border-primary/20 bg-background-light dark:bg-[#1b1022] p-4 flex items-center justify-between opacity-70">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-slate-500">rate_review</span>
+<h4 class="font-medium text-slate-700 dark:text-slate-300">Stage 3: Reviewer</h4>
+</div>
+<span class="material-symbols-outlined text-slate-500">expand_more</span>
+</div>
+<!-- Stage 4: Project Manager (Preview) -->
+<div class="rounded-xl border border-primary/30 bg-white dark:bg-[#231b2a] overflow-hidden">
+<div class="flex items-center justify-between p-4 border-b border-primary/20">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary">account_tree</span>
+<h4 class="font-medium text-slate-900 dark:text-slate-100">Stage 4: Project Manager</h4>
+</div>
+</div>
+<div class="p-5 flex flex-col gap-4">
+<h5 class="text-sm font-medium text-slate-700 dark:text-slate-300">Project Updates Preview</h5>
+<div class="rounded-lg border border-primary/20 bg-background-light dark:bg-background-dark/50 overflow-hidden text-sm">
+<div class="flex items-center justify-between p-3 border-b border-primary/10 hover:bg-primary/5 transition-colors">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px] text-green-500">add_circle</span>
+<span class="text-slate-900 dark:text-slate-100">Characters</span>
+</div>
+<span class="text-xs font-mono text-green-500 bg-green-500/10 px-2 py-0.5 rounded">+2 Entities</span>
+</div>
+<div class="flex items-center justify-between p-3 hover:bg-primary/5 transition-colors">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px] text-green-500">add_circle</span>
+<span class="text-slate-900 dark:text-slate-100">Events</span>
+</div>
+<span class="text-xs font-mono text-green-500 bg-green-500/10 px-2 py-0.5 rounded">+1 Event</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Stage 5: Apply -->
+<div class="rounded-xl border border-primary/30 bg-white dark:bg-[#231b2a] overflow-hidden mb-8">
+<div class="flex items-center justify-between p-4 border-b border-primary/20">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary">fact_check</span>
+<h4 class="font-medium text-slate-900 dark:text-slate-100">Stage 5: Apply</h4>
+</div>
+</div>
+<div class="p-5 flex justify-end gap-3">
+<button class="px-4 py-2 border border-primary/40 text-slate-700 dark:text-slate-300 rounded-lg text-sm font-medium hover:bg-primary/10 transition-colors">Dry Run</button>
+<button class="px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors">Apply Updates</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Command Bar -->
+<div class="absolute bottom-0 left-0 right-0 p-4 bg-background-light dark:bg-background-dark border-t border-primary/20">
+<div class="max-w-3xl mx-auto flex items-center gap-3 p-2 rounded-xl border border-primary/30 bg-white dark:bg-[#231b2a] shadow-lg">
+<span class="material-symbols-outlined text-slate-400 ml-2">terminal</span>
+<input class="form-input flex-1 border-none bg-transparent text-sm text-slate-900 dark:text-slate-100 focus:ring-0 p-0 placeholder:text-slate-500" placeholder="Type / for commands (e.g., /add_event)..." type="text"/>
+<button class="p-2 rounded hover:bg-primary/20 text-slate-500 dark:text-slate-400 transition-colors">
+<span class="material-symbols-outlined text-[20px]">send</span>
+</button>
+</div>
+</div>
+</main>
+</div>
+</div>
+</body></html>

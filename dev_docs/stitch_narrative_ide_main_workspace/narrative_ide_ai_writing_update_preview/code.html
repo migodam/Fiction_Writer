@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Narrative IDE - AI Writing &amp; Update Preview</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#9010da",
+                        "background-light": "#f7f6f8",
+                        "background-dark": "#1b1022",
+                    },
+                    fontFamily: {
+                        "display": ["Inter", "sans-serif"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-slate-100 antialiased h-screen overflow-hidden flex flex-col relative">
+<!-- Top Navigation Bar -->
+<header class="flex items-center justify-between border-b border-solid border-primary/20 bg-background-light dark:bg-background-dark px-6 py-3 shrink-0 z-10 relative">
+<div class="flex items-center gap-4 text-primary">
+<span class="material-symbols-outlined text-2xl">auto_awesome</span>
+<h2 class="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight tracking-[-0.015em]">Narrative IDE</h2>
+</div>
+<div class="flex flex-1 justify-center gap-8 hidden md:flex">
+<nav class="flex items-center gap-9">
+<a class="text-slate-600 dark:text-slate-400 hover:text-primary transition-colors text-sm font-medium leading-normal" href="#">File</a>
+<a class="text-slate-600 dark:text-slate-400 hover:text-primary transition-colors text-sm font-medium leading-normal" href="#">Edit</a>
+<a class="text-slate-600 dark:text-slate-400 hover:text-primary transition-colors text-sm font-medium leading-normal" href="#">View</a>
+<a class="text-slate-600 dark:text-slate-400 hover:text-primary transition-colors text-sm font-medium leading-normal" href="#">Tools</a>
+<a class="text-slate-600 dark:text-slate-400 hover:text-primary transition-colors text-sm font-medium leading-normal" href="#">Help</a>
+</nav>
+</div>
+<div class="flex items-center justify-end gap-4">
+<div class="bg-center bg-no-repeat aspect-square bg-cover rounded-full size-8 border border-primary/30" data-alt="User Avatar Placeholder" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuDjmE8joUOdBYlkauflZobiSUoYG3cbiXIt9c4FnCNaaAA1R-ef9TdDAADsg9T3r0FQ9bNkiCe30wAGGEa8NFncX546PjaR8Xbg452mPAosJEpW0YbFz1bc3SYMq6cOQgvn_eK9aSdct3zDzrH6s3SgL2j-2f3qopKJg4NFcEr4L0hmbPdN9OIhZpryBy5QLq2xJX8Sa8S-GcacpPvBdczJiJhzqFCASdhpiR4Gk-oPXfr3xLoUx3jMyP2zbT6SasH2rgBgLQhQpejc");'></div>
+</div>
+</header>
+<!-- Main Workspace Area -->
+<div class="flex flex-1 overflow-hidden relative">
+<!-- Sidebar -->
+<aside class="w-64 border-r border-solid border-primary/20 bg-background-light dark:bg-background-dark flex flex-col shrink-0 z-10 relative">
+<div class="p-4 border-b border-primary/10">
+<div class="flex gap-3 items-center">
+<div class="bg-center bg-no-repeat aspect-square bg-cover rounded-md size-10 shadow-sm border border-primary/20" data-alt="Project Alpha Thumbnail Cover" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuCZ4yYRqf1gWjA3gsG7Bp1ud_nMcFYB4vqO8jtR5cOZodtPd8uOpMd00q6IzsTxq8yv0s5MoIfyH4gRndvodU-UCHJQLa3JgHSFWsTk8ozsEpFvXHXaMifJV2EjP1cWlpIi9gE_kZp8bXK6M2Wju8hB0FOb4c1fg9Ekc9B4ZIqolHew1jqWCbu8a1WRQEpQA_gVDAV14bnLPNfAnUOVJOqamHnuLhfTA5aS-pTRJv9UAgnaJK_iHL6WRrozHmHYFinJTraD5f8wwHva");'></div>
+<div class="flex flex-col">
+<h1 class="text-slate-900 dark:text-slate-100 text-sm font-bold leading-tight">Project Alpha</h1>
+<p class="text-slate-500 dark:text-slate-400 text-xs font-normal">Dark Fantasy</p>
+</div>
+</div>
+</div>
+<nav class="flex-1 overflow-y-auto p-4 flex flex-col gap-2">
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg bg-primary text-white shadow-md shadow-primary/20" href="#">
+<span class="material-symbols-outlined text-xl">edit_document</span>
+<span class="text-sm font-medium">Writing Studio</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-700 dark:text-slate-300 hover:bg-primary/10 transition-colors" href="#">
+<span class="material-symbols-outlined text-xl">group</span>
+<span class="text-sm font-medium">Characters</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-700 dark:text-slate-300 hover:bg-primary/10 transition-colors" href="#">
+<span class="material-symbols-outlined text-xl">timeline</span>
+<span class="text-sm font-medium">Timeline</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-700 dark:text-slate-300 hover:bg-primary/10 transition-colors" href="#">
+<span class="material-symbols-outlined text-xl">map</span>
+<span class="text-sm font-medium">World Map</span>
+</a>
+</nav>
+</aside>
+<!-- Editor Area (Dimmed Background) -->
+<main class="flex-1 bg-background-light dark:bg-background-dark relative p-8">
+<div class="absolute inset-0 bg-slate-900/40 dark:bg-black/60 z-20 backdrop-blur-[2px]"></div>
+<!-- Content Behind Modal (Just for visual context) -->
+<div class="max-w-3xl mx-auto opacity-40 select-none">
+<h2 class="text-3xl font-bold mb-6">Chapter 4: The Hidden Chamber</h2>
+<p class="mb-4 text-lg leading-relaxed text-slate-700 dark:text-slate-300">
+                     Elara's breath caught as she ran her fingers over the cold stone. The faint outline of a door was barely visible in the torchlight. She glanced nervously over her shoulder; the echoing footsteps of the palace guards were growing louder.
+                 </p>
+<p class="mb-4 text-lg leading-relaxed text-slate-700 dark:text-slate-300">
+                     "It has to be here," she muttered, her hands frantically searching for a mechanism. The map had been clear, but maps rarely accounted for centuries of dust and decay.
+                 </p>
+</div>
+</main>
+<!-- Modal Overlay for AI Generation Preview -->
+<div class="absolute inset-0 z-30 flex items-center justify-center p-6">
+<div class="bg-background-light dark:bg-background-dark border border-primary/30 rounded-xl shadow-2xl flex flex-col w-full max-w-4xl max-h-[90vh] overflow-hidden">
+<!-- Modal Header -->
+<div class="border-b border-primary/20 px-6 py-4 flex items-center justify-between bg-primary/5">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary text-2xl">magic_button</span>
+<h2 class="text-slate-900 dark:text-slate-100 text-xl font-bold">Generate Scene Preview</h2>
+</div>
+<button class="text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors">
+<span class="material-symbols-outlined">close</span>
+</button>
+</div>
+<!-- Modal Content Scrollable Area -->
+<div class="flex-1 overflow-y-auto p-6 flex flex-col gap-8">
+<!-- Generation Context -->
+<section>
+<h3 class="text-slate-900 dark:text-slate-100 text-sm font-bold uppercase tracking-wider mb-4 border-b border-primary/20 pb-2">Generation Context</h3>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+<div class="bg-primary/5 rounded-lg p-4 border border-primary/10">
+<p class="text-slate-500 dark:text-slate-400 text-xs font-semibold mb-1 flex items-center gap-2">
+<span class="material-symbols-outlined text-[16px]">visibility</span> Current Reveal Snapshot
+                                </p>
+<p class="text-slate-800 dark:text-slate-200 text-sm">The secret door is discovered but locked. The mechanism is unknown.</p>
+</div>
+<div class="bg-primary/5 rounded-lg p-4 border border-primary/10">
+<p class="text-slate-500 dark:text-slate-400 text-xs font-semibold mb-1 flex items-center gap-2">
+<span class="material-symbols-outlined text-[16px]">flag</span> Character Goals
+                                </p>
+<p class="text-slate-800 dark:text-slate-200 text-sm">Find the key or bypass the lock before the guards arrive in 2 minutes.</p>
+</div>
+</div>
+</section>
+<!-- Draft Text Preview -->
+<section>
+<h3 class="text-slate-900 dark:text-slate-100 text-sm font-bold uppercase tracking-wider mb-4 border-b border-primary/20 pb-2 flex justify-between items-end">
+                            Draft Text
+                            <span class="text-xs font-normal normal-case text-primary bg-primary/10 px-2 py-1 rounded">AI Generated</span>
+</h3>
+<div class="bg-white dark:bg-[#120a16] border border-primary/20 rounded-lg p-5 shadow-inner font-display text-slate-800 dark:text-slate-200 leading-relaxed space-y-4">
+<p>
+                                A sudden click resonated through the damp stone. Elara hadn't found a keyhole, but a loose brick slightly discolored by ancient moss. As she pressed it, a narrow compartment slid open, revealing not a key, but an intricate, star-shaped metallic object.
+                            </p>
+<p>
+                                "A cipher," she whispered. Her heart pounded against her ribs. The footsteps were at the end of the hall now. She grabbed the cipher, noting a sudden, strange warmth radiating from its center—a magical signature she hadn't anticipated.
+                            </p>
+<p>
+                                She slammed the compartment shut just as the heavy oak doors to the corridor burst open. "Halt!" a gruff voice commanded. She spun around, the cipher hidden quickly within the folds of her cloak, trying to compose her terrified expression into one of innocent confusion.
+                            </p>
+</div>
+</section>
+<!-- Project Updates Preview -->
+<section>
+<h3 class="text-slate-900 dark:text-slate-100 text-sm font-bold uppercase tracking-wider mb-4 border-b border-primary/20 pb-2">Project Updates Preview</h3>
+<div class="flex flex-col gap-3">
+<div class="flex items-center gap-4 bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3">
+<div class="bg-emerald-500/20 p-2 rounded-md text-emerald-600 dark:text-emerald-400">
+<span class="material-symbols-outlined text-xl">timeline</span>
+</div>
+<div class="flex-1">
+<p class="text-slate-800 dark:text-slate-200 text-sm font-medium">Timeline Event Added</p>
+<p class="text-slate-500 dark:text-slate-400 text-xs">Elara discovers the Star Cipher in the hidden chamber.</p>
+</div>
+<span class="text-emerald-600 dark:text-emerald-400 font-bold text-sm bg-emerald-500/10 px-2 py-1 rounded">+1 Event</span>
+</div>
+<div class="flex items-center gap-4 bg-blue-500/10 border border-blue-500/20 rounded-lg p-3">
+<div class="bg-blue-500/20 p-2 rounded-md text-blue-600 dark:text-blue-400">
+<span class="material-symbols-outlined text-xl">person</span>
+</div>
+<div class="flex-1">
+<p class="text-slate-800 dark:text-slate-200 text-sm font-medium">Inventory / Trait Update</p>
+<p class="text-slate-500 dark:text-slate-400 text-xs">Elara added 'Star Cipher' to inventory. State: Hidden.</p>
+</div>
+<span class="text-blue-600 dark:text-blue-400 font-bold text-sm bg-blue-500/10 px-2 py-1 rounded">+1 Update</span>
+</div>
+</div>
+</section>
+</div>
+<!-- Modal Footer (Actions) -->
+<div class="border-t border-primary/20 bg-background-light dark:bg-background-dark px-6 py-4 flex items-center justify-end gap-4 shrink-0">
+<button class="px-5 py-2.5 rounded-lg text-slate-700 dark:text-slate-300 font-medium hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors border border-transparent hover:border-slate-300 dark:hover:border-slate-700 text-sm">
+                        Discard
+                    </button>
+<button class="px-6 py-2.5 rounded-lg bg-primary hover:bg-primary/90 text-white font-medium shadow-lg shadow-primary/30 transition-all flex items-center gap-2 text-sm">
+<span class="material-symbols-outlined text-[18px]">check_circle</span>
+                        Apply Updates
+                    </button>
+</div>
+</div>
+</div>
+</div>
+</body></html>

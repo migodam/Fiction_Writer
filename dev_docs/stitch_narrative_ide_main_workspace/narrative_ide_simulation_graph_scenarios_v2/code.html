@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Narrative IDE - Simulation Lab</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#9010da",
+                        "background-light": "#f7f6f8",
+                        "background-dark": "#1b1022",
+                    },
+                    fontFamily: {
+                        "display": ["Inter", "sans-serif"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .icon-fill {
+            font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 font-display flex flex-col h-screen overflow-hidden antialiased">
+<!-- TopNavBar -->
+<header class="flex items-center justify-between whitespace-nowrap border-b border-primary/10 dark:border-white/5 px-6 py-3 bg-white dark:bg-background-dark shrink-0 z-20">
+<div class="flex items-center gap-4">
+<div class="text-primary flex items-center justify-center">
+<span class="material-symbols-outlined icon-fill text-2xl">account_tree</span>
+</div>
+<h2 class="text-lg font-bold leading-tight tracking-tight">Narrative IDE</h2>
+</div>
+<div class="flex flex-1 justify-center gap-8">
+<nav class="flex items-center gap-8 bg-primary/5 dark:bg-white/5 px-6 py-1.5 rounded-full border border-primary/10 dark:border-white/5">
+<a class="text-primary dark:text-primary font-semibold text-sm flex items-center gap-2" href="#">
+<span class="material-symbols-outlined text-sm">hub</span>
+                    Simulation Lab
+                </a>
+<a class="text-slate-500 hover:text-slate-900 dark:text-white/50 dark:hover:text-white/90 transition-colors text-sm font-medium flex items-center gap-2" href="#">
+<span class="material-symbols-outlined text-sm">monitoring</span>
+                    Story Analytics
+                </a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<div class="flex gap-2">
+<button class="flex items-center justify-center rounded-lg h-9 px-4 bg-primary/10 dark:bg-white/5 text-primary dark:text-white/90 hover:bg-primary/20 dark:hover:bg-white/10 transition-colors text-sm font-semibold tracking-wide border border-primary/20 dark:border-transparent">
+<span class="material-symbols-outlined text-sm mr-2">upload</span>
+                    Export
+                </button>
+<button class="flex items-center justify-center rounded-lg h-9 px-5 bg-primary hover:bg-primary/90 text-white transition-colors text-sm font-semibold tracking-wide shadow-sm shadow-primary/20">
+<span class="material-symbols-outlined text-sm mr-2">save</span>
+                    Save
+                </button>
+</div>
+<div class="h-8 w-px bg-primary/10 dark:bg-white/10 mx-2"></div>
+<div class="bg-primary/20 dark:bg-primary/40 text-primary dark:text-white flex items-center justify-center rounded-full size-9 border border-primary/30" data-alt="User Avatar Placeholder">
+<span class="material-symbols-outlined text-lg">person</span>
+</div>
+</div>
+</header>
+<!-- Main Workspace -->
+<div class="flex flex-1 overflow-hidden relative">
+<!-- Left Sidebar: Project & Scenarios -->
+<aside class="w-72 flex flex-col bg-white dark:bg-primary/[0.02] border-r border-primary/10 dark:border-white/5 shrink-0 z-10">
+<!-- Project Header -->
+<div class="p-5 border-b border-primary/10 dark:border-white/5">
+<div class="flex gap-3 items-center">
+<div class="flex items-center justify-center rounded-lg size-10 bg-primary/10 dark:bg-primary/20 text-primary border border-primary/20">
+<span class="material-symbols-outlined icon-fill">folder_special</span>
+</div>
+<div class="flex flex-col">
+<h1 class="text-base font-semibold leading-snug text-slate-900 dark:text-white/90">Project Alpha</h1>
+<p class="text-primary dark:text-primary/80 text-xs font-medium uppercase tracking-wider">Simulation Lab</p>
+</div>
+</div>
+</div>
+<!-- Navigation Links -->
+<div class="p-3 flex flex-col gap-1 border-b border-primary/10 dark:border-white/5">
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg bg-primary/10 dark:bg-primary/20 text-primary dark:text-white/90 font-medium text-sm transition-colors border border-primary/10 dark:border-primary/30" href="#">
+<span class="material-symbols-outlined icon-fill text-lg">schema</span>
+                    Graph View
+                </a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-600 dark:text-white/60 hover:bg-primary/5 dark:hover:bg-white/5 font-medium text-sm transition-colors" href="#">
+<span class="material-symbols-outlined text-lg">route</span>
+                    Scenarios
+                </a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-600 dark:text-white/60 hover:bg-primary/5 dark:hover:bg-white/5 font-medium text-sm transition-colors" href="#">
+<span class="material-symbols-outlined text-lg">psychology</span>
+                    Character Arcs
+                </a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-600 dark:text-white/60 hover:bg-primary/5 dark:hover:bg-white/5 font-medium text-sm transition-colors" href="#">
+<span class="material-symbols-outlined text-lg">warning</span>
+                    Warnings
+                    <span class="ml-auto bg-primary text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">2</span>
+</a>
+</div>
+<!-- Scenario Tree -->
+<div class="flex-1 overflow-y-auto p-4 flex flex-col gap-2">
+<h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-white/40 mb-2 px-1">Scenario Tree</h3>
+<!-- Active Scenario -->
+<div class="flex flex-col gap-2 p-3 rounded-xl bg-primary/5 dark:bg-white/5 border border-primary/20 dark:border-primary/30 shadow-sm relative overflow-hidden group">
+<div class="absolute left-0 top-0 bottom-0 w-1 bg-primary"></div>
+<div class="flex items-start justify-between">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary text-xl">check_circle</span>
+<div>
+<p class="text-sm font-semibold text-slate-900 dark:text-white/90">Baseline</p>
+<p class="text-xs text-slate-500 dark:text-white/50 mt-0.5">Current Draft</p>
+</div>
+</div>
+<span class="text-[10px] font-bold uppercase tracking-wider text-primary bg-primary/10 px-2 py-1 rounded-md">Active</span>
+</div>
+</div>
+<!-- Alternate Scenario -->
+<div class="flex flex-col gap-2 p-3 rounded-xl hover:bg-primary/5 dark:hover:bg-white/5 border border-transparent hover:border-primary/10 dark:hover:border-white/10 transition-colors cursor-pointer group">
+<div class="flex items-start justify-between">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-slate-400 dark:text-white/40 group-hover:text-primary transition-colors text-xl">alt_route</span>
+<div>
+<p class="text-sm font-medium text-slate-700 dark:text-white/70 group-hover:text-slate-900 dark:group-hover:text-white/90">Alternate Ending</p>
+<p class="text-xs text-slate-500 dark:text-white/50 mt-0.5">Prob: 35%</p>
+</div>
+</div>
+<button class="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-white/70 bg-slate-100 dark:bg-white/10 px-2 py-1 rounded-md hover:bg-primary/10 hover:text-primary dark:hover:bg-primary/30 dark:hover:text-white">Simulate</button>
+</div>
+</div>
+</div>
+</aside>
+<!-- Center: Graph Simulation Canvas -->
+<main class="flex-1 flex flex-col relative bg-[#fcfbfc] dark:bg-background-dark/50">
+<!-- Canvas Toolbar -->
+<div class="absolute top-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1 p-1 bg-white/80 dark:bg-[#2a1b38]/80 backdrop-blur-md rounded-lg border border-primary/10 dark:border-white/10 shadow-sm">
+<button class="p-1.5 rounded-md text-slate-500 hover:bg-primary/10 hover:text-primary dark:text-white/60 dark:hover:text-white transition-colors">
+<span class="material-symbols-outlined text-[20px]">zoom_in</span>
+</button>
+<button class="p-1.5 rounded-md text-slate-500 hover:bg-primary/10 hover:text-primary dark:text-white/60 dark:hover:text-white transition-colors">
+<span class="material-symbols-outlined text-[20px]">zoom_out</span>
+</button>
+<div class="w-px h-4 bg-slate-300 dark:bg-white/20 mx-1"></div>
+<button class="p-1.5 rounded-md text-slate-500 hover:bg-primary/10 hover:text-primary dark:text-white/60 dark:hover:text-white transition-colors">
+<span class="material-symbols-outlined text-[20px]">filter_list</span>
+</button>
+<button class="p-1.5 rounded-md text-slate-500 hover:bg-primary/10 hover:text-primary dark:text-white/60 dark:hover:text-white transition-colors">
+<span class="material-symbols-outlined text-[20px]">auto_awesome_mosaic</span>
+</button>
+</div>
+<!-- Canvas Area (Mock Graph) -->
+<div class="flex-1 relative overflow-hidden bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] dark:bg-[radial-gradient(#332839_1px,transparent_1px)] [background-size:24px_24px]">
+<!-- SVG Edges -->
+<svg class="absolute inset-0 w-full h-full pointer-events-none z-0" preserveaspectratio="none">
+<!-- Edge 1 -->
+<path class="stroke-slate-300 dark:stroke-white/20" d="M 25% 50% C 35% 50%, 35% 50%, 45% 50%" fill="none" stroke-dasharray="4 4" stroke-width="2"></path>
+<!-- Edge 2 (Selected) -->
+<path class="stroke-primary" d="M 55% 50% C 65% 50%, 65% 30%, 75% 30%" fill="none" stroke-width="3"></path>
+<!-- Edge 3 -->
+<path class="stroke-slate-300 dark:stroke-white/20" d="M 55% 50% C 65% 50%, 65% 70%, 75% 70%" fill="none" stroke-width="2"></path>
+</svg>
+<!-- Nodes -->
+<!-- Node A: Event -->
+<div class="absolute top-1/2 left-1/4 -translate-x-1/2 -translate-y-1/2 w-48 bg-white dark:bg-[#25172e] border border-slate-200 dark:border-white/10 rounded-xl shadow-sm z-10 flex flex-col overflow-hidden">
+<div class="bg-slate-50 dark:bg-white/5 px-3 py-1.5 border-b border-slate-100 dark:border-white/5 flex items-center gap-2">
+<span class="material-symbols-outlined text-slate-400 dark:text-white/50 text-[16px]">event</span>
+<span class="text-xs font-semibold text-slate-500 dark:text-white/60 uppercase tracking-wide">Event</span>
+</div>
+<div class="p-3">
+<h4 class="text-sm font-medium text-slate-900 dark:text-white/90">The Discovery</h4>
+</div>
+</div>
+<!-- Node B: Scene (Central) -->
+<div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-56 bg-white dark:bg-[#25172e] border-2 border-primary/50 dark:border-primary/50 shadow-lg shadow-primary/10 rounded-xl z-10 flex flex-col overflow-hidden ring-4 ring-primary/10 dark:ring-primary/20">
+<div class="bg-primary/5 dark:bg-primary/10 px-3 py-1.5 border-b border-primary/10 flex items-center gap-2">
+<span class="material-symbols-outlined text-primary text-[16px]">movie</span>
+<span class="text-xs font-semibold text-primary uppercase tracking-wide">Scene</span>
+</div>
+<div class="p-3">
+<h4 class="text-sm font-semibold text-slate-900 dark:text-white/90">Warehouse Confrontation</h4>
+<div class="mt-2 flex gap-1">
+<span class="w-2 h-2 rounded-full bg-emerald-400" title="Resolved"></span>
+<span class="w-2 h-2 rounded-full bg-amber-400" title="Conflict"></span>
+</div>
+</div>
+</div>
+<!-- Edge Label (Selected) -->
+<div class="absolute top-[40%] left-[65%] -translate-x-1/2 -translate-y-1/2 z-20 bg-white dark:bg-[#1b1022] border border-primary/40 px-2 py-1 rounded-full shadow-sm flex items-center gap-1 cursor-pointer hover:bg-primary/5 transition-colors">
+<span class="material-symbols-outlined text-primary text-[14px]">call_split</span>
+<span class="text-[10px] font-bold text-primary uppercase tracking-wider">Causes (80%)</span>
+</div>
+<!-- Node C: Character Arc (Top Right) -->
+<div class="absolute top-[30%] left-[75%] -translate-x-1/2 -translate-y-1/2 w-48 bg-white dark:bg-[#25172e] border border-slate-200 dark:border-white/10 rounded-xl shadow-sm z-10 flex flex-col overflow-hidden">
+<div class="bg-slate-50 dark:bg-white/5 px-3 py-1.5 border-b border-slate-100 dark:border-white/5 flex items-center gap-2">
+<span class="material-symbols-outlined text-slate-400 dark:text-white/50 text-[16px]">person</span>
+<span class="text-xs font-semibold text-slate-500 dark:text-white/60 uppercase tracking-wide">Character Arc</span>
+</div>
+<div class="p-3">
+<h4 class="text-sm font-medium text-slate-900 dark:text-white/90">Alice's Decision</h4>
+</div>
+</div>
+<!-- Node D: Character Arc (Bottom Right) -->
+<div class="absolute top-[70%] left-[75%] -translate-x-1/2 -translate-y-1/2 w-48 bg-white dark:bg-[#25172e] border border-slate-200 dark:border-white/10 rounded-xl shadow-sm z-10 flex flex-col overflow-hidden opacity-70">
+<div class="bg-slate-50 dark:bg-white/5 px-3 py-1.5 border-b border-slate-100 dark:border-white/5 flex items-center gap-2">
+<span class="material-symbols-outlined text-slate-400 dark:text-white/50 text-[16px]">person</span>
+<span class="text-xs font-semibold text-slate-500 dark:text-white/60 uppercase tracking-wide">Character Arc</span>
+</div>
+<div class="p-3">
+<h4 class="text-sm font-medium text-slate-900 dark:text-white/90">Bob's Betrayal</h4>
+<div class="mt-2 text-[10px] text-slate-500 dark:text-white/40 font-medium">Prob: 20%</div>
+</div>
+</div>
+</div>
+</main>
+<!-- Right Sidebar: Analytics & Inspector -->
+<aside class="w-80 flex flex-col bg-white dark:bg-primary/[0.02] border-l border-primary/10 dark:border-white/5 shrink-0 z-10">
+<!-- Top Half: Analytics (Character Arc Health) -->
+<div class="flex-1 flex flex-col border-b border-primary/10 dark:border-white/5 min-h-[50%]">
+<div class="px-4 py-3 border-b border-primary/5 dark:border-white/5 flex items-center justify-between">
+<h3 class="text-sm font-bold text-slate-800 dark:text-white/90 flex items-center gap-2">
+<span class="material-symbols-outlined text-primary text-[18px]">health_and_safety</span>
+                        Arc Health
+                    </h3>
+<button class="text-slate-400 hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-[18px]">more_horiz</span>
+</button>
+</div>
+<div class="p-4 flex flex-col gap-5 overflow-y-auto">
+<!-- Character 1 Status -->
+<div class="flex flex-col gap-2">
+<div class="flex justify-between items-end">
+<span class="text-sm font-semibold text-slate-700 dark:text-white/80">Alice</span>
+<span class="text-xs font-bold text-primary">85% Complete</span>
+</div>
+<div class="h-1.5 w-full bg-slate-100 dark:bg-white/10 rounded-full overflow-hidden">
+<div class="h-full bg-primary rounded-full" style="width: 85%"></div>
+</div>
+</div>
+<!-- Character 2 Status w/ Warning -->
+<div class="flex flex-col gap-2">
+<div class="flex justify-between items-end">
+<span class="text-sm font-semibold text-slate-700 dark:text-white/80">Bob</span>
+<span class="text-xs font-bold text-amber-500">40% Complete</span>
+</div>
+<div class="h-1.5 w-full bg-slate-100 dark:bg-white/10 rounded-full overflow-hidden">
+<div class="h-full bg-amber-500 rounded-full" style="width: 40%"></div>
+</div>
+<!-- Warning Alert -->
+<div class="mt-1 flex items-start gap-2 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400">
+<span class="material-symbols-outlined text-[16px] shrink-0 mt-0.5">warning</span>
+<div class="flex flex-col">
+<span class="text-xs font-semibold">Missing Climax</span>
+<span class="text-[10px] leading-tight mt-0.5 opacity-80">Bob's arc resolves prematurely without a primary confrontation.</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Bottom Half: Inspector (Edge Metadata) -->
+<div class="flex-1 flex flex-col bg-slate-50/50 dark:bg-black/10">
+<div class="px-4 py-3 border-b border-primary/5 dark:border-white/5 flex items-center gap-2">
+<span class="material-symbols-outlined text-primary text-[18px]">tune</span>
+<h3 class="text-sm font-bold text-slate-800 dark:text-white/90">Edge Metadata</h3>
+</div>
+<div class="p-4 flex flex-col gap-4 overflow-y-auto">
+<!-- Properties Form -->
+<div class="flex flex-col gap-1">
+<label class="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-white/50">Relationship Type</label>
+<div class="flex items-center gap-2 bg-white dark:bg-[#25172e] border border-slate-200 dark:border-white/10 rounded-lg px-3 py-2 cursor-pointer hover:border-primary/50 transition-colors">
+<span class="material-symbols-outlined text-primary text-[16px]">call_split</span>
+<span class="text-sm font-medium text-slate-800 dark:text-white/90">Causes</span>
+<span class="material-symbols-outlined text-[16px] text-slate-400 ml-auto">expand_more</span>
+</div>
+</div>
+<div class="grid grid-cols-2 gap-3">
+<div class="flex flex-col gap-1">
+<label class="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-white/50">Source</label>
+<div class="text-sm font-medium text-slate-700 dark:text-white/70 truncate" title="Warehouse Confrontation">Warehouse Confr...</div>
+</div>
+<div class="flex flex-col gap-1">
+<label class="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-white/50">Target</label>
+<div class="text-sm font-medium text-slate-700 dark:text-white/70 truncate" title="Alice's Decision">Alice's Decision</div>
+</div>
+</div>
+<div class="h-px w-full bg-slate-200 dark:bg-white/10 my-1"></div>
+<!-- Weight Slider -->
+<div class="flex flex-col gap-2">
+<div class="flex justify-between items-center">
+<label class="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-white/50">Probability Weight</label>
+<span class="text-xs font-bold text-primary bg-primary/10 px-1.5 py-0.5 rounded">80%</span>
+</div>
+<input class="w-full h-1.5 bg-slate-200 dark:bg-white/10 rounded-lg appearance-none cursor-pointer accent-primary" max="100" min="0" type="range" value="80"/>
+</div>
+<!-- Conditions -->
+<div class="flex flex-col gap-2 mt-2">
+<label class="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-white/50">Conditions</label>
+<div class="flex items-center gap-2 text-xs font-medium text-slate-600 dark:text-white/60 bg-white dark:bg-[#25172e] p-2 rounded border border-slate-200 dark:border-white/5">
+<span class="material-symbols-outlined text-[14px] text-primary">data_object</span>
+<span>Alice_Trust_Level &gt; 50</span>
+</div>
+<button class="text-xs font-medium text-primary hover:text-primary/80 self-start flex items-center gap-1 mt-1">
+<span class="material-symbols-outlined text-[14px]">add</span> Add Condition
+                        </button>
+</div>
+</div>
+</div>
+</aside>
+</div>
+</body></html>

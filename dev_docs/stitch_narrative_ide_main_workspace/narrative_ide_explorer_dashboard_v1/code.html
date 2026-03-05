@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Narrative IDE - Explorer &amp; Dashboard</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#8B5CF6",
+                        "background-light": "#f7f6f8",
+                        "background-dark": "#0B0F14",
+                        "surface": "#1A1D24",
+                        "surface-hover": "#252830",
+                        "border-subtle": "#2D313A",
+                        "text-primary": "#E2E8F0",
+                        "text-secondary": "#94A3B8"
+                    },
+                    fontFamily: {
+                        "display": ["Inter", "sans-serif"],
+                        "mono": ["JetBrains Mono", "monospace"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+</head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-text-primary font-display h-screen overflow-hidden flex flex-col">
+<!-- Top Navigation Bar -->
+<header class="flex items-center justify-between border-b border-border-subtle bg-surface px-4 py-2 h-12 shrink-0">
+<div class="flex items-center gap-6">
+<div class="flex items-center gap-2 text-primary">
+<span class="material-symbols-outlined text-xl">auto_awesome</span>
+<span class="text-text-primary font-semibold text-sm tracking-tight">Narrative IDE</span>
+</div>
+<nav class="hidden md:flex items-center gap-4">
+<a class="text-text-secondary hover:text-text-primary text-xs font-medium transition-colors" href="#">File</a>
+<a class="text-text-secondary hover:text-text-primary text-xs font-medium transition-colors" href="#">Edit</a>
+<a class="text-text-secondary hover:text-text-primary text-xs font-medium transition-colors" href="#">View</a>
+<a class="text-text-secondary hover:text-text-primary text-xs font-medium transition-colors" href="#">Run</a>
+<a class="text-text-secondary hover:text-text-primary text-xs font-medium transition-colors" href="#">Help</a>
+</nav>
+</div>
+<div class="flex items-center gap-4 flex-1 justify-center max-w-md mx-auto hidden lg:flex">
+<div class="relative w-full">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary text-sm">search</span>
+<input class="w-full bg-background-dark border border-border-subtle rounded text-xs py-1.5 pl-8 pr-3 text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all" placeholder="Search files, components, settings (⌘+P)" type="text"/>
+</div>
+</div>
+<div class="flex items-center gap-3">
+<button class="text-text-secondary hover:text-text-primary transition-colors flex items-center justify-center">
+<span class="material-symbols-outlined text-lg">notifications</span>
+</button>
+<div class="h-6 w-6 rounded-full bg-primary/20 flex items-center justify-center text-primary border border-primary/30 cursor-pointer">
+<span class="text-xs font-medium">JD</span>
+</div>
+</div>
+</header>
+<!-- Main Layout Content -->
+<div class="flex flex-1 overflow-hidden">
+<!-- Activity Bar (Leftmost) -->
+<div class="w-12 bg-surface border-r border-border-subtle flex flex-col items-center py-4 shrink-0 justify-between">
+<div class="flex flex-col gap-4">
+<button class="text-primary flex items-center justify-center p-2 rounded hover:bg-surface-hover relative group">
+<span class="material-symbols-outlined text-xl">folder</span>
+<div class="absolute left-full ml-2 px-2 py-1 bg-background-dark border border-border-subtle rounded text-xs text-text-primary whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">Explorer</div>
+<div class="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-6 bg-primary rounded-r"></div>
+</button>
+<button class="text-text-secondary flex items-center justify-center p-2 rounded hover:bg-surface-hover hover:text-text-primary transition-colors group relative">
+<span class="material-symbols-outlined text-xl">menu_book</span>
+<div class="absolute left-full ml-2 px-2 py-1 bg-background-dark border border-border-subtle rounded text-xs text-text-primary whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">Story</div>
+</button>
+<button class="text-text-secondary flex items-center justify-center p-2 rounded hover:bg-surface-hover hover:text-text-primary transition-colors group relative">
+<span class="material-symbols-outlined text-xl">timeline</span>
+<div class="absolute left-full ml-2 px-2 py-1 bg-background-dark border border-border-subtle rounded text-xs text-text-primary whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">Timeline</div>
+</button>
+<button class="text-text-secondary flex items-center justify-center p-2 rounded hover:bg-surface-hover hover:text-text-primary transition-colors group relative">
+<span class="material-symbols-outlined text-xl">hub</span>
+<div class="absolute left-full ml-2 px-2 py-1 bg-background-dark border border-border-subtle rounded text-xs text-text-primary whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">Graph</div>
+</button>
+<button class="text-text-secondary flex items-center justify-center p-2 rounded hover:bg-surface-hover hover:text-text-primary transition-colors group relative">
+<span class="material-symbols-outlined text-xl">public</span>
+<div class="absolute left-full ml-2 px-2 py-1 bg-background-dark border border-border-subtle rounded text-xs text-text-primary whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">World</div>
+</button>
+<button class="text-text-secondary flex items-center justify-center p-2 rounded hover:bg-surface-hover hover:text-text-primary transition-colors group relative">
+<span class="material-symbols-outlined text-xl">memory</span>
+<div class="absolute left-full ml-2 px-2 py-1 bg-background-dark border border-border-subtle rounded text-xs text-text-primary whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">AI Assistant</div>
+</button>
+<button class="text-text-secondary flex items-center justify-center p-2 rounded hover:bg-surface-hover hover:text-text-primary transition-colors group relative">
+<span class="material-symbols-outlined text-xl">history</span>
+<div class="absolute left-full ml-2 px-2 py-1 bg-background-dark border border-border-subtle rounded text-xs text-text-primary whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">Versioning</div>
+</button>
+</div>
+<div class="flex flex-col gap-4">
+<button class="text-text-secondary flex items-center justify-center p-2 rounded hover:bg-surface-hover hover:text-text-primary transition-colors group relative">
+<span class="material-symbols-outlined text-xl">settings</span>
+<div class="absolute left-full ml-2 px-2 py-1 bg-background-dark border border-border-subtle rounded text-xs text-text-primary whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">Settings</div>
+</button>
+</div>
+</div>
+<!-- Secondary Sidebar (Project Tree) -->
+<div class="w-64 bg-background-dark border-r border-border-subtle flex flex-col shrink-0">
+<div class="p-3 border-b border-border-subtle flex items-center justify-between">
+<span class="text-xs font-semibold text-text-secondary uppercase tracking-wider">Explorer</span>
+<button class="text-text-secondary hover:text-text-primary"><span class="material-symbols-outlined text-sm">more_horiz</span></button>
+</div>
+<div class="p-2 overflow-y-auto flex-1 text-sm font-mono">
+<div class="flex items-center gap-1.5 py-1 px-2 hover:bg-surface rounded cursor-pointer text-text-primary">
+<span class="material-symbols-outlined text-sm text-text-secondary">keyboard_arrow_down</span>
+<span class="material-symbols-outlined text-sm text-primary">folder</span>
+<span>Project Alpha</span>
+</div>
+<div class="pl-4">
+<div class="flex items-center gap-1.5 py-1 px-2 hover:bg-surface rounded cursor-pointer text-text-secondary">
+<span class="material-symbols-outlined text-sm">keyboard_arrow_right</span>
+<span class="material-symbols-outlined text-sm text-blue-400">folder</span>
+<span>Characters</span>
+</div>
+<div class="flex items-center gap-1.5 py-1 px-2 hover:bg-surface rounded cursor-pointer text-text-secondary">
+<span class="material-symbols-outlined text-sm">keyboard_arrow_right</span>
+<span class="material-symbols-outlined text-sm text-green-400">folder</span>
+<span>Locations</span>
+</div>
+<div class="flex items-center gap-1.5 py-1 px-2 hover:bg-surface rounded cursor-pointer text-text-secondary">
+<span class="material-symbols-outlined text-sm">keyboard_arrow_down</span>
+<span class="material-symbols-outlined text-sm text-yellow-400">folder</span>
+<span>Acts</span>
+</div>
+<div class="pl-4">
+<div class="flex items-center gap-1.5 py-1 px-2 bg-primary/10 rounded cursor-pointer text-text-primary">
+<span class="material-symbols-outlined text-sm text-text-secondary opacity-0">keyboard_arrow_right</span>
+<span class="material-symbols-outlined text-sm text-text-secondary">description</span>
+<span>Act_1_Setup.md</span>
+</div>
+<div class="flex items-center gap-1.5 py-1 px-2 hover:bg-surface rounded cursor-pointer text-text-secondary">
+<span class="material-symbols-outlined text-sm text-text-secondary opacity-0">keyboard_arrow_right</span>
+<span class="material-symbols-outlined text-sm text-text-secondary">description</span>
+<span>Act_2_Conflict.md</span>
+</div>
+</div>
+<div class="flex items-center gap-1.5 py-1 px-2 hover:bg-surface rounded cursor-pointer text-text-secondary">
+<span class="material-symbols-outlined text-sm text-text-secondary opacity-0">keyboard_arrow_right</span>
+<span class="material-symbols-outlined text-sm text-primary">settings</span>
+<span>project.json</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Main Workspace -->
+<div class="flex-1 flex flex-col bg-background-dark min-w-0">
+<!-- Workspace Toolbar -->
+<div class="h-10 border-b border-border-subtle bg-surface flex items-center justify-between px-4 shrink-0">
+<div class="flex items-center gap-2 text-sm text-text-secondary">
+<span class="hover:text-text-primary cursor-pointer transition-colors">Project Alpha</span>
+<span class="material-symbols-outlined text-xs">chevron_right</span>
+<span class="text-text-primary">Dashboard</span>
+</div>
+<button class="bg-primary hover:bg-primary/90 text-white text-xs font-medium py-1.5 px-3 rounded flex items-center gap-1.5 transition-colors">
+<span class="material-symbols-outlined text-sm">add</span>
+                    New Element
+                </button>
+</div>
+<!-- Dashboard Content -->
+<div class="flex-1 overflow-y-auto p-6 bg-background-dark">
+<div class="max-w-5xl mx-auto space-y-6">
+<!-- Header -->
+<div class="flex items-center justify-between">
+<div>
+<h1 class="text-2xl font-bold text-text-primary">Project Dashboard</h1>
+<p class="text-text-secondary text-sm mt-1">Overview of your current narrative structure and statistics.</p>
+</div>
+<div class="flex gap-2">
+<button class="bg-surface hover:bg-surface-hover border border-border-subtle text-text-primary text-xs font-medium py-1.5 px-3 rounded flex items-center gap-1.5 transition-colors">
+<span class="material-symbols-outlined text-sm">analytics</span>
+                                Full Report
+                            </button>
+</div>
+</div>
+<!-- Stats Grid -->
+<div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+<div class="bg-surface border border-border-subtle rounded-lg p-4 flex flex-col gap-2">
+<div class="flex items-center justify-between text-text-secondary">
+<span class="text-xs font-medium uppercase tracking-wider">Words</span>
+<span class="material-symbols-outlined text-sm">text_snippet</span>
+</div>
+<div class="text-2xl font-bold text-text-primary">42,850</div>
+<div class="text-xs text-green-400 flex items-center gap-1">
+<span class="material-symbols-outlined text-[10px]">arrow_upward</span>
+<span>1.2k this week</span>
+</div>
+</div>
+<div class="bg-surface border border-border-subtle rounded-lg p-4 flex flex-col gap-2">
+<div class="flex items-center justify-between text-text-secondary">
+<span class="text-xs font-medium uppercase tracking-wider">Characters</span>
+<span class="material-symbols-outlined text-sm">group</span>
+</div>
+<div class="text-2xl font-bold text-text-primary">14</div>
+<div class="text-xs text-text-secondary flex items-center gap-1">
+<span>3 primary, 11 secondary</span>
+</div>
+</div>
+<div class="bg-surface border border-border-subtle rounded-lg p-4 flex flex-col gap-2">
+<div class="flex items-center justify-between text-text-secondary">
+<span class="text-xs font-medium uppercase tracking-wider">Locations</span>
+<span class="material-symbols-outlined text-sm">location_on</span>
+</div>
+<div class="text-2xl font-bold text-text-primary">8</div>
+<div class="text-xs text-text-secondary flex items-center gap-1">
+<span>Across 2 regions</span>
+</div>
+</div>
+<div class="bg-surface border border-border-subtle rounded-lg p-4 flex flex-col gap-2">
+<div class="flex items-center justify-between text-text-secondary">
+<span class="text-xs font-medium uppercase tracking-wider">Plot Threads</span>
+<span class="material-symbols-outlined text-sm">route</span>
+</div>
+<div class="text-2xl font-bold text-text-primary">5</div>
+<div class="text-xs text-yellow-400 flex items-center gap-1">
+<span class="material-symbols-outlined text-[10px]">warning</span>
+<span>2 unresolved</span>
+</div>
+</div>
+</div>
+<!-- Main Chart Area -->
+<div class="bg-surface border border-border-subtle rounded-lg p-5">
+<div class="flex items-center justify-between mb-4">
+<h2 class="text-sm font-semibold text-text-primary">Story Tension Graph</h2>
+<select class="bg-background-dark border border-border-subtle rounded text-xs text-text-secondary px-2 py-1 focus:outline-none focus:border-primary">
+<option>All Acts</option>
+<option>Act 1</option>
+<option>Act 2</option>
+<option>Act 3</option>
+</select>
+</div>
+<div class="h-64 w-full rounded bg-background-dark border border-border-subtle relative overflow-hidden flex items-end p-4 gap-2">
+<!-- Abstract Chart Representation -->
+<div class="w-full h-full absolute inset-0 bg-gradient-to-t from-primary/10 to-transparent opacity-50"></div>
+<div class="flex-1 bg-primary/40 rounded-t h-[20%] relative group"><div class="absolute -top-6 left-1/2 -translate-x-1/2 text-[10px] text-text-secondary opacity-0 group-hover:opacity-100">Setup</div></div>
+<div class="flex-1 bg-primary/50 rounded-t h-[35%] relative group"><div class="absolute -top-6 left-1/2 -translate-x-1/2 text-[10px] text-text-secondary opacity-0 group-hover:opacity-100">Inciting</div></div>
+<div class="flex-1 bg-primary/60 rounded-t h-[45%] relative group"><div class="absolute -top-6 left-1/2 -translate-x-1/2 text-[10px] text-text-secondary opacity-0 group-hover:opacity-100">Rising</div></div>
+<div class="flex-1 bg-primary/70 rounded-t h-[60%] relative group"><div class="absolute -top-6 left-1/2 -translate-x-1/2 text-[10px] text-text-secondary opacity-0 group-hover:opacity-100">Midpoint</div></div>
+<div class="flex-1 bg-primary/80 rounded-t h-[80%] relative group"><div class="absolute -top-6 left-1/2 -translate-x-1/2 text-[10px] text-text-secondary opacity-0 group-hover:opacity-100">Crisis</div></div>
+<div class="flex-1 bg-primary rounded-t h-[95%] relative group"><div class="absolute -top-6 left-1/2 -translate-x-1/2 text-[10px] text-text-primary opacity-0 group-hover:opacity-100 font-bold">Climax</div></div>
+<div class="flex-1 bg-primary/40 rounded-t h-[30%] relative group"><div class="absolute -top-6 left-1/2 -translate-x-1/2 text-[10px] text-text-secondary opacity-0 group-hover:opacity-100">Resolution</div></div>
+</div>
+</div>
+<!-- Recent Activity & Quick Links -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+<div class="bg-surface border border-border-subtle rounded-lg p-5">
+<h2 class="text-sm font-semibold text-text-primary mb-4">Recent Activity</h2>
+<div class="space-y-4">
+<div class="flex gap-3">
+<div class="h-8 w-8 rounded bg-background-dark border border-border-subtle flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-sm text-text-secondary">edit</span>
+</div>
+<div>
+<p class="text-sm text-text-primary">Edited <span class="font-mono text-primary">Act_1_Setup.md</span></p>
+<p class="text-xs text-text-secondary">2 hours ago</p>
+</div>
+</div>
+<div class="flex gap-3">
+<div class="h-8 w-8 rounded bg-background-dark border border-border-subtle flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-sm text-text-secondary">person_add</span>
+</div>
+<div>
+<p class="text-sm text-text-primary">Added new character <span class="font-mono text-blue-400">Elias Thorne</span></p>
+<p class="text-xs text-text-secondary">Yesterday</p>
+</div>
+</div>
+<div class="flex gap-3">
+<div class="h-8 w-8 rounded bg-background-dark border border-border-subtle flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-sm text-text-secondary">add_location</span>
+</div>
+<div>
+<p class="text-sm text-text-primary">Created location <span class="font-mono text-green-400">The Sunken City</span></p>
+<p class="text-xs text-text-secondary">2 days ago</p>
+</div>
+</div>
+</div>
+</div>
+<div class="bg-surface border border-border-subtle rounded-lg p-5">
+<h2 class="text-sm font-semibold text-text-primary mb-4">AI Suggestions</h2>
+<div class="space-y-3">
+<div class="p-3 bg-background-dark border border-primary/20 rounded border-l-2 border-l-primary flex gap-3">
+<span class="material-symbols-outlined text-primary text-lg shrink-0">lightbulb</span>
+<div>
+<p class="text-sm text-text-primary">Pacing Issue Detected</p>
+<p class="text-xs text-text-secondary mt-1">Act 2 seems longer than average. Consider tightening the dialogue in Scene 4.</p>
+</div>
+</div>
+<div class="p-3 bg-background-dark border border-border-subtle rounded flex gap-3">
+<span class="material-symbols-outlined text-text-secondary text-lg shrink-0">psychology</span>
+<div>
+<p class="text-sm text-text-primary">Character Arc Opportunity</p>
+<p class="text-xs text-text-secondary mt-1">Elias hasn't interacted with the main antagonist yet. A brief encounter could raise stakes.</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Bottom Panel (Collapsed with Tabs) -->
+<div class="border-t border-border-subtle bg-surface shrink-0">
+<div class="flex items-center px-4 h-8 gap-6 text-xs font-mono">
+<button class="text-text-secondary hover:text-text-primary flex items-center gap-1 h-full border-b-2 border-transparent hover:border-text-secondary transition-colors">
+<span class="material-symbols-outlined text-[14px]">terminal</span>
+                        Console
+                    </button>
+<button class="text-primary flex items-center gap-1 h-full border-b-2 border-primary">
+<span class="material-symbols-outlined text-[14px]">output</span>
+                        Output
+                    </button>
+<button class="text-text-secondary hover:text-text-primary flex items-center gap-1 h-full border-b-2 border-transparent hover:border-text-secondary transition-colors">
+<span class="material-symbols-outlined text-[14px]">play_circle</span>
+                        Simulation
+                    </button>
+<div class="flex-1"></div>
+<button class="text-text-secondary hover:text-text-primary">
+<span class="material-symbols-outlined text-[14px]">keyboard_arrow_up</span>
+</button>
+</div>
+</div>
+</div>
+<!-- Right Inspector (Hidden on smaller screens, can be toggled) -->
+<div class="w-64 bg-background-dark border-l border-border-subtle flex flex-col shrink-0 hidden xl:flex">
+<div class="p-3 border-b border-border-subtle flex items-center justify-between">
+<span class="text-xs font-semibold text-text-secondary uppercase tracking-wider">Inspector</span>
+<button class="text-text-secondary hover:text-text-primary"><span class="material-symbols-outlined text-sm">close</span></button>
+</div>
+<div class="p-4 flex flex-col gap-4 overflow-y-auto">
+<div class="text-center pb-4 border-b border-border-subtle">
+<div class="w-16 h-16 bg-surface border border-border-subtle rounded-lg mx-auto mb-2 flex items-center justify-center">
+<span class="material-symbols-outlined text-2xl text-text-secondary">analytics</span>
+</div>
+<h3 class="text-sm font-semibold text-text-primary">Dashboard Info</h3>
+<p class="text-xs text-text-secondary mt-1">Global view</p>
+</div>
+<div>
+<h4 class="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2">Properties</h4>
+<div class="space-y-2 text-sm">
+<div class="flex justify-between">
+<span class="text-text-secondary">Created</span>
+<span class="text-text-primary">Oct 12, 2023</span>
+</div>
+<div class="flex justify-between">
+<span class="text-text-secondary">Last Modified</span>
+<span class="text-text-primary">Today, 10:42 AM</span>
+</div>
+<div class="flex justify-between">
+<span class="text-text-secondary">Target Wordcount</span>
+<span class="text-text-primary">80,000</span>
+</div>
+<div class="flex justify-between">
+<span class="text-text-secondary">Progress</span>
+<span class="text-primary font-medium">53%</span>
+</div>
+</div>
+</div>
+<div>
+<h4 class="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2">Tags</h4>
+<div class="flex flex-wrap gap-1.5">
+<span class="px-2 py-0.5 bg-surface border border-border-subtle rounded text-xs text-text-secondary">sci-fi</span>
+<span class="px-2 py-0.5 bg-surface border border-border-subtle rounded text-xs text-text-secondary">thriller</span>
+<span class="px-2 py-0.5 bg-surface border border-border-subtle rounded text-xs text-text-secondary">draft-1</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</body></html>

@@ -4,35 +4,319 @@
 
 @layer base {
   :root {
-    --top-toolbar-height: 40px;
-    --status-bar-height: 24px;
-    --activity-bar-width: 50px;
-    --sidebar-width: 250px;
-    --inspector-width: 300px;
-    --bg-primary: #1e1e1e;
-    --bg-secondary: #252526;
-    --bg-workspace: #121212;
-    --text-primary: #cccccc;
-    --border-color: #333333;
-    --accent-color: #007acc;
+    /* Layout (IDE) */
+    --top-toolbar-height: 48px;
+    --status-bar-height: 28px;
+    --activity-bar-width: 64px;
+    --sidebar-width: 280px;
+    --inspector-width: 360px;
+
+    /* ===== Narrative IDE Dark Tokens (Design System v1) ===== */
+
+    /* Surfaces */
+    --bg: #0B0F14;
+    --bg-elev-1: #0F1620;
+    --bg-elev-2: #121B26;
+    --panel: #0F1620;
+    --card: #101826;
+    --card-2: #0E1520;
+
+    /* Lines */
+    --border: rgba(255, 255, 255, 0.08);
+    --border-2: rgba(255, 255, 255, 0.12);
+    --divider: rgba(255, 255, 255, 0.06);
+
+    /* Text */
+    --text: rgba(255, 255, 255, 0.92);
+    --text-2: rgba(255, 255, 255, 0.70);
+    --text-3: rgba(255, 255, 255, 0.52);
+    --text-invert: #0B0F14;
+
+    /* Brand / Accents */
+    --brand: #7C3AED;
+    --brand-2: #A78BFA;
+    --blue: #3B82F6;
+    --green: #22C55E;
+    --red: #EF4444;
+    --amber: #F59E0B;
+    --cyan: #06B6D4;
+
+    /* States */
+    --focus: rgba(124, 58, 237, 0.55);
+    --hover: rgba(255, 255, 255, 0.04);
+    --active: rgba(124, 58, 237, 0.12);
+    --selected: rgba(124, 58, 237, 0.18);
+    --update-glow: rgba(245, 158, 11, 0.18);
+
+    /* Radius */
+    --r-xs: 8px;
+    --r-sm: 10px;
+    --r-md: 12px;
+    --r-lg: 16px;
+
+    /* Shadows */
+    --shadow-1: 0 10px 30px rgba(0, 0, 0, 0.35);
+    --shadow-2: 0 16px 50px rgba(0, 0, 0, 0.45);
+
+    /* Back-compat (keep old names but point to new tokens) */
+    --bg-primary: var(--bg);
+    --bg-secondary: var(--bg-elev-1);
+    --bg-workspace: var(--bg);
+    --text-primary: var(--text);
+    --border-color: var(--border);
+    --accent-color: var(--brand);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    width: 100%;
   }
 
   body {
-    @apply m-0 p-0 h-full w-full overflow-hidden text-[#cccccc] bg-[#1e1e1e];
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    color: var(--text);
+    background: var(--bg);
+    font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  }
+
+  *:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--focus);
+    border-radius: var(--r-sm);
   }
 }
 
 @layer components {
+
+  /* ===== Layout containers ===== */
+  .ide-surface {
+    @apply h-full w-full;
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  .ide-panel {
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--panel);
+  }
+
+  .ide-card {
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--card);
+    box-shadow: var(--shadow-1);
+  }
+
+  .ide-divider {
+    border-color: var(--divider);
+  }
+
+  /* ===== Activity Bar ===== */
   .activity-btn {
-    @apply w-10 h-10 flex items-center justify-center cursor-pointer mb-1 rounded transition-colors duration-200;
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    margin-bottom: 6px;
+    border-radius: var(--r-sm);
+    transition: background 160ms ease, border-color 160ms ease;
+    background: transparent;
+    border: 1px solid transparent;
   }
-  
+
   .activity-btn:hover {
-    @apply bg-white bg-opacity-10;
+    background: var(--hover);
   }
-  
+
   .activity-btn.active {
-    @apply border-l-2 border-white;
+    background: var(--active);
+    border-color: var(--border-2);
+    position: relative;
+  }
+
+  .activity-btn.active::before {
+    content: "";
+    position: absolute;
+    left: -8px;
+    top: 8px;
+    bottom: 8px;
+    width: 3px;
+    border-radius: 2px;
+    background: var(--brand);
+  }
+
+  /* ===== Buttons ===== */
+  .btn {
+    height: 34px;
+    padding: 0 12px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    transition: background 160ms ease, border-color 160ms ease, transform 80ms ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    user-select: none;
+  }
+
+  .btn:hover {
+    background: var(--hover);
+  }
+
+  .btn:active {
+    transform: translateY(1px);
+  }
+
+  .btn-primary {
+    border-color: transparent;
+    background: var(--brand);
+    color: #fff;
+  }
+
+  .btn-primary:hover {
+    filter: brightness(1.06);
+  }
+
+  .btn-secondary {
+    border-color: var(--border-2);
+    background: transparent;
+    color: var(--text);
+  }
+
+  .btn-ghost {
+    border-color: transparent;
+    background: transparent;
+    color: var(--text-2);
+  }
+
+  .btn-ghost:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+
+  .btn-danger {
+    border-color: rgba(239, 68, 68, 0.5);
+    color: var(--red);
+    background: transparent;
+  }
+
+  .btn-danger:hover {
+    background: rgba(239, 68, 68, 0.08);
+  }
+
+  .btn-confirm {
+    border-color: transparent;
+    background: var(--green);
+    color: var(--text-invert);
+  }
+
+  .btn-confirm:hover {
+    filter: brightness(1.06);
+  }
+
+  /* ===== Tags / Badges ===== */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 10px;
+    height: 22px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    background: rgba(255, 255, 255, 0.03);
+    font-size: 12px;
+    line-height: 16px;
+  }
+
+  .badge-tag {
+    background: rgba(124, 58, 237, 0.15);
+    border-color: rgba(124, 58, 237, 0.35);
+    color: var(--brand-2);
+  }
+
+  .badge-active {
+    background: rgba(34, 197, 94, 0.15);
+    border-color: rgba(34, 197, 94, 0.35);
+    color: var(--green);
+  }
+
+  .badge-warning {
+    background: rgba(245, 158, 11, 0.15);
+    border-color: rgba(245, 158, 11, 0.35);
+    color: var(--amber);
+  }
+
+  /* ===== Updated highlight (glow) ===== */
+  .updated-highlight {
+    background: var(--update-glow);
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.12);
+    border-radius: var(--r-sm);
+  }
+
+  /* ===== Inputs ===== */
+  .ide-input {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text);
+    padding: 8px 10px;
+  }
+
+  .ide-input::placeholder {
+    color: var(--text-3);
+  }
+
+  /* ===== Tabs ===== */
+  .tabs {
+    display: flex;
+    gap: 14px;
+    border-bottom: 1px solid var(--divider);
+  }
+
+  .tab {
+    padding: 10px 2px;
+    color: var(--text-2);
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+  }
+
+  .tab:hover {
+    color: var(--text);
+  }
+
+  .tab.active {
+    color: var(--text);
+    border-bottom-color: var(--brand-2);
+  }
+
+  /* ===== AI Suggestion box ===== */
+  .ai-suggestion {
+    background: rgba(124, 58, 237, 0.08);
+    border: 1px solid rgba(124, 58, 237, 0.35);
+    border-radius: var(--r-md);
+  }
+
+  .ai-suggestion--amber {
+    border-left: 4px solid var(--amber);
+  }
+
+  .ai-suggestion--cyan {
+    border-left: 4px solid var(--cyan);
+  }
+
+  .ai-suggestion--brand {
+    border-left: 4px solid var(--brand);
   }
 }

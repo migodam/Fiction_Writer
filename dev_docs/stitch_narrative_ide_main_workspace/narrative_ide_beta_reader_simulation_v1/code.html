@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Narrative IDE - Beta Reader Simulation</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#8B5CF6",
+                        "background-light": "#f7f6f8",
+                        "background-dark": "#0B0F14",
+                        "surface-dark": "#131820",
+                        "border-dark": "#2A3441",
+                        "text-muted": "#9CA3AF"
+                    },
+                    fontFamily: {
+                        "display": ["Inter", "sans-serif"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .material-symbols-outlined.fill {
+            font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 font-display min-h-screen flex overflow-hidden">
+<!-- Activity Bar (Leftmost) -->
+<nav class="w-16 bg-surface-dark border-r border-border-dark flex flex-col items-center py-4 gap-6 shrink-0 z-20">
+<div class="text-primary material-symbols-outlined text-3xl">auto_awesome</div>
+<div class="flex flex-col gap-4 mt-4 w-full">
+<button class="w-full flex justify-center py-2 text-text-muted hover:text-slate-100 transition-colors">
+<span class="material-symbols-outlined">folder_open</span>
+</button>
+<button class="w-full flex justify-center py-2 text-text-muted hover:text-slate-100 transition-colors">
+<span class="material-symbols-outlined">edit_document</span>
+</button>
+<button class="w-full flex justify-center py-2 text-text-muted hover:text-slate-100 transition-colors">
+<span class="material-symbols-outlined">hub</span>
+</button>
+<button class="w-full flex justify-center py-2 border-l-2 border-primary text-primary bg-primary/10 transition-colors relative">
+<span class="material-symbols-outlined fill">group</span>
+</button>
+<button class="w-full flex justify-center py-2 text-text-muted hover:text-slate-100 transition-colors">
+<span class="material-symbols-outlined">analytics</span>
+</button>
+</div>
+<div class="mt-auto flex flex-col gap-4 w-full">
+<button class="w-full flex justify-center py-2 text-text-muted hover:text-slate-100 transition-colors">
+<span class="material-symbols-outlined">settings</span>
+</button>
+</div>
+</nav>
+<!-- Left Sidebar: Reader Profiles -->
+<aside class="w-64 bg-surface-dark border-r border-border-dark flex flex-col shrink-0">
+<div class="p-4 border-b border-border-dark flex gap-3 items-center">
+<div class="bg-primary/20 flex items-center justify-center rounded-lg size-10">
+<span class="material-symbols-outlined text-primary">groups</span>
+</div>
+<div class="flex flex-col">
+<h1 class="text-slate-100 text-sm font-semibold leading-tight">Beta Readers</h1>
+<p class="text-text-muted text-xs font-normal leading-tight">Simulation Profiles</p>
+</div>
+</div>
+<div class="flex-1 overflow-y-auto p-3 flex flex-col gap-1">
+<div class="px-2 py-1.5 text-xs font-semibold text-text-muted uppercase tracking-wider mb-1">Active Profiles</div>
+<button class="flex items-center gap-3 px-3 py-2 rounded-lg bg-primary/10 border border-primary/20 w-full text-left">
+<span class="material-symbols-outlined text-primary text-xl fill">person</span>
+<span class="text-slate-100 text-sm font-medium">Fantasy Fan</span>
+</button>
+<button class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/5 transition-colors w-full text-left">
+<span class="material-symbols-outlined text-text-muted text-xl">person</span>
+<span class="text-slate-300 text-sm font-medium">Casual Reader</span>
+</button>
+<button class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/5 transition-colors w-full text-left">
+<span class="material-symbols-outlined text-text-muted text-xl">person</span>
+<span class="text-slate-300 text-sm font-medium">Editor</span>
+</button>
+<button class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/5 transition-colors w-full text-left">
+<span class="material-symbols-outlined text-text-muted text-xl">person</span>
+<span class="text-slate-300 text-sm font-medium">History Buff</span>
+</button>
+<button class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/5 transition-colors w-full text-left">
+<span class="material-symbols-outlined text-text-muted text-xl">person</span>
+<span class="text-slate-300 text-sm font-medium">Sci-Fi Fan</span>
+</button>
+<div class="mt-4 px-2">
+<button class="flex items-center justify-center gap-2 w-full py-1.5 border border-dashed border-border-dark rounded-lg text-text-muted hover:text-slate-100 hover:border-slate-500 transition-colors text-sm">
+<span class="material-symbols-outlined text-lg">add</span>
+                    New Profile
+                </button>
+</div>
+</div>
+</aside>
+<!-- Main Workspace -->
+<main class="flex-1 flex flex-col min-w-0 bg-background-dark">
+<!-- Top Toolbar & Breadcrumb -->
+<header class="h-14 border-b border-border-dark flex items-center justify-between px-4 shrink-0 bg-surface-dark/50">
+<div class="flex items-center gap-2 text-sm">
+<a class="text-text-muted hover:text-slate-300 transition-colors" href="#">Project</a>
+<span class="material-symbols-outlined text-text-muted text-sm">chevron_right</span>
+<a class="text-text-muted hover:text-slate-300 transition-colors" href="#">Beta Reader</a>
+<span class="material-symbols-outlined text-text-muted text-sm">chevron_right</span>
+<span class="text-slate-100 font-medium">Chapter 4 Simulation</span>
+</div>
+<div class="flex items-center gap-3">
+<button class="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border-dark text-slate-300 hover:bg-white/5 transition-colors text-sm font-medium">
+<span class="material-symbols-outlined text-lg">compare_arrows</span>
+                    Compare Reactions
+                </button>
+<button class="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-primary text-white hover:bg-primary/90 transition-colors text-sm font-medium shadow-lg shadow-primary/20">
+<span class="material-symbols-outlined text-lg fill">play_arrow</span>
+                    Run Reader Simulation
+                </button>
+</div>
+</header>
+<!-- Content Area -->
+<div class="flex-1 flex overflow-hidden">
+<!-- Reader View -->
+<div class="flex-1 overflow-y-auto p-8 relative">
+<div class="max-w-3xl mx-auto">
+<h2 class="text-2xl font-bold text-slate-100 mb-6">Chapter 4: The Silent Council</h2>
+<div class="prose prose-invert prose-slate max-w-none text-slate-300 leading-relaxed space-y-6 relative">
+<p>
+                            Elara pushed open the heavy oak doors, the wood groaning in protest. The council chamber was vast, lit only by the flickering light of braziers suspended from the vaulted ceiling. Shadows danced across the faces of the seven elders seated in a semicircle before her.
+                        </p>
+<!-- Marker: Predictable Twist -->
+<div class="relative group">
+<div class="absolute -left-6 top-1 w-4 h-4 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center cursor-help">
+<div class="w-1.5 h-1.5 rounded-full bg-primary"></div>
+</div>
+<p class="pl-2 border-l-2 border-primary/30">
+                                She recognized the figure standing in the center of the room immediately, despite the heavy cloak. It was Malakor, the very man who had supposedly died in the siege of Oakhaven three moons ago. "I told you I would return," he rasped, pulling back his hood.
+                            </p>
+<div class="absolute left-full ml-4 top-0 w-48 bg-surface-dark border border-border-dark rounded-lg p-2 shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+<div class="text-xs font-bold text-primary mb-1 uppercase tracking-wider">Predictable Twist</div>
+<div class="text-xs text-slate-300">"Saw this coming from Chapter 1. The foreshadowing was too heavy." - Fantasy Fan</div>
+</div>
+</div>
+<p>
+                            The elders murmured among themselves, a low susurration that sounded like dry leaves in winter. Elara stepped forward, her hand resting on the pommel of her sword. She had expected a trap, but not this. Not him.
+                        </p>
+<!-- Marker: Confusion -->
+<div class="relative group">
+<div class="absolute -left-6 top-1 w-4 h-4 rounded-full bg-yellow-500/20 border-2 border-yellow-500 flex items-center justify-center cursor-help">
+<div class="w-1.5 h-1.5 rounded-full bg-yellow-500"></div>
+</div>
+<p class="pl-2 border-l-2 border-yellow-500/30">
+                                Malakor produced a small, crystalline orb from his robes. It glowed with a sickly green light. "The Arcanum of Vael has authorized the immediate dissolution of the pact," he declared, referencing the complex geopolitical treaty established during the Third Era of the Sun-King's reign, specifically the addendum regarding magical oversight in neutral territories.
+                            </p>
+<div class="absolute left-full ml-4 top-0 w-48 bg-surface-dark border border-border-dark rounded-lg p-2 shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+<div class="text-xs font-bold text-yellow-500 mb-1 uppercase tracking-wider">Confusion / Pacing</div>
+<div class="text-xs text-slate-300">"Too much exposition dumped here. Lost the tension of the reveal." - Casual Reader</div>
+</div>
+</div>
+<p>
+                            Elara drew her blade, the steel ringing clearly in the sudden silence. "The Arcanum has no jurisdiction here, Malakor. And you have no right to speak for them."
+                        </p>
+</div>
+</div>
+</div>
+<!-- Right Sub-pane: Reader Reactions -->
+<div class="w-80 border-l border-border-dark bg-surface-dark flex flex-col shrink-0">
+<div class="p-4 border-b border-border-dark flex items-center justify-between">
+<h3 class="text-sm font-semibold text-slate-100 flex items-center gap-2">
+<span class="material-symbols-outlined text-text-muted text-lg">forum</span>
+                        Reader Reactions
+                    </h3>
+<div class="flex items-center gap-1">
+<button class="p-1 rounded text-text-muted hover:bg-white/5 transition-colors">
+<span class="material-symbols-outlined text-sm">filter_list</span>
+</button>
+</div>
+</div>
+<div class="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+<!-- Feedback Card 1 -->
+<div class="bg-background-dark border border-border-dark rounded-lg p-3 hover:border-primary/50 transition-colors cursor-pointer">
+<div class="flex items-center justify-between mb-2">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-yellow-500 text-sm fill">warning</span>
+<span class="text-xs font-semibold text-slate-200">Exposition Dump</span>
+</div>
+<span class="text-[10px] text-text-muted">Scene 2</span>
+</div>
+<p class="text-sm text-slate-300 mb-3">
+                            "Bored during exposition in Scene 2. The political treaty details completely ruined the momentum of Malakor's entrance."
+                        </p>
+<div class="flex items-center gap-2">
+<div class="w-5 h-5 rounded-full bg-surface-dark border border-border-dark flex items-center justify-center">
+<span class="material-symbols-outlined text-[12px] text-slate-400">person</span>
+</div>
+<span class="text-xs text-text-muted">Casual Reader</span>
+</div>
+</div>
+<!-- Feedback Card 2 -->
+<div class="bg-primary/5 border border-primary/30 rounded-lg p-3 cursor-pointer">
+<div class="flex items-center justify-between mb-2">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary text-sm fill">visibility</span>
+<span class="text-xs font-semibold text-primary">Predictable Twist</span>
+</div>
+<span class="text-[10px] text-text-muted">Scene 1</span>
+</div>
+<p class="text-sm text-slate-300 mb-3">
+                            "Malakor being alive was way too obvious. You practically spelled it out in the previous chapter with the missing body."
+                        </p>
+<div class="flex items-center gap-2">
+<div class="w-5 h-5 rounded-full bg-surface-dark border border-border-dark flex items-center justify-center">
+<span class="material-symbols-outlined text-[12px] text-slate-400">person</span>
+</div>
+<span class="text-xs text-text-muted">Fantasy Fan</span>
+</div>
+</div>
+<!-- Feedback Card 3 -->
+<div class="bg-background-dark border border-border-dark rounded-lg p-3 hover:border-primary/50 transition-colors cursor-pointer">
+<div class="flex items-center justify-between mb-2">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-green-500 text-sm fill">thumb_up</span>
+<span class="text-xs font-semibold text-slate-200">Strong Character Voice</span>
+</div>
+<span class="text-[10px] text-text-muted">Scene 3</span>
+</div>
+<p class="text-sm text-slate-300 mb-3">
+                            "Elara's reaction here is perfect. Defiant but you can feel her internal panic. Great characterization."
+                        </p>
+<div class="flex items-center gap-2">
+<div class="w-5 h-5 rounded-full bg-surface-dark border border-border-dark flex items-center justify-center">
+<span class="material-symbols-outlined text-[12px] text-slate-400">person</span>
+</div>
+<span class="text-xs text-text-muted">Editor</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</main>
+</body></html>

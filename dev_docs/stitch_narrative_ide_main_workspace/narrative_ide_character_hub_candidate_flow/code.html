@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Narrative IDE - Character Hub</title>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#8B5CF6", // Purple Accent
+                        "background-light": "#f7f6f8",
+                        "background-dark": "#0B0F14", // Dark Theme
+                        "danger": "#ef4444",
+                        "success": "#22c55e",
+                        "surface": "#1A1F28",
+                        "surface-hover": "#252B36"
+                    },
+                    fontFamily: {
+                        "display": ["Inter"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+</head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 font-display flex h-screen overflow-hidden">
+<!-- Sidebar -->
+<aside class="w-64 bg-surface border-r border-slate-800 flex flex-col h-full shrink-0">
+<div class="p-4 border-b border-slate-800 flex items-center gap-3">
+<div class="bg-center bg-no-repeat aspect-square bg-cover rounded-full size-10" data-alt="Abstract purple logo for Narrative IDE" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuDoHbDQuRtozl_LLbK4owG2wV3Y0R6OGYo41YEpoFBED4_sM_K2v99LPL_baZPVJjP6_7q_Ok7yMcujANOHxz-BaWPsoaJVrTK32Iguuc6JF6AJPMDTWt5PeAfHKG28yzTfSsef65vIoRCU7rxv6fTC2WOgIGMHwdft1KgERSbahhwcXFAymxt8UuhfXIJIHbTIqq0OUl-gQeRKBb1iAZVpo2ly6DeQqtCW3jhILgaARDHD_bjTiq8adzeGLYtNbYIhUf5pCY7P3Qk5");'></div>
+<div class="flex flex-col">
+<h1 class="text-slate-100 text-base font-medium leading-normal">Narrative IDE</h1>
+<p class="text-slate-400 text-sm font-normal leading-normal">Dark Fantasy Project</p>
+</div>
+</div>
+<div class="flex-1 overflow-y-auto py-4">
+<nav class="flex flex-col gap-2 px-3">
+<div class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 px-3">Characters</div>
+<a class="flex items-center justify-between px-3 py-2 rounded-lg bg-primary/20 text-primary" href="#">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-[20px]">group_add</span>
+<span class="text-sm font-medium">Candidates</span>
+</div>
+<span class="bg-success/20 text-success text-xs font-bold px-2 py-0.5 rounded-full">3</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-surface-hover text-slate-300 transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">groups</span>
+<span class="text-sm font-medium">Active Roster</span>
+</a>
+<div class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 px-3 mt-6">World</div>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-surface-hover text-slate-300 transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">location_on</span>
+<span class="text-sm font-medium">Locations</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-surface-hover text-slate-300 transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">auto_stories</span>
+<span class="text-sm font-medium">Lore</span>
+</a>
+</nav>
+</div>
+</aside>
+<!-- Main Content -->
+<main class="flex-1 flex flex-col min-w-0 overflow-hidden">
+<!-- Header -->
+<header class="h-14 border-b border-slate-800 flex items-center justify-between px-6 shrink-0 bg-background-dark">
+<div class="flex items-center gap-2 text-sm">
+<a class="text-slate-400 hover:text-slate-200" href="#">Project</a>
+<span class="text-slate-600">/</span>
+<a class="text-slate-400 hover:text-slate-200" href="#">Characters</a>
+<span class="text-slate-600">/</span>
+<span class="text-slate-100 font-medium">Kaelen Vance</span>
+</div>
+<div class="flex items-center gap-3">
+<button class="flex items-center justify-center h-8 px-4 rounded-lg bg-transparent text-danger text-sm font-medium hover:bg-danger/10 border border-danger/30 transition-colors">
+<span class="material-symbols-outlined text-[18px] mr-1">close</span> Reject
+                </button>
+<button class="flex items-center justify-center h-8 px-4 rounded-lg bg-success text-slate-900 text-sm font-bold hover:bg-success/90 transition-colors">
+<span class="material-symbols-outlined text-[18px] mr-1">check</span> Confirm Candidate
+                </button>
+</div>
+</header>
+<!-- Character Header & Tabs -->
+<div class="px-8 pt-8 shrink-0">
+<div class="flex items-start justify-between mb-6">
+<div>
+<h2 class="text-3xl font-bold text-slate-100 mb-2">Kaelen Vance</h2>
+<div class="flex items-center gap-3">
+<span class="bg-primary/20 text-primary px-2.5 py-1 rounded-full text-xs font-medium border border-primary/30">Candidate</span>
+<span class="text-slate-400 text-sm">Created 2 days ago</span>
+</div>
+</div>
+<div class="w-24 h-24 rounded-xl bg-surface border border-slate-700 bg-cover bg-center" data-alt="Portrait placeholder for character Kaelen Vance" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuCt0cAo5xX2BUyu8JjXgF3E5om_5USBGss8kXOizgIclsunt8jIsAuYpAc1df1MJVnqhUHQSahZC_mm3o88MjYA8rGuL5-XmLFo7xTQ8rD_MDF6mofsx_fzBc8AAhrxFU56l6ZslQoYaPanFka4ZC9pb5hBsi7e3I9W6_6iVux8YOREu7zQQ_7DXrQSQgvGHxsDL8TewkwxBQpeVnjdEIrOYekB7dbM6VxkUp879RnhunC_vaX6n-eV1eUU_aA_li4UPYUp7S8BXFth");'></div>
+</div>
+<div class="flex border-b border-slate-800 gap-8">
+<a class="border-b-[3px] border-primary text-primary pb-3 text-sm font-medium" href="#">Profile</a>
+<a class="border-b-[3px] border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-700 pb-3 text-sm font-medium transition-colors" href="#">Relationships</a>
+<a class="border-b-[3px] border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-700 pb-3 text-sm font-medium transition-colors" href="#">Timeline</a>
+<a class="border-b-[3px] border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-700 pb-3 text-sm font-medium transition-colors" href="#">POV Insights</a>
+</div>
+</div>
+<!-- Scrollable Workspace -->
+<div class="flex-1 overflow-y-auto p-8 flex gap-8">
+<!-- Editor Content -->
+<div class="flex-1 max-w-4xl flex gap-8">
+<!-- Left Column: Core Fields -->
+<div class="w-1/2 flex flex-col gap-6">
+<div class="bg-surface rounded-xl p-5 border border-slate-800">
+<h3 class="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-4 flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px]">person</span> Core Identity
+                        </h3>
+<div class="space-y-4">
+<div>
+<label class="block text-xs text-slate-400 mb-1">Full Name</label>
+<input class="w-full bg-background-dark border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-primary focus:ring-1 focus:ring-primary outline-none" type="text" value="Kaelen Vance"/>
+</div>
+<div class="flex gap-4">
+<div class="flex-1">
+<label class="block text-xs text-slate-400 mb-1">Role in Story</label>
+<select class="w-full bg-background-dark border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-primary focus:ring-1 focus:ring-primary outline-none appearance-none">
+<option>Protagonist</option>
+<option selected="">Deuteragonist</option>
+<option>Antagonist</option>
+<option>Supporting</option>
+</select>
+</div>
+<div class="flex-1">
+<label class="block text-xs text-slate-400 mb-1">Archetype</label>
+<select class="w-full bg-background-dark border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-primary focus:ring-1 focus:ring-primary outline-none appearance-none">
+<option selected="">The Reluctant Hero</option>
+<option>The Mentor</option>
+<option>The Trickster</option>
+</select>
+</div>
+</div>
+<div>
+<label class="block text-xs text-slate-400 mb-1">Physical Description</label>
+<textarea class="w-full bg-background-dark border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-primary focus:ring-1 focus:ring-primary outline-none resize-none" rows="3">Tall, angular features with a perpetual scowl. Wears faded leathers that hint at a military past.</textarea>
+</div>
+<div>
+<label class="block text-xs text-slate-400 mb-2">Tags</label>
+<div class="flex flex-wrap gap-2">
+<span class="bg-slate-800 text-slate-300 px-2 py-1 rounded text-xs border border-slate-700 flex items-center gap-1">Warrior <button class="hover:text-slate-100"><span class="material-symbols-outlined text-[14px]">close</span></button></span>
+<span class="bg-slate-800 text-slate-300 px-2 py-1 rounded text-xs border border-slate-700 flex items-center gap-1">Exiled <button class="hover:text-slate-100"><span class="material-symbols-outlined text-[14px]">close</span></button></span>
+<button class="bg-surface-hover text-slate-400 px-2 py-1 rounded text-xs border border-dashed border-slate-600 hover:text-slate-200 hover:border-slate-500 flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">add</span> Add Tag</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Right Column: Deep Attributes -->
+<div class="w-1/2 flex flex-col gap-6">
+<div class="bg-surface rounded-xl p-5 border border-slate-800 h-full">
+<h3 class="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-4 flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px]">psychology</span> Internal Mechanics
+                        </h3>
+<div class="space-y-6">
+<div>
+<div class="flex items-center justify-between mb-1">
+<label class="block text-xs font-medium text-primary">Primary Goal</label>
+</div>
+<textarea class="w-full bg-background-dark border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-primary focus:ring-1 focus:ring-primary outline-none resize-none" rows="2">To clear his name and return to the Silver Vanguard, even if it means allying with the underground.</textarea>
+</div>
+<div>
+<label class="block text-xs font-medium text-danger mb-1">Core Fear</label>
+<textarea class="w-full bg-background-dark border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-danger focus:ring-1 focus:ring-danger outline-none resize-none" rows="2">Becoming the monster they accused him of being; losing his moral compass in the dark.</textarea>
+</div>
+<div>
+<label class="block text-xs font-medium text-slate-400 mb-1">Defining Secret</label>
+<div class="relative">
+<textarea class="w-full bg-background-dark border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-primary focus:ring-1 focus:ring-primary outline-none resize-none pr-8 blur-sm hover:blur-none transition-all duration-300" rows="2">He actually committed the crime he was exiled for, but for a righteous reason he cannot reveal.</textarea>
+<span class="material-symbols-outlined absolute top-2 right-2 text-slate-500 text-[18px] pointer-events-none">visibility_off</span>
+</div>
+</div>
+<div>
+<label class="block text-xs font-medium text-slate-400 mb-2">Personality Traits</label>
+<div class="space-y-3">
+<div class="flex items-center gap-3">
+<span class="text-xs text-slate-500 w-16 text-right">Stoic</span>
+<div class="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+<div class="h-full bg-primary/70 w-[80%]"></div>
+</div>
+<span class="text-xs text-slate-500 w-16">Expressive</span>
+</div>
+<div class="flex items-center gap-3">
+<span class="text-xs text-slate-500 w-16 text-right">Cautious</span>
+<div class="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+<div class="h-full bg-primary/70 w-[30%]"></div>
+</div>
+<span class="text-xs text-slate-500 w-16">Reckless</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Right Inspector: Metadata & AI -->
+<aside class="w-80 shrink-0 flex flex-col gap-4">
+<div class="bg-surface rounded-xl border border-slate-800 overflow-hidden">
+<div class="bg-slate-800/50 p-3 border-b border-slate-800">
+<h4 class="text-xs font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">info</span> Metadata
+                        </h4>
+</div>
+<div class="p-4 space-y-3">
+<div class="flex justify-between items-center text-sm">
+<span class="text-slate-500">Word Count</span>
+<span class="text-slate-300">1,240</span>
+</div>
+<div class="flex justify-between items-center text-sm">
+<span class="text-slate-500">Scenes Mentioned</span>
+<span class="text-slate-300">4</span>
+</div>
+<div class="flex justify-between items-center text-sm">
+<span class="text-slate-500">Arcs Linked</span>
+<span class="text-primary hover:underline cursor-pointer">Redemption Arc</span>
+</div>
+</div>
+</div>
+<div class="bg-surface rounded-xl border border-primary/30 overflow-hidden flex-1 flex flex-col">
+<div class="bg-primary/10 p-3 border-b border-primary/20 flex justify-between items-center">
+<h4 class="text-xs font-semibold text-primary uppercase tracking-wider flex items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">smart_toy</span> AI Suggestions
+                        </h4>
+<button class="text-primary hover:text-primary/80"><span class="material-symbols-outlined text-[16px]">refresh</span></button>
+</div>
+<div class="p-4 space-y-4 overflow-y-auto">
+<div class="p-3 bg-background-dark rounded-lg border border-slate-800">
+<p class="text-xs text-slate-300 leading-relaxed mb-2">
+<strong class="text-slate-200 block mb-1">Conflict Enhancement</strong>
+                                Kaelen's secret aligns poorly with his current stated goal. Consider if his goal is a front, or if revealing the secret would destroy his goal entirely.
+                            </p>
+<button class="text-[10px] uppercase font-bold text-primary hover:underline">Apply Tweak</button>
+</div>
+<div class="p-3 bg-background-dark rounded-lg border border-slate-800">
+<p class="text-xs text-slate-300 leading-relaxed mb-2">
+<strong class="text-slate-200 block mb-1">Relationship Gap</strong>
+                                He has no established connection to the 'Underground' faction mentioned in his goal. Recommend linking to candidate 'Elara Vance'.
+                            </p>
+<button class="text-[10px] uppercase font-bold text-primary hover:underline">Link Character</button>
+</div>
+</div>
+</div>
+</aside>
+</div>
+</main>
+</body></html>

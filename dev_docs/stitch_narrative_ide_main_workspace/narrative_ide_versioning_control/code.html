@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Narrative IDE - Versioning</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#9010da",
+                        "background-light": "#f7f6f8",
+                        "background-dark": "#1b1022",
+                    },
+                    fontFamily: {
+                        "display": ["Inter", "Noto Sans", "sans-serif"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings:
+            'FILL' 0,
+            'wght' 400,
+            'GRAD' 0,
+            'opsz' 24
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 font-display min-h-screen flex flex-col overflow-hidden">
+<!-- TopNavBar -->
+<header class="flex items-center justify-between whitespace-nowrap border-b border-solid border-slate-300 dark:border-slate-800 px-6 py-3 bg-background-light dark:bg-background-dark z-10 shrink-0">
+<div class="flex items-center gap-8">
+<div class="flex items-center gap-4 text-primary">
+<div class="size-6">
+<svg fill="none" viewbox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+<path d="M39.5563 34.1455V13.8546C39.5563 15.708 36.8773 17.3437 32.7927 18.3189C30.2914 18.916 27.263 19.2655 24 19.2655C20.737 19.2655 17.7086 18.916 15.2073 18.3189C11.1227 17.3437 8.44365 15.708 8.44365 13.8546V34.1455C8.44365 35.9988 11.1227 37.6346 15.2073 38.6098C17.7086 39.2069 20.737 39.5564 24 39.5564C27.263 39.5564 30.2914 39.2069 32.7927 38.6098C36.8773 37.6346 39.5563 35.9988 39.5563 34.1455Z" fill="currentColor"></path>
+<path clip-rule="evenodd" d="M10.4485 13.8519C10.4749 13.9271 10.6203 14.246 11.379 14.7361C12.298 15.3298 13.7492 15.9145 15.6717 16.3735C18.0007 16.9296 20.8712 17.2655 24 17.2655C27.1288 17.2655 29.9993 16.9296 32.3283 16.3735C34.2508 15.9145 35.702 15.3298 36.621 14.7361C37.3796 14.246 37.5251 13.9271 37.5515 13.8519C37.5287 13.7876 37.4333 13.5973 37.0635 13.2931C36.5266 12.8516 35.6288 12.3647 34.343 11.9175C31.79 11.0295 28.1333 10.4437 24 10.4437C19.8667 10.4437 16.2099 11.0295 13.657 11.9175C12.3712 12.3647 11.4734 12.8516 10.9365 13.2931C10.5667 13.5973 10.4713 13.7876 10.4485 13.8519ZM37.5563 18.7877C36.3176 19.3925 34.8502 19.8839 33.2571 20.2642C30.5836 20.9025 27.3973 21.2655 24 21.2655C20.6027 21.2655 17.4164 20.9025 14.7429 20.2642C13.1498 19.8839 11.6824 19.3925 10.4436 18.7877V34.1275C10.4515 34.1545 10.5427 34.4867 11.379 35.027C12.298 35.6207 13.7492 36.2054 15.6717 36.6644C18.0007 37.2205 20.8712 37.5564 24 37.5564C27.1288 37.5564 29.9993 37.2205 32.3283 36.6644C34.2508 36.2054 35.702 35.6207 36.621 35.027C37.4573 34.4867 37.5485 34.1546 37.5563 34.1275V18.7877ZM41.5563 13.8546V34.1455C41.5563 36.1078 40.158 37.5042 38.7915 38.3869C37.3498 39.3182 35.4192 40.0389 33.2571 40.5551C30.5836 41.1934 27.3973 41.5564 24 41.5564C20.6027 41.5564 17.4164 41.1934 14.7429 40.5551C12.5808 40.0389 10.6502 39.3182 9.20848 38.3869C7.84205 37.5042 6.44365 36.1078 6.44365 34.1455L6.44365 13.8546C6.44365 12.2684 7.37223 11.0454 8.39581 10.2036C9.43325 9.3505 10.8137 8.67141 12.343 8.13948C15.4203 7.06909 19.5418 6.44366 24 6.44366C28.4582 6.44366 32.5797 7.06909 35.657 8.13948C37.1863 8.67141 38.5667 9.3505 39.6042 10.2036C40.6278 11.0454 41.5563 12.2684 41.5563 13.8546Z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+<h2 class="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight tracking-[-0.015em]">Narrative IDE</h2>
+</div>
+<div class="flex items-center gap-6 hidden md:flex">
+<a class="text-slate-600 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-colors text-sm font-medium leading-normal" href="#">File</a>
+<a class="text-slate-600 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-colors text-sm font-medium leading-normal" href="#">Edit</a>
+<a class="text-slate-600 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-colors text-sm font-medium leading-normal" href="#">View</a>
+<a class="text-slate-600 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-colors text-sm font-medium leading-normal" href="#">Window</a>
+<a class="text-slate-600 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-colors text-sm font-medium leading-normal" href="#">Help</a>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<div class="relative hidden sm:block">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[20px]">search</span>
+<input class="w-64 pl-10 pr-4 py-1.5 bg-slate-200 dark:bg-slate-800/50 border-none rounded-full text-sm focus:ring-2 focus:ring-primary text-slate-900 dark:text-slate-100 placeholder-slate-500 dark:placeholder-slate-400" placeholder="Search..." type="text"/>
+</div>
+<div class="bg-primary/20 aspect-square rounded-full size-8 flex items-center justify-center text-primary font-medium text-sm">
+                JS
+            </div>
+</div>
+</header>
+<!-- Main Content -->
+<div class="flex flex-1 overflow-hidden">
+<!-- Activity Bar -->
+<div class="w-14 flex flex-col items-center py-4 border-r border-slate-300 dark:border-slate-800 bg-slate-100 dark:bg-[#150c1a] shrink-0 gap-6">
+<button class="text-slate-400 hover:text-primary dark:hover:text-primary transition-colors">
+<span class="material-symbols-outlined">folder</span>
+</button>
+<button class="text-slate-400 hover:text-primary dark:hover:text-primary transition-colors">
+<span class="material-symbols-outlined">search</span>
+</button>
+<button class="text-primary border-l-2 border-primary pl-[-2px] ml-[-2px]">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">call_split</span>
+</button>
+<button class="text-slate-400 hover:text-primary dark:hover:text-primary transition-colors">
+<span class="material-symbols-outlined">bug_report</span>
+</button>
+<div class="mt-auto">
+<button class="text-slate-400 hover:text-primary dark:hover:text-primary transition-colors">
+<span class="material-symbols-outlined">settings</span>
+</button>
+</div>
+</div>
+<!-- Sidebar (Versioning Explorer) -->
+<div class="w-64 flex flex-col border-r border-slate-300 dark:border-slate-800 bg-background-light dark:bg-[#1b1022] shrink-0">
+<div class="p-4 border-b border-slate-300 dark:border-slate-800">
+<h2 class="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Source Control</h2>
+<div class="mt-2 text-sm text-slate-900 dark:text-slate-100 font-medium truncate">dark_matter.story</div>
+</div>
+<div class="flex-1 overflow-y-auto">
+<!-- Branches -->
+<div class="p-4">
+<div class="flex items-center justify-between mb-3">
+<h3 class="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px]">keyboard_arrow_down</span>
+                            Branches
+                        </h3>
+<button class="text-slate-400 hover:text-primary"><span class="material-symbols-outlined text-[18px]">add</span></button>
+</div>
+<div class="flex flex-col gap-1 ml-6">
+<label class="flex items-center gap-3 p-2 rounded cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-800/50 group">
+<input checked="" class="w-4 h-4 text-primary focus:ring-primary border-slate-400 dark:border-slate-600 bg-transparent" name="branch" type="radio"/>
+<div class="flex flex-col">
+<span class="text-sm text-slate-900 dark:text-slate-100 font-medium">main</span>
+<span class="text-[11px] text-slate-500 dark:text-slate-400">Updated 2h ago</span>
+</div>
+</label>
+<label class="flex items-center gap-3 p-2 rounded cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-800/50 group">
+<input class="w-4 h-4 text-primary focus:ring-primary border-slate-400 dark:border-slate-600 bg-transparent" name="branch" type="radio"/>
+<div class="flex flex-col">
+<span class="text-sm text-slate-700 dark:text-slate-300 group-hover:text-slate-900 dark:group-hover:text-slate-100">feature/character-arc</span>
+<span class="text-[11px] text-slate-500 dark:text-slate-400">Updated yesterday</span>
+</div>
+</label>
+<label class="flex items-center gap-3 p-2 rounded cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-800/50 group">
+<input class="w-4 h-4 text-primary focus:ring-primary border-slate-400 dark:border-slate-600 bg-transparent" name="branch" type="radio"/>
+<div class="flex flex-col">
+<span class="text-sm text-slate-700 dark:text-slate-300 group-hover:text-slate-900 dark:group-hover:text-slate-100">draft/chapter-4</span>
+<span class="text-[11px] text-slate-500 dark:text-slate-400">Updated 3d ago</span>
+</div>
+</label>
+</div>
+</div>
+<!-- Checkpoints -->
+<div class="p-4 border-t border-slate-300 dark:border-slate-800">
+<div class="flex items-center justify-between mb-3">
+<h3 class="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px]">keyboard_arrow_right</span>
+                            Checkpoints (Commits)
+                        </h3>
+</div>
+</div>
+</div>
+</div>
+<!-- Main Workspace -->
+<div class="flex-1 flex flex-col min-w-0 bg-slate-50 dark:bg-[#120a17]">
+<!-- Workspace Toolbar -->
+<div class="h-12 border-b border-slate-300 dark:border-slate-800 flex items-center justify-between px-4 shrink-0 bg-background-light dark:bg-background-dark">
+<div class="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
+<span class="material-symbols-outlined text-[18px]">call_split</span>
+<span class="font-medium text-slate-900 dark:text-slate-100">Version Graph</span>
+</div>
+<div class="flex items-center gap-3">
+<button class="px-3 py-1.5 text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800 rounded transition-colors flex items-center gap-1">
+<span class="material-symbols-outlined text-[18px]">compare_arrows</span>
+                        Compare
+                    </button>
+<button class="px-3 py-1.5 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors flex items-center gap-1 border border-red-200 dark:border-red-900/50">
+<span class="material-symbols-outlined text-[18px]">history</span>
+                        Restore
+                    </button>
+</div>
+</div>
+<!-- Graph Area -->
+<div class="flex-1 p-6 flex flex-col items-center justify-center relative overflow-hidden">
+<!-- Placeholder for Graph -->
+<div class="absolute inset-0 opacity-10 dark:opacity-5 pointer-events-none" data-alt="Subtle dot grid background pattern" style="background-image: radial-gradient(#9010da 1px, transparent 1px); background-size: 20px 20px;"></div>
+<div class="flex flex-col items-center text-center z-10 max-w-md">
+<div class="w-20 h-20 mb-6 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
+<span class="material-symbols-outlined text-4xl">timeline</span>
+</div>
+<h3 class="text-xl font-bold text-slate-900 dark:text-slate-100 mb-2">Version Graph Visualization</h3>
+<p class="text-slate-600 dark:text-slate-400 text-sm mb-6">Interactive node-based graph will render here showing branch divergence and checkpoint history.</p>
+<button class="px-4 py-2 bg-primary text-white rounded font-medium hover:bg-primary/90 transition-colors shadow-lg shadow-primary/20">
+                        Refresh Graph
+                    </button>
+</div>
+</div>
+</div>
+<!-- Inspector (Diff Summary) -->
+<div class="w-80 flex flex-col border-l border-slate-300 dark:border-slate-800 bg-background-light dark:bg-[#1b1022] shrink-0 hidden lg:flex">
+<div class="p-4 border-b border-slate-300 dark:border-slate-800 flex items-center justify-between">
+<h2 class="text-sm font-semibold text-slate-900 dark:text-slate-100">Diff Summary</h2>
+<button class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+<span class="material-symbols-outlined text-[18px]">close</span>
+</button>
+</div>
+<div class="p-4 flex-1 overflow-y-auto">
+<div class="text-sm text-slate-600 dark:text-slate-400 mb-4">Comparing <span class="font-mono text-primary bg-primary/10 px-1 rounded">main</span> with <span class="font-mono text-slate-900 dark:text-slate-300 bg-slate-200 dark:bg-slate-800 px-1 rounded">feature/character-arc</span></div>
+<div class="space-y-4">
+<div class="border border-slate-200 dark:border-slate-800 rounded overflow-hidden">
+<div class="bg-slate-100 dark:bg-slate-800/50 px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 flex items-center gap-2">
+<span class="material-symbols-outlined text-[16px] text-green-500">add_circle</span>
+                            Chapter 4 added
+                        </div>
+<div class="p-3 bg-white dark:bg-[#150c1a] text-xs text-slate-600 dark:text-slate-400 font-mono">
+                            + 1,245 words<br/>
+                            + 3 scenes
+                        </div>
+</div>
+<div class="border border-slate-200 dark:border-slate-800 rounded overflow-hidden">
+<div class="bg-slate-100 dark:bg-slate-800/50 px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 flex items-center gap-2">
+<span class="material-symbols-outlined text-[16px] text-blue-500">edit</span>
+                            Character Bio: Elara
+                        </div>
+<div class="p-3 bg-white dark:bg-[#150c1a] text-xs text-slate-600 dark:text-slate-400 font-mono">
+                            ~ Modified backstory traits
+                        </div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</body></html>

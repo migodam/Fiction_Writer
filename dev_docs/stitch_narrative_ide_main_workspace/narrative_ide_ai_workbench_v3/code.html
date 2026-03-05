@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Narrative IDE - AI Workbench</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings:
+            'FILL' 0,
+            'wght' 400,
+            'GRAD' 0,
+            'opsz' 24
+        }
+    </style>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#9010da",
+                        "background-light": "#f7f6f8",
+                        "background-dark": "#1b1022",
+                        "surface-dark": "#2a1e35",
+                        "surface-darker": "#22172b",
+                        "border-dark": "#3d2b4d"
+                    },
+                    fontFamily: {
+                        "display": ["Inter", "sans-serif"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-slate-100 min-h-screen flex flex-col overflow-hidden">
+<!-- Top Nav Bar -->
+<header class="flex items-center justify-between whitespace-nowrap border-b border-solid border-border-dark px-6 py-3 bg-surface-darker shrink-0">
+<div class="flex items-center gap-4 text-slate-100">
+<div class="size-6 text-primary flex items-center justify-center">
+<span class="material-symbols-outlined">auto_awesome</span>
+</div>
+<h2 class="text-slate-100 text-lg font-bold leading-tight tracking-[-0.015em]">Narrative IDE</h2>
+</div>
+<div class="flex flex-1 justify-end gap-8">
+<div class="flex items-center gap-6 hidden md:flex">
+<a class="text-slate-300 hover:text-slate-100 text-sm font-medium leading-normal transition-colors" href="#">File</a>
+<a class="text-slate-300 hover:text-slate-100 text-sm font-medium leading-normal transition-colors" href="#">Edit</a>
+<a class="text-slate-300 hover:text-slate-100 text-sm font-medium leading-normal transition-colors" href="#">View</a>
+<a class="text-primary text-sm font-medium leading-normal" href="#">Agents</a>
+<a class="text-slate-300 hover:text-slate-100 text-sm font-medium leading-normal transition-colors" href="#">Help</a>
+</div>
+<div class="flex gap-2">
+<button class="flex min-w-[84px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-9 px-4 bg-primary hover:bg-primary/90 text-white text-sm font-bold leading-normal tracking-[0.015em] transition-colors">
+<span class="material-symbols-outlined mr-2 text-lg">rocket_launch</span>
+<span class="truncate">Deploy Agent</span>
+</button>
+<button class="flex min-w-[84px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-9 px-4 bg-surface-dark hover:bg-border-dark text-slate-100 text-sm font-bold leading-normal tracking-[0.015em] transition-colors border border-border-dark">
+<span class="material-symbols-outlined mr-2 text-lg">play_arrow</span>
+<span class="truncate">Simulate</span>
+</button>
+</div>
+</div>
+</header>
+<!-- Main Content Area -->
+<div class="flex flex-1 overflow-hidden">
+<!-- Activity Bar (Sidebar Left) -->
+<nav class="w-16 flex flex-col items-center py-4 border-r border-border-dark bg-surface-darker shrink-0 gap-6">
+<button class="text-slate-400 hover:text-slate-100 transition-colors p-2 rounded-lg hover:bg-surface-dark" title="Explorer">
+<span class="material-symbols-outlined">folder</span>
+</button>
+<button class="text-slate-400 hover:text-slate-100 transition-colors p-2 rounded-lg hover:bg-surface-dark" title="Timeline">
+<span class="material-symbols-outlined">schedule</span>
+</button>
+<button class="text-primary bg-primary/20 p-2 rounded-lg" title="AI Workbench">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">robot_2</span>
+</button>
+<button class="text-slate-400 hover:text-slate-100 transition-colors p-2 rounded-lg hover:bg-surface-dark" title="Data">
+<span class="material-symbols-outlined">database</span>
+</button>
+<div class="mt-auto">
+<button class="text-slate-400 hover:text-slate-100 transition-colors p-2 rounded-lg hover:bg-surface-dark" title="Settings">
+<span class="material-symbols-outlined">settings</span>
+</button>
+</div>
+</nav>
+<!-- Secondary Sidebar -->
+<aside class="w-64 flex flex-col border-r border-border-dark bg-background-dark shrink-0 overflow-y-auto hidden lg:flex">
+<div class="p-4 border-b border-border-dark">
+<div class="flex items-center gap-3 mb-4">
+<div class="bg-primary/20 text-primary p-1.5 rounded-lg">
+<span class="material-symbols-outlined text-xl">smart_toy</span>
+</div>
+<div>
+<h1 class="text-slate-100 text-sm font-semibold leading-normal">AI Workbench</h1>
+<p class="text-slate-400 text-xs font-normal leading-normal">Agent Console</p>
+</div>
+</div>
+</div>
+<div class="flex-1 py-2">
+<div class="px-4 py-2 flex items-center justify-between group cursor-pointer hover:bg-surface-dark transition-colors">
+<h3 class="text-slate-300 text-xs font-semibold uppercase tracking-wider">Active Entities</h3>
+<span class="material-symbols-outlined text-slate-500 text-sm group-hover:text-slate-300">add</span>
+</div>
+<div class="flex flex-col gap-1 px-2 mt-1">
+<div class="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-surface-dark cursor-pointer group">
+<div class="text-primary flex items-center justify-center rounded bg-primary/10 size-8 shrink-0">
+<span class="material-symbols-outlined text-sm">person</span>
+</div>
+<p class="text-slate-200 text-sm font-medium leading-normal flex-1 truncate">Protagonist: Elara</p>
+<span class="material-symbols-outlined text-slate-500 text-lg opacity-0 group-hover:opacity-100 transition-opacity">more_vert</span>
+</div>
+<div class="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-surface-dark cursor-pointer group">
+<div class="text-amber-500 flex items-center justify-center rounded bg-amber-500/10 size-8 shrink-0">
+<span class="material-symbols-outlined text-sm">person_alert</span>
+</div>
+<p class="text-slate-200 text-sm font-medium leading-normal flex-1 truncate">Antagonist: Kael</p>
+<span class="material-symbols-outlined text-slate-500 text-lg opacity-0 group-hover:opacity-100 transition-opacity">more_vert</span>
+</div>
+</div>
+<div class="px-4 py-2 mt-4 flex items-center justify-between group cursor-pointer hover:bg-surface-dark transition-colors">
+<h3 class="text-slate-300 text-xs font-semibold uppercase tracking-wider">Anchors</h3>
+<span class="material-symbols-outlined text-slate-500 text-sm group-hover:text-slate-300">add</span>
+</div>
+<div class="flex flex-col gap-1 px-2 mt-1">
+<div class="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-surface-dark cursor-pointer group">
+<div class="text-emerald-500 flex items-center justify-center rounded bg-emerald-500/10 size-8 shrink-0">
+<span class="material-symbols-outlined text-sm">location_on</span>
+</div>
+<p class="text-slate-200 text-sm font-medium leading-normal flex-1 truncate">City Core</p>
+<span class="material-symbols-outlined text-slate-500 text-lg opacity-0 group-hover:opacity-100 transition-opacity">more_vert</span>
+</div>
+<div class="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-surface-dark cursor-pointer group">
+<div class="text-blue-500 flex items-center justify-center rounded bg-blue-500/10 size-8 shrink-0">
+<span class="material-symbols-outlined text-sm">vpn_key</span>
+</div>
+<p class="text-slate-200 text-sm font-medium leading-normal flex-1 truncate">The Artifact</p>
+<span class="material-symbols-outlined text-slate-500 text-lg opacity-0 group-hover:opacity-100 transition-opacity">more_vert</span>
+</div>
+</div>
+</div>
+</aside>
+<!-- Main Workspace -->
+<main class="flex-1 flex flex-col min-w-0 bg-background-dark relative">
+<!-- Breadcrumb/Header -->
+<div class="flex items-center gap-2 px-6 py-3 border-b border-border-dark bg-background-dark">
+<span class="text-slate-400 text-sm font-medium">Agents</span>
+<span class="material-symbols-outlined text-slate-600 text-sm">chevron_right</span>
+<span class="text-slate-200 text-sm font-medium flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-green-500"></span>
+                    Multi-Agent Console
+                </span>
+</div>
+<!-- Workspace Content -->
+<div class="flex-1 overflow-y-auto p-6 flex flex-col gap-6">
+<!-- Diagnostic Cards -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+<div class="bg-surface-dark border border-border-dark rounded-xl p-4 flex flex-col gap-2">
+<div class="flex justify-between items-center text-slate-400">
+<span class="text-xs font-semibold uppercase">Agent Health</span>
+<span class="material-symbols-outlined text-sm">monitor_heart</span>
+</div>
+<div class="text-2xl font-bold text-slate-100">98.5%</div>
+<div class="text-xs text-green-400 flex items-center gap-1">
+<span class="material-symbols-outlined text-xs">trending_up</span>
+                            Optimal Performance
+                        </div>
+</div>
+<div class="bg-surface-dark border border-border-dark rounded-xl p-4 flex flex-col gap-2">
+<div class="flex justify-between items-center text-slate-400">
+<span class="text-xs font-semibold uppercase">Active Threads</span>
+<span class="material-symbols-outlined text-sm">account_tree</span>
+</div>
+<div class="text-2xl font-bold text-slate-100">12</div>
+<div class="text-xs text-slate-400 flex items-center gap-1">
+<span>Across 3 sub-systems</span>
+</div>
+</div>
+<div class="bg-surface-dark border border-border-dark rounded-xl p-4 flex flex-col gap-2">
+<div class="flex justify-between items-center text-slate-400">
+<span class="text-xs font-semibold uppercase">Memory Usage</span>
+<span class="material-symbols-outlined text-sm">memory</span>
+</div>
+<div class="text-2xl font-bold text-slate-100">4.2 GB</div>
+<div class="w-full bg-surface-darker rounded-full h-1.5 mt-1">
+<div class="bg-primary h-1.5 rounded-full" style="width: 65%"></div>
+</div>
+</div>
+</div>
+<!-- Failure Analysis Placeholder -->
+<div class="flex-1 bg-surface-dark border border-border-dark rounded-xl flex flex-col overflow-hidden min-h-[300px]">
+<div class="px-4 py-3 border-b border-border-dark flex justify-between items-center bg-surface-darker">
+<h3 class="text-sm font-semibold text-slate-200 flex items-center gap-2">
+<span class="material-symbols-outlined text-amber-500 text-lg">warning</span>
+                            Failure Analysis
+                        </h3>
+<div class="flex gap-2">
+<button class="text-slate-400 hover:text-slate-100"><span class="material-symbols-outlined text-sm">filter_list</span></button>
+<button class="text-slate-400 hover:text-slate-100"><span class="material-symbols-outlined text-sm">more_horiz</span></button>
+</div>
+</div>
+<div class="flex-1 p-4 flex flex-col gap-3 overflow-y-auto">
+<!-- Log Entries -->
+<div class="bg-background-dark border border-border-dark rounded-lg p-3 font-mono text-xs text-slate-300">
+<div class="flex items-start gap-3">
+<span class="text-red-400 shrink-0">[ERROR]</span>
+<div class="flex-1">
+<span class="text-slate-500">14:23:01</span> - Agent 'Elara' encountered narrative paradox in sector 7. Resolution fallback initiated.
+                                </div>
+</div>
+</div>
+<div class="bg-background-dark border border-border-dark rounded-lg p-3 font-mono text-xs text-slate-300">
+<div class="flex items-start gap-3">
+<span class="text-amber-400 shrink-0">[WARN ]</span>
+<div class="flex-1">
+<span class="text-slate-500">14:22:45</span> - Anchor 'City Core' sync latency spiked to 120ms.
+                                </div>
+</div>
+</div>
+<div class="bg-background-dark border border-border-dark rounded-lg p-3 font-mono text-xs text-slate-300 opacity-70">
+<div class="flex items-start gap-3">
+<span class="text-blue-400 shrink-0">[INFO ]</span>
+<div class="flex-1">
+<span class="text-slate-500">14:20:00</span> - Diagnostic routine completed successfully.
+                                </div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Command Input Bar -->
+<div class="p-4 border-t border-border-dark bg-surface-darker">
+<div class="relative flex items-center">
+<span class="material-symbols-outlined absolute left-4 text-slate-400">terminal</span>
+<input class="w-full bg-background-dark border border-border-dark text-slate-200 text-sm rounded-lg pl-12 pr-4 py-3 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary placeholder-slate-500" placeholder="Command the engine..." type="text"/>
+<button class="absolute right-2 p-1.5 text-slate-400 hover:text-primary transition-colors rounded-md hover:bg-primary/10">
+<span class="material-symbols-outlined text-lg">send</span>
+</button>
+</div>
+</div>
+</main>
+<!-- Inspector (Right Sidebar) -->
+<aside class="w-72 border-l border-border-dark bg-surface-darker shrink-0 overflow-y-auto hidden xl:block">
+<div class="p-4 border-b border-border-dark flex justify-between items-center sticky top-0 bg-surface-darker z-10">
+<h2 class="text-slate-100 text-sm font-semibold">Inspector</h2>
+<button class="text-slate-400 hover:text-slate-100">
+<span class="material-symbols-outlined text-sm">close</span>
+</button>
+</div>
+<div class="p-4">
+<div class="mb-6">
+<h3 class="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-3">Plan Details</h3>
+<div class="bg-background-dark border border-border-dark rounded-lg p-3">
+<div class="flex items-center gap-2 mb-2">
+<span class="material-symbols-outlined text-primary text-sm">description</span>
+<span class="text-slate-200 text-sm font-medium">Act 1: The Awakening</span>
+</div>
+<p class="text-slate-400 text-xs leading-relaxed">
+                            Current execution phase for the main narrative thread. Agents are establishing baseline behaviors and initial conflicts.
+                        </p>
+</div>
+</div>
+<div class="mb-6">
+<h3 class="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-3">Parameters</h3>
+<div class="flex flex-col gap-3">
+<div class="flex justify-between items-center">
+<span class="text-slate-300 text-sm">Pacing</span>
+<span class="text-slate-100 text-sm font-mono bg-surface-dark px-2 py-0.5 rounded border border-border-dark">Moderate</span>
+</div>
+<div class="flex justify-between items-center">
+<span class="text-slate-300 text-sm">Conflict Level</span>
+<span class="text-slate-100 text-sm font-mono bg-surface-dark px-2 py-0.5 rounded border border-border-dark">0.65</span>
+</div>
+<div class="flex justify-between items-center">
+<span class="text-slate-300 text-sm">Agent Autonomy</span>
+<div class="w-16 h-1.5 bg-surface-dark rounded-full overflow-hidden">
+<div class="bg-primary h-full w-4/5"></div>
+</div>
+</div>
+</div>
+</div>
+<div>
+<h3 class="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-3">Dependencies</h3>
+<div class="flex flex-wrap gap-2">
+<span class="px-2 py-1 bg-surface-dark border border-border-dark rounded text-xs text-slate-300 flex items-center gap-1">
+<span class="material-symbols-outlined text-[10px]">link</span> Core Lore DB
+                        </span>
+<span class="px-2 py-1 bg-surface-dark border border-border-dark rounded text-xs text-slate-300 flex items-center gap-1">
+<span class="material-symbols-outlined text-[10px]">link</span> Env Physics
+                        </span>
+</div>
+</div>
+</div>
+</aside>
+</div>
+</body></html>

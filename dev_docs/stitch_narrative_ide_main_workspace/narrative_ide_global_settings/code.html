@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Narrative IDE - Global Settings</title>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#9010da",
+                        "background-light": "#f7f6f8",
+                        "background-dark": "#1b1022",
+                    },
+                    fontFamily: {
+                        "display": ["Inter", "sans-serif"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 font-display min-h-screen flex flex-col antialiased">
+<!-- Top Navigation Bar -->
+<header class="flex items-center justify-between border-b border-slate-300 dark:border-slate-800 px-6 py-3 bg-white dark:bg-background-dark/80 backdrop-blur-sm sticky top-0 z-50">
+<div class="flex items-center gap-4">
+<div class="size-8 text-primary flex items-center justify-center">
+<span class="material-symbols-outlined" style="font-size: 32px;">history_edu</span>
+</div>
+<h2 class="text-lg font-bold tracking-tight">Narrative IDE</h2>
+</div>
+<nav class="flex items-center gap-8">
+<a class="text-sm font-medium hover:text-primary transition-colors" href="#">Workspace</a>
+<a class="text-sm font-medium text-primary" href="#">Settings</a>
+</nav>
+<div class="flex items-center gap-3">
+<button class="flex items-center justify-center h-9 px-4 rounded-lg bg-primary hover:bg-primary/90 text-white text-sm font-semibold transition-colors shadow-sm">
+                Save Settings
+            </button>
+<button class="flex items-center justify-center h-9 px-4 rounded-lg bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-sm font-medium transition-colors">
+                Reset
+            </button>
+<div class="h-6 w-px bg-slate-300 dark:bg-slate-700 mx-2"></div>
+<button aria-label="Notifications" class="flex items-center justify-center size-9 rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
+<span class="material-symbols-outlined text-xl">notifications</span>
+</button>
+<div class="size-9 rounded-full bg-gradient-to-tr from-primary to-purple-400 p-[2px]" data-alt="User profile avatar placeholder">
+<div class="w-full h-full rounded-full bg-white dark:bg-background-dark flex items-center justify-center overflow-hidden">
+<span class="material-symbols-outlined text-slate-400 dark:text-slate-500">person</span>
+</div>
+</div>
+</div>
+</header>
+<div class="flex flex-1 overflow-hidden">
+<!-- Sidebar Navigation -->
+<aside class="w-64 border-r border-slate-300 dark:border-slate-800 bg-slate-50 dark:bg-background-dark/50 flex flex-col flex-shrink-0">
+<div class="p-6">
+<h1 class="text-xl font-bold tracking-tight mb-1">Settings</h1>
+<p class="text-sm text-slate-500 dark:text-slate-400">Manage global configuration</p>
+</div>
+<nav class="flex-1 px-3 space-y-1 overflow-y-auto">
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-primary/10 dark:bg-primary/20 text-primary font-medium" href="#">
+<span class="material-symbols-outlined">settings</span>
+                    General
+                </a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800/50 text-slate-600 dark:text-slate-300 transition-colors" href="#">
+<span class="material-symbols-outlined">view_in_ar</span>
+                    Models
+                </a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800/50 text-slate-600 dark:text-slate-300 transition-colors" href="#">
+<span class="material-symbols-outlined">chat</span>
+                    Prompts
+                </a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800/50 text-slate-600 dark:text-slate-300 transition-colors" href="#">
+<span class="material-symbols-outlined">api</span>
+                    Integrations
+                </a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800/50 text-slate-600 dark:text-slate-300 transition-colors" href="#">
+<span class="material-symbols-outlined">security</span>
+                    Security
+                </a>
+</nav>
+</aside>
+<!-- Main Workspace -->
+<main class="flex-1 overflow-y-auto bg-white dark:bg-background-dark">
+<div class="max-w-4xl mx-auto p-8 lg:p-12 space-y-10">
+<!-- Section Header -->
+<div class="space-y-2 border-b border-slate-200 dark:border-slate-800 pb-6">
+<h2 class="text-3xl font-bold tracking-tight">General Settings</h2>
+<p class="text-slate-500 dark:text-slate-400 text-lg">Customize your interface and basic workspace behaviors.</p>
+</div>
+<!-- Settings Cards -->
+<div class="space-y-8">
+<!-- Interface Options -->
+<section class="space-y-5">
+<h3 class="text-xl font-semibold flex items-center gap-2">
+<span class="material-symbols-outlined text-primary">palette</span>
+                            Interface Options
+                        </h3>
+<div class="bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-6">
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+<!-- Theme Select -->
+<div class="space-y-2">
+<label class="block text-sm font-medium">Color Theme</label>
+<p class="text-sm text-slate-500 dark:text-slate-400 mb-3">Select your preferred visual style.</p>
+<div class="relative">
+<select class="form-select w-full rounded-lg border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-primary focus:border-primary py-2.5 pl-3 pr-10 appearance-none">
+<option value="system">System Default</option>
+<option value="light">Light Mode</option>
+<option selected="" value="dark">Dark Mode (Default)</option>
+</select>
+<div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-500">
+<span class="material-symbols-outlined">expand_more</span>
+</div>
+</div>
+</div>
+<!-- Font Size -->
+<div class="space-y-2">
+<label class="block text-sm font-medium">Editor Font Size</label>
+<p class="text-sm text-slate-500 dark:text-slate-400 mb-3">Adjust the text size in the main editor.</p>
+<div class="relative">
+<select class="form-select w-full rounded-lg border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-primary focus:border-primary py-2.5 pl-3 pr-10 appearance-none">
+<option value="sm">Small (12px)</option>
+<option selected="" value="md">Medium (14px)</option>
+<option value="lg">Large (16px)</option>
+<option value="xl">Extra Large (18px)</option>
+</select>
+<div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-500">
+<span class="material-symbols-outlined">expand_more</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Toggle Options -->
+<div class="pt-4 border-t border-slate-200 dark:border-slate-800 space-y-4">
+<label class="flex items-start justify-between cursor-pointer group">
+<div class="space-y-1">
+<span class="text-sm font-medium block">Show Line Numbers</span>
+<span class="text-sm text-slate-500 dark:text-slate-400 block">Display line numbers in the narrative editor.</span>
+</div>
+<div class="relative inline-flex items-center mt-1">
+<input checked="" class="sr-only peer" type="checkbox"/>
+<div class="w-11 h-6 bg-slate-200 dark:bg-slate-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+</div>
+</label>
+<label class="flex items-start justify-between cursor-pointer group">
+<div class="space-y-1">
+<span class="text-sm font-medium block">Auto-save Documents</span>
+<span class="text-sm text-slate-500 dark:text-slate-400 block">Automatically save changes every 5 minutes.</span>
+</div>
+<div class="relative inline-flex items-center mt-1">
+<input checked="" class="sr-only peer" type="checkbox"/>
+<div class="w-11 h-6 bg-slate-200 dark:bg-slate-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+</div>
+</label>
+</div>
+</div>
+</section>
+<!-- Workspace Configuration -->
+<section class="space-y-5">
+<h3 class="text-xl font-semibold flex items-center gap-2">
+<span class="material-symbols-outlined text-primary">folder_open</span>
+                            Workspace Configuration
+                        </h3>
+<div class="bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-6">
+<div class="space-y-2">
+<label class="block text-sm font-medium">Default Project Directory</label>
+<p class="text-sm text-slate-500 dark:text-slate-400 mb-3">Where new narrative projects are stored by default.</p>
+<div class="flex gap-3">
+<input class="form-input flex-1 rounded-lg border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-primary focus:border-primary py-2.5 px-3 font-mono text-sm" readonly="" type="text" value="~/Documents/NarrativeIDE/Projects"/>
+<button class="px-4 py-2 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 rounded-lg text-sm font-medium transition-colors whitespace-nowrap">
+                                        Browse...
+                                    </button>
+</div>
+</div>
+<div class="space-y-2">
+<label class="block text-sm font-medium">Backup Location</label>
+<p class="text-sm text-slate-500 dark:text-slate-400 mb-3">Directory for automated local backups.</p>
+<div class="flex gap-3">
+<input class="form-input flex-1 rounded-lg border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-primary focus:border-primary py-2.5 px-3 font-mono text-sm" readonly="" type="text" value="~/Documents/NarrativeIDE/Backups"/>
+<button class="px-4 py-2 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 rounded-lg text-sm font-medium transition-colors whitespace-nowrap">
+                                        Browse...
+                                    </button>
+</div>
+</div>
+</div>
+</section>
+</div>
+</div>
+</main>
+</div>
+</body></html>

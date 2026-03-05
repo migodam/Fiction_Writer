@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Narrative IDE - Story Editor (v2)</title>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#9010da",
+                        "background-light": "#f7f6f8",
+                        "background-dark": "#1b1022",
+                    },
+                    fontFamily: {
+                        "display": ["Inter", "sans-serif"],
+                        "mono": ["JetBrains Mono", "monospace"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+</head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 font-display min-h-screen flex flex-col overflow-hidden">
+<!-- Top Navigation Bar -->
+<header class="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-[#151118] px-4 py-2 shrink-0">
+<div class="flex items-center gap-4">
+<div class="text-primary material-symbols-outlined text-2xl">auto_awesome</div>
+<h2 class="text-lg font-bold tracking-tight">Narrative IDE</h2>
+<div class="h-4 w-[1px] bg-slate-300 dark:bg-slate-700 mx-2"></div>
+<nav class="hidden md:flex items-center gap-6">
+<a class="text-sm font-medium hover:text-primary transition-colors" href="#">File</a>
+<a class="text-sm font-medium hover:text-primary transition-colors" href="#">Edit</a>
+<a class="text-sm font-medium hover:text-primary transition-colors" href="#">View</a>
+<a class="text-sm font-medium hover:text-primary transition-colors" href="#">Story</a>
+<a class="text-sm font-medium hover:text-primary transition-colors" href="#">Help</a>
+</nav>
+</div>
+<div class="flex items-center gap-2">
+<button class="p-2 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 transition-colors">
+<span class="material-symbols-outlined text-xl">settings</span>
+</button>
+<button class="p-2 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 transition-colors">
+<span class="material-symbols-outlined text-xl">notifications</span>
+</button>
+<div class="ml-2 w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center border border-primary/30 cursor-pointer">
+<span class="material-symbols-outlined text-primary text-sm">person</span>
+</div>
+</div>
+</header>
+<!-- Main Workspace -->
+<div class="flex flex-1 overflow-hidden">
+<!-- Activity Bar (Primary Sidebar) -->
+<div class="w-14 flex flex-col items-center py-4 gap-4 border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-[#151118] shrink-0">
+<button class="p-2 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors" title="Story Editor">
+<span class="material-symbols-outlined text-xl">book_4</span>
+</button>
+<button class="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" title="Character Forge">
+<span class="material-symbols-outlined text-xl">group</span>
+</button>
+<button class="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" title="World Builder">
+<span class="material-symbols-outlined text-xl">public</span>
+</button>
+<button class="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" title="Lore Index">
+<span class="material-symbols-outlined text-xl">database</span>
+</button>
+<div class="flex-1"></div>
+<button class="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" title="Analytics">
+<span class="material-symbols-outlined text-xl">bar_chart</span>
+</button>
+</div>
+<!-- Secondary Sidebar (Outline Tree) -->
+<div class="w-64 flex flex-col border-r border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#1a1520] shrink-0">
+<div class="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+<div>
+<h1 class="text-sm font-semibold truncate">Project Alpha</h1>
+<p class="text-xs text-slate-500 dark:text-slate-400">Dark Fantasy</p>
+</div>
+<button class="text-slate-400 hover:text-slate-900 dark:hover:text-slate-100">
+<span class="material-symbols-outlined text-lg">unfold_more</span>
+</button>
+</div>
+<div class="p-2 flex-1 overflow-y-auto">
+<div class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2 px-2">Outline</div>
+<div class="space-y-1">
+<!-- Act 1 -->
+<div>
+<div class="flex items-center gap-1 px-2 py-1.5 rounded hover:bg-slate-200 dark:hover:bg-slate-800/50 cursor-pointer text-sm font-medium">
+<span class="material-symbols-outlined text-sm text-slate-400">expand_more</span>
+<span class="material-symbols-outlined text-sm text-slate-400">folder</span>
+                            Act I: The Awakening
+                        </div>
+<div class="ml-6 space-y-1 mt-1">
+<div class="flex items-center gap-2 px-2 py-1.5 rounded bg-primary/10 text-primary cursor-pointer text-sm">
+<span class="material-symbols-outlined text-sm">description</span>
+                                Scene 1: Prologue
+                            </div>
+<div class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-200 dark:hover:bg-slate-800/50 text-slate-600 dark:text-slate-300 cursor-pointer text-sm">
+<span class="material-symbols-outlined text-sm">description</span>
+                                Scene 2: Village Ruins
+                            </div>
+<div class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-200 dark:hover:bg-slate-800/50 text-slate-600 dark:text-slate-300 cursor-pointer text-sm">
+<span class="material-symbols-outlined text-sm">description</span>
+                                Scene 3: The Call
+                            </div>
+</div>
+</div>
+<!-- Act 2 -->
+<div>
+<div class="flex items-center gap-1 px-2 py-1.5 rounded hover:bg-slate-200 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300 cursor-pointer text-sm font-medium">
+<span class="material-symbols-outlined text-sm text-slate-400">chevron_right</span>
+<span class="material-symbols-outlined text-sm text-slate-400">folder</span>
+                            Act II: Journey into Shadow
+                        </div>
+</div>
+<!-- Act 3 -->
+<div>
+<div class="flex items-center gap-1 px-2 py-1.5 rounded hover:bg-slate-200 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300 cursor-pointer text-sm font-medium">
+<span class="material-symbols-outlined text-sm text-slate-400">chevron_right</span>
+<span class="material-symbols-outlined text-sm text-slate-400">folder</span>
+                            Act III: Convergence
+                        </div>
+</div>
+</div>
+</div>
+</div>
+<!-- Center Workspace (Scene Editor) -->
+<div class="flex-1 flex flex-col min-w-0 bg-white dark:bg-[#110d14]">
+<!-- Breadcrumbs & Actions -->
+<div class="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-800 shrink-0">
+<div class="flex items-center text-sm gap-2 text-slate-500 dark:text-slate-400">
+<span class="hover:text-slate-900 dark:hover:text-slate-100 cursor-pointer">Project Alpha</span>
+<span class="material-symbols-outlined text-sm">chevron_right</span>
+<span class="hover:text-slate-900 dark:hover:text-slate-100 cursor-pointer">Act I</span>
+<span class="material-symbols-outlined text-sm">chevron_right</span>
+<span class="text-slate-900 dark:text-slate-100 font-medium">Scene 1: Prologue</span>
+</div>
+<div class="flex items-center gap-2">
+<button class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors border border-slate-300 dark:border-slate-700">
+<span class="material-symbols-outlined text-sm">draw</span>
+                        Modify
+                    </button>
+<button class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors border border-slate-300 dark:border-slate-700">
+<span class="material-symbols-outlined text-sm">magic_button</span>
+                        Generate
+                    </button>
+<div class="w-px h-5 bg-slate-300 dark:bg-slate-700 mx-1"></div>
+<button class="flex items-center gap-1.5 px-4 py-1.5 text-sm font-bold rounded bg-primary text-white hover:bg-primary/90 transition-colors shadow-sm">
+<span class="material-symbols-outlined text-sm">play_arrow</span>
+                        Run Story
+                    </button>
+</div>
+</div>
+<!-- Editor Split View -->
+<div class="flex-1 flex flex-col md:flex-row min-h-0">
+<!-- Main Editor Area -->
+<div class="flex-1 p-8 overflow-y-auto max-w-4xl mx-auto w-full relative">
+<!-- Text Formatting Toolbar (floating) -->
+<div class="sticky top-0 bg-white/90 dark:bg-[#110d14]/90 backdrop-blur-sm p-2 mb-6 border border-slate-200 dark:border-slate-800 rounded-lg flex gap-1 shadow-sm z-10 w-max">
+<button class="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400"><span class="material-symbols-outlined text-sm">format_bold</span></button>
+<button class="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400"><span class="material-symbols-outlined text-sm">format_italic</span></button>
+<button class="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400"><span class="material-symbols-outlined text-sm">format_underlined</span></button>
+<div class="w-px h-4 bg-slate-300 dark:bg-slate-700 mx-1 self-center"></div>
+<button class="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400"><span class="material-symbols-outlined text-sm">format_h1</span></button>
+<button class="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400"><span class="material-symbols-outlined text-sm">format_h2</span></button>
+<button class="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400"><span class="material-symbols-outlined text-sm">format_quote</span></button>
+</div>
+<h1 class="text-3xl font-bold mb-6 text-slate-900 dark:text-slate-100 outline-none" contenteditable="true">Scene 1: Prologue</h1>
+<div class="prose prose-slate dark:prose-invert max-w-none text-slate-700 dark:text-slate-300 text-lg leading-relaxed space-y-4 outline-none" contenteditable="true">
+<p>The rain lashed against the cobblestone streets of Oakhaven, washing away the grime but leaving a profound sense of despair in its wake. Elara pulled her cloak tighter, her breath pluming in the frigid air. The tavern's sign, a battered oak leaf swinging precariously on a rusty hinge, offered the only solace in the encroaching gloom.</p>
+<p>She pushed open the heavy wooden door, greeted by a wave of stale ale and woodsmoke. The murmur of conversations halted momentarily, eyes assessing the newcomer before returning to their murky depths. Elara ignored the stares, making her way to a secluded corner booth.</p>
+<p class="border-l-4 border-primary/50 pl-4 py-1 italic bg-primary/5 dark:bg-primary/10 rounded-r">"He said he'd be here," she muttered to herself, tracing the rim of an empty mug left by a previous patron.</p>
+<p>Before she could signal the barkeep, a shadow detached itself from the gloom across the room, gliding silently towards her table. The hood obscured their face, but the subtle glint of steel beneath their cloak was unmistakable.</p>
+</div>
+</div>
+<!-- Right Inspector -->
+<div class="w-80 border-l border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#1a1520] shrink-0 overflow-y-auto">
+<div class="p-4 space-y-4">
+<!-- Scene Metadata -->
+<details class="group rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#151118] overflow-hidden" open="">
+<summary class="flex items-center justify-between p-3 cursor-pointer select-none bg-slate-50 dark:bg-[#1a1520] hover:bg-slate-100 dark:hover:bg-[#201a28]">
+<span class="text-sm font-semibold">Scene Metadata</span>
+<span class="material-symbols-outlined text-slate-400 group-open:rotate-180 transition-transform">expand_more</span>
+</summary>
+<div class="p-3 border-t border-slate-200 dark:border-slate-800 space-y-3">
+<div>
+<label class="block text-xs text-slate-500 dark:text-slate-400 mb-1">Location</label>
+<div class="flex items-center gap-2 p-1.5 rounded bg-slate-100 dark:bg-[#110d14] border border-slate-200 dark:border-slate-800 text-sm">
+<span class="material-symbols-outlined text-sm text-slate-400">location_on</span>
+                                        Oakhaven Tavern
+                                    </div>
+</div>
+<div>
+<label class="block text-xs text-slate-500 dark:text-slate-400 mb-1">Characters Present</label>
+<div class="flex flex-wrap gap-1">
+<span class="px-2 py-1 text-xs rounded-full bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300">Elara</span>
+<span class="px-2 py-1 text-xs rounded-full bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300">Mysterious Stranger</span>
+</div>
+</div>
+<div>
+<label class="block text-xs text-slate-500 dark:text-slate-400 mb-1">Time of Day</label>
+<select class="w-full bg-slate-100 dark:bg-[#110d14] border border-slate-200 dark:border-slate-800 rounded p-1.5 text-sm outline-none focus:border-primary">
+<option>Night</option>
+<option>Dusk</option>
+<option>Midnight</option>
+</select>
+</div>
+</div>
+</details>
+<!-- AI Suggestions -->
+<details class="group rounded-lg border border-primary/30 bg-white dark:bg-[#151118] overflow-hidden" open="">
+<summary class="flex items-center justify-between p-3 cursor-pointer select-none bg-primary/5 dark:bg-primary/10 hover:bg-primary/10 dark:hover:bg-primary/20">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary text-sm">auto_awesome</span>
+<span class="text-sm font-semibold text-primary">AI Suggestions</span>
+</div>
+<span class="material-symbols-outlined text-primary/60 group-open:rotate-180 transition-transform">expand_more</span>
+</summary>
+<div class="p-3 border-t border-primary/20 space-y-3">
+<div class="p-2 rounded bg-slate-50 dark:bg-[#110d14] border border-slate-200 dark:border-slate-800">
+<p class="text-xs text-slate-600 dark:text-slate-300 mb-2">Enhance sensory details in paragraph 2:</p>
+<button class="w-full text-left px-2 py-1.5 rounded text-xs text-primary hover:bg-primary/10 transition-colors">
+                                        + Add description of the tavern's smell (stale ale, damp wool, roasted mutton)
+                                    </button>
+</div>
+<div class="p-2 rounded bg-slate-50 dark:bg-[#110d14] border border-slate-200 dark:border-slate-800">
+<p class="text-xs text-slate-600 dark:text-slate-300 mb-2">Character Motivation Check:</p>
+<p class="text-xs text-slate-500 dark:text-slate-400 italic">Elara's internal thought "He said he'd be here" feels slightly abrupt. Consider adding a brief physical tell of her anxiety.</p>
+</div>
+</div>
+</details>
+<!-- Scene Goals -->
+<details class="group rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#151118] overflow-hidden">
+<summary class="flex items-center justify-between p-3 cursor-pointer select-none bg-slate-50 dark:bg-[#1a1520] hover:bg-slate-100 dark:hover:bg-[#201a28]">
+<span class="text-sm font-semibold">Scene Goals</span>
+<span class="material-symbols-outlined text-slate-400 group-open:rotate-180 transition-transform">expand_more</span>
+</summary>
+<div class="p-3 border-t border-slate-200 dark:border-slate-800">
+<ul class="space-y-2 text-sm text-slate-600 dark:text-slate-300">
+<li class="flex items-start gap-2">
+<input checked="" class="mt-1 rounded border-slate-400 text-primary focus:ring-primary" type="checkbox"/>
+                                        Establish mood/setting
+                                    </li>
+<li class="flex items-start gap-2">
+<input class="mt-1 rounded border-slate-400 text-primary focus:ring-primary" type="checkbox"/>
+                                        Introduce Inciting Incident (The Stranger's message)
+                                    </li>
+</ul>
+</div>
+</details>
+</div>
+</div>
+</div>
+<!-- Bottom Panel (Narrative Logs) -->
+<div class="h-48 border-t border-slate-200 dark:border-slate-800 bg-[#f8f9fa] dark:bg-[#0d0a0f] shrink-0 flex flex-col font-mono text-sm">
+<div class="flex items-center justify-between px-4 py-1.5 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-[#151118] text-xs">
+<div class="flex gap-4">
+<button class="text-slate-900 dark:text-slate-100 font-medium uppercase tracking-wider">Output</button>
+<button class="text-slate-500 dark:text-slate-500 uppercase tracking-wider hover:text-slate-700 dark:hover:text-slate-300">Problems (0)</button>
+<button class="text-slate-500 dark:text-slate-500 uppercase tracking-wider hover:text-slate-700 dark:hover:text-slate-300">Debug Console</button>
+</div>
+<div class="flex items-center gap-2">
+<button class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><span class="material-symbols-outlined text-[16px]">delete</span></button>
+<button class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><span class="material-symbols-outlined text-[16px]">close</span></button>
+</div>
+</div>
+<div class="flex-1 p-4 overflow-y-auto text-slate-700 dark:text-slate-400">
+<div class="mb-1 text-slate-500">[10:42:15 AM] Narrative Engine started...</div>
+<div class="mb-1 text-slate-500">[10:42:16 AM] Loading world state 'ProjectAlpha_v1.0.db'</div>
+<div class="mb-1 text-primary">[10:42:18 AM] Compiling Scene 1 dependencies... Success.</div>
+<div class="mb-1 text-slate-500">[10:43:02 AM] AI Assistant: Analyzed paragraph 3. Suggestions available.</div>
+<div class="mb-1 text-amber-600 dark:text-amber-500">[10:45:11 AM] Warning: 'Mysterious Stranger' lacks character sheet linkage.</div>
+<div class="flex items-center gap-2 mt-2">
+<span class="text-primary">&gt;</span>
+<input class="bg-transparent border-none outline-none flex-1 text-slate-800 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-600" placeholder="Enter engine command..." type="text"/>
+</div>
+</div>
+</div>
+</div>
+</div>
+</body></html>

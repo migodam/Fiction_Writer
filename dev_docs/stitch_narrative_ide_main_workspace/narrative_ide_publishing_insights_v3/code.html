@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Narrative IDE - Publishing Studio &amp; Insights</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#9010da",
+                        "background-light": "#f7f6f8",
+                        "background-dark": "#1b1022",
+                    },
+                    fontFamily: {
+                        "display": ["Inter"]
+                    },
+                    borderRadius: { "DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px" },
+                },
+            },
+        }
+    </script>
+<style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 flex flex-col h-screen overflow-hidden font-display">
+<!-- TopNavBar -->
+<header class="flex items-center justify-between whitespace-nowrap border-b border-solid border-slate-200 dark:border-white/10 px-6 py-3 shrink-0 bg-background-light dark:bg-background-dark z-10">
+<div class="flex items-center gap-4">
+<div class="size-6 text-primary flex items-center justify-center">
+<span class="material-symbols-outlined text-[24px]">menu_book</span>
+</div>
+<h2 class="text-lg font-bold leading-tight tracking-[-0.015em] text-slate-900 dark:text-slate-100">Narrative IDE</h2>
+</div>
+<div class="flex flex-1 justify-end gap-6 items-center">
+<div class="flex gap-2">
+<button class="flex min-w-[84px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-9 px-4 bg-primary text-white text-sm font-bold leading-normal tracking-[0.015em] hover:bg-primary/90 transition-colors">
+<span class="material-symbols-outlined mr-2 text-[18px]">file_download</span>
+<span class="truncate">Export Book</span>
+</button>
+<button class="flex min-w-[84px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-9 px-4 bg-slate-200 dark:bg-white/10 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-white/20 transition-colors text-sm font-bold leading-normal tracking-[0.015em]">
+<span class="material-symbols-outlined mr-2 text-[18px]">help</span>
+<span class="truncate">Help</span>
+</button>
+<button class="flex cursor-pointer items-center justify-center overflow-hidden rounded-lg h-9 w-9 bg-slate-200 dark:bg-white/10 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-white/20 transition-colors">
+<span class="material-symbols-outlined text-[20px]">settings</span>
+</button>
+<button class="flex cursor-pointer items-center justify-center overflow-hidden rounded-lg h-9 w-9 bg-slate-200 dark:bg-white/10 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-white/20 transition-colors relative">
+<span class="material-symbols-outlined text-[20px]">notifications</span>
+<span class="absolute top-2 right-2 size-2 bg-primary rounded-full"></span>
+</button>
+</div>
+<div class="bg-center bg-no-repeat aspect-square bg-cover rounded-full size-9 bg-slate-300 dark:bg-white/20" data-alt="User Avatar" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuC8969mfsnZGN0GPTl6ZWgb08AcY6oKX5JuqdHo4gZSDaZOaoTC174w_-f1zhHUwWVP8PPFovVRr8ZmZvOzXcCb5GNmJCAA0EJeH9kV2D2I99348Y3eAjUw8woqIRoVbdseP9R2oHWphtsgImhaYysZIkzd5XiWW5EVvm82wXjCuqI_fvHU71RwWdVxS9bGC13g4iCiN5xmX5Swl08I24yH6K93c7oEQUY05WB9V0RW-eu1msO7RLa47FhhprwjKiXaPrz4K2z27wgh");'></div>
+</div>
+</header>
+<!-- Main Content Area -->
+<div class="flex flex-1 overflow-hidden">
+<!-- Activity Bar (Far Left) -->
+<nav class="w-16 flex flex-col items-center py-4 gap-4 border-r border-slate-200 dark:border-white/10 bg-background-light dark:bg-background-dark shrink-0">
+<button class="size-10 flex items-center justify-center rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-white/10 transition-colors" title="Files">
+<span class="material-symbols-outlined text-[24px]">folder</span>
+</button>
+<button class="size-10 flex items-center justify-center rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-white/10 transition-colors" title="Search">
+<span class="material-symbols-outlined text-[24px]">search</span>
+</button>
+<button class="size-10 flex items-center justify-center rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-white/10 transition-colors" title="Characters">
+<span class="material-symbols-outlined text-[24px]">group</span>
+</button>
+<button class="size-10 flex items-center justify-center rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-white/10 transition-colors" title="Locations">
+<span class="material-symbols-outlined text-[24px]">location_on</span>
+</button>
+<button class="size-10 flex items-center justify-center rounded-lg bg-primary/20 text-primary dark:text-primary-light" title="Publish">
+<span class="material-symbols-outlined text-[24px]">publish</span>
+</button>
+<div class="mt-auto flex flex-col gap-4">
+<button class="size-10 flex items-center justify-center rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-white/10 transition-colors" title="Extensions">
+<span class="material-symbols-outlined text-[24px]">extension</span>
+</button>
+</div>
+</nav>
+<!-- Left Sidebar (Export Formats) -->
+<aside class="w-64 flex flex-col border-r border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#1f1627] shrink-0">
+<div class="p-4 border-b border-slate-200 dark:border-white/10">
+<h3 class="text-sm font-semibold text-slate-800 dark:text-slate-200 uppercase tracking-wider">Publishing</h3>
+</div>
+<div class="flex-1 overflow-y-auto p-2">
+<div class="mb-4">
+<div class="px-3 py-2 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Formats</div>
+<ul class="space-y-1">
+<li>
+<button class="w-full flex items-center gap-3 px-3 py-2 rounded-lg bg-primary/10 text-primary dark:text-purple-300 font-medium">
+<span class="material-symbols-outlined text-[20px]">book</span>
+<span class="text-sm">EPUB (eBook)</span>
+</button>
+</li>
+<li>
+<button class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-white/5 transition-colors">
+<span class="material-symbols-outlined text-[20px]">picture_as_pdf</span>
+<span class="text-sm">PDF (Print/Digital)</span>
+</button>
+</li>
+<li>
+<button class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-white/5 transition-colors">
+<span class="material-symbols-outlined text-[20px]">description</span>
+<span class="text-sm">DOCX (Manuscript)</span>
+</button>
+</li>
+<li>
+<button class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-white/5 transition-colors">
+<span class="material-symbols-outlined text-[20px]">language</span>
+<span class="text-sm">HTML (Web)</span>
+</button>
+</li>
+</ul>
+</div>
+<div>
+<div class="px-3 py-2 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Templates</div>
+<ul class="space-y-1">
+<li>
+<button class="w-full flex items-center justify-between px-3 py-2 rounded-lg text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-white/5 transition-colors">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-[20px]">style</span>
+<span class="text-sm">Modern Novel</span>
+</div>
+<span class="material-symbols-outlined text-[16px] text-primary">check_circle</span>
+</button>
+</li>
+<li>
+<button class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-white/5 transition-colors">
+<span class="material-symbols-outlined text-[20px]">style</span>
+<span class="text-sm">Classic Serif</span>
+</button>
+</li>
+<li>
+<button class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-white/5 transition-colors">
+<span class="material-symbols-outlined text-[20px]">style</span>
+<span class="text-sm">Sci-Fi Clean</span>
+</button>
+</li>
+</ul>
+</div>
+</div>
+</aside>
+<!-- Central Workspace & Bottom Console Container -->
+<div class="flex-1 flex flex-col min-w-0">
+<!-- Main Workspace (Book Preview) -->
+<main class="flex-1 flex flex-col bg-background-light dark:bg-[#150d1a] relative overflow-hidden">
+<!-- Toolbar -->
+<div class="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-white/10 shrink-0">
+<div class="flex items-center gap-4">
+<h1 class="text-xl font-bold text-slate-900 dark:text-slate-100">Project Alpha - EPUB Preview</h1>
+<span class="px-2 py-1 rounded bg-slate-200 dark:bg-white/10 text-xs font-medium text-slate-600 dark:text-slate-400">Draft v1.2</span>
+</div>
+<div class="flex gap-2">
+<button class="px-3 py-1.5 rounded bg-slate-200 dark:bg-white/10 text-slate-700 dark:text-slate-300 text-sm font-medium hover:bg-slate-300 dark:hover:bg-white/20 transition-colors flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px]">visibility</span>
+                            Preview Output
+                        </button>
+</div>
+</div>
+<!-- Content Area -->
+<div class="flex-1 overflow-y-auto p-6 @container">
+<div class="max-w-4xl mx-auto space-y-6">
+<!-- Table of Contents Builder -->
+<div class="bg-white dark:bg-[#1f1627] rounded-xl border border-slate-200 dark:border-white/10 overflow-hidden shadow-sm">
+<div class="px-4 py-3 border-b border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-white/5 flex justify-between items-center">
+<h3 class="text-sm font-semibold text-slate-800 dark:text-slate-200">Table of Contents Builder</h3>
+<button class="text-primary hover:text-primary/80 text-sm font-medium flex items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">add</span> Add Frontmatter
+                                </button>
+</div>
+<div class="p-0">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="border-b border-slate-200 dark:border-white/10">
+<th class="px-4 py-3 text-xs font-medium text-slate-500 dark:text-slate-400 w-10"></th>
+<th class="px-4 py-3 text-xs font-medium text-slate-500 dark:text-slate-400">Chapter / Section</th>
+<th class="px-4 py-3 text-xs font-medium text-slate-500 dark:text-slate-400 hidden @md:table-cell">Word Count</th>
+<th class="px-4 py-3 text-xs font-medium text-slate-500 dark:text-slate-400 hidden @lg:table-cell">Status</th>
+<th class="px-4 py-3 text-xs font-medium text-slate-500 dark:text-slate-400 text-right">Include</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-slate-100 dark:divide-white/5">
+<!-- Frontmatter -->
+<tr class="hover:bg-slate-50 dark:hover:bg-white/5 transition-colors group">
+<td class="px-4 py-3 text-slate-400 cursor-move"><span class="material-symbols-outlined text-[20px] opacity-0 group-hover:opacity-100 transition-opacity">drag_indicator</span></td>
+<td class="px-4 py-3">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px] text-slate-400">info</span>
+<span class="text-sm font-medium text-slate-700 dark:text-slate-300">Title Page &amp; Copyright</span>
+</div>
+</td>
+<td class="px-4 py-3 text-sm text-slate-500 dark:text-slate-400 hidden @md:table-cell">-</td>
+<td class="px-4 py-3 hidden @lg:table-cell"><span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">Ready</span></td>
+<td class="px-4 py-3 text-right">
+<input checked="" class="rounded border-slate-300 dark:border-slate-600 text-primary focus:ring-primary bg-transparent" type="checkbox"/>
+</td>
+</tr>
+<!-- Chapters -->
+<tr class="hover:bg-slate-50 dark:hover:bg-white/5 transition-colors group bg-slate-50/50 dark:bg-white/[0.02]">
+<td class="px-4 py-3 text-slate-400 cursor-move"><span class="material-symbols-outlined text-[20px] opacity-50 group-hover:opacity-100 transition-opacity">drag_indicator</span></td>
+<td class="px-4 py-3">
+<div class="flex flex-col">
+<span class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Chapter 1</span>
+<span class="text-sm font-medium text-slate-800 dark:text-slate-200">The Beginning</span>
+</div>
+</td>
+<td class="px-4 py-3 text-sm text-slate-500 dark:text-slate-400 hidden @md:table-cell">2,500</td>
+<td class="px-4 py-3 hidden @lg:table-cell"><span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">Ready</span></td>
+<td class="px-4 py-3 text-right">
+<input checked="" class="rounded border-slate-300 dark:border-slate-600 text-primary focus:ring-primary bg-transparent" type="checkbox"/>
+</td>
+</tr>
+<tr class="hover:bg-slate-50 dark:hover:bg-white/5 transition-colors group">
+<td class="px-4 py-3 text-slate-400 cursor-move"><span class="material-symbols-outlined text-[20px] opacity-0 group-hover:opacity-100 transition-opacity">drag_indicator</span></td>
+<td class="px-4 py-3">
+<div class="flex flex-col">
+<span class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Chapter 2</span>
+<span class="text-sm font-medium text-slate-800 dark:text-slate-200">The Incident</span>
+</div>
+</td>
+<td class="px-4 py-3 text-sm text-slate-500 dark:text-slate-400 hidden @md:table-cell">3,100</td>
+<td class="px-4 py-3 hidden @lg:table-cell"><span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">Ready</span></td>
+<td class="px-4 py-3 text-right">
+<input checked="" class="rounded border-slate-300 dark:border-slate-600 text-primary focus:ring-primary bg-transparent" type="checkbox"/>
+</td>
+</tr>
+<tr class="hover:bg-slate-50 dark:hover:bg-white/5 transition-colors group">
+<td class="px-4 py-3 text-slate-400 cursor-move"><span class="material-symbols-outlined text-[20px] opacity-0 group-hover:opacity-100 transition-opacity">drag_indicator</span></td>
+<td class="px-4 py-3">
+<div class="flex flex-col">
+<span class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Chapter 3</span>
+<span class="text-sm font-medium text-slate-800 dark:text-slate-200">The Journey</span>
+</div>
+</td>
+<td class="px-4 py-3 text-sm text-slate-500 dark:text-slate-400 hidden @md:table-cell">2,800</td>
+<td class="px-4 py-3 hidden @lg:table-cell"><span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400">Needs Review</span></td>
+<td class="px-4 py-3 text-right">
+<input checked="" class="rounded border-slate-300 dark:border-slate-600 text-primary focus:ring-primary bg-transparent" type="checkbox"/>
+</td>
+</tr>
+<tr class="hover:bg-slate-50 dark:hover:bg-white/5 transition-colors group">
+<td class="px-4 py-3 text-slate-400 cursor-move"><span class="material-symbols-outlined text-[20px] opacity-0 group-hover:opacity-100 transition-opacity">drag_indicator</span></td>
+<td class="px-4 py-3">
+<div class="flex flex-col">
+<span class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Chapter 4</span>
+<span class="text-sm font-medium text-slate-500 dark:text-slate-400 italic">The Conflict (Drafting)</span>
+</div>
+</td>
+<td class="px-4 py-3 text-sm text-slate-500 dark:text-slate-400 hidden @md:table-cell">1,200</td>
+<td class="px-4 py-3 hidden @lg:table-cell"><span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-800 dark:bg-white/10 dark:text-slate-300">Draft</span></td>
+<td class="px-4 py-3 text-right">
+<input class="rounded border-slate-300 dark:border-slate-600 text-primary focus:ring-primary bg-transparent" type="checkbox"/>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+</div>
+</main>
+<!-- Bottom Console (Project Intelligence) -->
+<div class="h-64 border-t border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#1a1120] shrink-0 flex flex-col">
+<div class="flex items-center justify-between px-4 py-2 border-b border-slate-200 dark:border-white/10">
+<div class="flex items-center gap-4">
+<button class="text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 pb-1 border-b-2 border-transparent">Terminal</button>
+<button class="text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 pb-1 border-b-2 border-transparent">Problems (2)</button>
+<button class="text-sm font-medium text-primary border-b-2 border-primary pb-1">Project Intelligence</button>
+</div>
+<div class="flex items-center gap-2">
+<button class="p-1 rounded text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-white/10">
+<span class="material-symbols-outlined text-[18px]">keyboard_arrow_up</span>
+</button>
+<button class="p-1 rounded text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-white/10">
+<span class="material-symbols-outlined text-[18px]">close</span>
+</button>
+</div>
+</div>
+<div class="flex-1 p-4 flex gap-6 overflow-hidden">
+<!-- Chart 1: Pacing -->
+<div class="flex-1 flex flex-col min-w-0">
+<h4 class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">Chapter Pacing (Action vs Dialogue)</h4>
+<div class="flex-1 bg-white dark:bg-[#23182b] rounded-lg border border-slate-200 dark:border-white/5 p-3 flex items-end gap-2 relative">
+<!-- Mock Bar Chart -->
+<div class="w-full h-full flex items-end justify-between px-2 gap-1">
+<div class="w-1/4 h-[40%] bg-blue-400/80 dark:bg-blue-500/60 rounded-t relative group"><div class="absolute inset-x-0 bottom-0 h-[60%] bg-primary/80 dark:bg-primary/60 rounded-t"></div></div>
+<div class="w-1/4 h-[70%] bg-blue-400/80 dark:bg-blue-500/60 rounded-t relative group"><div class="absolute inset-x-0 bottom-0 h-[30%] bg-primary/80 dark:bg-primary/60 rounded-t"></div></div>
+<div class="w-1/4 h-[50%] bg-blue-400/80 dark:bg-blue-500/60 rounded-t relative group"><div class="absolute inset-x-0 bottom-0 h-[80%] bg-primary/80 dark:bg-primary/60 rounded-t"></div></div>
+<div class="w-1/4 h-[90%] bg-blue-400/80 dark:bg-blue-500/60 rounded-t relative group"><div class="absolute inset-x-0 bottom-0 h-[20%] bg-primary/80 dark:bg-primary/60 rounded-t"></div></div>
+</div>
+<div class="absolute top-2 right-2 flex gap-3 text-[10px] text-slate-500">
+<span class="flex items-center gap-1"><span class="w-2 h-2 bg-blue-400/80 dark:bg-blue-500/60 rounded-sm"></span> Action</span>
+<span class="flex items-center gap-1"><span class="w-2 h-2 bg-primary/80 dark:bg-primary/60 rounded-sm"></span> Dialogue</span>
+</div>
+</div>
+</div>
+<!-- Chart 2: POV Distribution -->
+<div class="flex-1 flex flex-col min-w-0">
+<h4 class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">POV Distribution</h4>
+<div class="flex-1 bg-white dark:bg-[#23182b] rounded-lg border border-slate-200 dark:border-white/5 p-3 flex items-center justify-center gap-6">
+<!-- Mock Pie Chart (CSS rounded div) -->
+<div class="size-24 rounded-full border-[12px] border-primary/80 border-r-blue-500/60 border-b-blue-500/60 transform rotate-45 relative">
+<div class="absolute inset-0 rounded-full border-[12px] border-transparent border-l-teal-500/60 transform -rotate-12"></div>
+</div>
+<div class="flex flex-col gap-2 text-sm">
+<div class="flex items-center gap-2"><span class="w-3 h-3 bg-primary/80 rounded-sm"></span> <span class="text-slate-700 dark:text-slate-300">Elenor (45%)</span></div>
+<div class="flex items-center gap-2"><span class="w-3 h-3 bg-blue-500/60 rounded-sm"></span> <span class="text-slate-700 dark:text-slate-300">Marcus (35%)</span></div>
+<div class="flex items-center gap-2"><span class="w-3 h-3 bg-teal-500/60 rounded-sm"></span> <span class="text-slate-700 dark:text-slate-300">Silas (20%)</span></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Right Inspector (Metadata) -->
+<aside class="w-72 flex flex-col border-l border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#1f1627] shrink-0">
+<div class="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-white/10">
+<h3 class="text-sm font-semibold text-slate-800 dark:text-slate-200">Metadata</h3>
+<button class="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200">
+<span class="material-symbols-outlined text-[18px]">more_horiz</span>
+</button>
+</div>
+<div class="flex-1 overflow-y-auto p-4 space-y-6">
+<!-- Cover Image -->
+<div class="space-y-2">
+<label class="block text-xs font-medium text-slate-500 dark:text-slate-400">Cover Art</label>
+<div class="aspect-[2/3] w-full rounded-lg bg-slate-200 dark:bg-white/5 border-2 border-dashed border-slate-300 dark:border-white/10 flex flex-col items-center justify-center text-slate-500 dark:text-slate-400 hover:bg-slate-300 dark:hover:bg-white/10 transition-colors cursor-pointer" data-alt="Placeholder for Cover Art">
+<span class="material-symbols-outlined text-[32px] mb-2">add_photo_alternate</span>
+<span class="text-xs font-medium">Upload Cover</span>
+</div>
+</div>
+<!-- Book Details -->
+<div class="space-y-4">
+<div class="space-y-1">
+<label class="block text-xs font-medium text-slate-500 dark:text-slate-400">Title</label>
+<input class="w-full px-3 py-2 bg-white dark:bg-[#150d1a] border border-slate-300 dark:border-white/10 rounded-md text-sm text-slate-900 dark:text-slate-100 focus:ring-1 focus:ring-primary focus:border-primary" type="text" value="Project Alpha"/>
+</div>
+<div class="space-y-1">
+<label class="block text-xs font-medium text-slate-500 dark:text-slate-400">Author</label>
+<input class="w-full px-3 py-2 bg-white dark:bg-[#150d1a] border border-slate-300 dark:border-white/10 rounded-md text-sm text-slate-900 dark:text-slate-100 focus:ring-1 focus:ring-primary focus:border-primary" type="text" value="Jane Doe"/>
+</div>
+<div class="space-y-1">
+<label class="block text-xs font-medium text-slate-500 dark:text-slate-400">ISBN</label>
+<input class="w-full px-3 py-2 bg-white dark:bg-[#150d1a] border border-slate-300 dark:border-white/10 rounded-md text-sm text-slate-900 dark:text-slate-100 focus:ring-1 focus:ring-primary focus:border-primary" placeholder="Optional" type="text"/>
+</div>
+</div>
+<!-- Blurb Generator -->
+<div class="space-y-2 pt-4 border-t border-slate-200 dark:border-white/10">
+<div class="flex items-center justify-between">
+<label class="block text-xs font-medium text-slate-500 dark:text-slate-400">Synopsis / Blurb</label>
+</div>
+<textarea class="w-full px-3 py-2 bg-white dark:bg-[#150d1a] border border-slate-300 dark:border-white/10 rounded-md text-sm text-slate-900 dark:text-slate-100 focus:ring-1 focus:ring-primary focus:border-primary resize-none placeholder-slate-400 dark:placeholder-slate-600" placeholder="Write your book's description..." rows="4"></textarea>
+<button class="w-full flex items-center justify-center gap-2 px-4 py-2 bg-gradient-to-r from-primary/20 to-blue-500/20 text-primary dark:text-purple-300 border border-primary/30 rounded-lg text-sm font-medium hover:bg-primary/30 transition-colors">
+<span class="material-symbols-outlined text-[18px]">auto_awesome</span>
+                        AI Generate Blurb
+                    </button>
+</div>
+</div>
+</aside>
+</div>
+</body></html>

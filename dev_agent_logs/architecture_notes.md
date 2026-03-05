@@ -1,30 +1,40 @@
-# Architecture Notes
+# Frontend Architecture Notes
 
-## Platform
-- Windows-only demo target.
-- Electron shell.
-- React UI with Vite.
+## Current State (Phase 2)
+- **Tech Stack**: Electron, React 18, Vite, TypeScript, Tailwind CSS, Zustand, Playwright.
+- **Layout**: Complete Phase 1 Shell.
+- **State Management**: Zustand stores handling UI, Project data, and Selection.
+- **Persistence**: Scaffolding for JSON persistence.
 
-## Layout
-- VSCode-style layout with:
-  - Top Toolbar
-  - Activity Bar (Left icon rail)
-  - Sidebar (Contextual second-level navigation)
-  - Workspace (Main panel)
-  - Inspector (Right panel)
-  - Status Bar (Bottom)
-
-## Routing
-- Using React Router.
-- Routes follow `UI_ROUTES.txt`.
-
-## State
-- Zustand for UI state and project data.
+## Project JSON Schema (Phase 1 Persistence)
+```json
+{
+  "metadata": {
+    "name": "Project Name",
+    "lastModified": "2026-03-05T..."
+  },
+  "characters": [
+    { "id": "char_1", "name": "...", "background": "...", "aliases": "..." }
+  ],
+  "timeline": {
+    "branches": [{ "id": "branch_main", "name": "Main" }],
+    "events": [
+      { "id": "event_1", "title": "...", "summary": "...", "branchId": "branch_main", "orderIndex": 0 }
+    ]
+  },
+  "writing": {
+    "scenes": [
+      { "id": "scene_1", "title": "...", "content": "..." }
+    ]
+  }
+}
+```
 
 ## Selection Model
-- Global selection driven by (type, id).
-- Workspace click sets selection.
-- Inspector listens to selection.
+The `selectedEntity` in `useProjectStore` is the source of truth for the `Inspector`.
+Components must call `setSelectedEntity(type, id)` to update the global view.
 
-## Persistence
-- JSON files stored locally (Phase 1).
+## Gaps vs. Phase 2 Exit Criteria
+- Electron IPC wiring for file system access (loading/saving real files).
+- Global search UI component in Top Toolbar.
+- "Project Open" dialog implementation.

@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Narrative IDE - Continuity Engine &amp; Guided Fix</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#9010da",
+                        "background-light": "#f7f6f8",
+                        "background-dark": "#1b1022",
+                    },
+                    fontFamily: {
+                        "display": ["Inter", "sans-serif"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings:
+            'FILL' 1,
+            'wght' 400,
+            'GRAD' 0,
+            'opsz' 24
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 font-display min-h-screen flex flex-col overflow-hidden">
+<header class="flex items-center justify-between whitespace-nowrap border-b border-solid border-slate-200 dark:border-primary/20 px-10 py-3 bg-white dark:bg-[#1b1022]">
+<div class="flex items-center gap-4 text-slate-900 dark:text-white">
+<div class="size-6 text-primary flex items-center justify-center">
+<span class="material-symbols-outlined">auto_stories</span>
+</div>
+<h2 class="text-slate-900 dark:text-white text-lg font-bold leading-tight tracking-[-0.015em]">Narrative IDE</h2>
+</div>
+<div class="flex flex-1 justify-end gap-8">
+<div class="flex items-center gap-9">
+<a class="text-slate-600 dark:text-slate-300 hover:text-primary dark:hover:text-primary transition-colors text-sm font-medium leading-normal" href="#">File</a>
+<a class="text-slate-600 dark:text-slate-300 hover:text-primary dark:hover:text-primary transition-colors text-sm font-medium leading-normal" href="#">Edit</a>
+<a class="text-slate-600 dark:text-slate-300 hover:text-primary dark:hover:text-primary transition-colors text-sm font-medium leading-normal" href="#">View</a>
+<a class="text-primary dark:text-primary text-sm font-bold leading-normal border-b-2 border-primary pb-1" href="#">Writing Studio</a>
+<a class="text-slate-600 dark:text-slate-300 hover:text-primary dark:hover:text-primary transition-colors text-sm font-medium leading-normal" href="#">Timeline</a>
+<a class="text-slate-600 dark:text-slate-300 hover:text-primary dark:hover:text-primary transition-colors text-sm font-medium leading-normal" href="#">Characters</a>
+</div>
+<div class="flex gap-2">
+<button class="flex max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 bg-slate-100 dark:bg-primary/20 text-slate-700 dark:text-primary hover:bg-slate-200 dark:hover:bg-primary/30 transition-colors gap-2 text-sm font-bold leading-normal tracking-[0.015em] min-w-0 px-2.5">
+<span class="material-symbols-outlined text-[20px]">notifications</span>
+</button>
+<button class="flex max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 bg-slate-100 dark:bg-primary/20 text-slate-700 dark:text-primary hover:bg-slate-200 dark:hover:bg-primary/30 transition-colors gap-2 text-sm font-bold leading-normal tracking-[0.015em] min-w-0 px-2.5">
+<span class="material-symbols-outlined text-[20px]">settings</span>
+</button>
+<button class="flex max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 bg-slate-100 dark:bg-primary/20 text-slate-700 dark:text-primary hover:bg-slate-200 dark:hover:bg-primary/30 transition-colors gap-2 text-sm font-bold leading-normal tracking-[0.015em] min-w-0 px-2.5">
+<span class="material-symbols-outlined text-[20px]">person</span>
+</button>
+</div>
+</div>
+</header>
+<div class="flex flex-1 overflow-hidden relative">
+<!-- Sidebar -->
+<aside class="w-64 border-r border-slate-200 dark:border-primary/20 bg-white dark:bg-[#1b1022] flex flex-col">
+<div class="p-4 border-b border-slate-200 dark:border-primary/20">
+<div class="flex gap-3 items-center">
+<div class="bg-center bg-no-repeat aspect-square bg-cover rounded-full size-10 border border-slate-200 dark:border-primary/30" data-alt="Abstract space nebula pattern" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuAGgGuovmQem5KfI15qSwpfIfxNz9T4KcGHzO6kJa77wze38wNcL3Gui8rObQuuHp7jd20ajFNI0uLEQaVdCbUq1GrtaxKRnHgKVIxebm2yFRh1q-L2A3nTLKew76SZNOmq6ichAcIspYWkRO-wIsWvRs_3_RfVycCqSv9ViLKmFTHMCJ60XC10VxYp6T-swqgvXHIACr6k6CYqlZW043OI1_WN_RodyHtBiNp2LKodNJr2ftvum0liBgJrTTvT2lRDR4TITKTHj_Vv");'></div>
+<div class="flex flex-col">
+<h1 class="text-slate-900 dark:text-white text-base font-bold leading-normal">Project Alpha</h1>
+<p class="text-slate-500 dark:text-slate-400 text-xs font-medium leading-normal">Last saved 2m ago</p>
+</div>
+</div>
+</div>
+<nav class="flex-1 overflow-y-auto p-4 flex flex-col gap-1">
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-primary/10 transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">description</span>
+<span class="text-sm font-medium">Drafts</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg bg-primary/10 dark:bg-primary/20 text-primary dark:text-primary font-bold" href="#">
+<span class="material-symbols-outlined text-[20px]">movie</span>
+<span class="text-sm">Scenes</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-primary/10 transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">format_list_bulleted</span>
+<span class="text-sm font-medium">Outline</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-primary/10 transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">notes</span>
+<span class="text-sm font-medium">Notes</span>
+</a>
+<div class="mt-4 mb-2 px-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Active Scenes</div>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-primary/10 transition-colors" href="#">
+<span class="material-symbols-outlined text-[16px] text-slate-400">segment</span>
+<span class="text-sm text-slate-700 dark:text-slate-300 truncate">1. The Arrival</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg bg-slate-100 dark:bg-[#251832] text-slate-900 dark:text-white font-medium border-l-2 border-primary" href="#">
+<span class="material-symbols-outlined text-[16px] text-primary">segment</span>
+<span class="text-sm truncate">2. The Encounter</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-primary/10 transition-colors" href="#">
+<span class="material-symbols-outlined text-[16px] text-slate-400">segment</span>
+<span class="text-sm text-slate-700 dark:text-slate-300 truncate">3. Aftermath</span>
+</a>
+</nav>
+<div class="p-4 border-t border-slate-200 dark:border-primary/20">
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-primary/10 transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">delete</span>
+<span class="text-sm font-medium">Trash</span>
+</a>
+</div>
+</aside>
+<!-- Main Editor Area -->
+<main class="flex-1 flex flex-col bg-white dark:bg-[#150d1a]">
+<!-- Editor Toolbar -->
+<div class="flex items-center border-b border-slate-200 dark:border-primary/20 px-6 py-2 bg-slate-50 dark:bg-[#1b1022]">
+<div class="flex items-center gap-2 mr-6">
+<select class="bg-transparent border-none text-sm font-medium text-slate-700 dark:text-slate-300 focus:ring-0 cursor-pointer">
+<option>Heading 1</option>
+<option>Heading 2</option>
+<option selected="">Normal Text</option>
+</select>
+</div>
+<div class="h-6 w-px bg-slate-300 dark:bg-primary/20 mx-2"></div>
+<div class="flex items-center gap-1">
+<button class="p-1.5 rounded hover:bg-slate-200 dark:hover:bg-primary/20 text-slate-700 dark:text-slate-300"><span class="material-symbols-outlined text-[18px]">format_bold</span></button>
+<button class="p-1.5 rounded hover:bg-slate-200 dark:hover:bg-primary/20 text-slate-700 dark:text-slate-300"><span class="material-symbols-outlined text-[18px]">format_italic</span></button>
+<button class="p-1.5 rounded hover:bg-slate-200 dark:hover:bg-primary/20 text-slate-700 dark:text-slate-300"><span class="material-symbols-outlined text-[18px]">format_underlined</span></button>
+</div>
+<div class="h-6 w-px bg-slate-300 dark:bg-primary/20 mx-2"></div>
+<div class="flex items-center gap-1">
+<button class="p-1.5 rounded hover:bg-slate-200 dark:hover:bg-primary/20 text-slate-700 dark:text-slate-300"><span class="material-symbols-outlined text-[18px]">format_align_left</span></button>
+<button class="p-1.5 rounded hover:bg-slate-200 dark:hover:bg-primary/20 text-slate-700 dark:text-slate-300"><span class="material-symbols-outlined text-[18px]">format_align_center</span></button>
+<button class="p-1.5 rounded hover:bg-slate-200 dark:hover:bg-primary/20 text-slate-700 dark:text-slate-300"><span class="material-symbols-outlined text-[18px]">format_align_right</span></button>
+</div>
+</div>
+<!-- Editor Content -->
+<div class="flex-1 overflow-y-auto p-12 lg:px-24 xl:px-32">
+<div class="max-w-3xl mx-auto">
+<h1 class="text-4xl font-bold mb-6 text-slate-900 dark:text-white">Scene 2: The Encounter</h1>
+<p class="text-lg leading-relaxed text-slate-700 dark:text-slate-300 mb-4">
+                        The heavy metal doors of the observation deck slid open with a hiss, revealing the sprawling expanse of the neon-lit city below. Kaelen stepped forward, his boots echoing sharply against the grating. He pulled the collar of his coat up against the artificial chill.
+                    </p>
+<p class="text-lg leading-relaxed text-slate-700 dark:text-slate-300 mb-4">
+                        "You're late," a voice grated from the shadows near the primary console.
+                    </p>
+<p class="text-lg leading-relaxed text-slate-700 dark:text-slate-300 mb-4 relative group">
+<span class="bg-red-100 dark:bg-red-900/30 border-b-2 border-red-500 rounded px-1 -mx-1 cursor-pointer">Kaelen glanced at the chronometer on his wrist. It flashed 14:00.</span>
+<span class="absolute left-full ml-4 top-0 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap bg-red-500 text-white text-xs px-2 py-1 rounded shadow-lg pointer-events-none">
+                            Timeline Contradiction
+                        </span>
+</p>
+<p class="text-lg leading-relaxed text-slate-700 dark:text-slate-300 mb-4">
+                        "Traffic in the upper sectors," he lied smoothly, moving to stand beside the figure. "Do you have the package?"
+                    </p>
+</div>
+</div>
+</main>
+<!-- Right Context Pane -->
+<aside class="w-80 border-l border-slate-200 dark:border-primary/20 bg-slate-50 dark:bg-[#1b1022] flex flex-col z-0">
+<div class="flex border-b border-slate-200 dark:border-primary/30 px-2 pt-2">
+<button class="flex-1 pb-2 border-b-2 border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300 text-sm font-bold">Properties</button>
+<button class="flex-1 pb-2 border-b-2 border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300 text-sm font-bold">Cast</button>
+<button class="flex-1 pb-2 border-b-2 border-primary text-primary dark:text-primary text-sm font-bold">Checks</button>
+</div>
+<div class="flex-1 overflow-y-auto p-4">
+<div class="flex items-center justify-between mb-4">
+<h3 class="text-slate-900 dark:text-white text-sm font-bold uppercase tracking-wider">Continuity Engine</h3>
+<span class="bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300 text-xs font-bold px-2 py-0.5 rounded-full">1 Issue</span>
+</div>
+<!-- Detected Issue Card -->
+<div class="bg-white dark:bg-[#251832] rounded-lg border border-red-200 dark:border-red-900/50 p-3 shadow-sm relative overflow-hidden">
+<div class="absolute top-0 left-0 w-1 h-full bg-red-500"></div>
+<div class="flex items-start gap-3">
+<span class="material-symbols-outlined text-red-500 mt-0.5">error</span>
+<div class="flex-1">
+<h4 class="text-slate-900 dark:text-white text-sm font-bold mb-1">Timeline Contradiction</h4>
+<p class="text-slate-600 dark:text-slate-400 text-xs mb-3">Kaelen is recorded in Sector 4 (Event: The Breach) at 14:00, but is present on the Observation Deck in this scene.</p>
+<button class="w-full bg-slate-100 dark:bg-primary/20 hover:bg-slate-200 dark:hover:bg-primary/30 text-slate-800 dark:text-primary transition-colors text-xs font-bold py-1.5 rounded flex items-center justify-center gap-1">
+<span class="material-symbols-outlined text-[16px]">build</span>
+                                Resolve
+                            </button>
+</div>
+</div>
+</div>
+<div class="mt-6">
+<h3 class="text-slate-900 dark:text-white text-sm font-bold uppercase tracking-wider mb-3">All Clear</h3>
+<div class="flex items-center gap-2 text-slate-500 dark:text-slate-400 text-sm mb-2">
+<span class="material-symbols-outlined text-emerald-500 text-[18px]">check_circle</span>
+                         Character Voices Consistent
+                     </div>
+<div class="flex items-center gap-2 text-slate-500 dark:text-slate-400 text-sm">
+<span class="material-symbols-outlined text-emerald-500 text-[18px]">check_circle</span>
+                         Location Logic Valid
+                     </div>
+</div>
+</div>
+</aside>
+<!-- Guided Fix Modal Overlay (Simulated Active State) -->
+<div class="absolute inset-0 bg-slate-900/50 dark:bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+<div class="bg-white dark:bg-[#1b1022] w-full max-w-2xl rounded-xl shadow-2xl border border-slate-200 dark:border-primary/30 flex flex-col max-h-[90vh]">
+<!-- Modal Header -->
+<div class="px-6 py-4 border-b border-slate-200 dark:border-primary/20 flex items-center justify-between">
+<div class="flex items-center gap-3">
+<div class="bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 p-2 rounded-lg">
+<span class="material-symbols-outlined">timeline</span>
+</div>
+<div>
+<h2 class="text-lg font-bold text-slate-900 dark:text-white">Guided Fix: Timeline Contradiction</h2>
+<p class="text-sm text-slate-500 dark:text-slate-400">Resolve overlapping events for character Kaelen.</p>
+</div>
+</div>
+<button class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors">
+<span class="material-symbols-outlined">close</span>
+</button>
+</div>
+<!-- Modal Body -->
+<div class="p-6 overflow-y-auto flex-1 flex flex-col gap-6">
+<!-- Cause Section -->
+<div>
+<h3 class="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider mb-3">Root Cause</h3>
+<div class="bg-slate-50 dark:bg-[#251832] rounded-lg p-4 border border-slate-200 dark:border-primary/20 flex flex-col gap-3">
+<div class="flex items-center justify-between">
+<span class="text-sm font-medium text-slate-700 dark:text-slate-300">Conflict with Event: <span class="font-bold text-slate-900 dark:text-white">The Breach</span></span>
+<span class="bg-slate-200 dark:bg-primary/20 text-slate-700 dark:text-primary text-xs font-bold px-2 py-1 rounded">Global Timeline</span>
+</div>
+<div class="flex items-center gap-4 text-sm text-slate-600 dark:text-slate-400">
+<div class="flex items-center gap-1"><span class="material-symbols-outlined text-[16px]">schedule</span> 14:00 - 15:30</div>
+<div class="flex items-center gap-1"><span class="material-symbols-outlined text-[16px]">location_on</span> Sector 4 Lower Levels</div>
+</div>
+</div>
+</div>
+<!-- Suggested Edits Section -->
+<div>
+<h3 class="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider mb-3">Suggested Edits</h3>
+<!-- Option 1: Edit Scene Metadata (Selected) -->
+<label class="block mb-3 relative cursor-pointer group">
+<input checked="" class="peer sr-only" name="fix_option" type="radio"/>
+<div class="bg-white dark:bg-[#1b1022] rounded-lg p-4 border-2 border-slate-200 dark:border-primary/20 peer-checked:border-primary peer-checked:bg-primary/5 dark:peer-checked:bg-primary/10 transition-all flex gap-4 items-start">
+<div class="mt-0.5 flex-shrink-0 w-5 h-5 rounded-full border-2 border-slate-300 dark:border-slate-600 peer-checked:border-primary flex items-center justify-center">
+<div class="w-2.5 h-2.5 rounded-full bg-primary scale-0 peer-checked:scale-100 transition-transform"></div>
+</div>
+<div class="flex-1">
+<h4 class="text-sm font-bold text-slate-900 dark:text-white mb-1">Shift Current Scene Time</h4>
+<p class="text-xs text-slate-500 dark:text-slate-400 mb-3">Automatically updates the scene metadata and suggests a text rewrite.</p>
+<div class="grid grid-cols-2 gap-4 bg-white dark:bg-[#150d1a] p-3 rounded border border-slate-200 dark:border-primary/20">
+<div>
+<span class="block text-xs text-slate-400 mb-1">Current Scene Metadata</span>
+<div class="text-sm font-medium text-red-600 dark:text-red-400 line-through decoration-red-500/50">Time: 14:00</div>
+</div>
+<div>
+<span class="block text-xs text-slate-400 mb-1">Proposed Update</span>
+<div class="text-sm font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                                                Time: 16:00 <span class="material-symbols-outlined text-[14px]">arrow_forward</span>
+</div>
+</div>
+</div>
+<div class="mt-3 bg-slate-50 dark:bg-[#251832] p-3 rounded text-sm text-slate-700 dark:text-slate-300 border-l-2 border-primary italic">
+                                        "Kaelen glanced at the chronometer on his wrist. It flashed <span class="line-through text-slate-400">14:00</span> <span class="font-bold text-primary">16:00</span>."
+                                    </div>
+</div>
+</div>
+</label>
+<!-- Option 2: Edit Timeline Event -->
+<label class="block relative cursor-pointer group">
+<input class="peer sr-only" name="fix_option" type="radio"/>
+<div class="bg-white dark:bg-[#1b1022] rounded-lg p-4 border-2 border-slate-200 dark:border-primary/20 peer-checked:border-primary peer-checked:bg-primary/5 dark:peer-checked:bg-primary/10 transition-all flex gap-4 items-start opacity-70 hover:opacity-100">
+<div class="mt-0.5 flex-shrink-0 w-5 h-5 rounded-full border-2 border-slate-300 dark:border-slate-600 peer-checked:border-primary flex items-center justify-center">
+<div class="w-2.5 h-2.5 rounded-full bg-primary scale-0 peer-checked:scale-100 transition-transform"></div>
+</div>
+<div class="flex-1">
+<h4 class="text-sm font-bold text-slate-900 dark:text-white mb-1">Modify 'The Breach' Event</h4>
+<p class="text-xs text-slate-500 dark:text-slate-400">Shift the conflicting global event earlier to accommodate this scene.</p>
+</div>
+</div>
+</label>
+</div>
+</div>
+<!-- Modal Footer -->
+<div class="px-6 py-4 border-t border-slate-200 dark:border-primary/20 flex justify-end gap-3 bg-slate-50 dark:bg-[#1b1022] rounded-b-xl">
+<button class="px-4 py-2 rounded-lg text-sm font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-primary/20 transition-colors">
+                        Cancel
+                    </button>
+<button class="px-6 py-2 rounded-lg text-sm font-bold bg-primary text-white hover:bg-primary/90 transition-colors shadow-lg shadow-primary/20 flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px]">check_circle</span>
+                        Apply Fix
+                    </button>
+</div>
+</div>
+</div>
+</div>
+</body></html>

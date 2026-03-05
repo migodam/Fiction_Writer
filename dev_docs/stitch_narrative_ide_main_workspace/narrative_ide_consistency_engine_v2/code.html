@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Narrative IDE - Consistency Engine</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#9010da",
+                        "background-light": "#f7f6f8",
+                        "background-dark": "#1b1022",
+                    },
+                    fontFamily: {
+                        "display": ["Inter"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+        .material-symbols-outlined {
+            font-family: 'Material Symbols Outlined';
+            font-weight: normal;
+            font-style: normal;
+            font-size: 24px;
+            line-height: 1;
+            letter-spacing: normal;
+            text-transform: none;
+            display: inline-block;
+            white-space: nowrap;
+            word-wrap: normal;
+            direction: ltr;
+            -webkit-font-feature-settings: 'liga';
+            -webkit-font-smoothing: antialiased;
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 font-display min-h-screen flex flex-col">
+<!-- Top Navigation Bar -->
+<header class="flex items-center justify-between whitespace-nowrap border-b border-solid border-slate-200 dark:border-primary/20 px-6 py-3 bg-white dark:bg-background-dark z-10 shrink-0">
+<div class="flex items-center gap-8">
+<div class="flex items-center gap-4 text-primary">
+<div class="size-6 flex items-center justify-center">
+<span class="material-symbols-outlined" style="font-size: 28px;">auto_awesome</span>
+</div>
+<h2 class="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight tracking-[-0.015em]">Narrative IDE</h2>
+</div>
+<div class="flex items-center gap-6 hidden md:flex">
+<a class="text-slate-600 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-colors text-sm font-medium leading-normal" href="#">Writing</a>
+<a class="text-slate-600 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-colors text-sm font-medium leading-normal" href="#">World Building</a>
+<a class="text-slate-600 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-colors text-sm font-medium leading-normal" href="#">Publishing</a>
+<a class="text-primary dark:text-primary text-sm font-medium leading-normal border-b-2 border-primary pb-1" href="#">Simulation &amp; Testing</a>
+</div>
+</div>
+<div class="flex flex-1 justify-end gap-4 items-center">
+<label class="flex flex-col min-w-40 !h-9 max-w-64 hidden sm:flex">
+<div class="flex w-full flex-1 items-stretch rounded-lg h-full border border-slate-300 dark:border-primary/30 overflow-hidden focus-within:border-primary dark:focus-within:border-primary transition-colors">
+<div class="text-slate-500 dark:text-slate-400 flex items-center justify-center pl-3 bg-slate-100 dark:bg-primary/10">
+<span class="material-symbols-outlined" style="font-size: 20px;">search</span>
+</div>
+<input class="flex w-full min-w-0 flex-1 resize-none overflow-hidden text-slate-900 dark:text-slate-100 focus:outline-0 focus:ring-0 border-none bg-slate-100 dark:bg-primary/10 h-full placeholder:text-slate-500 dark:placeholder:text-slate-400 px-3 text-sm font-normal leading-normal" placeholder="Search project..." value=""/>
+</div>
+</label>
+<div class="flex gap-2">
+<button class="flex cursor-pointer items-center justify-center overflow-hidden rounded-lg h-9 w-9 bg-slate-100 dark:bg-primary/10 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-primary/20 transition-colors" title="Notifications">
+<span class="material-symbols-outlined" style="font-size: 20px;">notifications</span>
+</button>
+<button class="flex cursor-pointer items-center justify-center overflow-hidden rounded-lg h-9 w-9 bg-slate-100 dark:bg-primary/10 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-primary/20 transition-colors" title="Settings">
+<span class="material-symbols-outlined" style="font-size: 20px;">settings</span>
+</button>
+</div>
+<div class="bg-center bg-no-repeat aspect-square bg-cover rounded-full size-9 border border-slate-200 dark:border-primary/30" data-alt="User profile avatar placeholder" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuCkaiVcgnIyDxLfMtdBTZaLAtqcjrQA3e89YPN0xdLQxDO03LQuHuUzE1udnXdyEYDvD2OrcWDrOdhtpmRND3QSDFNLPB8qWivyoEMu5j8wxvFwOQ_TKa9avDu-yWDxjpFrgQ1H5-VC0jX9X8vrScmcMsiIj79lwdHZrYotOasO64GuBn9DtRYmhSLlYkHw2KhK7QvCkgGAPu92OPaCCkry7N_3BHstSJlDuDKrnvMpAJzNwXpl59lyIIQn_WXYBRPBuTYVfAtUN-Ua");'></div>
+</div>
+</header>
+<!-- Main Layout -->
+<div class="flex flex-1 overflow-hidden">
+<!-- Activity Bar (Leftmost narrow sidebar) -->
+<nav class="w-14 shrink-0 flex flex-col items-center py-4 gap-4 border-r border-slate-200 dark:border-primary/20 bg-slate-50 dark:bg-background-dark/80">
+<button class="w-10 h-10 rounded-lg flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary hover:bg-primary/10 transition-colors" title="Explorer">
+<span class="material-symbols-outlined">folder_open</span>
+</button>
+<button class="w-10 h-10 rounded-lg flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary hover:bg-primary/10 transition-colors" title="World Model">
+<span class="material-symbols-outlined">public</span>
+</button>
+<button class="w-10 h-10 rounded-lg flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary hover:bg-primary/10 transition-colors" title="Characters">
+<span class="material-symbols-outlined">groups</span>
+</button>
+<div class="w-8 h-px bg-slate-300 dark:bg-primary/30 my-1"></div>
+<button class="w-10 h-10 rounded-lg flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary hover:bg-primary/10 transition-colors" title="Simulation">
+<span class="material-symbols-outlined">play_circle</span>
+</button>
+<button class="w-10 h-10 rounded-lg flex items-center justify-center bg-primary/20 text-primary dark:text-primary shadow-sm" title="Consistency Engine">
+<span class="material-symbols-outlined">fact_check</span>
+</button>
+<button class="w-10 h-10 rounded-lg flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary hover:bg-primary/10 transition-colors" title="Publish">
+<span class="material-symbols-outlined">publish</span>
+</button>
+</nav>
+<!-- Sidebar (Check Categories) -->
+<aside class="w-64 shrink-0 flex flex-col border-r border-slate-200 dark:border-primary/20 bg-white dark:bg-[#1a1320]">
+<div class="p-4 border-b border-slate-200 dark:border-primary/20 flex items-center gap-3">
+<div class="w-8 h-8 rounded bg-primary/20 flex items-center justify-center text-primary">
+<span class="material-symbols-outlined" style="font-size: 20px;">fact_check</span>
+</div>
+<div>
+<h1 class="text-slate-900 dark:text-slate-100 text-sm font-semibold leading-tight">Consistency Engine</h1>
+<p class="text-slate-500 dark:text-slate-400 text-xs font-normal">Verify narrative integrity</p>
+</div>
+</div>
+<div class="flex-1 overflow-y-auto p-3 flex flex-col gap-1">
+<p class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2 px-2 mt-2">Check Categories</p>
+<button class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-primary/10 transition-colors text-left w-full">
+<span class="material-symbols-outlined text-slate-500 dark:text-slate-400" style="font-size: 20px;">timeline</span>
+<span class="text-sm font-medium">Timeline &amp; Events</span>
+</button>
+<button class="flex items-center gap-3 px-3 py-2 rounded-lg bg-primary/10 text-primary dark:bg-primary/20 dark:text-primary text-left w-full">
+<span class="material-symbols-outlined text-primary" style="font-size: 20px;">person_alert</span>
+<span class="text-sm font-medium">Character Logic</span>
+</button>
+<button class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-primary/10 transition-colors text-left w-full">
+<span class="material-symbols-outlined text-slate-500 dark:text-slate-400" style="font-size: 20px;">gavel</span>
+<span class="text-sm font-medium">World Rules</span>
+</button>
+<button class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-primary/10 transition-colors text-left w-full">
+<span class="material-symbols-outlined text-slate-500 dark:text-slate-400" style="font-size: 20px;">location_on</span>
+<span class="text-sm font-medium">Spatial Consistency</span>
+</button>
+<div class="mt-4 pt-4 border-t border-slate-200 dark:border-primary/20">
+<button class="w-full flex cursor-pointer items-center justify-center gap-2 rounded-lg h-9 px-4 bg-primary text-white text-sm font-bold shadow-sm hover:bg-primary/90 transition-colors">
+<span class="material-symbols-outlined" style="font-size: 18px;">play_arrow</span>
+<span>Run Full Scan</span>
+</button>
+</div>
+</div>
+</aside>
+<!-- Main Workspace (Issue List) -->
+<main class="flex-1 flex flex-col min-w-0 bg-slate-50 dark:bg-background-dark overflow-hidden">
+<!-- Workspace Header -->
+<div class="px-6 py-4 border-b border-slate-200 dark:border-primary/20 bg-white dark:bg-[#1a1320] flex items-center justify-between shrink-0">
+<div>
+<h2 class="text-slate-900 dark:text-slate-100 text-xl font-bold leading-tight">Character Logic Issues</h2>
+<p class="text-slate-500 dark:text-slate-400 text-sm mt-1">3 issues found in current draft</p>
+</div>
+<div class="flex gap-2">
+<div class="flex items-center bg-slate-100 dark:bg-primary/10 rounded-lg p-1">
+<button class="px-3 py-1 text-xs font-medium rounded-md bg-white dark:bg-primary/20 text-slate-900 dark:text-slate-100 shadow-sm">All</button>
+<button class="px-3 py-1 text-xs font-medium rounded-md text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200">High Priority</button>
+<button class="px-3 py-1 text-xs font-medium rounded-md text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200">Warnings</button>
+</div>
+</div>
+</div>
+<!-- Issue List -->
+<div class="flex-1 overflow-y-auto p-6 space-y-4">
+<!-- Issue Item 1 (Active) -->
+<div class="bg-white dark:bg-[#1f1726] border-l-4 border-red-500 rounded-r-lg shadow-sm border border-slate-200 dark:border-primary/30 ring-1 ring-primary/50 cursor-pointer overflow-hidden">
+<div class="p-4 flex gap-4">
+<div class="shrink-0 mt-1">
+<span class="material-symbols-outlined text-red-500" style="font-size: 24px;">error</span>
+</div>
+<div class="flex-1 min-w-0">
+<div class="flex items-start justify-between gap-4">
+<h3 class="text-slate-900 dark:text-slate-100 text-base font-semibold truncate">Character Personality Contradiction</h3>
+<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400 shrink-0">High Priority</span>
+</div>
+<p class="text-slate-600 dark:text-slate-300 text-sm mt-1">Elaria feared magic in Act 1, but now uses it confidently in Chapter 12 without character development to explain the shift.</p>
+<div class="mt-3 flex items-center gap-4 text-xs text-slate-500 dark:text-slate-400">
+<span class="flex items-center gap-1"><span class="material-symbols-outlined" style="font-size: 14px;">person</span> Elaria Vance</span>
+<span class="flex items-center gap-1"><span class="material-symbols-outlined" style="font-size: 14px;">menu_book</span> Chapter 12</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Issue Item 2 -->
+<div class="bg-white dark:bg-[#1a1320] border-l-4 border-amber-500 rounded-r-lg shadow-sm border border-slate-200 dark:border-primary/20 hover:border-slate-300 dark:hover:border-primary/40 cursor-pointer transition-colors overflow-hidden opacity-70">
+<div class="p-4 flex gap-4">
+<div class="shrink-0 mt-1">
+<span class="material-symbols-outlined text-amber-500" style="font-size: 24px;">warning</span>
+</div>
+<div class="flex-1 min-w-0">
+<div class="flex items-start justify-between gap-4">
+<h3 class="text-slate-900 dark:text-slate-100 text-base font-medium truncate">Missing Motivation</h3>
+<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400 shrink-0">Warning</span>
+</div>
+<p class="text-slate-600 dark:text-slate-300 text-sm mt-1">Kael decides to join the rebellion abruptly. Previous interactions showed strong loyalty to the crown.</p>
+</div>
+</div>
+</div>
+<!-- Issue Item 3 -->
+<div class="bg-white dark:bg-[#1a1320] border-l-4 border-blue-500 rounded-r-lg shadow-sm border border-slate-200 dark:border-primary/20 hover:border-slate-300 dark:hover:border-primary/40 cursor-pointer transition-colors overflow-hidden opacity-70">
+<div class="p-4 flex gap-4">
+<div class="shrink-0 mt-1">
+<span class="material-symbols-outlined text-blue-500" style="font-size: 24px;">info</span>
+</div>
+<div class="flex-1 min-w-0">
+<div class="flex items-start justify-between gap-4">
+<h3 class="text-slate-900 dark:text-slate-100 text-base font-medium truncate">Unresolved Subplot Arc</h3>
+<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400 shrink-0">Notice</span>
+</div>
+<p class="text-slate-600 dark:text-slate-300 text-sm mt-1">The conflict with the merchant guild established in Chapter 4 hasn't been mentioned in over 50 pages.</p>
+</div>
+</div>
+</div>
+</div>
+</main>
+<!-- Right Inspector (Issue Evidence & Fixes) -->
+<aside class="w-80 xl:w-96 shrink-0 flex flex-col border-l border-slate-200 dark:border-primary/20 bg-white dark:bg-[#1a1320]">
+<!-- Inspector Header -->
+<div class="px-5 py-4 border-b border-slate-200 dark:border-primary/20 flex items-center justify-between shrink-0">
+<h3 class="text-slate-900 dark:text-slate-100 text-sm font-semibold uppercase tracking-wider">Issue Details</h3>
+<button class="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200">
+<span class="material-symbols-outlined" style="font-size: 18px;">close</span>
+</button>
+</div>
+<div class="flex-1 overflow-y-auto">
+<!-- Issue Evidence Section -->
+<div class="p-5 border-b border-slate-200 dark:border-primary/10">
+<h4 class="text-slate-900 dark:text-slate-100 text-sm font-bold flex items-center gap-2 mb-3">
+<span class="material-symbols-outlined text-slate-500" style="font-size: 18px;">plagiarism</span> Evidence from Text
+                </h4>
+<div class="space-y-4">
+<!-- Evidence 1 -->
+<div class="bg-slate-50 dark:bg-background-dark/50 rounded-lg p-3 border border-slate-200 dark:border-primary/10">
+<div class="flex justify-between items-center mb-2">
+<span class="text-xs font-medium text-slate-500 dark:text-slate-400">Chapter 2 • Act 1</span>
+<span class="material-symbols-outlined text-slate-400" style="font-size: 14px;">open_in_new</span>
+</div>
+<p class="text-sm text-slate-700 dark:text-slate-300 italic font-serif">"...Elaria backed away, her hands trembling as the sparks danced across the table. 'I won't touch it,' she whispered, the old terror tightening her throat. 'It corrupts everything it touches.'"</p>
+</div>
+<!-- Evidence 2 -->
+<div class="bg-red-50/50 dark:bg-red-900/10 rounded-lg p-3 border border-red-100 dark:border-red-900/30 relative">
+<div class="absolute -left-1.5 top-4 w-3 h-3 bg-red-500 rounded-full"></div>
+<div class="flex justify-between items-center mb-2 pl-3">
+<span class="text-xs font-medium text-slate-500 dark:text-slate-400">Chapter 12 (Current Draft)</span>
+<span class="material-symbols-outlined text-slate-400" style="font-size: 14px;">open_in_new</span>
+</div>
+<p class="text-sm text-slate-700 dark:text-slate-300 italic font-serif pl-3">"Elaria stepped forward confidently, weaving the arcane threads between her fingers without hesitation. The spell came naturally to her, a tool she wielded with expert precision."</p>
+</div>
+</div>
+</div>
+<!-- World Model Context -->
+<div class="p-5 border-b border-slate-200 dark:border-primary/10">
+<h4 class="text-slate-900 dark:text-slate-100 text-sm font-bold flex items-center gap-2 mb-3">
+<span class="material-symbols-outlined text-slate-500" style="font-size: 18px;">psychology</span> World Model Context
+                </h4>
+<div class="text-sm text-slate-600 dark:text-slate-400 space-y-2">
+<p><strong class="text-slate-700 dark:text-slate-300">Character Trait:</strong> Arcane Phobia (Established Ch. 1)</p>
+<p><strong class="text-slate-700 dark:text-slate-300">Missing Link:</strong> No scene exists showing Elaria overcoming this phobia or learning to cast spells.</p>
+</div>
+</div>
+<!-- Suggested Fixes -->
+<div class="p-5">
+<h4 class="text-slate-900 dark:text-slate-100 text-sm font-bold flex items-center gap-2 mb-3">
+<span class="material-symbols-outlined text-slate-500" style="font-size: 18px;">build</span> Suggested Fixes
+                </h4>
+<div class="space-y-3">
+<label class="flex items-start gap-3 p-3 rounded-lg border border-primary/40 bg-primary/5 cursor-pointer">
+<input checked="" class="mt-0.5 text-primary focus:ring-primary dark:bg-background-dark dark:border-primary/50" name="fix_option" type="radio"/>
+<div>
+<span class="block text-sm font-medium text-slate-900 dark:text-slate-100">Add a transition scene</span>
+<span class="block text-xs text-slate-500 dark:text-slate-400 mt-1">Generate a bridge scene between Ch. 8 and Ch. 12 where Elaria is forced to confront her fear.</span>
+</div>
+</label>
+<label class="flex items-start gap-3 p-3 rounded-lg border border-slate-200 dark:border-primary/20 hover:bg-slate-50 dark:hover:bg-primary/10 cursor-pointer transition-colors">
+<input class="mt-0.5 text-primary focus:ring-primary dark:bg-background-dark dark:border-primary/50" name="fix_option" type="radio"/>
+<div>
+<span class="block text-sm font-medium text-slate-900 dark:text-slate-100">Rewrite Chapter 12 reaction</span>
+<span class="block text-xs text-slate-500 dark:text-slate-400 mt-1">Adjust current draft so she uses magic reluctantly and fearfully out of absolute necessity.</span>
+</div>
+</label>
+</div>
+</div>
+</div>
+<!-- Action Buttons -->
+<div class="p-5 border-t border-slate-200 dark:border-primary/20 bg-slate-50 dark:bg-background-dark/50 flex flex-col gap-3 shrink-0">
+<button class="w-full flex cursor-pointer items-center justify-center gap-2 rounded-lg h-10 px-4 bg-primary text-white text-sm font-bold shadow-sm hover:bg-primary/90 transition-colors">
+<span class="material-symbols-outlined" style="font-size: 18px;">auto_fix_high</span>
+<span>Auto Fix Issue</span>
+</button>
+<button class="w-full flex cursor-pointer items-center justify-center gap-2 rounded-lg h-10 px-4 bg-white dark:bg-primary/10 border border-slate-300 dark:border-primary/30 text-slate-700 dark:text-slate-200 text-sm font-medium hover:bg-slate-50 dark:hover:bg-primary/20 transition-colors">
+<span class="material-symbols-outlined" style="font-size: 18px;">forum</span>
+<span>Send to AI Workbench</span>
+</button>
+</div>
+</aside>
+</div>
+</body></html>
