@@ -1,45 +1,76 @@
-# Python
+# --- Node / React / Electron ---
+node_modules/
+dist/
+dist-electron/
+out/
+build-electron/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.eslintcache
+.stylelintcache
+.vite/
+.parcel-cache
+.next/
+.cache/
+
+# --- Playwright (E2E Testing) ---
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
+# --- Python ---
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
+.pytest_cache/
+.coverage
+.cache
+nosetests.xml
+coverage.xml
+*.tet
+.hypothesis/
+.pypy_cache/
 
-# Virtual Environment
+# --- Virtual Environment ---
 .venv/
 venv/
 ENV/
 env/
 
-# IDE
+# --- IDE / Editor ---
 .vscode/
 .idea/
+*.swp
+*.swo
+.history/
+*.sublime-project
+*.sublime-workspace
 
-# Environment variables
+# --- OS Specific ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Environment & Data ---
 .env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+# Ignore runtime data but keep the directory if needed
+data/*.json
+!data/.gitkeep
+logs/*.log
+!logs/.gitkeep
 
-# Data and logs
-data/
-logs/
-*.log
-
-# AI specific
+# --- AI Specific ---
 *.model
 *.weights
+*.bin
+*.gguf

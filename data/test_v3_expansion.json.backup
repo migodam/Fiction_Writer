@@ -1,0 +1,53 @@
+{
+    "project_info": {
+        "name": "Untitled Project",
+        "style": "Modern"
+    },
+    "canon_facts": [],
+    "chat_history": [],
+    "chapters": [],
+    "timeline_events": [],
+    "setting_pages": [
+        {
+            "id": "f6ded427-4fbf-45e2-bb0c-f4ac2ffd1a5f",
+            "title": "The Guild",
+            "items": [],
+            "created_at": "2026-03-04T00:09:44.311140"
+        }
+    ],
+    "characters": [
+        {
+            "id": "737da119-1122-4c3e-a41a-a19edb359ba5",
+            "name": "Char A",
+            "description": "Desc",
+            "traits": "traits",
+            "goals": "goals",
+            "secrets": "secrets",
+            "status": "candidate",
+            "created_at": "2026-03-04T00:09:44.303862",
+            "background": "Has background"
+        },
+        {
+            "id": "f8c27b5f-675b-435f-8886-dfb071a3429d",
+            "name": "Char B",
+            "description": "Desc",
+            "traits": "traits",
+            "goals": "goals",
+            "secrets": "secrets",
+            "status": "candidate",
+            "created_at": "2026-03-04T00:09:44.306536",
+            "background": ""
+        },
+        {
+            "id": "53f9900b-1b4f-442d-90df-1edd6b85f9db",
+            "name": "Char C",
+            "description": "Desc",
+            "traits": "traits",
+            "goals": "goals",
+            "secrets": "secrets",
+            "status": "candidate",
+            "created_at": "2026-03-04T00:09:44.307744"
+        }
+    ],
+    "relationships": []
+}

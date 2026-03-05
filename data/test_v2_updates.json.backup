@@ -1,0 +1,22 @@
+{
+    "project_info": {
+        "name": "Untitled Project",
+        "style": "Modern"
+    },
+    "canon_facts": [],
+    "chat_history": [],
+    "chapters": [],
+    "timeline_events": [],
+    "setting_pages": [
+        {
+            "id": "cf60976b-3032-458d-8493-2cb4f0ae1e1b",
+            "title": "Lore",
+            "category": "custom",
+            "items": [],
+            "created_at": "2026-03-02T04:01:28.028624",
+            "updated_at": "2026-03-02T04:01:28.028624"
+        }
+    ],
+    "characters": [],
+    "relationships": []
+}

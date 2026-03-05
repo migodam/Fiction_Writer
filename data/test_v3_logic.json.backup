@@ -1,0 +1,53 @@
+{
+    "project_info": {
+        "name": "Untitled Project",
+        "style": "Modern"
+    },
+    "canon_facts": [],
+    "chat_history": [],
+    "chapters": [],
+    "timeline_events": [],
+    "setting_pages": [
+        {
+            "id": "d35adaa3-a9e8-44cd-9175-7a5a96fd6cdc",
+            "title": "The Glass Guild",
+            "items": [],
+            "created_at": "2026-03-03T23:41:27.855067"
+        }
+    ],
+    "characters": [
+        {
+            "id": "385b934a-611c-4f67-926b-d805ca935437",
+            "name": "Hero A",
+            "description": "Desc",
+            "traits": "traits",
+            "goals": "goals",
+            "secrets": "secrets",
+            "status": "candidate",
+            "created_at": "2026-03-03T23:41:27.852090",
+            "background": "Existing background"
+        },
+        {
+            "id": "bdbd418c-c64f-40ed-9182-a10bd6e1ee87",
+            "name": "Hero B",
+            "description": "Desc",
+            "traits": "traits",
+            "goals": "goals",
+            "secrets": "secrets",
+            "status": "candidate",
+            "created_at": "2026-03-03T23:41:27.853066",
+            "background": ""
+        },
+        {
+            "id": "30556195-4b1e-4b45-ba3f-10efc24fa766",
+            "name": "Hero C",
+            "description": "Desc",
+            "traits": "traits",
+            "goals": "goals",
+            "secrets": "secrets",
+            "status": "candidate",
+            "created_at": "2026-03-03T23:41:27.855067"
+        }
+    ],
+    "relationships": []
+}

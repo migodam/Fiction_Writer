@@ -1,0 +1,25 @@
+{
+    "project_info": {
+        "name": "Untitled Project",
+        "style": "Modern"
+    },
+    "canon_facts": [],
+    "chat_history": [],
+    "chapters": [],
+    "timeline_events": [],
+    "setting_pages": [],
+    "characters": [
+        {
+            "id": "b80b7fb9-ec7c-48b8-9b50-7b4db4701709",
+            "name": "TestHero",
+            "description": "A brave knight",
+            "traits": "brave",
+            "goals": "save world",
+            "secrets": "none",
+            "status": "candidate",
+            "created_at": "2026-03-03T22:20:34.621777",
+            "background": ""
+        }
+    ],
+    "relationships": []
+}

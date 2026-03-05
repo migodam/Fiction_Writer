@@ -1,0 +1,39 @@
+{
+    "project_info": {
+        "name": "Untitled Project",
+        "style": "Modern"
+    },
+    "canon_facts": [],
+    "chat_history": [],
+    "outline": [],
+    "chapters": [],
+    "timeline_events": [
+        {
+            "id": "8b8cac5b-bcc5-4c1c-8275-2362aa3eb3bd",
+            "title": "Event to Delete",
+            "time": "2026",
+            "participants": [
+                "None"
+            ],
+            "summary": "Will be removed",
+            "created_at": "2026-03-04T23:01:44.562851"
+        }
+    ],
+    "setting_pages": [],
+    "characters": [
+        {
+            "id": "a4946fc7-da82-4886-bacf-ac8bfe24d952",
+            "name": "Old Character",
+            "description": "Desc",
+            "background": "Desc",
+            "traits": "Traits",
+            "goals": "Goals",
+            "secrets": "Secrets",
+            "status": "candidate",
+            "created_at": "2026-03-04T23:01:44.563515",
+            "tags": [],
+            "aliases": []
+        }
+    ],
+    "relationships": []
+}

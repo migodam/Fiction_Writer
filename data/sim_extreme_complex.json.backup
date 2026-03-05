@@ -1,0 +1,65 @@
+{
+    "project_info": {
+        "name": "Untitled Project",
+        "style": "Modern"
+    },
+    "canon_facts": [],
+    "chat_history": [],
+    "outline": [
+        {
+            "title": "Main Plot",
+            "summary": "艾伦发现古代图纸并决定推翻财阀，展开一系列冒险和对抗。",
+            "status": "draft",
+            "parent_id": null,
+            "id": "3e4db022-831b-4832-b524-8e10c0bf14d7",
+            "ui_metadata": {
+                "is_new_update": true
+            }
+        }
+    ],
+    "chapters": [],
+    "timeline_events": [
+        {
+            "title": "Discovery of Ancient Blueprint",
+            "time": "Future date TBD",
+            "summary": "艾伦在旧城区发现了一份能推翻财阀的古代图纸。",
+            "participants": [
+                "艾伦"
+            ],
+            "id": "aab03c3a-e7a3-492f-9dbc-92fe52f20c3e",
+            "ui_metadata": {
+                "is_new_update": true
+            }
+        }
+    ],
+    "setting_pages": [],
+    "characters": [
+        {
+            "id": "4a7f42d6-c8fe-4aba-94be-cd358504a390",
+            "name": "艾伦",
+            "status": "candidate",
+            "created_at": "2026-03-04T02:36:50.158546",
+            "tags": [],
+            "aliases": [],
+            "role": "protagonist",
+            "description": "艾伦是一个机械臂发明家，在一个由巨型财阀控制的雾都里生存。他发现了一个能推翻财阀的古代图纸。",
+            "ui_metadata": {
+                "is_new_update": true
+            }
+        },
+        {
+            "id": "4060a861-8f39-4497-b790-4a640786b0dc",
+            "name": "Antagonist",
+            "status": "candidate",
+            "created_at": "2026-03-04T02:36:50.158546",
+            "tags": [],
+            "aliases": [],
+            "role": "antagonist",
+            "description": "A powerful member of the financial conglomerate controlling the fog city.",
+            "ui_metadata": {
+                "is_new_update": true
+            }
+        }
+    ],
+    "relationships": []
+}
