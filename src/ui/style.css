@@ -1,104 +1,141 @@
-/* Apple Style Streamlit Override */
+/* Narrative Lab - Modern Studio Light Style */
 
-/* Global Font */
+/* Global Font & Smoothness */
 html, body, [class*="css"] {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     color: #1d1d1f;
+    -webkit-font-smoothing: antialiased;
 }
 
-/* Base Background */
+/* Base Background - Clean White */
 .stApp {
-    background-color: #f5f5f7;
+    background-color: #ffffff;
 }
 
-/* Sidebar */
+/* Sidebar - Silver Studio Style */
 [data-testid="stSidebar"] {
-    background-color: rgba(255, 255, 255, 0.7);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border-right: 1px solid rgba(0,0,0,0.1);
+    background-color: #f8f9fa;
+    border-right: 1px solid #e5e5e7;
 }
 
-/* Cards / Containers (Mocking Apple styled blocks) */
+/* Sidebar Buttons */
+[data-testid="stSidebar"] .stButton > button {
+    background-color: transparent !important;
+    color: #424245 !important;
+    border: none !important;
+    text-align: left;
+    justify-content: flex-start;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 14px;
+    margin-bottom: 2px;
+}
+
+[data-testid="stSidebar"] .stButton > button:hover {
+    background-color: #efeff1 !important;
+    color: #000000 !important;
+}
+
+/* Active Sidebar Item - Apple Blue tint */
+[data-testid="stSidebar"] .stButton > button:active, 
+[data-testid="stSidebar"] .stButton > button:focus {
+    background-color: #e7f3ff !important;
+    color: #0071e3 !important;
+    font-weight: 600;
+}
+
+/* Main Content Panels - Subtle Border Cards */
 div[data-testid="stVerticalBlock"] > div {
     background: #ffffff;
-    border-radius: 18px;
-    padding: 16px;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
-    margin-bottom: 12px;
-}
-
-/* Sidebar nav items */
-[data-testid="stSidebarNav"] li {
     border-radius: 8px;
-    margin: 4px 12px;
+    padding: 16px;
+    box-shadow: none;
+    margin-bottom: 12px;
+    border: 1px solid #e5e5e7;
 }
 
 /* Headers */
 h1, h2, h3 {
     font-weight: 600;
-    letter-spacing: -0.02em;
+    color: #1d1d1f;
+    letter-spacing: -0.01em;
 }
 
-h1 { font-size: 32px; }
-h2 { font-size: 24px; }
-h3 { font-size: 18px; }
+h1 { font-size: 30px; margin-bottom: 20px; }
+h2 { font-size: 20px; border-bottom: 1px solid #f2f2f2; padding-bottom: 8px; margin-top: 10px; }
+h3 { font-size: 16px; color: #0071e3; }
 
-/* Buttons */
+/* Action Buttons - Professional Blue */
 .stButton > button {
     background-color: #0071e3;
     color: white;
     border: none;
-    border-radius: 20px;
+    border-radius: 6px;
     padding: 8px 16px;
+    font-size: 14px;
     font-weight: 500;
     transition: all 0.2s ease;
 }
 
 .stButton > button:hover {
     background-color: #0077ed;
-    box-shadow: 0 4px 10px rgba(0, 113, 227, 0.3);
-    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 113, 227, 0.2);
 }
 
-/* Inputs */
+/* Updated Item Highlight (Clean Yellow Glow) */
+div.updated-highlight button {
+    background-color: #fff9c4 !important; /* Soft yellow background */
+    color: #856404 !important;
+    border: 1px solid #ffeeba !important;
+    font-weight: 600 !important;
+}
+
+/* Inputs & TextAreas - Clean Borders */
 .stTextInput > div > div > input,
 .stTextArea > div > textarea {
-    border-radius: 12px;
+    border-radius: 6px;
     border: 1px solid #d2d2d7;
     background-color: #ffffff;
-    padding: 12px;
-    transition: border-color 0.2s;
+    color: #1d1d1f;
+    padding: 10px;
 }
 
 .stTextInput > div > div > input:focus,
 .stTextArea > div > textarea:focus {
     border-color: #0071e3;
-    box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.1);
+    box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.1);
 }
 
-/* Metrics */
-[data-testid="stMetricValue"] {
-    font-size: 36px;
-    font-weight: 700;
-    letter-spacing: -0.04em;
-    color: #1d1d1f;
-}
-
-/* Custom Clarifier Chat Bubbles */
+/* Chat Bubbles - Notion style */
 .chat-bubble-ai {
-    background: rgba(0, 113, 227, 0.1);
-    border-radius: 18px;
+    background: #f5f5f7;
+    border: 1px solid #e5e5e7;
+    border-radius: 12px;
     padding: 16px;
     margin-bottom: 16px;
     border-left: 4px solid #0071e3;
 }
 
 .chat-bubble-user {
-    background: #f5f5f7;
-    border-radius: 18px;
+    background: #ffffff;
+    border: 1px solid #e5e5e7;
+    border-radius: 12px;
     padding: 16px;
     margin-bottom: 16px;
     border-right: 4px solid #86868b;
     text-align: right;
+}
+
+/* Metadata Tags - Professional Badges */
+.ide-tag {
+    display: inline-block;
+    background-color: #e8f0fe;
+    color: #1a73e8;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+    margin-right: 6px;
+    margin-top: 4px;
+    border: 1px solid #d2e3fc;
 }

@@ -56,11 +56,23 @@ def render(memory: ProjectMemory):
             filtered_items = [it for it in active_page.get("items", []) if filter_i.lower() in it.get("name", "Untitled").lower()]
             
             for it in filtered_items:
+                is_updated = it.get("ui_metadata", {}).get("is_new_update", False)
                 name = it.get("name") or "Untitled"
+                btn_label = f"✨ {name}" if is_updated else name
+                
                 is_active_it = (st.session_state.get(ITEM_SEL_KEY) == it["id"])
-                if st.button(name, key=f"it_btn_{it['id']}", use_container_width=True, type="primary" if is_active_it else "secondary"):
+                
+                if is_updated:
+                    st.markdown('<div class="updated-highlight">', unsafe_allow_html=True)
+                
+                if st.button(btn_label, key=f"it_btn_{it['id']}", use_container_width=True, type="primary" if is_active_it else "secondary"):
                     st.session_state[ITEM_SEL_KEY] = it["id"]
+                    if is_updated:
+                        memory.clear_update_flag("setting_item", it["id"], parent_id=active_page_id)
                     st.rerun()
+                
+                if is_updated:
+                    st.markdown('</div>', unsafe_allow_html=True)
             
             st.write("---")
             if st.button("+ New Object", use_container_width=True):

@@ -102,29 +102,44 @@ def render_workbench(memory: ProjectMemory, workflow: Any = None):
                     st.warning(res['context_stats'].get('overflow_summary', 'Context truncated.'))
                 
                 # Errors & Diagnostics
-                if res.get("errors"):
-                    for err in res["errors"]:
-                        st.error(f"Error in {err['stage']}: {err['error']}")
-                
                 diag = res.get("diagnostics", {})
-                if diag.get("planner_missing_keys"):
-                    st.warning(f"Incomplete LLM Output. Missing keys: {', '.join(diag['planner_missing_keys'])}")
+                if diag.get("pipeline_error_summary"):
+                    st.error(diag["pipeline_error_summary"])
                 
-                if diag.get("expansion_ran"):
-                    st.info("Expansion stage ran: True")
+                if res.get("errors"):
+                    with st.expander("Detailed Pipeline Errors"):
+                        for err in res["errors"]:
+                            st.write(f"- **{err['stage']}**: {err['error']}")
                 
-                pm_updates = res.get("project_updates", {})
-                char_upserts = pm_updates.get("characters", {}).get("upsert", [])
-                if char_upserts:
-                    st.info(f"Character patches emitted: {len(char_upserts)}")
+                if diag.get("core_planner_missing_keys_a"):
+                    st.warning(f"Stage A missing keys: {', '.join(diag['core_planner_missing_keys_a'])}")
+                if diag.get("core_planner_missing_keys_b"):
+                    st.warning(f"Stage B missing keys: {', '.join(diag['core_planner_missing_keys_b'])}")
                 
-                setting_upserts = pm_updates.get("setting_pages", {}).get("upsert_items", [])
-                if setting_upserts:
-                    st.info(f"Setting background item upserted: {len(setting_upserts)}")
+                st.info(f"Expansion stage ran: {diag.get('expansion_stage_ran', False)}")
 
                 # Raw Output
-                with st.expander("View Core Planner Raw Output", expanded=False):
-                    st.code(res.get("planner_raw", "No raw output captured."), language="json")
+                with st.expander("View Core Planner Raw Output (Stage A)", expanded=False):
+                    raw_a = diag.get("core_planner_raw_a", "")
+                    st.code(raw_a if raw_a else "(empty raw, length=0)", language="json")
+                    if diag.get("core_planner_err_a"):
+                        st.error(f"Stage A Error: {diag['core_planner_err_a']}")
+
+                if diag.get("expansion_stage_ran"):
+                    with st.expander("View Core Planner Raw Output (Stage B)", expanded=False):
+                        raw_b = diag.get("core_planner_raw_b", "")
+                        st.code(raw_b if raw_b else "(empty raw, length=0)", language="json")
+                        if diag.get("core_planner_err_b"):
+                            st.error(f"Stage B Error: {diag['core_planner_err_b']}")
+
+                # --- Failure Analysis ---
+                if diag.get("failure_explanation"):
+                    with st.expander("Why no updates? (Failure Analysis)", expanded=True):
+                        st.markdown(diag["failure_explanation"])
+                        if diag.get("failure_reasons"):
+                            st.write("**Detected Issues:**")
+                            for reason in diag["failure_reasons"]:
+                                st.write(f"- {reason}")
 
                 # Results
                 st.markdown("**Core Planner Output:**")

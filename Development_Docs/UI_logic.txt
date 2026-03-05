@@ -1,0 +1,816 @@
+我会按真实软件的结构来写，类似：
+
+```
+VSCode / Premiere / Unreal
+```
+
+的 IDE 逻辑。
+
+结构分为：
+
+1️⃣ 全局 UI 结构
+2️⃣ Activity Bar（左侧竖栏）
+3️⃣ Sidebar（第二层导航）
+4️⃣ Workspace 页面
+5️⃣ Inspector Panel
+6️⃣ Timeline 交互逻辑
+7️⃣ Graph 交互逻辑
+8️⃣ Writing Studio
+9️⃣ Simulation
+10️⃣ Consistency
+11️⃣ Beta Reader
+12️⃣ Publishing
+13️⃣ Project Insights
+
+---
+
+# 1 全局 UI 结构
+
+整体界面结构：
+
+```
+┌─────────────────────────────────────────────┐
+│ Top Toolbar                                 │
+├───────┬───────────────┬─────────────────────┤
+│Activity│ Sidebar      │ Workspace           │
+│Bar     │              │                     │
+│       │              │                     │
+│       │              │                     │
+│       │              │                     │
+│       │              │                     │
+│       │              │                     │
+│       │              │                     │
+├───────┴───────────────┼─────────────────────┤
+│ Status Bar            │ Inspector Panel     │
+└─────────────────────────────────────────────┘
+```
+
+类似：
+
+```
+VS Code
+```
+
+---
+
+# 2 Top Toolbar（顶部工具栏）
+
+按钮：
+
+```
+New Project
+Open Project
+Save
+Undo
+Redo
+Run AI
+Run Simulation
+Check Consistency
+Export Book
+```
+
+右侧：
+
+```
+Search
+AI Assistant
+Project Settings
+User Profile
+```
+
+---
+
+# 3 Activity Bar（最左侧竖栏）
+
+固定按钮：
+
+```
+Workbench
+Writing Studio
+Characters
+Timeline
+Graph
+World Model
+Simulation
+Beta Reader
+Consistency
+Publish
+Insights
+```
+
+图标式：
+
+```
+⚡ Workbench
+✍ Writing
+👤 Characters
+⏳ Timeline
+🕸 Graph
+🌍 World
+🧪 Simulation
+📚 Readers
+✔ Consistency
+📦 Publish
+📊 Insights
+```
+
+点击按钮：
+
+```
+切换 Sidebar + Workspace
+```
+
+---
+
+# 4 Sidebar（第二层导航）
+
+Sidebar 结构根据 Activity 改变。
+
+例如：
+
+---
+
+# Workbench Sidebar
+
+```
+Agent Console
+Prompt Library
+AI History
+System Logs
+```
+
+按钮：
+
+```
+Run Prompt
+Clear Console
+Show Raw Output
+Retry
+```
+
+---
+
+# Characters Sidebar
+
+```
+Character List
+Character Candidates
+Relationship Viewer
+Character Tags
+```
+
+按钮：
+
+```
+New Character
+Import Character
+Generate Character
+Filter
+Sort
+```
+
+点击角色：
+
+```
+打开 Character Editor
+```
+
+---
+
+# Timeline Sidebar
+
+```
+Events
+Locations
+Chapters
+Timeline Layers
+```
+
+按钮：
+
+```
+Add Event
+Import Event
+Filter Events
+Sort by Time
+Sort by Creation
+```
+
+---
+
+# Graph Sidebar
+
+```
+Narrative Graph
+Relationship Graph
+Causality Graph
+Location Graph
+```
+
+按钮：
+
+```
+Add Node
+Add Edge
+Auto Layout
+Run Narrative Analysis
+```
+
+---
+
+# World Model Sidebar
+
+```
+Notebooks
+Maps
+Organizations
+Magic System
+Technology
+Lore
+```
+
+按钮：
+
+```
+Create Notebook
+Add Item
+Import Lore
+Generate World Detail
+```
+
+---
+
+# Writing Studio Sidebar
+
+```
+Chapters
+Scenes
+POV Characters
+Story Beats
+```
+
+按钮：
+
+```
+New Chapter
+New Scene
+Generate Scene
+Reorder Chapters
+```
+
+---
+
+# Simulation Sidebar
+
+```
+Simulation Runs
+Scenarios
+Comparisons
+Reports
+```
+
+按钮：
+
+```
+Run Simulation
+Create Scenario
+Compare Runs
+Export Report
+```
+
+---
+
+# Consistency Sidebar
+
+```
+Check Categories
+Issue List
+Ignored Issues
+```
+
+按钮：
+
+```
+Run Check
+Auto Fix
+Ignore Issue
+Send To Workbench
+```
+
+---
+
+# Publish Sidebar
+
+```
+Export Formats
+Metadata
+Preview
+Assets
+```
+
+按钮：
+
+```
+Generate Blurb
+Generate Cover
+Export
+Package Project
+```
+
+---
+
+# Insights Sidebar
+
+```
+Project Stats
+Character Stats
+Pacing Stats
+Narrative Insights
+```
+
+按钮：
+
+```
+Generate Report
+Compare Chapters
+Analyze Arc
+```
+
+---
+
+# 5 Workspace 页面结构
+
+Workspace 页面统一结构：
+
+```
+Header
+Main Panel
+Secondary Panel
+Inspector Panel
+```
+
+---
+
+# Characters Page
+
+布局：
+
+```
+Left: Character List
+Center: Character Profile
+Right: Inspector
+```
+
+---
+
+## Character List
+
+每个角色：
+
+```
+Name
+Tags
+Update Marker
+```
+
+按钮：
+
+```
+Select
+Open Timeline
+Open Relationships
+Delete
+```
+
+---
+
+## Character Profile
+
+字段：
+
+```
+Name
+Aliases
+Background
+Traits
+Goals
+Fears
+Secrets
+Tags
+```
+
+按钮：
+
+```
+Save
+Generate Traits
+Generate Backstory
+Link Timeline
+```
+
+---
+
+# Timeline Page
+
+布局：
+
+```
+Top Toolbar
+Center Timeline
+Right Inspector
+```
+
+---
+
+## Timeline Toolbar
+
+按钮：
+
+```
+Add Event
+Create Chapter
+Filter Events
+Zoom Timeline
+Switch View
+```
+
+视图：
+
+```
+Linear
+Chapter
+Character
+Location
+```
+
+---
+
+# Timeline Interaction
+
+事件显示为：
+
+```
+● Event Node
+```
+
+点击：
+
+```
+打开 Inspector
+```
+
+拖动：
+
+```
+改变时间顺序
+```
+
+---
+
+# Event Inspector
+
+字段：
+
+```
+Title
+Time
+Location
+Participants
+Summary
+Consequences
+Tags
+```
+
+按钮：
+
+```
+Save
+Delete
+Open Scene
+Simulate Impact
+```
+
+---
+
+# Character Timeline
+
+在 Character 页面：
+
+按钮：
+
+```
+View Character Timeline
+```
+
+显示：
+
+```
+该角色参与的所有事件
+```
+
+---
+
+# Graph Page
+
+显示：
+
+```
+Narrative Graph
+```
+
+节点：
+
+```
+Character
+Event
+Location
+Object
+```
+
+边：
+
+```
+participates
+causes
+reveals
+conflicts
+```
+
+按钮：
+
+```
+Add Node
+Add Edge
+Auto Layout
+Run Analysis
+```
+
+---
+
+# Writing Studio
+
+布局：
+
+```
+Left: Chapter List
+Center: Editor
+Right: Context Panel
+```
+
+---
+
+## Chapter List
+
+按钮：
+
+```
+New Chapter
+Delete Chapter
+Move Up
+Move Down
+```
+
+---
+
+## Editor
+
+文本编辑器：
+
+支持：
+
+```
+markdown
+rich text
+```
+
+按钮：
+
+```
+Generate Scene
+Rewrite
+Continue
+Improve Dialogue
+```
+
+---
+
+## Context Panel
+
+显示：
+
+```
+Timeline events
+Characters in scene
+World notes
+```
+
+按钮：
+
+```
+Insert Event
+Insert Character
+Insert Lore
+```
+
+---
+
+# Simulation Page
+
+布局：
+
+```
+Top Controls
+Center Simulation Graph
+Right Analytics
+```
+
+按钮：
+
+```
+Run Simulation
+Reset
+Create Scenario
+Compare Runs
+```
+
+---
+
+# Analytics Panel
+
+显示：
+
+```
+Tension Curve
+Character Arc
+Conflict Density
+Foreshadowing
+Plot Holes
+```
+
+按钮：
+
+```
+Highlight Issues
+Send Fix Suggestions
+```
+
+---
+
+# Consistency Page
+
+显示问题列表：
+
+```
+Timeline errors
+Character inconsistencies
+World rule violations
+```
+
+按钮：
+
+```
+Auto Fix
+Open Scene
+Ignore
+```
+
+---
+
+# Beta Reader
+
+模拟读者：
+
+```
+Reader Profiles
+Reader Reactions
+```
+
+按钮：
+
+```
+Run Reader Simulation
+Compare Readers
+```
+
+---
+
+# Publishing
+
+页面：
+
+```
+Preview Book
+Metadata
+Export
+```
+
+按钮：
+
+```
+Generate Blurb
+Export EPUB
+Export PDF
+```
+
+---
+
+# Insights
+
+显示：
+
+```
+Word count
+Character usage
+Chapter pacing
+Scene density
+```
+
+按钮：
+
+```
+Generate Report
+Analyze Arc
+```
+
+---
+
+# Timeline 关键交互（最重要）
+
+事件节点：
+
+```
+click → open inspector
+drag → change order
+right-click → options
+```
+
+右键菜单：
+
+```
+Edit Event
+Open Scene
+Simulate Impact
+Delete Event
+```
+
+---
+
+# Timeline ↔ Writing Studio
+
+在 Event Inspector：
+
+按钮：
+
+```
+Open Scene
+```
+
+跳转：
+
+```
+Writing Studio
+```
+
+并自动定位到场景。
+
+---
+
+# Timeline ↔ Graph
+
+点击 Event：
+
+```
+Highlight in Graph
+```
+
+Graph 自动聚焦。
+
+---
+
+# Timeline ↔ Characters
+
+点击角色：
+
+```
+Open Character Profile
+```
+
+---
+
+# 最终用户体验
+
+用户写小说流程：
+
+```
+创建角色
+→ 创建时间线
+→ 构建世界
+→ 写章节
+→ AI协助
+→ Simulation分析
+→ Consistency检查
+→ Beta Reader测试
+→ Export出版
+```
+
+---

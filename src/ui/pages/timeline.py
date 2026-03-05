@@ -28,13 +28,24 @@ def render(memory: ProjectMemory):
             st.info("No events found.")
         else:
             for ev in filtered_events:
+                is_updated = ev.get("ui_metadata", {}).get("is_new_update", False)
+                btn_label = f"✨ {ev['time']} | {ev['title']}" if is_updated else f"{ev['time']} | {ev['title']}"
+
                 with st.container():
-                    # Compact Card
-                    if st.button(f"{ev['time']} | {ev['title']}", key=f"tl_btn_{ev['id']}", use_container_width=True):
+                    if is_updated:
+                        st.markdown('<div class="updated-highlight">', unsafe_allow_html=True)
+
+                    if st.button(btn_label, key=f"tl_btn_{ev['id']}", use_container_width=True):
                         st.session_state.nl_active_tl_event = ev["id"]
+                        if is_updated:
+                            memory.clear_update_flag("timeline_event", ev["id"])
+                            st.rerun()
+
+                    if is_updated:
+                        st.markdown('</div>', unsafe_allow_html=True)
+
                     st.caption(ev.get("summary", "")[:60] + "...")
-                    st.write("---")
-        
+                    st.write("---")        
         if st.button("+ Manual Event", use_container_width=True):
             st.session_state.nl_active_tl_event = "NEW"
 
@@ -47,9 +58,12 @@ def render(memory: ProjectMemory):
                 title = st.text_input("Title")
                 time = st.text_input("Time / Era")
                 summary = st.text_area("Summary")
+                location = st.text_input("Location")
                 participants = st.text_input("Participants (comma separated)")
                 if st.form_submit_button("Create"):
-                    memory.add_timeline_event(title, time, participants, summary)
+                    ev = memory.add_timeline_event(title, time, participants, summary)
+                    ev["location"] = location
+                    memory.save()
                     st.rerun()
         
         elif active_id:
@@ -57,12 +71,13 @@ def render(memory: ProjectMemory):
             if ev:
                 ev["title"] = st.text_input("Title", value=ev["title"])
                 ev["time"] = st.text_input("Time", value=ev["time"])
+                ev["location"] = st.text_input("Location", value=ev.get("location", ""))
                 ev["summary"] = st.text_area("Summary", value=ev["summary"], height=150)
+                ev["consequences"] = st.text_area("Consequences", value=ev.get("consequences", ""))
                 ev["participants"] = st.text_input("Participants", value=", ".join(ev.get("participants", [])))
                 
                 c1, c2 = st.columns(2)
                 if c1.button("Save Changes"):
-                    # Ensure participants is list
                     if isinstance(ev["participants"], str):
                         ev["participants"] = [p.strip() for p in ev["participants"].split(",") if p.strip()]
                     memory.save()

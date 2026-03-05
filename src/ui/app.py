@@ -40,42 +40,64 @@ def load_css():
 load_css()
 
 # ----------------- State Initialization -----------------
-# Ensure a consistent memory object in session state
 if "nl_memory" not in st.session_state:
     st.session_state.nl_memory = ProjectMemory()
 
 memory = st.session_state.nl_memory
 
 # ----------------- Sidebar Routing -----------------
-pages = [
-    "app",
-    "chapter preview",
-    "project structure",
-    "timeline",
-    "characters",
-    "relationships",
-    "map",
-    "background settings",
-    "chat assistant",
-    "Prompt Management"
-]
+def get_sidebar_labels(mem):
+    labels = {
+        "app": "Workbench",
+        "chapter preview": "Manuscript",
+        "outline & structure": "Outline",
+        "timeline": "Timeline",
+        "characters": "Characters",
+        "relationships": "Relationships",
+        "map": "World Map",
+        "background settings": "Notebook",
+        "chat assistant": "Assistant",
+        "Prompt Management": "Settings"
+    }
+    
+    # Check for updates in each section
+    data = mem.data
+    updates = {
+        "outline & structure": any(o.get("ui_metadata", {}).get("is_new_update") for o in data.get("outline", [])),
+        "timeline": any(e.get("ui_metadata", {}).get("is_new_update") for e in data.get("timeline_events", [])),
+        "characters": any(c.get("ui_metadata", {}).get("is_new_update") for c in data.get("characters", [])),
+        "background settings": any(p.get("ui_metadata", {}).get("is_new_update") for p in data.get("setting_pages", [])) or \
+                              any(any(it.get("ui_metadata", {}).get("is_new_update") for it in p.get("items", [])) for p in data.get("setting_pages", []))
+    }
+    
+    final_labels = {}
+    for k, v in labels.items():
+        if updates.get(k):
+            final_labels[k] = f"{v} ✨"
+        else:
+            final_labels[k] = v
+    return final_labels
+
+sidebar_map = get_sidebar_labels(memory)
+inv_sidebar_map = {v: k for k, v in sidebar_map.items()}
 
 with st.sidebar:
-    st.title("Narrative Lab")
-    st.caption("v0.2.8 | Stability Engine")
+    st.title("Narrative IDE")
+    st.caption("v0.3.8 | Professional")
     st.write("---")
     
-    selected_page = st.radio(
+    selected_label = st.radio(
         "Navigation",
-        pages,
-        key="nl_page"
+        list(sidebar_map.values()),
+        key="nl_page_label"
     )
+    selected_page = inv_sidebar_map[selected_label]
     
     st.write("---")
     if st.button("Force Save & Reload", use_container_width=True):
         memory.save()
-        st.session_state.nl_memory = ProjectMemory() # Force full reload
-        st.success("JSON Persisted & Normalized.")
+        st.session_state.nl_memory = ProjectMemory()
+        st.success("JSON Persisted.")
         st.rerun()
 
 # ----------------- Page Dispatcher -----------------
@@ -101,7 +123,7 @@ if selected_page == "app":
 
 elif selected_page == "chapter preview":
     chapter_preview.render(memory)
-elif selected_page == "project structure":
+elif selected_page == "outline & structure":
     project_structure.render(memory)
 elif selected_page == "timeline":
     timeline.render(memory)

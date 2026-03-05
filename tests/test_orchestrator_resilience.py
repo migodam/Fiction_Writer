@@ -35,3 +35,8 @@ def test_validate_planner_output_partial():
     assert "classification" in missing
     assert normalized["user_output"]["content_markdown"] == "hello"
     assert "memory_change_proposals" in normalized
+
+def test_orchestrator_initialization():
+    # Placeholder for checking run_pipeline returns correct structure even on fail
+    # This matches the 'finally' block logic we added.
+    pass

@@ -20,9 +20,10 @@ def route_user_input(user_text: str, workbench_state: Dict[str, Any], memory_met
     Analyze the user's request: "{user_text}"
     
     Determine if this is an edit, create, query, or memory_change.
-    Special Rule: If the user is asking to add or change a character's background, traits, or description (e.g., "添加人物background"), set intent_type="edit", needs_project_update=true, and needs_sections=["characters"].
-    
-    If specific names are present in the request, list them in a "target_entities" field; otherwise set a "scope" field to "all_characters" if it's a general character edit.
+    Special Rules: 
+    1. If the user is asking to add or change a character's background, traits, or description, set intent_type="edit", needs_project_update=true, and needs_sections=["characters"].
+    2. If the user is adding details to a location, building, or setting object (e.g., "In the Church..."), set intent_type="edit", needs_project_update=true, and needs_sections=["settings"].
+    3. If user says "添加事件" or "出生", set needs_sections=["timeline"].
     
     Output JSON schema:
     {{
@@ -32,7 +33,7 @@ def route_user_input(user_text: str, workbench_state: Dict[str, Any], memory_met
       "ambiguous_update": true|false,
       "needs_project_update": true|false,
       "needs_global_rule_update": true|false,
-      "needs_sections": ["governance", "outline", "characters", "timeline"],
+      "needs_sections": ["governance", "outline", "characters", "timeline", "settings"],
       "target_agents": ["core_planner", "project_manager"]
     }}
     """
@@ -42,10 +43,10 @@ def route_user_input(user_text: str, workbench_state: Dict[str, Any], memory_met
     try:
         response = client.chat(messages)
         clean = response.strip().replace("```json", "").replace("```", "")
-        return json.loads(clean)
+        result = json.loads(clean)
     except Exception as e:
         # Fallback routing
-        return {
+        result = {
             "intent_type": "query",
             "ambiguous_update": False,
             "needs_project_update": False,
@@ -53,3 +54,11 @@ def route_user_input(user_text: str, workbench_state: Dict[str, Any], memory_met
             "needs_sections": [],
             "target_agents": ["core_planner"]
         }
+
+    # Post-processing for creation/initialization
+    if result.get("intent_type") == "create" and not result.get("needs_sections"):
+        result["needs_sections"] = ["characters", "timeline", "settings"]
+        result["needs_project_update"] = True
+        result["target_agents"] = ["core_planner", "project_manager"]
+    
+    return result

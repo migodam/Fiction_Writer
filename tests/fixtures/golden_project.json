@@ -1,0 +1,54 @@
+{
+    "project_info": {
+        "name": "Golden Test Project",
+        "style": "High Fantasy"
+    },
+    "characters": [
+        {
+            "id": "char-hero-001",
+            "name": "Lorian Sunlight",
+            "role": "Protagonist",
+            "description": "A fallen knight seeking redemption.",
+            "background": "",
+            "traits": "Brave, Melancholic",
+            "goals": "Find the Lost Ember",
+            "status": "active"
+        },
+        {
+            "id": "char-villain-002",
+            "name": "Malakor the Void",
+            "role": "Antagonist",
+            "description": "An ancient sorcerer.",
+            "background": "Born in the abyss.",
+            "traits": "Cunning, Ruthless",
+            "goals": "Extinguish the sun",
+            "status": "active"
+        }
+    ],
+    "setting_pages": [
+        {
+            "id": "page-church-001",
+            "title": "The Sunken Church",
+            "items": [
+                {
+                    "id": "item-altar-001",
+                    "name": "The Obsidian Altar",
+                    "content": "A cold, dark slab of stone."
+                }
+            ]
+        }
+    ],
+    "timeline_events": [
+        {
+            "id": "event-001",
+            "time": "Age of Ash, Year 10",
+            "title": "The Fall of Silverhall",
+            "summary": "The city fell to the Void.",
+            "participants": ["char-hero-001", "char-villain-002"]
+        }
+    ],
+    "relationships": [],
+    "canon_facts": [],
+    "chat_history": [],
+    "chapters": []
+}
