@@ -1,0 +1,306 @@
+NARRATIVE IDE — UX_RULES v0.1 (Electron + React, Windows-only demo)
+UI language: English (UI chrome, labels, menus)
+Content fields: CN/EN mixed allowed (names, titles, narrative text)
+
+==================================================
+0. UX PRINCIPLES (HARD RULES)
+==================================================
+- Consistency: Same action always looks/behaves the same across pages.
+- No Blank Pages: every Activity route must render meaningful UI (even if placeholder).
+- Single Selection: at any time only one primary selection (type,id) drives the Global Inspector.
+- Explicit Save for Structured Data: characters/timeline/world/graph require explicit Save.
+- Autosave for Writing Text: writing editor autosaves in background with clear status.
+- Predictable Navigation: Activity Bar changes the app mode; Sidebar only changes view/filter.
+- Testability: every interactive element must have stable data-testid.
+- Error UX: errors never crash the UI; show inline error card + actionable next steps.
+
+==================================================
+1. NAVIGATION & ROUTING
+==================================================
+Activity Bar:
+- Clicking an Activity changes:
+  (a) Sidebar sections for that Activity
+  (b) Workspace route for that Activity
+- The last open sidebar section + last selection for each Activity is remembered per session.
+- Re-clicking the active Activity does not reset state (no surprise reset).
+
+Sidebar:
+- Sidebar sections are view modes / filters, not separate pages.
+- Switching Sidebar section MUST preserve selection if still visible; otherwise selection becomes null and Inspector shows "No selection".
+
+Deep Links:
+- Cross-page actions (Open Scene, Open Timeline, Highlight in Graph) MUST:
+  - navigate to target Activity
+  - apply the correct filter/selection
+  - focus the target entity in Workspace
+  - update Inspector accordingly
+
+==================================================
+2. GLOBAL INSPECTOR RULES (RIGHT PANEL)
+==================================================
+Inspector is global and always visible.
+Inspector states:
+- Empty: shows "Select an item to inspect" + quick tips.
+- Single selection: shows fields + actions for selected entity.
+- Multi selection (Graph only): shows count + limited batch actions (optional v0.1: read-only multi).
+
+Inspector tabs:
+- Details (default)
+- Links (cross-references)
+- History (version list)
+
+Save behavior:
+- Save button enabled only when changes exist and required fields valid.
+- Save writes to persistence store and shows toast "Saved".
+- If save fails: show error card with:
+  - brief reason
+  - suggested action
+  - copyable error details
+
+Delete behavior:
+- Delete triggers confirm modal (Yes/Cancel).
+- On confirm: delete entity; selection becomes null; show toast "Deleted".
+
+History:
+- History shows version snapshots read-only.
+- Restore creates a new version with restored content (does not mutate past versions).
+
+==================================================
+3. TOP TOOLBAR RULES
+==================================================
+Save Project:
+- Forces flush of pending autosave buffers and validates current project state.
+- Shows:
+  - success toast with summary
+  - or error modal listing invalid entities (click opens them)
+
+Undo/Redo:
+- Only enabled when Writing Studio editor is focused.
+- Only affects text edits within the current open document.
+
+Global Search:
+- Searching returns grouped results by entity type.
+- Selecting a result navigates to its Activity and selects it.
+
+==================================================
+4. STRUCTURED DATA EDITING UX (CHAR/TL/WORLD/GRAPH)
+==================================================
+Validation:
+- Required fields show inline validation on Save attempt.
+- Required fields in v0.1:
+  - Character: name, background (confirmed)
+  - Timeline event: title, summary
+  - World item: name
+- Invalid save keeps edits in UI state, does not discard.
+
+Dirty state:
+- If user navigates away with unsaved structured edits:
+  - show non-blocking warning bar: "Unsaved changes" + [Save] [Discard]
+  - default behavior: keep edits in memory until saved/discarded
+
+Toasts:
+- All create/update/delete show toasts (short, non-intrusive).
+
+==================================================
+5. CHARACTERS UX
+==================================================
+Candidate flow:
+- Candidate items are visually distinct (gray card).
+- Each candidate has:
+  - Confirm ✓ (green)
+  - Reject (gray)
+- Confirm:
+  - opens a mini confirm dialog: "Add to confirmed roster?"
+  - on confirm: candidate becomes confirmed, appears in confirmed list
+  - candidate fields must be non-empty for required fields; if missing, prompt user to fill in before confirm
+- Reject:
+  - removes from queue; shows toast
+
+Character profile:
+- Center panel provides readable editing fields; Inspector mirrors and provides Save action.
+- Buttons:
+  - Generate Backstory / Traits / Goals: runs AI, writes into draft fields but does not auto-save; user must Save.
+- Links:
+  - Character page shows:
+    - linked timeline events list (read-only)
+    - linked relationships list (read-only)
+  - Each list item click selects that event/relationship (Inspector updates).
+
+Open Timeline:
+- Applies timeline filter "Participants includes this character".
+
+==================================================
+6. TIMELINE UX (BRANCH TRACKS)
+==================================================
+Timeline model:
+- Branch is a named track; event belongs to exactly one branch.
+- Event ordering within branch uses order_index (integer).
+- Time field is display string only.
+
+Timeline toolbar:
+- Add Event:
+  - opens Inspector in "New Event" mode
+  - default branch: currently selected branch or "Main"
+  - default order_index: append to end
+- Add Branch:
+  - creates branch with unique name (e.g., "Branch 2")
+  - opens rename inline input
+
+Event node interactions:
+- Click:
+  - selects event
+  - opens Inspector Details for event
+- Drag horizontally:
+  - reorders within same branch
+  - updates order_index
+  - reordering must be stable and deterministic
+- Drag vertically:
+  - moves to another branch
+  - preserves relative position by nearest index
+  - updates branch_id and order_index
+- Right-click:
+  context menu:
+  - Edit Event (focus Inspector)
+  - Open Scene (if linked)
+  - Create Scene (if none)
+  - Simulate Impact
+  - Delete Event
+
+Zoom:
+- Zoom slider changes spacing only; no data change.
+
+Views:
+- Linear / Chapter / Character / Location are view filters:
+  - Linear: show all
+  - Chapter: group events by linked chapters
+  - Character: filter by selected character (requires selection)
+  - Location: filter by selected location (requires selection)
+- View switching must not erase edits.
+
+==================================================
+7. GRAPH UX (PERSISTED LAYOUT)
+==================================================
+Graph selection:
+- Click node/edge selects it (Inspector updates).
+- Drag node moves position; positions persist to DB.
+- Shift-click toggles multi-selection (optional v0.1: allow but no batch edit required).
+
+Add Node:
+- Modal form fields:
+  - type (required)
+  - name/title (required)
+  - optional link: existing entity (character/event/world item)
+- On create: node appears and is selected.
+
+Add Edge:
+- Modal form fields:
+  - source (required)
+  - target (required)
+  - edge type (required)
+- On create: edge appears and is selected.
+
+Auto Layout:
+- Computes layout; writes baseline positions and current positions.
+- Shows toast "Layout updated".
+
+Reset Layout:
+- Restores baseline positions (or recompute if none).
+- Shows toast "Layout reset".
+
+==================================================
+8. WORLD MODEL UX (CONTAINERS)
+==================================================
+World Model is a container system.
+Default containers exist and cannot be deleted:
+- Notebooks
+- Maps
+- Organizations
+- Lore
+
+Custom containers:
+- Create Container:
+  - choose type: notebook | graph | timeline | map
+  - enter name (free)
+- Containers can be renamed and deleted (custom only).
+
+Items:
+- Left: container list
+- Middle: items list within selected container
+- Right: item editor
+
+Item editor:
+- Fixed fields: Name, Description
+- Dynamic fields: key-value rows
+  - Add Row
+  - Delete Row
+  - Keys must be unique; duplicate key shows inline error.
+- Save Item required; delete requires confirm modal.
+
+==================================================
+9. WRITING STUDIO UX
+==================================================
+Editor:
+- Autosave with debounce (e.g., 1–2 seconds after stop typing).
+- Status bar shows: "Saving..." then "Saved".
+- No structured Save button required for text (but "Save Project" flushes).
+
+Context Panel (right):
+- Shows linked events, characters, world items.
+- Insert actions insert reference chips/links (not plain text).
+- Clicking a chip selects referenced entity in Inspector.
+
+Open Scene:
+- From Timeline "Open Scene" navigates and scrolls to the scene anchor.
+
+==================================================
+10. ERROR HANDLING UX
+==================================================
+No crashes.
+All errors show:
+- short description
+- root cause hint
+- actionable next step
+- copy button for details
+
+Network/API errors (AI):
+- show "AI unavailable" + retry button
+- never block editor navigation
+
+DB errors:
+- show "Storage error" + recommended action
+- create backup note if possible
+
+==================================================
+11. ACCESSIBILITY & INPUT
+==================================================
+Keyboard:
+- Ctrl+S: Save structured selection if applicable, else Save Project
+- Ctrl+F: focus Global Search
+- Esc: close modal
+- Right-click context menus must work with trackpad/mouse.
+
+==================================================
+12. TEST MODE REQUIREMENTS (FOR PLAYWRIGHT)
+==================================================
+App must support deterministic test mode:
+- fixed seed project data
+- stable layout (disable animations)
+- predictable IDs
+
+All critical UI elements must have data-testid:
+- activity-btn-<activity>
+- sidebar-section-<section>
+- inspector-tab-<tab>
+- inspector-save / inspector-delete
+- timeline-node-<eventId>
+- timeline-branch-<branchId>
+- graph-node-<nodeId>
+- graph-edge-<edgeId>
+- world-container-<containerId>
+- world-item-<itemId>
+- writing-editor
+- context-insert-event / context-insert-character / context-insert-lore
+
+==================================================
+END
+==================================================

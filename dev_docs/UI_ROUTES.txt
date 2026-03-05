@@ -1,0 +1,184 @@
+==================================================
+NARRATIVE IDE — UI ROUTES
+==================================================
+
+Every Activity corresponds to a route.
+
+Routes must NEVER render blank screens.
+
+==================================================
+ROOT
+==================================================
+
+/ -> redirect /workbench
+
+==================================================
+PRIMARY ROUTES
+==================================================
+
+/workbench
+/writing
+/characters
+/timeline
+/graph
+/world
+/simulation
+/beta-reader
+/consistency
+/publish
+/insights
+
+==================================================
+WORKBENCH
+==================================================
+
+/workbench/console
+/workbench/prompts
+/workbench/history
+/workbench/logs
+
+==================================================
+CHARACTERS
+==================================================
+
+/characters/list
+/characters/candidates
+/characters/relationships
+/characters/tags
+
+character profile view:
+
+/characters/profile/:characterId
+
+==================================================
+TIMELINE
+==================================================
+
+/timeline/events
+/timeline/locations
+/timeline/chapters
+/timeline/branches
+
+event inspector:
+
+/timeline/event/:eventId
+
+==================================================
+GRAPH
+==================================================
+
+/graph/narrative
+/graph/relationships
+/graph/causality
+/graph/location
+
+==================================================
+WORLD MODEL
+==================================================
+
+/world/notebooks
+/world/maps
+/world/organizations
+/world/lore
+
+custom containers:
+
+/world/container/:containerId
+
+item editor:
+
+/world/item/:itemId
+
+==================================================
+WRITING STUDIO
+==================================================
+
+/writing/chapters
+/writing/scenes
+/writing/pov
+/writing/beats
+
+scene editor:
+
+/writing/scene/:sceneId
+
+==================================================
+SIMULATION
+==================================================
+
+/simulation/runs
+/simulation/scenarios
+/simulation/comparisons
+/simulation/reports
+
+==================================================
+CONSISTENCY
+==================================================
+
+/consistency/categories
+/consistency/issues
+/consistency/ignored
+
+==================================================
+PUBLISH
+==================================================
+
+/publish/formats
+/publish/metadata
+/publish/preview
+/publish/assets
+
+==================================================
+INSIGHTS
+==================================================
+
+/insights/project
+/insights/characters
+/insights/pacing
+/insights/narrative
+
+==================================================
+ROUTE RULES
+==================================================
+
+Rule 1:
+Every route must render a workspace layout.
+
+Rule 2:
+Routes must never crash or show blank screen.
+
+Rule 3:
+Deep link navigation must select the correct entity.
+
+Example:
+
+timeline -> open scene
+
+/timeline/event/123
+→
+/writing/scene/456
+
+Rule 4:
+Navigation must preserve sidebar state when possible.
+
+Rule 5:
+Invalid IDs must show:
+
+"Entity not found"
+
+with navigation back option.
+
+==================================================
+TEST REQUIREMENTS
+==================================================
+
+Playwright must verify:
+
+- every route loads
+- no console errors
+- workspace visible
+- inspector visible
+
+==================================================
+END
+==================================================

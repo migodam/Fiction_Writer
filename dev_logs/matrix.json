@@ -1,0 +1,52 @@
+{
+  "progress": {
+    "P0": {
+      "P0-1 Application Launch": "Completed",
+      "P0-2 Activity Navigation": "Completed",
+      "P0-3 Sidebar Switching": "Pending",
+      "P0-4 Character Creation": "Pending",
+      "P0-5 Candidate Confirmation": "Pending",
+      "P0-6 Timeline Event Creation": "Pending",
+      "P0-7 Timeline Drag Reorder": "Pending",
+      "P0-8 Writing Autosave": "Pending",
+      "P0-9 Timeline -> Writing Link": "Pending"
+    },
+    "P1": {
+      "P1-1 Graph Layout Persistence": "Pending",
+      "P1-2 Graph Reset Layout": "Pending",
+      "P1-3 World Container Creation": "Pending",
+      "P1-4 World Item Creation": "Pending",
+      "P1-5 Consistency Run": "Pending",
+      "P1-6 Workbench AI Run": "Pending",
+      "P1-7 Publish Preview": "Pending",
+      "P1-8 Insights Dashboard": "Pending"
+    },
+    "P2": {
+      "P2-1 Timeline Branch Drag": "Pending",
+      "P2-2 Context Panel Insert": "Pending",
+      "P2-3 Delete Confirm Modal": "Pending",
+      "P2-4 Keyboard Shortcuts": "Pending"
+    }
+  },
+  "routes_implemented": [
+    "/workbench",
+    "/writing",
+    "/characters",
+    "/timeline",
+    "/graph",
+    "/world",
+    "/simulation",
+    "/beta-reader",
+    "/consistency",
+    "/publish",
+    "/insights"
+  ],
+  "data_testid_coverage": 15,
+  "last_test_run": "2026-03-05T17:35:00Z",
+  "backlog": [
+    "Implement Zustand stores for UI and Project state",
+    "Implement Sidebar switching logic",
+    "Implement Character CRUD skeleton",
+    "Implement Timeline Event CRUD skeleton"
+  ]
+}

@@ -1,0 +1,487 @@
+NARRATIVE IDE — UI_LOGIC v0.2 (Electron + React, Windows-only demo)
+UI language: English
+Content fields: allow CN/EN mixed (names, titles, text)
+
+==================================================
+0. CORE PRINCIPLES
+==================================================
+- IDE layout: Activity Bar (left) + Sidebar (2nd) + Workspace (main) + Global Inspector (right) + Status Bar (bottom).
+- Sidebar secondary navigation is FILTER / VIEW mode within the same Workspace page (Q1=B).
+- Global Inspector is shared across all activities (Q2=C), BUT Writing Studio additionally has a Context Panel (right) for insertion/reference.
+- Persistence strategy: Structured entities (character/timeline/world/graph) use explicit Save; Writing Studio text uses autosave + version snapshots (Q3=C).
+- Undo/Redo scope: Writing Studio text only (Q4=A). Structured edits are explicit & versioned (no global undo for now).
+- Timeline drag changes ORDER_INDEX only; time is display string (Q5=B).
+- Timeline Layers = Branch lines (Q6=A). Branch is a user-managed track; events belong to exactly 1 branch.
+- Graph layout positions persist in DB; Reset Layout restores auto layout baseline (Q7=C).
+- World Model: default fixed categories + user-defined containers of types (notebook/graph/timeline/map) (Q8=C).
+- Automated UI tests enforced; Gate is tiered (P0/P1 must pass) (Q9=B).
+
+==================================================
+1. GLOBAL UI LAYOUT
+==================================================
+Layout:
+┌──────────────────────────────────────────────────────────────┐
+│ Top Toolbar (global)                                         │
+├──────────┬──────────────────────┬──────────────┬────────────┤
+│ Activity │ Sidebar (contextual) │ Workspace     │ Inspector  │
+│ Bar      │                      │ (main panel)  │ (global)   │
+├──────────┴──────────────────────┴──────────────┴────────────┤
+│ Status Bar (global)                                          │
+└──────────────────────────────────────────────────────────────┘
+
+Global selection model:
+- At any time there is ONE active selection: (type, id).
+- Clicking an item in Workspace sets selection and updates Global Inspector.
+- Sidebar changes filters/views; does not overwrite selection unless selection becomes invalid.
+
+==================================================
+2. TOP TOOLBAR (GLOBAL)
+==================================================
+Left actions:
+- New Project
+- Open Project
+- Save Project (flush pending saves; validates; shows toast result)
+- Run AI
+- Run Simulation
+- Check Consistency
+- Export Book
+
+Middle:
+- Global Search (search entities + open results)
+
+Right:
+- AI Assistant (opens right-side drawer overlay, non-blocking)
+- Project Settings
+- User/Profile (optional)
+
+Notes:
+- Undo/Redo buttons exist but only affect Writing Studio text editor when focused.
+
+==================================================
+3. STATUS BAR (GLOBAL)
+==================================================
+Shows:
+- Current Project name
+- Save status (Idle / Unsaved changes / Saving / Error)
+- Active selection label (e.g., "Character: Silas Vane")
+- Background tasks (AI / simulation) progress
+- Test mode indicator (when running Playwright)
+
+==================================================
+4. ACTIVITY BAR (LEFT ICON BAR)
+==================================================
+Fixed activities:
+- Workbench
+- Writing Studio
+- Characters
+- Timeline
+- Graph
+- World Model
+- Simulation
+- Beta Reader
+- Consistency
+- Publish
+- Insights
+
+Behavior:
+- Click activity => updates Sidebar sections + Workspace route.
+- Keeps last open sub-view per activity (session memory).
+- Activity icon highlights when active.
+
+==================================================
+5. SIDEBAR (SECOND COLUMN) — VIEW/FILTER SWITCHER
+==================================================
+Sidebar for each Activity provides:
+- Sub-sections (tabs or list) used as filter/view modes.
+- Quick actions (buttons).
+- Search/filter inputs.
+
+IMPORTANT: Sidebar sub-section switching does NOT navigate to totally different pages.
+It changes the Workspace mode (same base page) and applies filters.
+
+--------------------------------------------------
+5.1 Workbench Sidebar
+Sections:
+- Agent Console
+- Prompt Library
+- AI History
+- System Logs
+Actions:
+- Run Prompt
+- Retry Last
+- Clear Console
+- Show Raw Output (toggle)
+
+--------------------------------------------------
+5.2 Characters Sidebar
+Sections:
+- Character List (confirmed)
+- Candidate Queue (pending confirm)
+- Relationships (viewer filter)
+- Tags
+Actions:
+- New Character
+- Generate Candidates (AI)
+- Filter
+- Sort
+
+--------------------------------------------------
+5.3 Timeline Sidebar
+Sections:
+- Events
+- Locations (filter)
+- Chapters (filter)
+- Branches (manage branches)
+Actions:
+- Add Event
+- Add Branch
+- Filter
+- Sort by Order
+- Sort by Creation
+
+--------------------------------------------------
+5.4 Graph Sidebar
+Sections:
+- Narrative Graph
+- Relationship Graph
+- Causality Graph
+- Location Graph
+Actions:
+- Add Node
+- Add Edge
+- Auto Layout
+- Reset Layout
+- Run Analysis
+
+--------------------------------------------------
+5.5 World Model Sidebar
+Sections (defaults):
+- Notebooks
+- Maps
+- Organizations
+- Lore
+Plus: Custom Containers (user-defined)
+Actions:
+- Create Container
+- Add Item
+- Import
+- Generate Detail (AI)
+
+Container types:
+- notebook | graph | timeline | map
+Each container has a name (free text).
+
+--------------------------------------------------
+5.6 Writing Studio Sidebar
+Sections:
+- Chapters
+- Scenes
+- POV Characters (filter)
+- Story Beats (filter)
+Actions:
+- New Chapter
+- New Scene
+- Reorder Chapters
+- Generate Scene (AI)
+
+--------------------------------------------------
+5.7 Simulation Sidebar
+Sections:
+- Runs
+- Scenarios
+- Comparisons
+- Reports
+Actions:
+- Run
+- Create Scenario
+- Compare
+- Export Report
+
+--------------------------------------------------
+5.8 Consistency Sidebar
+Sections:
+- Categories
+- Issues
+- Ignored
+Actions:
+- Run Check
+- Auto Fix (sends proposed patches to Workbench)
+- Ignore
+- Open in Workbench
+
+--------------------------------------------------
+5.9 Publish Sidebar
+Sections:
+- Formats
+- Metadata
+- Preview
+- Assets
+Actions:
+- Generate Blurb
+- Generate Cover
+- Export
+- Package
+
+--------------------------------------------------
+5.10 Insights Sidebar
+Sections:
+- Project Stats
+- Character Stats
+- Pacing
+- Narrative Insights
+Actions:
+- Generate Report
+- Compare Chapters
+- Analyze Arc
+
+==================================================
+6. GLOBAL INSPECTOR (RIGHT PANEL)
+==================================================
+Inspector shows fields & actions for current selection.
+Selection types supported:
+- character
+- timeline_event
+- relationship
+- world_item
+- chapter
+- scene
+- graph_node / graph_edge
+
+Inspector has:
+- Header: Type + Title
+- Tabs: Details | Links | History
+- Primary actions: Save / Delete (if applicable)
+- Secondary actions context-dependent
+
+History tab:
+- Shows version snapshots (read-only)
+- Allows "Restore this version" (creates a new version; does not overwrite)
+
+==================================================
+7. WORKSPACE PAGES (BY ACTIVITY)
+==================================================
+
+--------------------------------------------------
+7.1 Characters (Workspace)
+Layout:
+- Left: List panel (confirmed characters OR candidates depending on sidebar section)
+- Center: Profile panel (read/edit)
+- Right: Global Inspector (details of selected character)
+
+Candidate workflow:
+- Candidates are gray-card items with a green "Confirm ✓" button.
+- Confirm converts candidate => confirmed character; then appears in Character List.
+- Reject removes from candidate queue (with toast; optional undo local).
+
+Character Profile fields (center panel):
+- Name (required)
+- Aliases
+- Background (required non-empty for confirmed)
+- Traits
+- Goals
+- Fears
+- Secrets
+- Speech Style
+- Arc
+- Affiliations
+Buttons:
+- Save Profile
+- Generate Backstory (AI)
+- Generate Traits (AI)
+- Open Timeline (filters Timeline view by this character)
+- Open Relationships (filters Graph/Relationships by this character)
+
+Auto-aggregation:
+- Character page shows linked timeline events (from participants match) in a subpanel.
+- Character page shows linked relationships in a subpanel.
+
+--------------------------------------------------
+7.2 Timeline (Workspace)
+Layout:
+- Top: Timeline toolbar
+- Center: Branch timeline canvas
+- Right: Global Inspector (event details)
+
+Timeline toolbar:
+- Add Event
+- Add Branch
+- Filter
+- Zoom (slider)
+- View mode (dropdown): Linear | Chapter | Character | Location
+(Note: view mode changes filtering/overlay; still one timeline page.)
+
+Branch model:
+- Branch is a named track (e.g., "Main", "Side A").
+- Each event belongs to exactly one branch.
+- Branch order is fixed by branch index.
+- Branches can be renamed, reordered, or hidden.
+
+Event node:
+- Display: dot + title label + short summary tooltip
+Interactions:
+- Click => select event; Inspector opens event fields
+- Drag vertically => move to another branch (updates branch_id)
+- Drag horizontally => reorders within branch (updates order_index)
+- Right click => context menu:
+  - Edit Event (focus Inspector)
+  - Open Scene (jump to Writing Studio and locate linked scene)
+  - Simulate Impact (opens Simulation with event preselected)
+  - Delete Event
+
+Event fields (Inspector Details):
+- Title (required)
+- Time (display string; optional)
+- Location (optional)
+- Participants (multi-select from confirmed characters)
+- Summary (required)
+- Consequences (list)
+- Tags (list)
+Buttons:
+- Save
+- Delete
+- Open Scene
+- Create Scene (if missing)
+
+--------------------------------------------------
+7.3 Graph (Workspace)
+Layout:
+- Center: Graph canvas
+- Right: Global Inspector (node/edge)
+
+Node types:
+- Character
+- Event
+- Location
+- Object
+- World Item
+
+Edges:
+- participates
+- causes
+- reveals
+- conflicts
+
+Interactions:
+- Click node/edge => select & show Inspector
+- Drag node => move; positions persist
+- Box select (shift-drag) => multi-select (Inspector shows "Multi")
+- Add Node button => modal form (type + name + link target optional)
+- Add Edge button => modal form (source + target + edge type)
+
+Layout:
+- Auto Layout computes positions and writes them as layout_baseline + current positions.
+- Reset Layout restores baseline positions (or recomputes baseline if none).
+
+--------------------------------------------------
+7.4 World Model (Workspace)
+World Model is a container system.
+
+Layout:
+- Left: Container list
+- Center: Items list for selected container
+- Right: Editor panel (for selected item) + Global Inspector updates selection
+
+Default containers exist:
+- Notebooks
+- Maps
+- Organizations
+- Lore
+
+User can create custom containers:
+- Type: notebook | graph | timeline | map
+- Name: free text (e.g., "Company Relationship", "Federation Politics", "宗门体系")
+
+Item model:
+- Each item has Name, Description, and Dynamic Fields (key-value).
+Actions:
+- Create Container
+- Rename Container
+- Delete Container
+- Add Item
+- Delete Item
+- Save Item
+
+--------------------------------------------------
+7.5 Writing Studio (Workspace)
+Layout:
+- Left: Chapter/Scene list
+- Center: Editor (TipTap/Markdown)
+- Right: Context Panel (NOT Inspector) + Global Inspector still exists for selections outside text
+
+Editor:
+- Autosave text snapshots (debounced)
+- Buttons:
+  - Generate Scene
+  - Rewrite
+  - Continue
+  - Improve Dialogue
+
+Context Panel shows:
+- Linked timeline events
+- Characters in scene
+- Relevant world items
+Buttons:
+- Insert Event (inserts a reference chip / link)
+- Insert Character
+- Insert Lore
+
+Open Scene:
+- From Timeline Inspector button => navigates to Writing Studio and scrolls to linked scene.
+
+--------------------------------------------------
+7.6 Simulation / Consistency / Beta Reader / Publish / Insights
+These are functional skeleton pages for now with:
+- sidebar-driven filters
+- workspace main panel with placeholders + run buttons
+- results panels with tables/charts
+
+All must be reachable and non-empty (no blank routes).
+
+==================================================
+8. CROSS-PAGE TRANSITIONS (MUST IMPLEMENT)
+==================================================
+Timeline -> Writing Studio:
+- "Open Scene" navigates and focuses the correct scene in editor.
+
+Timeline -> Graph:
+- "Highlight in Graph" focuses corresponding node.
+
+Character -> Timeline:
+- "Open Timeline" filters timeline by character involvement.
+
+Consistency -> Workbench:
+- "Send To Workbench" opens Workbench with issue context.
+
+==================================================
+9. PLAYWRIGHT TESTABILITY REQUIREMENTS (HOOKS)
+==================================================
+All interactive UI elements must have stable selectors:
+- data-testid for:
+  activity-bar buttons
+  sidebar section buttons
+  primary workspace panels
+  inspector tabs/actions
+  timeline nodes
+  graph nodes/edges
+  editor action buttons
+
+App must support a test mode:
+- deterministic seed project
+- disable animations
+- predictable layout
+
+==================================================
+10. USER FLOW (PRIMARY)
+==================================================
+Primary novel workflow:
+- Create/confirm characters
+- Create timeline branches and events
+- Create world containers and items
+- Write chapters/scenes with context insertion
+- Run consistency checks
+- Run beta reader
+- Export
+
+==================================================
+END
+==================================================
