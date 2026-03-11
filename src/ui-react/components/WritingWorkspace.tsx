@@ -165,7 +165,7 @@ export const WritingWorkspace = () => {
                         >
                             <span className="truncate font-medium">{c.name}</span>
                             <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all translate-x-2 group-hover:translate-x-0">
-                                <Plus size={12} className="text-brand" title="Insert Reference" />
+                                <Plus size={12} className="text-brand" />
                                 <ChevronRight size={12} className="text-text-3" />
                             </div>
                         </div>

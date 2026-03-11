@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 
 test('create character and save', async ({ page }) => {
 
-    await page.goto('http://localhost:3000');
+    await page.goto('/');
 
     await page.getByTestId('activity-btn-characters').click();
 
@@ -20,19 +20,17 @@ test('create character and save', async ({ page }) => {
 
 test('candidate confirmation flow', async ({ page }) => {
 
-    await page.goto('http://localhost:3000');
+    await page.goto('/');
 
     await page.getByTestId('activity-btn-characters').click();
+    await page.getByTestId('sidebar-section-characters-candidates').click();
 
-    // Find candidate card and confirm
     const candidateCard = page.getByTestId('candidate-card-cand_1');
     await expect(candidateCard).toBeVisible();
     
     await candidateCard.getByTestId('candidate-confirm-btn').click();
 
-    // Candidate should disappear from candidate list
-    await expect(candidateCard).not.toBeVisible();
-
-    // Should appear in confirmed list
+    await expect(page).toHaveURL(/\/characters\/profile\/cand_1$/);
     await expect(page.getByTestId('character-list')).toContainText('Mysterious Stranger');
+    await expect(page.getByTestId('character-name-input')).toHaveValue('Mysterious Stranger');
 });

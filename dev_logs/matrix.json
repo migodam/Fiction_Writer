@@ -1,4 +1,17 @@
 {
+  "current_module": "Characters",
+  "current_iteration": "2026-03-11/iter_01",
+  "completed_modules": [
+    "Characters"
+  ],
+  "qa_status": {
+    "characters": "Accepted"
+  },
+  "playwright_status": {
+    "characters_iteration": "Passed",
+    "smoke_subset": "Passed",
+    "world_model_item_creation": "Failed"
+  },
   "progress": {
     "P0": {
       "P0-1 Application Launch": "Completed",
@@ -15,7 +28,7 @@
       "P1-1 Graph Layout Persistence": "Completed",
       "P1-2 Graph Reset Layout": "Completed",
       "P1-3 World Container Creation": "Completed",
-      "P1-4 World Item Creation": "Completed",
+      "P1-4 World Item Creation": "Blocked",
       "P1-5 Consistency Run": "Pending",
       "P1-6 Workbench AI Run": "Pending",
       "P1-7 Publish Preview": "Pending",
@@ -29,9 +42,13 @@
     }
   },
   "routes_implemented": [
-    "/workbench",
+    "/workbench/console",
     "/writing",
-    "/characters",
+    "/characters/list",
+    "/characters/candidates",
+    "/characters/relationships",
+    "/characters/tags",
+    "/characters/profile/:characterId",
     "/timeline",
     "/graph",
     "/world",
@@ -41,14 +58,26 @@
     "/publish",
     "/insights"
   ],
-  "data_testid_coverage": 85,
-  "last_test_run": "2026-03-06T03:20:00Z",
+  "selector_coverage": 89,
+  "data_testid_coverage": 89,
+  "last_test_run": "2026-03-11T14:47:00+08:00",
+  "open_bugs": [
+    {
+      "id": "world-item-editor-not-opening",
+      "priority": "P1",
+      "status": "Open",
+      "summary": "World item editor does not render after clicking add-world-item-btn."
+    }
+  ],
+  "known_issues": [
+    "Playwright config path drift is fixed in npm scripts, but governing document path drift remains for TEST_PLAN and iteration docs."
+  ],
   "backlog": [
-    "Implement Simulation Workspace skeleton",
-    "Implement Consistency Workspace skeleton",
-    "Implement Beta Reader Workspace skeleton",
-    "Implement Publish Workspace skeleton",
-    "Implement Insights Workspace skeleton",
-    "Implement Workbench Console"
+    "Fix World item editor create flow",
+    "Implement Timeline deep-link behaviors",
+    "Implement Writing Studio deep-link and scene focus behaviors",
+    "Fill remaining empty tests/e2e/p1 specs",
+    "Implement Workbench console and prompt actions",
+    "Replace remaining raw-color Inspector styles with semantic tokens"
   ]
 }

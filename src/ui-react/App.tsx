@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { 
   Layout, Users, Clock, Network, Globe, 
   PlayCircle, CheckCircle, FileText, PenTool, 
@@ -38,23 +38,29 @@ const CommandPalette = () => {
   const navigate = useNavigate();
 
   const activityOptions: CommandOption[] = [
-    { label: 'Go to Workbench', path: '/workbench', type: 'activity' },
-    { label: 'Go to Writing Studio', path: '/writing', type: 'activity' },
-    { label: 'Go to Characters', path: '/characters', type: 'activity' },
-    { label: 'Go to Timeline', path: '/timeline', type: 'activity' },
-    { label: 'Go to Graph', path: '/graph', type: 'activity' },
-    { label: 'Go to World Model', path: '/world', type: 'activity' },
-    { label: 'Go to Simulation', path: '/simulation', type: 'activity' },
-    { label: 'Go to Beta Reader', path: '/beta-reader', type: 'activity' },
-    { label: 'Go to Consistency', path: '/consistency', type: 'activity' },
-    { label: 'Go to Publish', path: '/publish', type: 'activity' },
-    { label: 'Go to Insights', path: '/insights', type: 'activity' },
+    { label: 'Go to Workbench', path: getActivityEntryPath('workbench'), type: 'activity' },
+    { label: 'Go to Writing Studio', path: getActivityEntryPath('writing'), type: 'activity' },
+    { label: 'Go to Characters', path: getActivityEntryPath('characters'), type: 'activity' },
+    { label: 'Go to Timeline', path: getActivityEntryPath('timeline'), type: 'activity' },
+    { label: 'Go to Graph', path: getActivityEntryPath('graph'), type: 'activity' },
+    { label: 'Go to World Model', path: getActivityEntryPath('world'), type: 'activity' },
+    { label: 'Go to Simulation', path: getActivityEntryPath('simulation'), type: 'activity' },
+    { label: 'Go to Beta Reader', path: getActivityEntryPath('beta-reader'), type: 'activity' },
+    { label: 'Go to Consistency', path: getActivityEntryPath('consistency'), type: 'activity' },
+    { label: 'Go to Publish', path: getActivityEntryPath('publish'), type: 'activity' },
+    { label: 'Go to Insights', path: getActivityEntryPath('insights'), type: 'activity' },
   ];
 
   const entityResults: CommandOption[] = searchEntities(search).map(e => ({
       label: e.label,
       description: e.description,
-      path: e.type === 'character' ? '/characters' : '/timeline',
+      path: e.type === 'character'
+        ? `/characters/profile/${e.id}`
+        : e.type === 'candidate'
+        ? '/characters/candidates'
+        : e.type === 'timeline_event'
+        ? `/timeline/event/${e.id}`
+        : '/timeline/events',
       type: e.type || 'unknown',
       id: e.id
   }));
@@ -252,7 +258,7 @@ const Toast = () => {
 };
 
 // LAYOUT
-import { APP_ROUTES } from './config/routes';
+import { APP_ROUTES, getActivityEntryPath, getSidebarSectionFromPath } from './config/routes';
 import charMock from './mock/characters.json';
 import timelineMock from './mock/timeline.json';
 import relMock from './mock/relationships.json';
@@ -262,13 +268,14 @@ const AppContent = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { selectedEntity, characters, timelineEvents, projectName, saveStatus, loadProject } = useProjectStore();
-  const { setActivity } = useUIStore();
+  const { setActivity, setSidebarSection } = useUIStore();
 
   const currentActivityId = APP_ROUTES.find(a => location.pathname.startsWith(a.path))?.id || 'workbench';
   
   useEffect(() => {
     setActivity(currentActivityId);
-  }, [currentActivityId]);
+    setSidebarSection(getSidebarSectionFromPath(location.pathname, currentActivityId));
+  }, [currentActivityId, location.pathname, setActivity, setSidebarSection]);
 
   useEffect(() => {
     // Initial data load
@@ -324,7 +331,7 @@ const AppContent = () => {
                     "w-12 h-12 flex items-center justify-center cursor-pointer transition-all relative group",
                     isActive ? "text-brand" : "text-text-2 hover:text-text"
                 )}
-                onClick={() => navigate(activity.path)}
+                onClick={() => navigate(getActivityEntryPath(activity.id))}
                 title={activity.label}
                 data-testid={activity.testId}
                 >
@@ -340,10 +347,17 @@ const AppContent = () => {
         {/* Workspace */}
         <main className="flex-1 bg-bg overflow-auto relative" data-testid="workspace">
           <Routes>
-            <Route path="/" element={<PlaceholderPage title="Workbench" testId="agent-console" />} />
+            <Route path="/" element={<Navigate to="/workbench/console" replace />} />
+            <Route path="/workbench" element={<Navigate to="/workbench/console" replace />} />
             <Route path="/workbench/*" element={<PlaceholderPage title="Workbench" testId="agent-console" />} />
             <Route path="/writing/*" element={<WritingWorkspace />} />
-            <Route path="/characters/*" element={<CharactersWorkspace />} />
+            <Route path="/characters" element={<Navigate to="/characters/list" replace />} />
+            <Route path="/characters/list" element={<CharactersWorkspace />} />
+            <Route path="/characters/candidates" element={<CharactersWorkspace />} />
+            <Route path="/characters/relationships" element={<CharactersWorkspace />} />
+            <Route path="/characters/tags" element={<CharactersWorkspace />} />
+            <Route path="/characters/profile/:characterId" element={<CharactersWorkspace />} />
+            <Route path="/characters/*" element={<Navigate to="/characters/list" replace />} />
             <Route path="/timeline/*" element={<TimelineWorkspace />} />
             <Route path="/graph/*" element={<GraphWorkspace />} />
             <Route path="/world/*" element={<WorldWorkspace />} />

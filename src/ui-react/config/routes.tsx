@@ -81,7 +81,7 @@ export const APP_ROUTES: RouteConfig[] = [
       { id: 'narrative', label: 'Narrative Graph' },
       { id: 'relationships', label: 'Relationship Graph' },
       { id: 'causality', label: 'Causality Graph' },
-      { id: 'locations', label: 'Location Graph' },
+      { id: 'location', label: 'Location Graph' },
     ],
   },
   {
@@ -153,8 +153,8 @@ export const APP_ROUTES: RouteConfig[] = [
     icon: <BarChart2 size={20} />,
     testId: 'activity-btn-insights',
     sidebarSections: [
-      { id: 'project_stats', label: 'Project Stats' },
-      { id: 'character_stats', label: 'Character Stats' },
+      { id: 'project', label: 'Project Stats' },
+      { id: 'characters', label: 'Character Stats' },
       { id: 'pacing', label: 'Pacing' },
       { id: 'narrative', label: 'Narrative Insights' },
     ],
@@ -163,4 +163,39 @@ export const APP_ROUTES: RouteConfig[] = [
 
 export const getRouteConfig = (id: string): RouteConfig => {
   return APP_ROUTES.find(r => r.id === id) || APP_ROUTES[0];
+};
+
+export const getDefaultSection = (activityId: string): string => {
+  const config = getRouteConfig(activityId);
+  return config.sidebarSections[0]?.id || '';
+};
+
+export const getSectionRoute = (activityId: string, sectionId?: string): string => {
+  const config = getRouteConfig(activityId);
+  const resolvedSection = sectionId || getDefaultSection(activityId);
+  return resolvedSection ? `${config.path}/${resolvedSection}` : config.path;
+};
+
+export const getActivityEntryPath = (activityId: string): string => {
+  return getSectionRoute(activityId, getDefaultSection(activityId));
+};
+
+export const getSidebarSectionFromPath = (pathname: string, activityId: string): string => {
+  const config = getRouteConfig(activityId);
+  const segments = pathname.split('/').filter(Boolean);
+  const activitySegment = config.path.replace('/', '');
+  const currentIndex = segments.indexOf(activitySegment);
+  const nextSegment = currentIndex >= 0 ? segments[currentIndex + 1] : undefined;
+  const knownSections = new Set(config.sidebarSections.map((section) => section.id));
+
+  if (!nextSegment) {
+    return getDefaultSection(activityId);
+  }
+
+  if (knownSections.has(nextSegment)) {
+    return nextSegment;
+  }
+
+  // Entity detail routes keep the primary list section highlighted.
+  return getDefaultSection(activityId);
 };

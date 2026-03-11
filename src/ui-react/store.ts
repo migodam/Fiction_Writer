@@ -115,7 +115,7 @@ interface ProjectState {
   setSelectedEntity: (type: Selection['type'], id: string | null) => void;
   addCharacter: (char: Character) => void;
   updateCharacter: (char: Character) => void;
-  confirmCandidate: (candidateId: string) => void;
+  confirmCandidate: (candidateId: string) => string | null;
   rejectCandidate: (candidateId: string) => void;
   addTimelineEvent: (event: TimelineEvent) => void;
   updateTimelineEvent: (event: TimelineEvent) => void;
@@ -141,10 +141,10 @@ interface ProjectState {
 
 export const useUIStore = create<UIState>((set) => ({
   currentActivity: 'workbench',
-  sidebarSection: 'default',
+  sidebarSection: 'console',
   isCommandPaletteOpen: false,
   lastActionStatus: null,
-  setActivity: (id) => set({ currentActivity: id, sidebarSection: 'default' }),
+  setActivity: (id) => set({ currentActivity: id }),
   setSidebarSection: (section) => set({ sidebarSection: section }),
   toggleCommandPalette: (open) => set((state) => ({ 
     isCommandPaletteOpen: typeof open === 'boolean' ? open : !state.isCommandPaletteOpen 
@@ -192,16 +192,21 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     characters: state.characters.map(c => c.id === char.id ? char : c),
     saveStatus: 'Unsaved changes'
   })),
-  confirmCandidate: (candidateId) => set((state) => {
+  confirmCandidate: (candidateId) => {
+    let confirmedId: string | null = null;
+    set((state) => {
     const candidate = state.candidates.find(c => c.id === candidateId);
     if (!candidate) return state;
     const newChar: Character = { ...candidate };
+    confirmedId = newChar.id;
     return {
       candidates: state.candidates.filter(c => c.id !== candidateId),
       characters: [...state.characters, newChar],
       saveStatus: 'Unsaved changes'
     };
-  }),
+    });
+    return confirmedId;
+  },
   rejectCandidate: (candidateId) => set((state) => ({
     candidates: state.candidates.filter(c => c.id !== candidateId),
     saveStatus: 'Unsaved changes'

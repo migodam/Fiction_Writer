@@ -13,7 +13,7 @@
     "build": "npm run ui:build",
     "preview": "vite preview",
     "electron:dev": "concurrently \"npm run ui:dev\" \"wait-on http://localhost:3000 && electron .\"",
-    "test:e2e": "npx playwright test"
+    "test:e2e": "npx playwright test --config tests/playwright.config.ts"
   },
   "dependencies": {
     "react": "^18.3.1",

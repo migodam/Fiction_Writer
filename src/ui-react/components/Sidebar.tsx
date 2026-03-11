@@ -1,9 +1,11 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useUIStore } from '../store';
-import { getRouteConfig } from '../config/routes';
+import { getRouteConfig, getSectionRoute } from '../config/routes';
 
 export const Sidebar = () => {
   const { currentActivity, sidebarSection, setSidebarSection } = useUIStore();
+  const navigate = useNavigate();
   const config = getRouteConfig(currentActivity);
 
   return (
@@ -22,7 +24,10 @@ export const Sidebar = () => {
             className={`px-4 py-2 text-sm cursor-pointer flex items-center gap-2 transition-colors ${
               sidebarSection === section.id ? 'bg-active text-text font-medium border-l-2 border-brand' : 'text-text-2 hover:bg-hover border-l-2 border-transparent'
             }`}
-            onClick={() => setSidebarSection(section.id)}
+            onClick={() => {
+              setSidebarSection(section.id);
+              navigate(getSectionRoute(currentActivity, section.id));
+            }}
           >
             {section.label}
           </div>
