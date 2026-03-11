@@ -263,3 +263,179 @@ workbench-run-prompt
 - Sidebar/Inspector feel native and consistent.
 - Characters page matches the screenshot vibe:
   dark, calm, structured, with purple AI suggestion panels and clear confirm/reject.
+
+  ------------------------------------------------------------
+8) Spacing System
+
+Base spacing unit: 4px
+
+Spacing scale:
+--s-1: 4px
+--s-2: 8px
+--s-3: 12px
+--s-4: 16px
+--s-5: 20px
+--s-6: 24px
+--s-7: 32px
+--s-8: 40px
+--s-9: 48px
+
+Usage rules:
+
+Page padding
+20px
+
+Card padding
+16px
+
+List row horizontal padding
+12px
+
+Section vertical spacing
+24px
+
+Toolbar button gap
+8px
+
+Sidebar item gap
+4px
+
+Form field gap
+12px
+
+------------------------------------------------------------
+9) Icon System
+
+Icon library:
+Lucide React
+
+Icon size scale:
+
+--icon-xs: 14px
+--icon-sm: 16px
+--icon-md: 18px
+--icon-lg: 20px
+
+Activity bar icons:
+20px
+
+Sidebar icons:
+16px
+
+Toolbar icons:
+16px
+
+List icons:
+14px
+
+Icon color rules:
+
+default:
+--text-2
+
+hover:
+--text
+
+active:
+--brand-2
+
+------------------------------------------------------------
+10) Interaction States
+
+Hover
+
+background:
+--hover
+
+Cursor:
+pointer
+
+Active / Pressed
+
+background:
+--active
+
+Selected
+
+background:
+--selected
+left border:
+3px solid --brand
+
+Focus (keyboard navigation)
+
+outline:
+2px solid --focus
+outline offset:
+2px
+
+Disabled
+
+opacity:
+0.4
+
+cursor:
+not-allowed
+
+------------------------------------------------------------
+11) Data Display Components
+
+11.1 Property Grid (Inspector)
+
+Label column:
+140px fixed
+
+Value column:
+flex
+
+Row height:
+32px
+
+Label style:
+Small typography
+color: --text-3
+
+Value style:
+Body typography
+color: --text
+
+11.2 Table
+
+Row height:
+36px
+
+Header:
+uppercase
+Small typography
+color: --text-3
+
+Row hover:
+--hover
+
+Selected row:
+--selected
+
+11.3 Timeline Event Card
+
+bg:
+--card
+
+border:
+--border
+
+padding:
+12px
+
+radius:
+--r-sm
+
+Title:
+Body bold
+
+Meta row:
+Small typography
+color: --text-3
+
+Participant chips:
+Badge style
+

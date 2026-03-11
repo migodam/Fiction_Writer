@@ -1,0 +1,12 @@
+[
+  {
+    "id": "item_1",
+    "containerId": "lore",
+    "name": "The Dawn Crystal",
+    "description": "An ancient artifact of immense power.",
+    "fields": {
+      "Origin": "The First Age",
+      "Power Level": "Unknown"
+    }
+  }
+]

@@ -3,19 +3,19 @@
     "P0": {
       "P0-1 Application Launch": "Completed",
       "P0-2 Activity Navigation": "Completed",
-      "P0-3 Sidebar Switching": "Pending",
-      "P0-4 Character Creation": "Pending",
-      "P0-5 Candidate Confirmation": "Pending",
-      "P0-6 Timeline Event Creation": "Pending",
-      "P0-7 Timeline Drag Reorder": "Pending",
-      "P0-8 Writing Autosave": "Pending",
-      "P0-9 Timeline -> Writing Link": "Pending"
+      "P0-3 Sidebar Switching": "Completed",
+      "P0-4 Character Creation": "Completed",
+      "P0-5 Candidate Confirmation": "Completed",
+      "P0-6 Timeline Event Creation": "Completed",
+      "P0-7 Timeline Drag Reorder": "Completed",
+      "P0-8 Writing Autosave": "Completed",
+      "P0-9 Timeline -> Writing Link": "Completed"
     },
     "P1": {
-      "P1-1 Graph Layout Persistence": "Pending",
-      "P1-2 Graph Reset Layout": "Pending",
-      "P1-3 World Container Creation": "Pending",
-      "P1-4 World Item Creation": "Pending",
+      "P1-1 Graph Layout Persistence": "Completed",
+      "P1-2 Graph Reset Layout": "Completed",
+      "P1-3 World Container Creation": "Completed",
+      "P1-4 World Item Creation": "Completed",
       "P1-5 Consistency Run": "Pending",
       "P1-6 Workbench AI Run": "Pending",
       "P1-7 Publish Preview": "Pending",
@@ -23,9 +23,9 @@
     },
     "P2": {
       "P2-1 Timeline Branch Drag": "Pending",
-      "P2-2 Context Panel Insert": "Pending",
+      "P2-2 Context Panel Insert": "Completed",
       "P2-3 Delete Confirm Modal": "Pending",
-      "P2-4 Keyboard Shortcuts": "Pending"
+      "P2-4 Keyboard Shortcuts": "Completed"
     }
   },
   "routes_implemented": [
@@ -41,12 +41,14 @@
     "/publish",
     "/insights"
   ],
-  "data_testid_coverage": 15,
-  "last_test_run": "2026-03-05T17:35:00Z",
+  "data_testid_coverage": 85,
+  "last_test_run": "2026-03-06T03:20:00Z",
   "backlog": [
-    "Implement Zustand stores for UI and Project state",
-    "Implement Sidebar switching logic",
-    "Implement Character CRUD skeleton",
-    "Implement Timeline Event CRUD skeleton"
+    "Implement Simulation Workspace skeleton",
+    "Implement Consistency Workspace skeleton",
+    "Implement Beta Reader Workspace skeleton",
+    "Implement Publish Workspace skeleton",
+    "Implement Insights Workspace skeleton",
+    "Implement Workbench Console"
   ]
 }

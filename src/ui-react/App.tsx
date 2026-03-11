@@ -12,6 +12,11 @@ import { CharactersWorkspace } from './components/CharactersWorkspace';
 import { TimelineWorkspace } from './components/TimelineWorkspace';
 import { EventInspector } from './components/EventInspector';
 import { WritingWorkspace } from './components/WritingWorkspace';
+import { GraphWorkspace } from './components/GraphWorkspace';
+import { WorldWorkspace } from './components/WorldWorkspace';
+import { SimulationWorkspace } from './components/SimulationWorkspace';
+import { ConsistencyWorkspace } from './components/ConsistencyWorkspace';
+import { BetaReaderWorkspace } from './components/BetaReaderWorkspace';
 import { Sidebar } from './components/Sidebar';
 
 // UTILS
@@ -75,12 +80,12 @@ const CommandPalette = () => {
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-20 bg-black bg-opacity-50" data-testid="command-palette">
-      <div className="w-full max-w-lg bg-[#252526] border border-[#333333] shadow-2xl rounded-lg overflow-hidden flex flex-col">
-        <div className="flex items-center px-4 border-b border-[#333333]">
-          <Search size={18} className="text-[#888888]" />
+      <div className="w-full max-w-lg bg-bg-elev-1 border border-border shadow-2xl rounded-lg overflow-hidden flex flex-col">
+        <div className="flex items-center px-4 border-b border-border">
+          <Search size={18} className="text-text-2" />
           <input 
             autoFocus
-            className="w-full p-4 bg-transparent outline-none text-[#cccccc]"
+            className="w-full p-4 bg-transparent outline-none text-text"
             placeholder="Search activities or entities..."
             value={search}
             onChange={e => setSearch(e.target.value)}
@@ -90,7 +95,7 @@ const CommandPalette = () => {
           {allResults.length > 0 ? allResults.map((opt, idx) => (
             <div 
               key={idx}
-              className="px-4 py-2 hover:bg-[#007acc] hover:text-white cursor-pointer transition-colors flex items-center justify-between group"
+              className="px-4 py-2 hover:bg-brand hover:text-white cursor-pointer transition-colors flex items-center justify-between group"
               onClick={() => {
                 if (opt.type !== 'activity' && opt.id) {
                     setSelectedEntity(opt.type as any, opt.id);
@@ -107,10 +112,10 @@ const CommandPalette = () => {
               <ChevronRight size={14} className="opacity-0 group-hover:opacity-100 transition-opacity" />
             </div>
           )) : (
-              <div className="px-4 py-8 text-center text-[#666666] text-xs uppercase tracking-widest font-bold italic">No results found</div>
+              <div className="px-4 py-8 text-center text-text-3 text-xs uppercase tracking-widest font-bold italic">No results found</div>
           )}
         </div>
-        <div className="p-2 bg-[#1e1e1e] border-t border-[#333333] flex justify-between text-[9px] text-[#555555] font-bold uppercase tracking-widest px-4">
+        <div className="p-2 bg-bg border-t border-border flex justify-between text-[9px] text-text-3 font-bold uppercase tracking-widest px-4">
             <span>↑↓ to navigate</span>
             <span>↵ to select</span>
             <span>esc to close</span>
@@ -126,26 +131,26 @@ const TopToolbar = () => {
     const { saveProject, saveStatus } = useProjectStore();
 
     return (
-      <header className="h-[var(--top-toolbar-height)] bg-[#252526] border-b border-[#333333] flex items-center justify-between px-2 z-10" data-testid="top-toolbar">
+      <header className="h-top-toolbar bg-bg-elev-1 border-b border-border flex items-center justify-between px-2 z-10" data-testid="top-toolbar">
         <div className="flex items-center gap-1">
-          <div className="flex items-center gap-2 px-2 mr-2 border-r border-[#333333]">
-            <div className="w-6 h-6 bg-[#007acc] rounded flex items-center justify-center text-white font-bold text-xs">F</div>
-            <span className="font-bold text-[11px] text-[#cccccc] tracking-tighter">NARRATIVE IDE</span>
+          <div className="flex items-center gap-2 px-2 mr-2 border-r border-border">
+            <div className="w-6 h-6 bg-brand rounded flex items-center justify-center text-white font-bold text-xs">F</div>
+            <span className="font-bold text-[11px] text-text tracking-tighter">NARRATIVE IDE</span>
           </div>
           
           <div className="flex items-center gap-0.5">
             <ToolbarButton icon={<FilePlus size={14} />} title="New Project" />
             <ToolbarButton icon={<FolderOpen size={14} />} title="Open Project" />
             <ToolbarButton 
-                icon={<Save size={14} className={saveStatus === 'Unsaved changes' ? 'text-[#007acc]' : ''} />} 
+                icon={<Save size={14} className={saveStatus === 'Unsaved changes' ? 'text-brand' : ''} />} 
                 title="Save Project" 
                 onClick={saveProject}
                 testId="toolbar-save"
             />
-            <div className="w-px h-4 bg-[#333333] mx-1"></div>
+            <div className="w-px h-4 bg-border mx-1"></div>
             <ToolbarButton icon={<Undo size={14} />} title="Undo" />
             <ToolbarButton icon={<Redo size={14} />} title="Redo" />
-            <div className="w-px h-4 bg-[#333333] mx-1"></div>
+            <div className="w-px h-4 bg-border mx-1"></div>
             <ToolbarButton icon={<Cpu size={14} />} title="Run AI" />
             <ToolbarButton icon={<Activity size={14} />} title="Run Simulation" />
             <ToolbarButton icon={<CheckCircle size={14} />} title="Check Consistency" />
@@ -155,7 +160,7 @@ const TopToolbar = () => {
 
         <div className="flex-1 max-w-md px-4">
             <div 
-                className="flex items-center gap-2 bg-[#1e1e1e] border border-[#333333] rounded px-3 py-1 text-[#888888] cursor-pointer hover:border-[#444444] transition-colors"
+                className="flex items-center gap-2 bg-bg border border-border rounded px-3 py-1 text-text-2 cursor-pointer hover:border-border-2 transition-colors"
                 onClick={() => toggleCommandPalette()}
                 data-testid="global-search"
             >
@@ -166,7 +171,7 @@ const TopToolbar = () => {
 
         <div className="flex items-center gap-1">
           <ToolbarButton icon={<Settings size={14} />} title="Settings" />
-          <div className="w-8 h-8 rounded-full bg-[#333333] ml-2 flex items-center justify-center text-[10px] font-bold border border-[#444444]">JD</div>
+          <div className="w-8 h-8 rounded-full bg-bg-elev-2 ml-2 flex items-center justify-center text-[10px] font-bold border border-border">JD</div>
         </div>
       </header>
     );
@@ -174,7 +179,7 @@ const TopToolbar = () => {
 
 const ToolbarButton = ({ icon, title, onClick, testId }: { icon: React.ReactNode, title: string, onClick?: () => void, testId?: string }) => (
     <button 
-        className="p-1.5 hover:bg-[#333333] rounded text-[#888888] hover:text-[#cccccc] transition-colors" 
+        className="p-1.5 hover:bg-hover rounded text-text-2 hover:text-text transition-colors" 
         title={title}
         onClick={onClick}
         data-testid={testId}
@@ -247,31 +252,53 @@ const Toast = () => {
 };
 
 // LAYOUT
+import { APP_ROUTES } from './config/routes';
+import charMock from './mock/characters.json';
+import timelineMock from './mock/timeline.json';
+import relMock from './mock/relationships.json';
+import worldMock from './mock/world_items.json';
+
 const AppContent = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { selectedEntity, characters, timelineEvents, projectName, saveStatus } = useProjectStore();
+  const { selectedEntity, characters, timelineEvents, projectName, saveStatus, loadProject } = useProjectStore();
   const { setActivity } = useUIStore();
 
-  const activities = [
-    { id: 'workbench', path: '/workbench', label: 'Workbench', icon: <Terminal size={20} />, testId: 'activity-btn-workbench' },
-    { id: 'writing', path: '/writing', label: 'Writing Studio', icon: <PenTool size={20} />, testId: 'activity-btn-writing' },
-    { id: 'characters', path: '/characters', label: 'Characters', icon: <Users size={20} />, testId: 'activity-btn-characters' },
-    { id: 'timeline', path: '/timeline', label: 'Timeline', icon: <Clock size={20} />, testId: 'activity-btn-timeline' },
-    { id: 'graph', path: '/graph', label: 'Graph', icon: <Network size={20} />, testId: 'activity-btn-graph' },
-    { id: 'world', path: '/world', label: 'World Model', icon: <Globe size={20} />, testId: 'activity-btn-world' },
-    { id: 'simulation', path: '/simulation', label: 'Simulation', icon: <PlayCircle size={20} />, testId: 'activity-btn-simulation' },
-    { id: 'beta', path: '/beta-reader', label: 'Beta Reader', icon: <FileText size={20} />, testId: 'activity-btn-beta' },
-    { id: 'consistency', path: '/consistency', label: 'Consistency', icon: <CheckCircle size={20} />, testId: 'activity-btn-consistency' },
-    { id: 'publish', path: '/publish', label: 'Publish', icon: <Layout size={20} />, testId: 'activity-btn-publish' },
-    { id: 'insights', path: '/insights', label: 'Insights', icon: <BarChart2 size={20} />, testId: 'activity-btn-insights' },
-  ];
-
-  const currentActivityId = activities.find(a => location.pathname.startsWith(a.path))?.id || 'workbench';
+  const currentActivityId = APP_ROUTES.find(a => location.pathname.startsWith(a.path))?.id || 'workbench';
   
   useEffect(() => {
     setActivity(currentActivityId);
   }, [currentActivityId]);
+
+  useEffect(() => {
+    // Initial data load
+    loadProject({ 
+        characters: charMock,
+        timeline: { events: timelineMock, branches: [{ id: 'branch_main', name: 'Main' }] },
+        relationships: relMock,
+        world: { 
+            containers: [
+                { id: 'cont_notebooks', name: 'Notebooks', type: 'notebook', isDefault: true },
+                { id: 'cont_maps', name: 'Maps', type: 'map', isDefault: true },
+                { id: 'cont_orgs', name: 'Organizations', type: 'graph', isDefault: true },
+                { id: 'cont_lore', name: 'Lore', type: 'notebook', isDefault: true },
+            ],
+            items: worldMock.map((item: any) => ({
+                id: item.id,
+                containerId: 'cont_lore', // default to lore for mock
+                name: item.name,
+                description: item.description,
+                attributes: Object.entries(item.fields || {}).map(([key, value]) => ({ key, value: String(value) }))
+            }))
+        },
+        chapters: [
+            { id: 'chap_1', title: 'Chapter 1', orderIndex: 0 }
+        ],
+        scenes: [
+            { id: 'scene_1', chapterId: 'chap_1', title: 'The Beginning', content: 'Once upon a time...', orderIndex: 0 }
+        ]
+    });
+  }, []);
 
   const selectedLabel = selectedEntity.type === 'character' 
     ? characters.find(c => c.id === selectedEntity.id)?.name || 'New Character'
@@ -280,28 +307,28 @@ const AppContent = () => {
     : selectedEntity.id || 'No Selection';
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden bg-[#1e1e1e] text-[#cccccc]">
+    <div className="flex flex-col h-screen overflow-hidden bg-bg text-text">
       <CommandPalette />
       <Toast />
       <TopToolbar />
 
       <div className="flex flex-1 overflow-hidden">
         {/* Activity Bar */}
-        <nav className="w-[var(--activity-bar-width)] bg-[#333333] border-r border-[#1e1e1e] flex flex-col items-center pt-2 gap-1" data-testid="activity-bar">
-          {activities.map((activity) => {
+        <nav className="w-activity-bar bg-bg-elev-2 border-r border-border flex flex-col items-center pt-2 gap-1" data-testid="activity-bar">
+          {APP_ROUTES.map((activity) => {
             const isActive = currentActivityId === activity.id;
             return (
                 <div
                 key={activity.id}
                 className={cnLocal(
                     "w-12 h-12 flex items-center justify-center cursor-pointer transition-all relative group",
-                    isActive ? "text-white" : "text-[#888888] hover:text-[#cccccc]"
+                    isActive ? "text-brand" : "text-text-2 hover:text-text"
                 )}
                 onClick={() => navigate(activity.path)}
                 title={activity.label}
                 data-testid={activity.testId}
                 >
-                {isActive && <div className="absolute left-0 top-2 bottom-2 w-0.5 bg-[#007acc]"></div>}
+                {isActive && <div className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r bg-brand"></div>}
                 {activity.icon}
                 </div>
             );
@@ -311,18 +338,18 @@ const AppContent = () => {
         <Sidebar />
 
         {/* Workspace */}
-        <main className="flex-1 bg-[#121212] overflow-auto relative" data-testid="workspace">
+        <main className="flex-1 bg-bg overflow-auto relative" data-testid="workspace">
           <Routes>
             <Route path="/" element={<PlaceholderPage title="Workbench" testId="agent-console" />} />
             <Route path="/workbench/*" element={<PlaceholderPage title="Workbench" testId="agent-console" />} />
             <Route path="/writing/*" element={<WritingWorkspace />} />
             <Route path="/characters/*" element={<CharactersWorkspace />} />
             <Route path="/timeline/*" element={<TimelineWorkspace />} />
-            <Route path="/graph/*" element={<PlaceholderPage title="Graph" testId="graph-canvas" />} />
-            <Route path="/world/*" element={<PlaceholderPage title="World Model" testId="world-container-list" />} />
-            <Route path="/simulation/*" element={<PlaceholderPage title="Simulation" testId="simulation-runs" />} />
-            <Route path="/beta-reader/*" element={<PlaceholderPage title="Beta Reader" testId="beta-reader-preview" />} />
-            <Route path="/consistency/*" element={<PlaceholderPage title="Consistency" testId="consistency-issue-list" />} />
+            <Route path="/graph/*" element={<GraphWorkspace />} />
+            <Route path="/world/*" element={<WorldWorkspace />} />
+            <Route path="/simulation/*" element={<SimulationWorkspace />} />
+            <Route path="/beta-reader/*" element={<BetaReaderWorkspace />} />
+            <Route path="/consistency/*" element={<ConsistencyWorkspace />} />
             <Route path="/publish/*" element={<PlaceholderPage title="Publish" testId="publish-preview" />} />
             <Route path="/insights/*" element={<PlaceholderPage title="Insights" testId="insight-wordcount" />} />
           </Routes>
@@ -332,7 +359,7 @@ const AppContent = () => {
       </div>
 
       {/* Status Bar */}
-      <footer className="h-[var(--status-bar-height)] bg-[#007acc] text-white flex items-center justify-between px-3 text-[10px] font-bold uppercase tracking-wider" data-testid="status-bar">
+      <footer className="h-status-bar bg-brand text-white flex items-center justify-between px-3 text-[10px] font-bold uppercase tracking-wider" data-testid="status-bar">
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2">
             <span className="opacity-60">Project:</span>

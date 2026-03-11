@@ -1,0 +1,9 @@
+[
+  {
+    "id": "rel_1",
+    "sourceId": "char_1",
+    "targetId": "char_2",
+    "type": "allies",
+    "description": "Reluctant partners in crime."
+  }
+]

@@ -58,8 +58,23 @@ interface Chapter {
     orderIndex: number;
 }
 
+interface WorldContainer {
+    id: string;
+    name: string;
+    type: 'notebook' | 'graph' | 'timeline' | 'map';
+    isDefault?: boolean;
+}
+
+interface WorldItem {
+    id: string;
+    containerId: string;
+    name: string;
+    description: string;
+    attributes: { key: string; value: string }[];
+}
+
 interface Selection {
-  type: 'character' | 'candidate' | 'timeline_event' | 'world_item' | 'relationship' | 'chapter' | 'scene' | null;
+  type: 'character' | 'candidate' | 'timeline_event' | 'world_item' | 'relationship' | 'chapter' | 'scene' | 'world_container' | null;
   id: string | null;
 }
 
@@ -95,6 +110,8 @@ interface ProjectState {
   scenes: Scene[];
   currentSceneContent: string;
   selectedEntity: Selection;
+  worldContainers: WorldContainer[];
+  worldItems: WorldItem[];
   setSelectedEntity: (type: Selection['type'], id: string | null) => void;
   addCharacter: (char: Character) => void;
   updateCharacter: (char: Character) => void;
@@ -109,6 +126,12 @@ interface ProjectState {
   updateChapter: (chap: Chapter) => void;
   addScene: (scene: Scene) => void;
   updateScene: (scene: Scene) => void;
+  addWorldContainer: (container: WorldContainer) => void;
+  updateWorldContainer: (container: WorldContainer) => void;
+  deleteWorldContainer: (id: string) => void;
+  addWorldItem: (item: WorldItem) => void;
+  updateWorldItem: (item: WorldItem) => void;
+  deleteWorldItem: (id: string) => void;
   setCurrentSceneContent: (content: string) => void;
   setSaveStatus: (status: SaveStatus) => void;
   saveProject: () => Promise<void>;
@@ -154,6 +177,13 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   ],
   currentSceneContent: '',
   selectedEntity: { type: null, id: null },
+  worldContainers: [
+    { id: 'cont_notebooks', name: 'Notebooks', type: 'notebook', isDefault: true },
+    { id: 'cont_maps', name: 'Maps', type: 'map', isDefault: true },
+    { id: 'cont_orgs', name: 'Organizations', type: 'graph', isDefault: true },
+    { id: 'cont_lore', name: 'Lore', type: 'notebook', isDefault: true },
+  ],
+  worldItems: [],
   setSelectedEntity: (type, id) => set({ selectedEntity: { type, id } }),
   addCharacter: (char) => {
     set((state) => ({ characters: [...state.characters, char], saveStatus: 'Unsaved changes' }));
@@ -206,6 +236,30 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       scenes: state.scenes.map(s => s.id === scene.id ? scene : s),
       saveStatus: 'Unsaved changes'
   })),
+  addWorldContainer: (container) => set((state) => ({
+      worldContainers: [...state.worldContainers, container],
+      saveStatus: 'Unsaved changes'
+  })),
+  updateWorldContainer: (container) => set((state) => ({
+      worldContainers: state.worldContainers.map(c => c.id === container.id ? container : c),
+      saveStatus: 'Unsaved changes'
+  })),
+  deleteWorldContainer: (id) => set((state) => ({
+      worldContainers: state.worldContainers.filter(c => c.id !== id),
+      saveStatus: 'Unsaved changes'
+  })),
+  addWorldItem: (item) => set((state) => ({
+      worldItems: [...state.worldItems, item],
+      saveStatus: 'Unsaved changes'
+  })),
+  updateWorldItem: (item) => set((state) => ({
+      worldItems: state.worldItems.map(i => i.id === item.id ? item : i),
+      saveStatus: 'Unsaved changes'
+  })),
+  deleteWorldItem: (id) => set((state) => ({
+      worldItems: state.worldItems.filter(i => i.id !== id),
+      saveStatus: 'Unsaved changes'
+  })),
   setCurrentSceneContent: (content) => set({ currentSceneContent: content, saveStatus: 'Unsaved changes' }),
   setSaveStatus: (status) => set({ saveStatus: status }),
   saveProject: async () => {
@@ -224,6 +278,13 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     relationships: data.relationships || [],
     chapters: data.chapters || [],
     scenes: data.scenes || [],
+    worldContainers: data.world?.containers || [
+        { id: 'cont_notebooks', name: 'Notebooks', type: 'notebook', isDefault: true },
+        { id: 'cont_maps', name: 'Maps', type: 'map', isDefault: true },
+        { id: 'cont_orgs', name: 'Organizations', type: 'graph', isDefault: true },
+        { id: 'cont_lore', name: 'Lore', type: 'notebook', isDefault: true },
+    ],
+    worldItems: data.world?.items || [],
     saveStatus: 'Idle'
   }),
   searchEntities: (query) => {

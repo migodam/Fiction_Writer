@@ -12,6 +12,6 @@ test('writing editor typing and autosave', async ({ page }) => {
 
   await page.keyboard.type('Hello world');
 
-  await expect(page.getByText('Saved')).toBeVisible();
+  await expect(page.getByText('Saved', { exact: true })).toBeVisible();
 
 });

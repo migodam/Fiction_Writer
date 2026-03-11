@@ -14,7 +14,7 @@ test('create character and save', async ({ page }) => {
 
     await page.getByTestId('inspector-save').click();
 
-    await expect(page.getByText('Saved')).toBeVisible();
+    await expect(page.getByText('Saved', { exact: true })).toBeVisible();
 
 });
 

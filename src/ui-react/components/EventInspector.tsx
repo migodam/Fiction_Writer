@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useProjectStore, useUIStore } from '../store';
-import { Save, Trash, Clock, MapPin, Users, BookOpen } from 'lucide-react';
+import { Save, Trash, Clock, MapPin, Users, BookOpen, ChevronRight, Info } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 export const EventInspector = () => {
@@ -12,6 +12,7 @@ export const EventInspector = () => {
   const navigate = useNavigate();
   
   const [editEvent, setEditEvent] = useState<any>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
 
   useEffect(() => {
     if (selectedEntity.type === 'timeline_event' && selectedEntity.id) {
@@ -28,6 +29,7 @@ export const EventInspector = () => {
         const event = timelineEvents.find(e => e.id === selectedEntity.id);
         if (event) setEditEvent({ ...event });
       }
+      setValidationError(null);
     } else {
       setEditEvent(null);
     }
@@ -36,7 +38,7 @@ export const EventInspector = () => {
   const handleSave = () => {
     if (!editEvent) return;
     if (!editEvent.title || !editEvent.summary) {
-        alert("Title and Summary are required.");
+        setValidationError("Title and Summary are mandatory.");
         return;
     }
 
@@ -46,6 +48,7 @@ export const EventInspector = () => {
       addTimelineEvent(editEvent);
       setSelectedEntity('timeline_event', editEvent.id);
     }
+    setValidationError(null);
     setLastActionStatus('Saved');
   };
 
@@ -61,64 +64,71 @@ export const EventInspector = () => {
   if (!editEvent) return null;
 
   return (
-    <div className="flex flex-col h-full bg-[#252526]">
-      <div className="p-4 border-b border-[#333333] flex items-center justify-between bg-[#2d2d2d]">
+    <div className="flex flex-col h-full bg-bg-elev-1 animate-in slide-in-from-right duration-300">
+      <div className="p-4 border-b border-border flex items-center justify-between bg-bg-elev-2">
          <div className="flex items-center gap-2">
-           <div className="w-2 h-2 rounded-full bg-[#007acc] animate-pulse"></div>
-           <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#cccccc]">Event Configuration</span>
+           <div className="w-2.5 h-2.5 rounded-full bg-brand shadow-[0_0_8px_rgba(124,58,237,0.4)]"></div>
+           <span className="text-[10px] font-black uppercase tracking-[0.25em] text-text-2">Event Configuration</span>
          </div>
          <button 
-            className="p-1.5 hover:bg-[#333333] rounded text-[#666666] hover:text-red-400 transition-colors"
+            className="p-1.5 hover:bg-hover rounded-lg text-text-3 hover:text-red transition-all group"
             title="Delete Event"
          >
-             <Trash size={14} />
+             <Trash size={16} className="group-active:scale-90" />
          </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
-        <div className="space-y-1">
-          <label className="block text-[9px] font-bold text-[#555555] uppercase tracking-widest ml-1">Event Title</label>
+      <div className="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
+        {validationError && (
+            <div className="p-3 bg-red/10 border border-red/30 rounded-lg flex items-center gap-2.5 text-red text-[10px] font-bold animate-in zoom-in-95">
+                <Info size={14} />
+                {validationError}
+            </div>
+        )}
+
+        <div className="space-y-2 group">
+          <label className="block text-[10px] font-black text-text-3 uppercase tracking-[0.2em] ml-1 group-focus-within:text-brand transition-colors">Event Title</label>
           <input 
             data-testid="event-title-input"
-            className="w-full bg-[#181818] border border-[#333333] rounded-lg p-3 text-sm text-[#cccccc] focus:border-[#007acc] outline-none transition-all shadow-inner"
-            placeholder="What happens?"
+            className="w-full bg-bg border border-border rounded-xl p-3.5 text-sm text-text focus:border-brand focus:ring-1 focus:ring-brand/30 outline-none transition-all shadow-inner"
+            placeholder="Nodal point title..."
             value={editEvent.title}
             onChange={e => setEditEvent({...editEvent, title: e.target.value})}
           />
         </div>
 
-        <div className="space-y-1">
-          <label className="block text-[9px] font-bold text-[#555555] uppercase tracking-widest ml-1">Summary</label>
+        <div className="space-y-2 group">
+          <label className="block text-[10px] font-black text-text-3 uppercase tracking-[0.2em] ml-1 group-focus-within:text-brand transition-colors">Narrative Summary</label>
           <textarea 
             data-testid="event-summary-input"
-            className="w-full h-32 bg-[#181818] border border-[#333333] rounded-lg p-3 text-sm text-[#cccccc] focus:border-[#007acc] outline-none resize-none shadow-inner font-serif leading-relaxed"
-            placeholder="Detailed description of the narrative beats..."
+            className="w-full h-40 bg-bg border border-border rounded-xl p-4 text-sm text-text-2 focus:border-brand focus:ring-1 focus:ring-brand/30 outline-none resize-none shadow-inner font-serif leading-relaxed"
+            placeholder="Describe the causality and impact of this event..."
             value={editEvent.summary}
             onChange={e => setEditEvent({...editEvent, summary: e.target.value})}
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1">
-                <label className="block text-[9px] font-bold text-[#555555] uppercase tracking-widest ml-1">Chronology</label>
-                <div className="flex items-center bg-[#181818] border border-[#333333] rounded-lg px-3 group focus-within:border-[#007acc] transition-all shadow-inner">
-                    <Clock size={12} className="text-[#444444] group-focus-within:text-[#007acc]" />
+        <div className="grid grid-cols-2 gap-6">
+            <div className="space-y-2 group">
+                <label className="block text-[10px] font-black text-text-3 uppercase tracking-[0.2em] ml-1 group-focus-within:text-brand transition-colors">Temporal</label>
+                <div className="flex items-center bg-bg border border-border rounded-xl px-3.5 group-focus-within:border-brand transition-all shadow-inner">
+                    <Clock size={14} className="text-text-3 group-focus-within:text-brand" />
                     <input 
                         data-testid="event-time-input"
-                        className="w-full bg-transparent p-2.5 text-xs text-[#cccccc] outline-none"
-                        placeholder="Day 1, AM"
+                        className="w-full bg-transparent p-3 text-[11px] text-text-2 outline-none font-mono"
+                        placeholder="T+00:00"
                         value={editEvent.time || ''}
                         onChange={e => setEditEvent({...editEvent, time: e.target.value})}
                     />
                 </div>
             </div>
-            <div className="space-y-1">
-                <label className="block text-[9px] font-bold text-[#555555] uppercase tracking-widest ml-1">Setting</label>
-                <div className="flex items-center bg-[#181818] border border-[#333333] rounded-lg px-3 group focus-within:border-[#007acc] transition-all shadow-inner">
-                    <MapPin size={12} className="text-[#444444] group-focus-within:text-[#007acc]" />
+            <div className="space-y-2 group">
+                <label className="block text-[10px] font-black text-text-3 uppercase tracking-[0.2em] ml-1 group-focus-within:text-brand transition-colors">Locus</label>
+                <div className="flex items-center bg-bg border border-border rounded-xl px-3.5 group-focus-within:border-brand transition-all shadow-inner">
+                    <MapPin size={14} className="text-text-3 group-focus-within:text-brand" />
                     <input 
                         data-testid="event-location-input"
-                        className="w-full bg-transparent p-2.5 text-xs text-[#cccccc] outline-none"
+                        className="w-full bg-transparent p-3 text-[11px] text-text-2 outline-none"
                         placeholder="Location"
                         value={editEvent.location || ''}
                         onChange={e => setEditEvent({...editEvent, location: e.target.value})}
@@ -127,25 +137,25 @@ export const EventInspector = () => {
             </div>
         </div>
 
-        <div className="space-y-3">
-          <label className="block text-[9px] font-bold text-[#555555] uppercase tracking-widest flex items-center justify-between ml-1">
+        <div className="space-y-4">
+          <label className="block text-[10px] font-black text-text-3 uppercase tracking-[0.2em] flex items-center justify-between ml-1">
             <span>Participants</span>
-            <Users size={10} className="opacity-40" />
+            <Users size={12} className="opacity-30" />
           </label>
-          <div className="bg-[#181818] border border-[#333333] rounded-lg p-3 min-h-[80px] shadow-inner">
+          <div className="bg-bg border border-border rounded-xl p-4 min-h-[100px] shadow-inner">
              {characters.length === 0 ? (
-                 <div className="text-[10px] text-[#333333] italic text-center py-4">No characters defined yet</div>
+                 <div className="text-[10px] text-text-3 italic text-center py-6 font-medium">No confirmed entities available</div>
              ) : (
-                 <div className="flex flex-wrap gap-2">
+                 <div className="flex flex-wrap gap-2.5">
                     {characters.map(char => {
                         const isSelected = editEvent.participants?.includes(char.id);
                         return (
                             <div 
                                 key={char.id}
-                                className={`px-2 py-1 rounded border text-[10px] font-bold cursor-pointer transition-all ${
+                                className={`px-3 py-1.5 rounded-lg border text-[10px] font-bold cursor-pointer transition-all active:scale-95 ${
                                     isSelected 
-                                    ? 'bg-[#007acc] border-[#007acc] text-white shadow-lg' 
-                                    : 'bg-[#252526] border-[#333333] text-[#666666] hover:border-[#444444]'
+                                    ? 'bg-brand border-brand text-white shadow-lg shadow-brand/20' 
+                                    : 'bg-bg-elev-2 border-border text-text-3 hover:border-brand-2 hover:text-text-2'
                                 }`}
                                 onClick={() => toggleParticipant(char.id)}
                             >
@@ -159,22 +169,23 @@ export const EventInspector = () => {
         </div>
       </div>
 
-      <div className="p-4 border-t border-[#333333] flex flex-col gap-2 bg-[#2d2d2d]">
+      <div className="p-6 border-t border-border flex flex-col gap-3 bg-bg-elev-2">
          <button 
            data-testid="open-scene-btn"
-           className="w-full py-2 border border-[#444444] hover:bg-[#333333] text-[#cccccc] text-[10px] font-bold uppercase tracking-widest rounded flex items-center justify-center gap-2 transition-all shadow-sm"
+           className="w-full py-2.5 border border-border hover:bg-bg hover:border-brand-2 text-text-2 text-[11px] font-bold uppercase tracking-widest rounded-lg flex items-center justify-center gap-2.5 transition-all shadow-sm group"
            onClick={() => navigate('/writing')}
          >
-           <BookOpen size={14} /> Writing Studio
+           <BookOpen size={16} className="text-text-3 group-hover:text-brand" /> Writing Studio
          </button>
          <button 
            data-testid="inspector-save"
-           className="w-full py-2 bg-[#007acc] hover:bg-[#005fa3] text-white text-[10px] font-bold uppercase tracking-widest rounded flex items-center justify-center gap-2 transition-all shadow-lg active:scale-95"
+           className="w-full py-3 bg-brand hover:bg-brand-2 text-white text-[11px] font-bold uppercase tracking-widest rounded-xl flex items-center justify-center gap-2.5 transition-all shadow-2 active:scale-95 ring-1 ring-white/10"
            onClick={handleSave}
          >
-           <Save size={14} /> Commit Event
+           <Save size={16} /> Persist Event
          </button>
       </div>
     </div>
   );
 };
+

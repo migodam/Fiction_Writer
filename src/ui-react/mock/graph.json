@@ -1,0 +1,9 @@
+{
+  "nodes": [
+    { "id": "node_1", "type": "character", "label": "Silas Vane" },
+    { "id": "node_2", "type": "event", "label": "The Awakening" }
+  ],
+  "edges": [
+    { "id": "edge_1", "source": "node_1", "target": "node_2", "label": "participates" }
+  ]
+}

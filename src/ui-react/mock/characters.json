@@ -1,0 +1,16 @@
+[
+  {
+    "id": "char_1",
+    "name": "Silas Vane",
+    "background": "A rogue scholar from the lower districts.",
+    "traits": "Cynical, observant",
+    "affiliations": "The Whisperers"
+  },
+  {
+    "id": "char_2",
+    "name": "Lyra Dawnbringer",
+    "background": "Heir to the Dawn throne.",
+    "goals": "Restore her family's honor.",
+    "secrets": "Cannot actually use light magic."
+  }
+]

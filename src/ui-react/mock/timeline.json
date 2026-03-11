@@ -1,0 +1,20 @@
+[
+  {
+    "id": "event_1",
+    "title": "The Awakening",
+    "summary": "Silas discovers the ancient text.",
+    "time": "Year 400, Spring",
+    "participants": ["char_1"],
+    "branchId": "branch_main",
+    "orderIndex": 0
+  },
+  {
+    "id": "event_2",
+    "title": "The Betrayal",
+    "summary": "Lyra is exiled from the capital.",
+    "time": "Year 400, Summer",
+    "participants": ["char_2"],
+    "branchId": "branch_main",
+    "orderIndex": 1
+  }
+]
