@@ -67,7 +67,9 @@ test.describe('Narrative IDE Smoke Test', () => {
     await expect(page.getByTestId('status-bar')).toContainText('Searchable Hero');
 
     await page.getByTestId('char-tab-relationships').click();
-    await expect(page.getByText(/Network Matrix|关系网络/)).toBeVisible();
+    await expect(page.getByTestId('add-relationship-btn')).toBeVisible();
+    await page.getByTestId('add-relationship-btn').click();
+    await expect(page.getByTestId('relationship-card').first()).toBeVisible();
 
     await page.getByTestId('char-tab-timeline').click();
     await expect(page.getByText(/Temporal Presence|时间存在/)).toBeVisible();
@@ -195,10 +197,10 @@ test.describe('Narrative IDE Smoke Test', () => {
     await page.getByTestId('activity-btn-beta').click();
     await expect(page.getByTestId('beta-reader-list')).toBeVisible();
 
-    await page.getByText('The Logician').click();
+    await page.getByTestId('beta-persona-beta_logician').click();
     await page.getByTestId('run-beta-reader-btn').click();
     await expect(page.getByText('Beta simulation complete', { exact: true })).toBeVisible();
-    await expect(page.getByText('Engagement')).toBeVisible();
+    await expect(page.locator('span').filter({ hasText: 'Engagement' }).first()).toBeVisible();
   });
 
   test('toolbar save action updates status bar', async ({ page }) => {

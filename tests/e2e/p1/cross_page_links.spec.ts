@@ -34,8 +34,8 @@ test.describe('Cross-page links', () => {
     await expect(page).toHaveURL(/\/timeline\/events\?location=loc_glass_bridge/);
     await expect(page.getByTestId('timeline-filter-state')).toContainText('Glass Bridge');
 
-    await page.getByTestId('timeline-node-event_bridge').click();
-    await page.getByTestId('timeline-open-scene-btn').click();
+    await page.getByTestId('timeline-node-event_bridge').first().click();
+    await page.getByTestId('timeline-open-scene-btn').first().click();
     await expect(page.getByTestId('writing-editor')).toBeVisible();
     await expect(page.locator('input[value="Glass Bridge Intercept"]')).toBeVisible();
   });

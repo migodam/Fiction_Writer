@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { useProjectStore } from '../store';
-import { Plus, Maximize2, Minimize2, Layers, ChevronRight, Clock, MapPin, Users, FilterX, ArrowRightCircle } from 'lucide-react';
+import { ArrowRightCircle, FilterX, GitBranchPlus, Maximize2, Minimize2, Plus } from 'lucide-react';
+import { useProjectStore, useUIStore } from '../store';
 import { useI18n } from '../i18n';
+import { cn } from '../utils';
 
 export const TimelineWorkspace = () => {
   const {
@@ -11,15 +12,19 @@ export const TimelineWorkspace = () => {
     setSelectedEntity,
     selectedEntity,
     updateTimelineEvent,
+    addTimelineBranch,
     characters,
     worldItems,
   } = useProjectStore();
+  const { openContextMenu, setLastActionStatus } = useUIStore();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const { t } = useI18n();
-
+  const canvasRef = useRef<HTMLDivElement | null>(null);
   const [zoom, setZoom] = useState(1);
-  const [viewMode, setViewMode] = useState<'linear' | 'chapter'>('linear');
+  const [panX, setPanX] = useState(0);
+  const [panY, setPanY] = useState(0);
+  const [hoveredEventId, setHoveredEventId] = useState<string | null>(null);
 
   const characterFilter = searchParams.get('character') || '';
   const locationFilter = searchParams.get('location') || '';
@@ -27,200 +32,191 @@ export const TimelineWorkspace = () => {
   const eventFocus = searchParams.get('event') || '';
 
   useEffect(() => {
-    if (eventFocus) {
-      setSelectedEntity('timeline_event', eventFocus);
-    }
+    if (eventFocus) setSelectedEntity('timeline_event', eventFocus);
   }, [eventFocus, setSelectedEntity]);
 
-  const locationOptions = useMemo(
-    () => worldItems.filter((item) => item.type === 'location'),
-    [worldItems]
-  );
+  useEffect(() => {
+    const node = canvasRef.current;
+    if (!node) return;
+    const handleWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      setZoom((current) => Math.min(1.8, Math.max(0.6, current - event.deltaY * 0.001)));
+    };
+    node.addEventListener('wheel', handleWheel, { passive: false });
+    return () => node.removeEventListener('wheel', handleWheel);
+  }, []);
 
-  const visibleEvents = useMemo(() => {
-    return timelineEvents.filter((event) => {
-      if (characterFilter && !event.participantCharacterIds.includes(characterFilter)) {
-        return false;
-      }
-      if (locationFilter && !event.locationIds.includes(locationFilter)) {
-        return false;
-      }
-      if (branchFilter && event.branchId !== branchFilter) {
-        return false;
-      }
-      return true;
-    });
-  }, [branchFilter, characterFilter, locationFilter, timelineEvents]);
-
-  const handleAddEvent = () => {
-    setSelectedEntity('timeline_event', 'new');
-  };
-
-  const updateParam = (key: string, value: string) => {
-    const next = new URLSearchParams(searchParams);
-    if (value) {
-      next.set(key, value);
-    } else {
-      next.delete(key);
-    }
-    setSearchParams(next);
-  };
-
-  const clearFilters = () => {
-    setSearchParams({});
-  };
-
-  const onDragOver = (event: React.DragEvent) => {
-    event.preventDefault();
-  };
-
-  const onDrop = (event: React.DragEvent, branchId: string, targetOrderIndex: number) => {
-    const eventId = event.dataTransfer.getData('eventId');
-    const target = timelineEvents.find((entry) => entry.id === eventId);
-    if (target) {
-      updateTimelineEvent({ ...target, branchId, orderIndex: targetOrderIndex });
-    }
-  };
-
-  const getLocationLabel = (event: (typeof timelineEvents)[number]) => {
-    return event.locationIds
-      .map((locationId) => locationOptions.find((item) => item.id === locationId)?.name || locationId)
-      .join(', ');
-  };
-
-  const branchRows = branchFilter ? timelineBranches.filter((branch) => branch.id === branchFilter) : timelineBranches;
+  const locationOptions = useMemo(() => worldItems.filter((item) => item.type === 'location'), [worldItems]);
+  const branchRows = branchFilter ? timelineBranches.filter((branch) => branch.id === branchFilter) : timelineBranches.slice().sort((a, b) => a.sortOrder - b.sortOrder);
+  const visibleEvents = useMemo(() => timelineEvents.filter((event) => {
+    if (characterFilter && !event.participantCharacterIds.includes(characterFilter)) return false;
+    if (locationFilter && !event.locationIds.includes(locationFilter)) return false;
+    if (branchFilter && event.branchId !== branchFilter && !event.sharedBranchIds?.includes(branchFilter)) return false;
+    return true;
+  }), [branchFilter, characterFilter, locationFilter, timelineEvents]);
 
   return (
-    <div className="flex flex-col h-full bg-bg overflow-hidden">
-      <div className="h-12 border-b border-border flex items-center px-6 gap-6 bg-bg-elev-1 z-10 shadow-1" data-testid="timeline-toolbar">
-        <div className="flex items-center gap-3">
-          <button
-            data-testid="add-event-btn"
-            className="flex items-center gap-2 px-4 py-1.5 bg-brand hover:bg-brand-2 text-white text-[11px] font-bold rounded-lg shadow-2 transition-all uppercase tracking-widest active:scale-95"
-            onClick={handleAddEvent}
-          >
-            <Plus size={14} strokeWidth={3} /> {t('timeline.addEvent')}
-          </button>
-        </div>
-
-        <div className="h-5 w-px bg-divider"></div>
-
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2.5 bg-bg border border-border rounded-lg px-3 py-1.5">
-            <Layers size={14} className="text-text-3" />
-            <select className="bg-transparent text-[10px] font-bold text-text-2 outline-none uppercase tracking-wider" value={viewMode} onChange={(event) => setViewMode(event.target.value as any)}>
-              <option value="linear">{t('timeline.linear')}</option>
-              <option value="chapter">{t('timeline.chapterGrouping')}</option>
-            </select>
-          </div>
-          <select className="rounded-lg border border-border bg-bg px-3 py-1.5 text-[10px] font-bold text-text-2" value={branchFilter} onChange={(event) => updateParam('branch', event.target.value)} data-testid="timeline-branch-filter">
-            <option value="">{t('timeline.branchFilter')}</option>
-            {timelineBranches.map((branch) => (
-              <option key={branch.id} value={branch.id}>{branch.name}</option>
-            ))}
-          </select>
-          <select className="rounded-lg border border-border bg-bg px-3 py-1.5 text-[10px] font-bold text-text-2" value={characterFilter} onChange={(event) => updateParam('character', event.target.value)} data-testid="timeline-character-filter">
-            <option value="">{t('timeline.allCharacters')}</option>
-            {characters.map((character) => (
-              <option key={character.id} value={character.id}>{character.name}</option>
-            ))}
-          </select>
-          <select className="rounded-lg border border-border bg-bg px-3 py-1.5 text-[10px] font-bold text-text-2" value={locationFilter} onChange={(event) => updateParam('location', event.target.value)} data-testid="timeline-location-filter">
-            <option value="">{t('timeline.allLocations')}</option>
-            {locationOptions.map((location) => (
-              <option key={location.id} value={location.id}>{location.name}</option>
-            ))}
-          </select>
-          <button type="button" className="rounded-lg border border-border px-3 py-1.5 text-[10px] font-bold text-text-2" onClick={clearFilters} data-testid="timeline-clear-filters">
-            <FilterX size={12} className="inline mr-2" />{t('timeline.clearFilters')}
-          </button>
-        </div>
-
-        <div className="ml-auto flex items-center gap-4 bg-bg border border-border rounded-lg px-4 py-1.5 shadow-inner">
-          <button className="text-text-3 hover:text-brand" onClick={() => setZoom(Math.max(0.5, zoom - 0.1))}><Minimize2 size={14} /></button>
-          <input type="range" min="0.5" max="2" step="0.1" value={zoom} onChange={(event) => setZoom(parseFloat(event.target.value))} className="w-24 h-1 bg-divider rounded-lg appearance-none cursor-pointer accent-brand" />
-          <button className="text-text-3 hover:text-brand" onClick={() => setZoom(Math.min(2, zoom + 0.1))}><Maximize2 size={14} /></button>
+    <div className="flex h-full flex-col overflow-hidden bg-bg">
+      <div className="flex items-center gap-4 border-b border-border bg-bg-elev-1 px-6 py-3" data-testid="timeline-toolbar">
+        <button type="button" data-testid="add-event-btn" className="rounded-xl bg-brand px-4 py-2 text-[11px] font-black uppercase tracking-[0.25em] text-white" onClick={() => setSelectedEntity('timeline_event', 'new')}>
+          <Plus size={13} className="mr-2 inline" />{t('timeline.addEvent')}
+        </button>
+        <button type="button" className="rounded-xl border border-border px-4 py-2 text-[11px] font-black uppercase tracking-[0.25em] text-text-2 hover:border-brand" onClick={() => {
+          const parent = branchRows[0]?.id || timelineBranches[0]?.id || 'branch_main';
+          addTimelineBranch({ id: `branch_${Date.now()}`, name: 'New Branch', description: 'Branch from current narrative line.', parentBranchId: parent, forkEventId: visibleEvents[0]?.id || null, mergeEventId: null, color: '#38bdf8', sortOrder: timelineBranches.length, collapsed: false });
+          setLastActionStatus('Branch created');
+        }}>
+          <GitBranchPlus size={13} className="mr-2 inline" />New Branch
+        </button>
+        <select className="rounded-xl border border-border bg-bg px-3 py-2 text-[11px] font-black text-text-2" value={branchFilter} onChange={(event) => updateParam(searchParams, setSearchParams, 'branch', event.target.value)} data-testid="timeline-branch-filter">
+          <option value="">{t('timeline.branchFilter')}</option>
+          {timelineBranches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
+        </select>
+        <select className="rounded-xl border border-border bg-bg px-3 py-2 text-[11px] font-black text-text-2" value={characterFilter} onChange={(event) => updateParam(searchParams, setSearchParams, 'character', event.target.value)} data-testid="timeline-character-filter">
+          <option value="">{t('timeline.allCharacters')}</option>
+          {characters.map((character) => <option key={character.id} value={character.id}>{character.name}</option>)}
+        </select>
+        <select className="rounded-xl border border-border bg-bg px-3 py-2 text-[11px] font-black text-text-2" value={locationFilter} onChange={(event) => updateParam(searchParams, setSearchParams, 'location', event.target.value)} data-testid="timeline-location-filter">
+          <option value="">{t('timeline.allLocations')}</option>
+          {locationOptions.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}
+        </select>
+        <button type="button" data-testid="timeline-clear-filters" className="rounded-xl border border-border px-4 py-2 text-[11px] font-black uppercase tracking-[0.25em] text-text-2 hover:border-brand" onClick={() => setSearchParams({})}>
+          <FilterX size={13} className="mr-2 inline" />{t('timeline.clearFilters')}
+        </button>
+        <div className="ml-auto flex items-center gap-3 rounded-full border border-border bg-bg px-4 py-2">
+          <button type="button" className="text-text-3 hover:text-brand" onClick={() => setZoom((current) => Math.max(0.6, current - 0.1))}><Minimize2 size={14} /></button>
+          <input type="range" min="0.6" max="1.8" step="0.1" value={zoom} onChange={(event) => setZoom(Number(event.target.value))} className="w-24 accent-brand" />
+          <button type="button" className="text-text-3 hover:text-brand" onClick={() => setZoom((current) => Math.min(1.8, current + 0.1))}><Maximize2 size={14} /></button>
         </div>
       </div>
 
-      <div className="px-6 py-3 border-b border-border bg-bg-elev-1/60 flex flex-wrap gap-4 text-[10px] font-black uppercase tracking-[0.2em] text-text-3" data-testid="timeline-filter-state">
-        {characterFilter && <span>{t('timeline.filteredByCharacter')}: {characters.find((entry) => entry.id === characterFilter)?.name}</span>}
-        {locationFilter && <span>{t('timeline.filteredByLocation')}: {locationOptions.find((entry) => entry.id === locationFilter)?.name}</span>}
+      <div className="border-b border-border bg-bg-elev-1/70 px-6 py-3 text-[10px] font-black uppercase tracking-[0.2em] text-text-3" data-testid="timeline-filter-state">
+        {characterFilter && <span>{t('timeline.filteredByCharacter')}: {characters.find((entry) => entry.id === characterFilter)?.name} </span>}
+        {locationFilter && <span>{t('timeline.filteredByLocation')}: {locationOptions.find((entry) => entry.id === locationFilter)?.name} </span>}
         {branchFilter && <span>{t('timeline.branchFilter')}: {timelineBranches.find((entry) => entry.id === branchFilter)?.name}</span>}
         {!characterFilter && !locationFilter && !branchFilter && <span>{t('timeline.title')}</span>}
       </div>
 
-      <div className="flex-1 overflow-auto bg-bg custom-scrollbar relative p-10" data-testid="timeline-canvas">
-        <div className="absolute inset-0 pointer-events-none opacity-[0.03] select-none" style={{ backgroundImage: `linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px)`, backgroundSize: `${40 * zoom}px ${40 * zoom}px` }}></div>
-
-        <div className="relative flex flex-col gap-8 min-h-full" style={{ minWidth: `${1600 * zoom}px` }}>
-          {branchRows.map((branch) => {
-            const events = visibleEvents.filter((event) => event.branchId === branch.id).sort((a, b) => a.orderIndex - b.orderIndex);
-            return (
-              <div key={branch.id} className="relative h-52 border border-border bg-bg-elev-1 rounded-2xl flex items-center px-10 group transition-all hover:bg-bg-elev-2 hover:border-border-2 shadow-1" data-testid={`timeline-branch-${branch.id}`} onDragOver={onDragOver} onDrop={(event) => onDrop(event, branch.id, events.length)}>
-                <div className="absolute left-6 top-6 flex items-center gap-3 z-20">
-                  <div className="w-2.5 h-2.5 rounded-full bg-brand shadow-[0_0_12px_rgba(124,58,237,0.6)]"></div>
-                  <div>
-                    <span className="text-[11px] font-black text-text-3 uppercase tracking-[0.25em] group-hover:text-brand transition-colors duration-300">{branch.name}</span>
-                    {branch.description && <div className="text-[10px] mt-1 text-text-3 normal-case tracking-normal">{branch.description}</div>}
+      <div ref={canvasRef} className="relative flex-1 overflow-hidden bg-bg" data-testid="timeline-canvas" onMouseDown={(event) => {
+        if ((event.target as HTMLElement).dataset.timelineNode) return;
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const initialPanX = panX;
+        const initialPanY = panY;
+        const onMove = (moveEvent: MouseEvent) => {
+          setPanX(initialPanX + (moveEvent.clientX - startX));
+          setPanY(initialPanY + (moveEvent.clientY - startY));
+        };
+        const onUp = () => {
+          window.removeEventListener('mousemove', onMove);
+          window.removeEventListener('mouseup', onUp);
+        };
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+      }}>
+        <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: 'linear-gradient(rgba(255,255,255,0.8) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.8) 1px, transparent 1px)', backgroundSize: `${48 * zoom}px ${48 * zoom}px` }} />
+        <div className="absolute inset-0 overflow-auto custom-scrollbar">
+          <div className="min-h-full min-w-[1500px] p-10" style={{ transform: `translate(${panX}px, ${panY}px) scale(${zoom})`, transformOrigin: 'top left' }}>
+            {branchRows.map((branch) => {
+              const events = visibleEvents
+                .filter((event) => event.branchId === branch.id || event.sharedBranchIds?.includes(branch.id))
+                .sort((a, b) => a.orderIndex - b.orderIndex);
+              return (
+                <div key={branch.id} className="mb-10 rounded-[30px] border border-border bg-bg-elev-1 px-8 py-7 shadow-1" data-testid={`timeline-branch-${branch.id}`} onContextMenu={(event) => {
+                  event.preventDefault();
+                  openContextMenu({
+                    x: event.clientX,
+                    y: event.clientY,
+                    items: [{ id: 'focus-branch', label: 'Focus Branch', action: () => updateParam(searchParams, setSearchParams, 'branch', branch.id) }],
+                  });
+                }}>
+                  <div className="mb-7 flex items-center gap-4">
+                    <div className="h-3 w-3 rounded-full shadow-[0_0_18px_rgba(242,200,121,0.5)]" style={{ background: branch.color || '#f59e0b' }} />
+                    <div>
+                      <div className="text-[11px] font-black uppercase tracking-[0.3em] text-text-2">{branch.name}</div>
+                      <div className="mt-1 text-sm text-text-3">{branch.description}</div>
+                    </div>
+                    {branch.parentBranchId && <div className="ml-auto rounded-full border border-border px-3 py-1 text-[10px] uppercase tracking-[0.25em] text-text-3">Fork from {timelineBranches.find((entry) => entry.id === branch.parentBranchId)?.name}</div>}
                   </div>
-                </div>
-
-                <div className="flex gap-10 items-center ml-24 h-full relative z-10">
-                  {events.map((event) => {
-                    const isSelected = selectedEntity.id === event.id;
-                    return (
-                      <div
-                        key={event.id}
-                        draggable
-                        onDragStart={(dragEvent) => dragEvent.dataTransfer.setData('eventId', event.id)}
-                        data-testid={`timeline-node-${event.id}`}
-                        className={cnLocal('w-72 p-5 rounded-xl border-2 cursor-pointer transition-all relative group/node animate-in zoom-in-95 duration-200', isSelected ? 'bg-bg-elev-2 border-brand shadow-2 ring-1 ring-brand/30' : 'bg-bg border-border hover:border-border-2 hover:bg-bg-elev-2 shadow-1')}
-                        style={{ transform: `scale(${0.95 + zoom * 0.05})` }}
-                        onClick={() => setSelectedEntity('timeline_event', event.id)}
-                      >
-                        <div className="flex items-center justify-between mb-3 relative z-10">
-                          <div className="flex items-center gap-1.5 text-brand-2"><Clock size={10} /><span className="text-[10px] font-extrabold uppercase tracking-[0.15em]">{event.time || 'T+0'}</span></div>
-                          <ChevronRight size={12} className="text-text-3 opacity-0 group-hover/node:opacity-100 transition-opacity" />
-                        </div>
-                        <div className="text-sm font-bold text-text truncate mb-2 relative z-10 group-hover/node:text-brand transition-colors">{event.title}</div>
-                        <p className="text-[11px] text-text-2 line-clamp-2 leading-relaxed opacity-70 relative z-10">{event.summary}</p>
-                        <div className="mt-4 pt-3 border-t border-divider flex items-center gap-3 relative z-10 flex-wrap">
-                          {getLocationLabel(event) && <div className="flex items-center gap-1 text-[9px] text-text-3 font-bold uppercase tracking-widest truncate"><MapPin size={8} /> {getLocationLabel(event)}</div>}
-                          {event.participantCharacterIds.length > 0 && <div className="flex items-center gap-1 text-[9px] text-text-3 font-bold uppercase tracking-widest"><Users size={8} /> {event.participantCharacterIds.length}</div>}
-                        </div>
-                        {event.linkedSceneIds.length > 0 && (
+                  <div className="relative flex items-center gap-8 overflow-visible">
+                    <div className="absolute left-0 right-0 top-1/2 h-px bg-white/10" />
+                    {events.map((event) => {
+                      const isSelected = selectedEntity.id === event.id;
+                      const isShared = event.sharedBranchIds?.includes(branch.id);
+                      return (
+                        <div key={`${branch.id}-${event.id}`} className="relative z-10 flex flex-col items-center gap-3">
                           <button
                             type="button"
-                            className="mt-4 inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-[10px] font-black uppercase tracking-widest text-text-2 hover:border-brand"
-                            onClick={(clickEvent) => {
-                              clickEvent.stopPropagation();
-                              setSelectedEntity('scene', event.linkedSceneIds[0]);
-                              navigate('/writing/scenes');
+                            data-testid={event.branchId === branch.id ? `timeline-node-${event.id}` : `timeline-node-shared-${event.id}-${branch.id}`}
+                            data-timeline-node="true"
+                            draggable
+                            onDragStart={(dragEvent) => dragEvent.dataTransfer.setData('eventId', event.id)}
+                            onDragOver={(dragEvent) => dragEvent.preventDefault()}
+                            onDrop={(dropEvent) => {
+                              const draggedId = dropEvent.dataTransfer.getData('eventId');
+                              const draggedEvent = timelineEvents.find((entry) => entry.id === draggedId);
+                              if (draggedEvent) updateTimelineEvent({ ...draggedEvent, branchId: branch.id, orderIndex: event.orderIndex });
                             }}
-                            data-testid="timeline-open-scene-btn"
+                            className={cn('group relative h-16 w-16 rounded-full border-2 transition-all', isSelected ? 'border-brand bg-brand text-white shadow-[0_0_30px_rgba(201,131,40,0.45)]' : 'border-white/14 bg-slate-950/70 text-brand-2 hover:border-brand')}
+                            onClick={() => setSelectedEntity('timeline_event', event.id)}
+                            onMouseEnter={() => setHoveredEventId(event.id)}
+                            onMouseLeave={() => setHoveredEventId((current) => current === event.id ? null : current)}
+                            onContextMenu={(ctxEvent) => {
+                              ctxEvent.preventDefault();
+                              openContextMenu({
+                                x: ctxEvent.clientX,
+                                y: ctxEvent.clientY,
+                                items: [
+                                  { id: 'open-event', label: 'Open Event Inspector', action: () => setSelectedEntity('timeline_event', event.id) },
+                                  { id: 'scene-jump', label: 'Open Linked Scene', action: () => event.linkedSceneIds[0] && navigate(`/writing/scenes?scene=${event.linkedSceneIds[0]}`) },
+                                ],
+                              });
+                            }}
                           >
-                            <ArrowRightCircle size={12} /> {t('timeline.jumpToScene')}
+                            <span className="absolute inset-0 flex items-center justify-center text-[9px] font-black uppercase tracking-[0.2em]">{event.orderIndex + 1}</span>
                           </button>
-                        )}
-                      </div>
-                    );
-                  })}
-
-                  {events.length === 0 && (
-                    <div className="flex flex-col items-center justify-center opacity-20 ml-20">
-                      <Plus size={32} className="mb-2 text-text-3" />
-                      <p className="text-[10px] text-text-3 font-black uppercase tracking-[0.3em] italic">{t('timeline.emptyTrack')}</p>
-                    </div>
-                  )}
+                          <div className="text-center">
+                            <div className="text-[11px] font-black text-text">{event.title}</div>
+                            <div className="mt-1 text-[10px] uppercase tracking-[0.2em] text-text-3">{event.time}</div>
+                            {isShared && <div className="mt-1 text-[9px] uppercase tracking-[0.2em] text-amber">shared</div>}
+                          </div>
+                          {hoveredEventId === event.id && (
+                            <div className="absolute top-[88px] z-20 w-72 rounded-2xl border border-border bg-slate-950/95 p-4 text-left shadow-[0_24px_50px_rgba(0,0,0,0.5)]">
+                              <div className="text-sm font-black text-text">{event.title}</div>
+                              <div className="mt-2 text-xs leading-relaxed text-text-2">{event.summary}</div>
+                            </div>
+                          )}
+                          {event.linkedSceneIds.length > 0 && (
+                            <button type="button" data-testid="timeline-open-scene-btn" className="rounded-xl border border-border px-3 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-text-2 hover:border-brand" onClick={() => {
+                              setSelectedEntity('scene', event.linkedSceneIds[0]);
+                              navigate(`/writing/scenes?scene=${event.linkedSceneIds[0]}`);
+                            }}>
+                              <ArrowRightCircle size={12} className="mr-2 inline" />{t('timeline.jumpToScene')}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
       </div>
     </div>
   );
 };
 
-const cnLocal = (...inputs: any[]) => inputs.filter(Boolean).join(' ');
+const updateParam = (
+  current: URLSearchParams,
+  setSearchParams: ReturnType<typeof useSearchParams>[1],
+  key: string,
+  value: string
+) => {
+  const next = new URLSearchParams(current);
+  if (value) next.set(key, value);
+  else next.delete(key);
+  setSearchParams(next);
+};

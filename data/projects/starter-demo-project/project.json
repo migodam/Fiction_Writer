@@ -1,10 +1,11 @@
 {
   "metadata": {
+    "schemaVersion": 3,
     "projectId": "project_starter-demo_starter_demo_project",
     "name": "Starter Demo Project",
     "description": "A guided starter project for the acceptance walkthrough.",
     "createdAt": "2026-03-12T02:40:26.701Z",
-    "updatedAt": "2026-03-12T02:40:26.701Z",
+    "updatedAt": "2026-03-12T05:29:12.723Z",
     "version": 2,
     "rootPath": "D:\\NUS\\Computing\\Projects\\Fiction_Writer\\data\\projects\\starter-demo-project",
     "storageMode": "nodefs",

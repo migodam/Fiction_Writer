@@ -8,8 +8,9 @@ import {
   Download,
   FilePlus,
   FolderOpen,
-  FolderTree,
-  Layout,
+  Gauge,
+  Keyboard,
+  LayoutPanelTop,
   PanelLeft,
   Redo,
   Save,
@@ -37,8 +38,9 @@ import { InsightsWorkspace } from './components/InsightsWorkspace';
 import { electronApi } from './services/electronApi';
 import { useI18n } from './i18n';
 import type { CreateProjectInput } from './models/project';
-
-const cn = (...inputs: Array<string | false | undefined>) => inputs.filter(Boolean).join(' ');
+import { cn } from './utils';
+import { PaneResizeHandle } from './components/PaneResizeHandle';
+import { ContextMenu } from './components/ContextMenu';
 
 type CommandOption = {
   label: string;
@@ -53,40 +55,6 @@ type ProjectDialogState = {
   name: string;
   folder: string;
   template: CreateProjectInput['template'];
-};
-
-const Resizer = ({
-  panel,
-  className,
-  direction = 'left',
-}: {
-  panel: 'sidebar' | 'inspector' | 'agentDock';
-  className?: string;
-  direction?: 'left' | 'right';
-}) => {
-  const setPanelWidth = useUIStore((state) => state.setPanelWidth);
-
-  const handleMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    const startX = event.clientX;
-    const initialWidth = useUIStore.getState()[panel === 'sidebar' ? 'sidebarWidth' : panel === 'inspector' ? 'inspectorWidth' : 'agentDockWidth'];
-
-    const onMouseMove = (moveEvent: MouseEvent) => {
-      const delta = moveEvent.clientX - startX;
-      const nextWidth = direction === 'left' ? initialWidth - delta : initialWidth + delta;
-      setPanelWidth(panel, nextWidth);
-    };
-
-    const onMouseUp = () => {
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
-    };
-
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
-  };
-
-  return <div className={cn('w-1 cursor-col-resize bg-border/40 hover:bg-brand/60 transition-colors', className)} onMouseDown={handleMouseDown} data-testid={`${panel}-resizer`} />;
 };
 
 const CommandPalette = () => {
@@ -425,7 +393,19 @@ const ProjectDialog = ({
 };
 
 const SettingsModal = () => {
-  const { isSettingsOpen, toggleSettings, locale, setLocale, resetLayout } = useUIStore();
+  const {
+    isSettingsOpen,
+    toggleSettings,
+    locale,
+    setLocale,
+    resetLayout,
+    density,
+    setDensity,
+    editorWidth,
+    setEditorWidth,
+    motionLevel,
+    setMotionLevel,
+  } = useUIStore();
   const { createProject } = useProjectStore();
   const { t } = useI18n();
 
@@ -455,7 +435,44 @@ const SettingsModal = () => {
 
           <section>
             <div className="mb-3 text-[10px] font-black uppercase tracking-[0.25em] text-text-3">{t('settings.layout')}</div>
-            <button type="button" className="rounded-xl border border-border px-4 py-3 text-sm text-text transition-colors hover:border-brand" onClick={resetLayout} data-testid="reset-layout-btn">{t('settings.resetLayout')}</button>
+            <div className="grid gap-3 md:grid-cols-3">
+              <button type="button" className={cn('rounded-xl border px-4 py-3 text-sm', density === 'comfortable' ? 'border-brand bg-active text-text' : 'border-border text-text-2')} onClick={() => setDensity('comfortable')}>
+                <div className="flex items-center gap-2"><Gauge size={14} /> Comfortable</div>
+              </button>
+              <button type="button" className={cn('rounded-xl border px-4 py-3 text-sm', density === 'compact' ? 'border-brand bg-active text-text' : 'border-border text-text-2')} onClick={() => setDensity('compact')}>
+                <div className="flex items-center gap-2"><Gauge size={14} /> Compact</div>
+              </button>
+              <button type="button" className="rounded-xl border border-border px-4 py-3 text-sm text-text transition-colors hover:border-brand" onClick={resetLayout} data-testid="reset-layout-btn">
+                {t('settings.resetLayout')}
+              </button>
+            </div>
+          </section>
+
+          <section>
+            <div className="mb-3 text-[10px] font-black uppercase tracking-[0.25em] text-text-3">Editor Width</div>
+            <div className="grid grid-cols-2 gap-3">
+              <button type="button" className={cn('rounded-xl border px-4 py-3 text-sm', editorWidth === 'focused' ? 'border-brand bg-active text-text' : 'border-border text-text-2')} onClick={() => setEditorWidth('focused')}>Focused</button>
+              <button type="button" className={cn('rounded-xl border px-4 py-3 text-sm', editorWidth === 'wide' ? 'border-brand bg-active text-text' : 'border-border text-text-2')} onClick={() => setEditorWidth('wide')}>Wide</button>
+            </div>
+          </section>
+
+          <section>
+            <div className="mb-3 text-[10px] font-black uppercase tracking-[0.25em] text-text-3">Motion</div>
+            <div className="grid grid-cols-2 gap-3">
+              <button type="button" className={cn('rounded-xl border px-4 py-3 text-sm', motionLevel === 'full' ? 'border-brand bg-active text-text' : 'border-border text-text-2')} onClick={() => setMotionLevel('full')}>
+                Full Motion
+              </button>
+              <button type="button" className={cn('rounded-xl border px-4 py-3 text-sm', motionLevel === 'reduced' ? 'border-brand bg-active text-text' : 'border-border text-text-2')} onClick={() => setMotionLevel('reduced')}>
+                Reduced
+              </button>
+            </div>
+          </section>
+
+          <section>
+            <div className="mb-3 text-[10px] font-black uppercase tracking-[0.25em] text-text-3">Shortcuts</div>
+            <div className="rounded-2xl border border-border bg-bg px-4 py-4 text-sm text-text-2">
+              <div className="flex items-center gap-3"><Keyboard size={14} /> `Ctrl+P` opens the command palette. Right-click now exposes contextual actions across authoring surfaces.</div>
+            </div>
           </section>
 
           <section>
@@ -496,6 +513,7 @@ const AppContent = () => {
     setSelectedEntity,
     clearUnreadActivity,
     setProjectLocale,
+    syncProjectUiState,
   } = useProjectStore();
   const {
     setActivity,
@@ -506,6 +524,9 @@ const AppContent = () => {
     isSidebarCollapsed,
     isAgentDockOpen,
     locale,
+    density,
+    editorWidth,
+    motionLevel,
   } = useUIStore();
 
   const currentActivityId = APP_ROUTES.find((route) => location.pathname.startsWith(route.path))?.id || 'workbench';
@@ -527,6 +548,10 @@ const AppContent = () => {
   useEffect(() => {
     setProjectLocale(locale);
   }, [locale, setProjectLocale]);
+
+  useEffect(() => {
+    syncProjectUiState();
+  }, [sidebarWidth, inspectorWidth, agentDockWidth, isSidebarCollapsed, isAgentDockOpen, density, editorWidth, motionLevel, syncProjectUiState]);
 
   const selectedLabel =
     selectedEntity.type === 'character'
@@ -598,7 +623,7 @@ const AppContent = () => {
 
   return (
     <div
-      className="flex h-screen flex-col overflow-hidden bg-bg text-text"
+      className={cn('flex h-screen flex-col overflow-hidden bg-bg text-text', density === 'compact' && 'text-[13px]')}
       style={{
         ['--sidebar-width' as any]: `${sidebarWidth}px`,
         ['--inspector-width' as any]: `${inspectorWidth}px`,
@@ -607,6 +632,7 @@ const AppContent = () => {
     >
       <CommandPalette />
       <SettingsModal />
+      <ContextMenu />
       {projectDialog && (
         <ProjectDialog
           state={projectDialog}
@@ -645,9 +671,9 @@ const AppContent = () => {
         <div style={{ width: isSidebarCollapsed ? 0 : sidebarWidth }} className="transition-[width] duration-200 overflow-hidden">
           <Sidebar />
         </div>
-        {!isSidebarCollapsed && <Resizer panel="sidebar" direction="right" />}
+        {!isSidebarCollapsed && <PaneResizeHandle panel="sidebar" direction="right" testId="sidebar-resizer" />}
 
-        <main className="flex-1 overflow-auto bg-bg" data-testid="workspace">
+        <main className="flex-1 overflow-hidden bg-bg" data-testid="workspace">
           <Routes>
             <Route path="/" element={<Navigate to="/workbench/inbox" replace />} />
             <Route path="/workbench" element={<Navigate to="/workbench/inbox" replace />} />
@@ -675,17 +701,17 @@ const AppContent = () => {
           </Routes>
         </main>
 
-        <Resizer panel="inspector" direction="left" />
+        <PaneResizeHandle panel="inspector" direction="left" testId="inspector-resizer" />
         <div style={{ width: inspectorWidth }} className="overflow-hidden">
           <Inspector />
         </div>
-        {isAgentDockOpen && <Resizer panel="agentDock" direction="left" />}
+        {isAgentDockOpen && <PaneResizeHandle panel="agentDock" direction="left" testId="agentDock-resizer" />}
         <div style={{ width: isAgentDockOpen ? agentDockWidth : 56 }} className="overflow-hidden transition-[width] duration-200">
           <AgentDock />
         </div>
       </div>
 
-      <footer className="h-status-bar border-t border-brand/20 bg-brand text-white" data-testid="status-bar">
+      <footer className={cn('h-status-bar border-t border-amber-300/20 text-white', editorWidth === 'wide' ? 'bg-slate-900' : 'bg-brand')} data-testid="status-bar">
         <div className="flex h-full items-center justify-between px-3 text-[10px] font-black uppercase tracking-[0.18em]">
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-2"><span className="opacity-60">{t('shell.project')}</span><span>{projectName}</span></div>

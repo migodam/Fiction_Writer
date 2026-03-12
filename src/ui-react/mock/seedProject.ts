@@ -1,7 +1,10 @@
 import type {
+  BetaPersona,
+  BetaRun,
   Candidate,
   Chapter,
   Character,
+  CharacterTag,
   ConsistencyIssue,
   ExportArtifact,
   GraphBoard,
@@ -11,13 +14,157 @@ import type {
   Proposal,
   Relationship,
   Scene,
+  TaskArtifact,
+  TaskRequest,
+  TaskRun,
   TimelineBranch,
   TimelineEvent,
   WorldContainer,
   WorldItem,
 } from '../models/project';
+import { PROJECT_SCHEMA_VERSION } from '../models/project';
 
 const now = () => new Date().toISOString();
+
+const createStarterTags = (): CharacterTag[] => [
+  { id: 'tag_lead', name: 'Lead', color: '#f59e0b', description: 'Primary perspective driver.', characterIds: ['char_aria'] },
+  { id: 'tag_strategist', name: 'Strategist', color: '#38bdf8', description: 'Pattern-detecting operators.', characterIds: ['char_rowan', 'char_nila'] },
+  { id: 'tag_resistance', name: 'Resistance', color: '#22c55e', description: 'Opposition-aligned characters.', characterIds: ['char_seren'] },
+  { id: 'tag_antagonist', name: 'Antagonist', color: '#ef4444', description: 'Primary hostile force.', characterIds: ['char_vesper'] },
+];
+
+const createStarterBetaPersonas = (): BetaPersona[] => [
+  {
+    id: 'beta_logician',
+    name: 'The Logician',
+    archetype: 'Analytical',
+    profile: 'Focuses on plot holes and cause-effect chains.',
+    tone: 'precise',
+    focusAreas: ['consistency', 'causality', 'pacing'],
+    weights: { engagement: 62, retention: 68, resonance: 48, pacing: 82, consistency: 95 },
+  },
+  {
+    id: 'beta_empath',
+    name: 'The Empath',
+    archetype: 'Emotional',
+    profile: 'Tracks emotional resonance and character arcs.',
+    tone: 'warm',
+    focusAreas: ['resonance', 'engagement', 'character'],
+    weights: { engagement: 85, retention: 74, resonance: 93, pacing: 58, consistency: 65 },
+  },
+  {
+    id: 'beta_generalist',
+    name: 'The Generalist',
+    archetype: 'Broad audience',
+    profile: 'Represents average reader enjoyment and clarity.',
+    tone: 'balanced',
+    focusAreas: ['engagement', 'retention', 'clarity'],
+    weights: { engagement: 81, retention: 79, resonance: 75, pacing: 78, consistency: 71 },
+  },
+];
+
+const createStarterBetaRuns = (): BetaRun[] => [
+  {
+    id: 'beta_run_seed',
+    personaId: 'beta_generalist',
+    createdAt: now(),
+    aggregate: {
+      engagement: 82,
+      retention: 71,
+      resonance: 85,
+      pacing: 77,
+      consistency: 68,
+      highlights: [
+        'Bridge Intercept lands as a strong act-turning sequence.',
+        'Rowan and Nila have memorable tactical chemistry.',
+        'The public fallout thread wants one more aftermath scene.',
+      ],
+    },
+    feedback: [
+      {
+        id: 'feedback_1',
+        title: 'Chapter 1 pacing',
+        text: 'The introduction is strong, but the market transition wants one more beat of emotional processing.',
+        tag: 'Pacing',
+        type: 'constructive',
+      },
+      {
+        id: 'feedback_2',
+        title: 'Cipher setup',
+        text: 'The archive reconstruction sequence is compelling, but Nila should own more of the deciphering setup earlier.',
+        tag: 'Consistency',
+        type: 'critical',
+      },
+      {
+        id: 'feedback_3',
+        title: 'Rowan voice',
+        text: 'Rowan consistently lands with a dry tactical humor that helps the investigation feel sharp.',
+        tag: 'Voice',
+        type: 'positive',
+      },
+    ],
+  },
+];
+
+const createStarterTaskRequests = (): TaskRequest[] => [
+  {
+    id: 'task_graph_sync',
+    title: 'Graph sync candidate review',
+    source: 'manual',
+    status: 'queued',
+    prompt: 'Review selected graph notes and prepare canonical-safe proposals.',
+    targetIds: [
+      { type: 'graph_board', id: 'board_main' },
+      { type: 'timeline_event', id: 'event_bridge' },
+    ],
+    createdAt: now(),
+  },
+];
+
+const createStarterTaskRuns = (): TaskRun[] => [
+  {
+    id: 'run_graph_sync_seed',
+    taskRequestId: 'task_graph_sync',
+    status: 'completed',
+    startedAt: now(),
+    finishedAt: now(),
+    summary: 'Generated one graph sync proposal and one consistency summary.',
+    artifactIds: ['artifact_graph_sync_seed'],
+  },
+];
+
+const createStarterTaskArtifacts = (): TaskArtifact[] => [
+  {
+    id: 'artifact_graph_sync_seed',
+    taskRunId: 'run_graph_sync_seed',
+    type: 'report',
+    summary: 'Seed analysis bundle for review.',
+    path: null,
+  },
+];
+
+const createDefaultUiState = (): NarrativeProject['uiState'] => ({
+  panes: {
+    sidebarWidth: 280,
+    inspectorWidth: 360,
+    agentDockWidth: 320,
+    writingOutlineWidth: 320,
+    writingContextWidth: 340,
+    isSidebarCollapsed: false,
+    isAgentDockOpen: true,
+    isWritingOutlineCollapsed: false,
+    isWritingContextCollapsed: false,
+  },
+  view: {
+    activeGraphBoardId: 'board_main',
+    activeTimelineBranchId: 'branch_main',
+    lastOpenedSceneId: 'scene_arrival',
+  },
+  density: 'comfortable',
+  editorWidth: 'focused',
+  motionLevel: 'full',
+  experimentalFlags: ['context-menu', 'graph-canvas-pan'],
+});
 
 const mapSvg = encodeURIComponent(`
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800">
@@ -331,9 +478,9 @@ const createWorldItems = (): WorldItem[] => [
 ];
 
 const createStarterBranches = (): TimelineBranch[] => [
-  { id: 'branch_main', name: 'Main Investigation', description: 'Primary narrative thread.' },
-  { id: 'branch_shadow', name: 'Shadow Routes', description: 'Undercity movements and hidden handoffs.' },
-  { id: 'branch_public', name: 'Public Pressure', description: 'Political and civic fallout.' },
+  { id: 'branch_main', name: 'Main Investigation', description: 'Primary narrative thread.', parentBranchId: null, forkEventId: null, mergeEventId: 'event_merge_public', color: '#f59e0b', sortOrder: 0, collapsed: false },
+  { id: 'branch_shadow', name: 'Shadow Routes', description: 'Undercity movements and hidden handoffs.', parentBranchId: 'branch_main', forkEventId: 'event_arrival', mergeEventId: 'event_bridge', color: '#38bdf8', sortOrder: 1, collapsed: false },
+  { id: 'branch_public', name: 'Public Pressure', description: 'Political and civic fallout.', parentBranchId: 'branch_main', forkEventId: 'event_arrival', mergeEventId: 'event_merge_public', color: '#22c55e', sortOrder: 2, collapsed: false },
 ];
 
 const createStarterEvents = (): TimelineEvent[] => [
@@ -349,6 +496,7 @@ const createStarterEvents = (): TimelineEvent[] => [
     linkedSceneIds: ['scene_arrival'],
     linkedWorldItemIds: ['loc_sky_dock'],
     tags: ['arrival'],
+    sharedBranchIds: ['branch_shadow', 'branch_public'],
   },
   {
     id: 'event_market',
@@ -401,6 +549,21 @@ const createStarterEvents = (): TimelineEvent[] => [
     linkedSceneIds: ['scene_bridge'],
     linkedWorldItemIds: ['loc_glass_bridge', 'item_memory_shard', 'item_city_map'],
     tags: ['climax'],
+    sharedBranchIds: ['branch_shadow'],
+  },
+  {
+    id: 'event_merge_public',
+    title: 'Emergency Public Hearing',
+    summary: 'The political fallout merges back into the main investigation after the bridge clash.',
+    time: 'Day 3 - Morning',
+    branchId: 'branch_main',
+    orderIndex: 3,
+    locationIds: ['loc_glass_bridge'],
+    participantCharacterIds: ['char_aria', 'char_seren'],
+    linkedSceneIds: [],
+    linkedWorldItemIds: ['loc_glass_bridge'],
+    tags: ['merge'],
+    sharedBranchIds: ['branch_public'],
   },
 ];
 
@@ -536,6 +699,28 @@ const createStarterBoards = (): GraphBoard[] => [
       { id: 'edge_bridge_shard', sourceId: 'graph_event_bridge', targetId: 'graph_item_shard', label: 'centers on' },
       { id: 'edge_note_bridge', sourceId: 'graph_note_public', targetId: 'graph_event_bridge', label: 'aftershock' },
     ],
+    view: { zoom: 1, panX: 0, panY: 0 },
+    selectedNodeIds: [],
+    sortOrder: 0,
+  },
+  {
+    id: 'board_relationships',
+    name: 'Relationship Tensions',
+    description: 'Character pressure map for alliance and betrayal analysis.',
+    nodes: [
+      { id: 'graph_rel_aria', kind: 'character_ref', label: 'Aria', description: 'Anchor point.', x: 220, y: 180, width: 180, height: 120, linkedEntityId: 'char_aria', linkedEntityType: 'character', imageAssetId: null },
+      { id: 'graph_rel_seren', kind: 'character_ref', label: 'Seren', description: 'Public pressure axis.', x: 480, y: 80, width: 180, height: 120, linkedEntityId: 'char_seren', linkedEntityType: 'character', imageAssetId: null },
+      { id: 'graph_rel_vesper', kind: 'character_ref', label: 'Vesper', description: 'Hidden threat axis.', x: 690, y: 250, width: 180, height: 120, linkedEntityId: 'char_vesper', linkedEntityType: 'character', imageAssetId: null },
+      { id: 'graph_rel_rowan', kind: 'character_ref', label: 'Rowan', description: 'Shadow logistics.', x: 360, y: 330, width: 180, height: 120, linkedEntityId: 'char_rowan', linkedEntityType: 'character', imageAssetId: null },
+    ],
+    edges: [
+      { id: 'edge_rel_a_s', sourceId: 'graph_rel_aria', targetId: 'graph_rel_seren', label: 'trust / leverage' },
+      { id: 'edge_rel_a_v', sourceId: 'graph_rel_aria', targetId: 'graph_rel_vesper', label: 'suspects' },
+      { id: 'edge_rel_a_r', sourceId: 'graph_rel_aria', targetId: 'graph_rel_rowan', label: 'needs' },
+    ],
+    view: { zoom: 0.95, panX: 0, panY: 0 },
+    selectedNodeIds: [],
+    sortOrder: 1,
   },
 ];
 
@@ -639,12 +824,13 @@ const buildProject = (
   body: Omit<NarrativeProject, 'metadata'>
 ): NarrativeProject => ({
   metadata: {
+    schemaVersion: PROJECT_SCHEMA_VERSION,
     projectId: `project_${template}_${name.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`,
     name,
     description: template === 'starter-demo' ? 'A guided starter project for the acceptance walkthrough.' : 'A blank narrative project.',
     createdAt: now(),
     updatedAt: now(),
-    version: 2,
+    version: 3,
     rootPath,
     storageMode,
     locale,
@@ -664,6 +850,7 @@ export const createStarterProject = (
 ): NarrativeProject =>
   buildProject(name, rootPath, locale, storageMode, 'starter-demo', {
     characters: createStarterCharacters(),
+    characterTags: createStarterTags(),
     candidates: createStarterCandidates(),
     timelineBranches: createStarterBranches(),
     timelineEvents: createStarterEvents(),
@@ -673,16 +860,22 @@ export const createStarterProject = (
     worldContainers: createWorldContainers(),
     worldItems: createWorldItems(),
     graphBoards: createStarterBoards(),
+    betaPersonas: createStarterBetaPersonas(),
+    betaRuns: createStarterBetaRuns(),
+    taskRequests: createStarterTaskRequests(),
+    taskRuns: createStarterTaskRuns(),
+    taskArtifacts: createStarterTaskArtifacts(),
     proposals: createStarterProposals(),
     proposalHistory: createStarterHistory(),
     issues: createStarterIssues(),
     exports: createStarterExports(),
     unreadUpdates: {
-      activities: { workbench: true, graph: true, consistency: true },
+      activities: { workbench: true, graph: true, consistency: true, 'beta-reader': true },
       sections: { 'workbench.inbox': true, 'graph.narrative': true, 'consistency.issues': true },
       entities: { proposal_graph_public_fallout: true, issue_bridge_name: true },
     },
     archivedIds: [],
+    uiState: createDefaultUiState(),
   });
 
 export const createBlankProject = (
@@ -693,8 +886,9 @@ export const createBlankProject = (
 ): NarrativeProject =>
   buildProject(name, rootPath, locale, storageMode, 'blank', {
     characters: [],
+    characterTags: [],
     candidates: [],
-    timelineBranches: [{ id: 'branch_main', name: 'Main Branch', description: 'Default story branch.' }],
+    timelineBranches: [{ id: 'branch_main', name: 'Main Branch', description: 'Default story branch.', parentBranchId: null, forkEventId: null, mergeEventId: null, color: '#f59e0b', sortOrder: 0, collapsed: false }],
     timelineEvents: [],
     relationships: [],
     chapters: [
@@ -748,12 +942,21 @@ export const createBlankProject = (
         description: 'A blank mixed-mode board.',
         nodes: [],
         edges: [],
+        view: { zoom: 1, panX: 0, panY: 0 },
+        selectedNodeIds: [],
+        sortOrder: 0,
       },
     ],
+    betaPersonas: createStarterBetaPersonas(),
+    betaRuns: [],
+    taskRequests: [],
+    taskRuns: [],
+    taskArtifacts: [],
     proposals: [],
     proposalHistory: [],
     issues: [],
     exports: [],
     unreadUpdates: { activities: {}, sections: {}, entities: {} },
     archivedIds: [],
+    uiState: createDefaultUiState(),
   });

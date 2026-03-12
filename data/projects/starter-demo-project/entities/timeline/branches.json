@@ -2,16 +2,34 @@
   {
     "id": "branch_main",
     "name": "Main Investigation",
-    "description": "Primary narrative thread."
+    "description": "Primary narrative thread.",
+    "parentBranchId": null,
+    "forkEventId": null,
+    "mergeEventId": null,
+    "color": "#f59e0b",
+    "sortOrder": 0,
+    "collapsed": false
   },
   {
     "id": "branch_shadow",
     "name": "Shadow Routes",
-    "description": "Undercity movements and hidden handoffs."
+    "description": "Undercity movements and hidden handoffs.",
+    "parentBranchId": null,
+    "forkEventId": null,
+    "mergeEventId": null,
+    "color": "#f59e0b",
+    "sortOrder": 1,
+    "collapsed": false
   },
   {
     "id": "branch_public",
     "name": "Public Pressure",
-    "description": "Political and civic fallout."
+    "description": "Political and civic fallout.",
+    "parentBranchId": null,
+    "forkEventId": null,
+    "mergeEventId": null,
+    "color": "#f59e0b",
+    "sortOrder": 2,
+    "collapsed": false
   }
 ]

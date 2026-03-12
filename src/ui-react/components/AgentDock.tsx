@@ -5,7 +5,7 @@ import { useI18n } from '../i18n';
 
 export const AgentDock = () => {
   const { isAgentDockOpen, toggleAgentDock } = useUIStore();
-  const { projectRoot, projectName, proposals, issues, selectedEntity } = useProjectStore();
+  const { projectRoot, projectName, proposals, issues, selectedEntity, taskRequests, taskRuns, taskArtifacts } = useProjectStore();
   const { t } = useI18n();
 
   if (!isAgentDockOpen) {
@@ -65,6 +65,8 @@ export const AgentDock = () => {
           <div className="mt-4 grid grid-cols-2 gap-3">
             <Metric label="Inbox" value={String(proposals.length)} />
             <Metric label="Issues" value={String(issues.length)} />
+            <Metric label="Tasks" value={String(taskRequests.filter((entry) => entry.status === 'queued' || entry.status === 'running').length)} />
+            <Metric label="Runs" value={String(taskRuns.length)} />
           </div>
         </section>
 
@@ -72,6 +74,30 @@ export const AgentDock = () => {
           <div className="text-[10px] font-black uppercase tracking-[0.2em] text-text-3">{t('agentDock.context')}</div>
           <div className="mt-3 text-sm text-text-2">
             {selectedEntity.id ? `Selected ${selectedEntity.type}: ${selectedEntity.id}` : t('agentDock.noContext')}
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-border bg-card p-4 shadow-1">
+          <div className="text-[10px] font-black uppercase tracking-[0.2em] text-text-3">Task Queue</div>
+          <div className="mt-3 space-y-3">
+            {taskRequests.slice(0, 4).map((task) => (
+              <div key={task.id} className="rounded-xl border border-border bg-bg p-3">
+                <div className="text-sm font-bold text-text">{task.title}</div>
+                <div className="mt-1 text-[10px] uppercase tracking-[0.2em] text-text-3">{task.status} · {task.source}</div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-border bg-card p-4 shadow-1">
+          <div className="text-[10px] font-black uppercase tracking-[0.2em] text-text-3">Artifacts</div>
+          <div className="mt-3 space-y-3">
+            {taskArtifacts.slice(0, 3).map((artifact) => (
+              <div key={artifact.id} className="rounded-xl border border-border bg-bg p-3">
+                <div className="text-sm font-bold text-text">{artifact.summary}</div>
+                <div className="mt-1 text-[10px] uppercase tracking-[0.2em] text-text-3">{artifact.type}</div>
+              </div>
+            ))}
           </div>
         </section>
 

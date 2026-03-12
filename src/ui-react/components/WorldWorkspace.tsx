@@ -1,37 +1,34 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Book, ChevronDown, ChevronRight, ExternalLink, Globe, Layers, Map as MapIcon, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useProjectStore, useUIStore } from '../store';
-import { Globe, Box, Plus, ChevronRight, Trash2, Save, Database, Layers, Map as MapIcon, Book, ExternalLink } from 'lucide-react';
 import { useI18n } from '../i18n';
+import { cn } from '../utils';
 
 export const WorldWorkspace = () => {
   const {
     worldContainers,
     worldItems,
+    timelineEvents,
+    scenes,
     selectedEntity,
     setSelectedEntity,
     addWorldContainer,
+    updateWorldContainer,
     addWorldItem,
     updateWorldItem,
   } = useProjectStore();
-  const { setLastActionStatus, sidebarSection } = useUIStore();
+  const { setLastActionStatus, sidebarSection, openContextMenu } = useUIStore();
   const navigate = useNavigate();
   const { t } = useI18n();
 
   const [activeContainerId, setActiveContainerId] = useState<string | null>(worldContainers[0]?.id || null);
-  const [editItem, setEditItem] = useState<any>(null);
+  const [editItem, setEditItem] = useState<typeof worldItems[number] | null>(null);
+  const [renamingContainerId, setRenamingContainerId] = useState<string | null>(null);
 
   useEffect(() => {
-    const preferred = sidebarSection === 'maps'
-      ? 'cont_world_map'
-      : sidebarSection === 'organizations'
-      ? 'cont_orgs'
-      : sidebarSection === 'lore'
-      ? 'cont_lore'
-      : 'cont_locations';
-    if (worldContainers.some((entry) => entry.id === preferred)) {
-      setActiveContainerId(preferred);
-    }
+    const preferred = sidebarSection === 'maps' ? 'cont_world_map' : sidebarSection === 'organizations' ? 'cont_orgs' : sidebarSection === 'lore' ? 'cont_lore' : 'cont_locations';
+    if (worldContainers.some((entry) => entry.id === preferred)) setActiveContainerId(preferred);
   }, [sidebarSection, worldContainers]);
 
   const activeContainer = worldContainers.find((container) => container.id === activeContainerId) || null;
@@ -39,149 +36,157 @@ export const WorldWorkspace = () => {
   const mapItem = worldItems.find((item) => item.containerId === 'cont_world_map');
 
   useEffect(() => {
-    if (selectedEntity.type === 'world_item' && selectedEntity.id) {
-      if (selectedEntity.id === 'new' || selectedEntity.id.startsWith('new_')) {
-        setEditItem({
-          id: `item_${Date.now()}`,
-          containerId: activeContainerId,
-          type: activeContainerId === 'cont_locations' ? 'location' : activeContainer?.type || 'note',
-          name: '',
-          description: '',
-          attributes: [],
-          linkedCharacterIds: [],
-          linkedEventIds: [],
-          linkedSceneIds: [],
-          mapMarkers: [],
-          assetPath: null,
-          tagIds: [],
-        });
-      } else {
-        const item = worldItems.find((entry) => entry.id === selectedEntity.id);
-        if (item) {
-          setEditItem({ ...item });
-        }
-      }
-    } else {
-      setEditItem(null);
-    }
-  }, [selectedEntity, worldItems, activeContainerId, activeContainer]);
-
-  const handleSaveItem = () => {
-    if (!editItem?.name) {
+    if (selectedEntity.type !== 'world_item' || !selectedEntity.id) return setEditItem(null);
+    if (selectedEntity.id.startsWith('new_')) {
+      setEditItem({
+        id: `item_${Date.now()}`,
+        containerId: activeContainerId || 'cont_locations',
+        type: activeContainerId === 'cont_locations' ? 'location' : activeContainer?.type || 'note',
+        name: '',
+        description: '',
+        attributes: [],
+        linkedCharacterIds: [],
+        linkedEventIds: [],
+        linkedSceneIds: [],
+        mapMarkers: [],
+        assetPath: null,
+        tagIds: [],
+      });
       return;
     }
-    if (worldItems.some((entry) => entry.id === editItem.id)) {
-      updateWorldItem(editItem);
-    } else {
-      addWorldItem(editItem);
-      setSelectedEntity('world_item', editItem.id);
-    }
-    setLastActionStatus(t('shell.saved'));
-  };
+    const item = worldItems.find((entry) => entry.id === selectedEntity.id);
+    if (item) setEditItem({ ...item });
+  }, [activeContainer, activeContainerId, selectedEntity, worldItems]);
 
-  const addAttribute = () => {
-    setEditItem({ ...editItem, attributes: [...(editItem.attributes || []), { key: '', value: '' }] });
-  };
+  const openLocationTimeline = (locationId: string) => navigate(`/timeline/events?location=${locationId}`);
 
-  const openLocationTimeline = (locationId: string) => {
-    navigate(`/timeline/events?location=${locationId}`);
-  };
+  const reverseReferences = useMemo(() => {
+    if (!editItem) return { scenes: [], events: [] };
+    return {
+      scenes: scenes.filter((scene) => scene.linkedWorldItemIds.includes(editItem.id)),
+      events: timelineEvents.filter((event) => event.linkedWorldItemIds.includes(editItem.id) || event.locationIds.includes(editItem.id)),
+    };
+  }, [editItem, scenes, timelineEvents]);
+
+  const sortedContainers = worldContainers.slice().sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
 
   return (
     <div className="flex h-full overflow-hidden bg-bg">
-      <div className="w-64 border-r border-border flex flex-col bg-bg-elev-1" data-testid="world-container-list">
-        <div className="p-4 border-b border-border flex items-center justify-between bg-bg-elev-2">
-          <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-text-3">{t('world.containers')}</h3>
-          <button
-            data-testid="create-container-btn"
-            className="p-1 hover:bg-hover rounded-lg text-brand transition-colors"
-            onClick={() => {
+      <aside className="w-72 border-r border-border bg-bg-elev-1" data-testid="world-container-list">
+        <div className="border-b border-border bg-bg-elev-2 p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <div>
+              <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('world.containers')}</div>
+              <div className="text-sm font-black text-text">World Structure</div>
+            </div>
+            <button type="button" data-testid="create-container-btn" className="rounded-xl border border-border p-2 text-brand hover:border-brand" onClick={() => {
               const id = `cont_${Date.now()}`;
-              addWorldContainer({ id, name: 'New Container', type: 'notebook' });
+              addWorldContainer({ id, name: 'New Container', type: 'notebook', sortOrder: sortedContainers.length, isCollapsed: false });
               setActiveContainerId(id);
-            }}
-          >
-            <Plus size={16} />
-          </button>
+              setRenamingContainerId(id);
+            }}>
+              <Plus size={16} />
+            </button>
+          </div>
         </div>
-        <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1">
-          {worldContainers.map((container) => (
+        <div className="h-full overflow-y-auto custom-scrollbar p-2">
+          {sortedContainers.map((container) => (
             <div
               key={container.id}
               data-testid={`world-container-${container.id}`}
-              className={`px-3 py-2.5 rounded-xl cursor-pointer flex items-center gap-3 transition-all group ${activeContainerId === container.id ? 'bg-active text-text' : 'text-text-3 hover:bg-hover'}`}
-              onClick={() => setActiveContainerId(container.id)}
+              className={cn('mb-2 rounded-2xl border transition-colors', activeContainerId === container.id ? 'border-brand bg-active' : 'border-transparent hover:bg-hover')}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                openContextMenu({
+                  x: event.clientX,
+                  y: event.clientY,
+                  items: [
+                    { id: 'rename-container', label: 'Rename Container', action: () => setRenamingContainerId(container.id) },
+                    { id: 'toggle-collapse', label: container.isCollapsed ? 'Expand Container' : 'Collapse Container', action: () => updateWorldContainer({ ...container, isCollapsed: !container.isCollapsed }) },
+                  ],
+                });
+              }}
             >
-              <div className={activeContainerId === container.id ? 'text-brand' : 'text-text-3 opacity-40'}>
-                {container.type === 'notebook' && <Book size={14} />}
-                {container.type === 'map' && <MapIcon size={14} />}
-                {container.type === 'graph' && <Database size={14} />}
-                {container.type === 'timeline' && <Layers size={14} />}
+              <div className="flex items-center gap-2 px-3 py-3">
+                <button type="button" className="rounded p-1 text-text-3 hover:text-text" onClick={() => updateWorldContainer({ ...container, isCollapsed: !container.isCollapsed })}>
+                  {container.isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                </button>
+                <button type="button" className="flex min-w-0 flex-1 items-center gap-3 text-left" onClick={() => setActiveContainerId(container.id)}>
+                  {container.type === 'map' ? <MapIcon size={14} className="text-brand-2" /> : container.type === 'graph' ? <Layers size={14} className="text-brand-2" /> : <Book size={14} className="text-brand-2" />}
+                  {renamingContainerId === container.id ? (
+                    <>
+                      <span className="sr-only">{container.name}</span>
+                      <input autoFocus value={container.name} onChange={(event) => updateWorldContainer({ ...container, name: event.target.value })} onBlur={() => setRenamingContainerId(null)} className="min-w-0 flex-1 bg-transparent text-sm font-bold text-text outline-none" />
+                    </>
+                  ) : (
+                    <span className="truncate text-sm font-bold text-text">{container.name}</span>
+                  )}
+                </button>
+                <button type="button" className="rounded p-1 text-text-3 hover:text-text" onClick={() => setRenamingContainerId(container.id)}>
+                  <Pencil size={12} />
+                </button>
               </div>
-              <span className="text-[11px] font-bold uppercase tracking-wider truncate">{container.name}</span>
             </div>
           ))}
         </div>
-      </div>
+      </aside>
 
-      <div className="w-80 border-r border-border flex flex-col bg-bg shadow-xl z-10" data-testid="world-item-list">
-        <div className="p-4 border-b border-border flex items-center justify-between bg-bg-elev-1">
-          <div className="flex flex-col">
-            <span className="text-[9px] font-black uppercase tracking-[0.3em] text-brand">{activeContainer?.type}</span>
-            <h3 className="text-sm font-black text-text truncate">{activeContainer?.name}</h3>
+      <aside className="w-80 border-r border-border bg-bg shadow-xl" data-testid="world-item-list">
+        <div className="border-b border-border bg-bg-elev-1 p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <div>
+              <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{activeContainer?.type}</div>
+              <div className="text-sm font-black text-text">{activeContainer?.name}</div>
+            </div>
+            {activeContainerId !== 'cont_world_map' && (
+              <button type="button" data-testid="add-world-item-btn" className="rounded-xl border border-border p-2 text-brand hover:border-brand" onClick={() => setSelectedEntity('world_item', `new_${Date.now()}`)}>
+                <Plus size={16} />
+              </button>
+            )}
           </div>
-          {activeContainerId !== 'cont_world_map' && (
-            <button
-              data-testid="add-world-item-btn"
-              className="p-2 bg-brand/10 hover:bg-brand/20 text-brand rounded-xl transition-all active:scale-95"
-              onClick={() => setSelectedEntity('world_item', `new_${Date.now()}`)}
-            >
-              <Plus size={18} />
-            </button>
-          )}
         </div>
-        <div className="flex-1 overflow-y-auto custom-scrollbar">
+        <div className="h-full overflow-y-auto custom-scrollbar">
           {containerItems.map((item) => (
-            <div
+            <button
+              type="button"
               key={item.id}
               data-testid={`world-item-${item.id}`}
-              className={`p-4 border-b border-divider cursor-pointer transition-all group relative ${selectedEntity.id === item.id ? 'bg-selected' : 'hover:bg-hover'}`}
+              className={cn('w-full border-b border-divider px-4 py-4 text-left transition-colors', selectedEntity.id === item.id ? 'bg-selected' : 'hover:bg-hover')}
               onClick={() => setSelectedEntity('world_item', item.id)}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                openContextMenu({
+                  x: event.clientX,
+                  y: event.clientY,
+                  items: [
+                    { id: 'rename-item', label: 'Rename Item', action: () => setSelectedEntity('world_item', item.id) },
+                    ...(item.type === 'location' ? [{ id: 'location-timeline', label: 'Open Timeline', action: () => openLocationTimeline(item.id) }] : []),
+                  ],
+                });
+              }}
             >
-              {selectedEntity.id === item.id && <div className="absolute left-0 top-0 bottom-0 w-1 bg-brand"></div>}
-              <div className="flex items-center justify-between mb-1">
-                <div className="font-bold text-sm text-text truncate pr-4 group-hover:text-brand transition-colors">{item.name}</div>
-                <ChevronRight size={14} className={`transition-opacity text-text-3 ${selectedEntity.id === item.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`} />
+              <div className="flex items-center justify-between">
+                <div className="pr-3">
+                  <div className="text-sm font-black text-text">{item.name}</div>
+                  <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-text-3">{item.description}</div>
+                </div>
+                <ChevronRight size={14} />
               </div>
-              <div className="text-[11px] text-text-3 line-clamp-2 leading-relaxed">{item.description}</div>
-            </div>
+            </button>
           ))}
-          {containerItems.length === 0 && (
-            <div className="p-12 text-center opacity-20">
-              <Box size={40} className="mx-auto mb-4" />
-              <p className="text-[10px] font-black uppercase tracking-widest">Container Empty</p>
-            </div>
-          )}
         </div>
-      </div>
+      </aside>
 
-      <div className="flex-1 flex flex-col bg-bg-elev-1 overflow-y-auto custom-scrollbar" data-testid="world-detail-panel">
+      <main className="flex-1 overflow-hidden bg-bg-elev-1" data-testid="world-detail-panel">
         {activeContainerId === 'cont_world_map' ? (
-          <div className="p-10">
+          <div className="h-full overflow-y-auto custom-scrollbar p-10">
             <div className="mb-4 text-[10px] font-black uppercase tracking-[0.3em] text-text-3">{t('world.mapTitle')}</div>
             <div className="rounded-3xl border border-border bg-card p-4 shadow-1">
               {mapItem && (
                 <div className="relative overflow-hidden rounded-2xl border border-border bg-bg">
-                  <img src={mapItem.assetPath || ''} alt="World Map" className="w-full h-[520px] object-cover" data-testid="world-map-image" />
+                  <img src={mapItem.assetPath || ''} alt="World Map" className="h-[560px] w-full object-cover" data-testid="world-map-image" />
                   {mapItem.mapMarkers.map((marker) => (
-                    <button
-                      type="button"
-                      key={marker.id}
-                      className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/20 bg-brand px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-white shadow-2"
-                      style={{ left: `${marker.x * 100}%`, top: `${marker.y * 100}%` }}
-                      onClick={() => marker.linkedEntityId && openLocationTimeline(marker.linkedEntityId)}
-                      data-testid="world-map-marker"
-                    >
+                    <button key={marker.id} type="button" className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/20 bg-brand px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-white shadow-2" style={{ left: `${marker.x * 100}%`, top: `${marker.y * 100}%` }} onClick={() => marker.linkedEntityId && openLocationTimeline(marker.linkedEntityId)} data-testid="world-map-marker">
                       {marker.label}
                     </button>
                   ))}
@@ -191,61 +196,89 @@ export const WorldWorkspace = () => {
             </div>
           </div>
         ) : editItem ? (
-          <div className="max-w-3xl mx-auto p-12 w-full">
-            <div className="space-y-10">
-              <div className="group">
-                <label className="block text-[10px] font-black text-text-3 uppercase tracking-[0.3em] mb-4">{t('world.itemIdentity')}</label>
-                <input data-testid="world-item-name-input" className="bg-transparent text-5xl font-black text-text outline-none placeholder:text-text-3/10 w-full tracking-tight focus:text-brand transition-colors" placeholder="Object or Concept Name" value={editItem.name} onChange={(event) => setEditItem({ ...editItem, name: event.target.value })} />
+          <div className="h-full overflow-y-auto custom-scrollbar p-10">
+            <div className="mx-auto max-w-4xl space-y-8">
+              <div>
+                <div className="mb-2 text-[10px] font-black uppercase tracking-[0.3em] text-text-3">{t('world.itemIdentity')}</div>
+                <input data-testid="world-item-name-input" value={editItem.name} onChange={(event) => setEditItem({ ...editItem, name: event.target.value })} className="w-full bg-transparent text-5xl font-black tracking-tight outline-none" placeholder="Object or Concept Name" />
               </div>
-              <div className="group">
-                <label className="block text-[10px] font-black text-text-3 uppercase tracking-[0.3em] mb-4">{t('world.description')}</label>
-                <textarea data-testid="world-item-description-input" className="w-full h-40 bg-bg border border-border rounded-2xl p-5 text-sm text-text-2 focus:border-brand outline-none transition-all font-serif leading-relaxed shadow-inner" placeholder="Describe how this item exists in the world..." value={editItem.description} onChange={(event) => setEditItem({ ...editItem, description: event.target.value })} />
+              <div>
+                <div className="mb-2 text-[10px] font-black uppercase tracking-[0.3em] text-text-3">{t('world.description')}</div>
+                <textarea data-testid="world-item-description-input" value={editItem.description} onChange={(event) => setEditItem({ ...editItem, description: event.target.value })} className="h-40 w-full rounded-3xl border border-border bg-bg p-5 font-serif text-sm leading-relaxed text-text-2 outline-none" />
               </div>
-              <div className="space-y-6">
-                <div className="flex items-center justify-between">
-                  <label className="block text-[10px] font-black text-text-3 uppercase tracking-[0.3em]">{t('world.attributes')}</label>
-                  <button data-testid="dynamic-field-add-row" className="px-3 py-1 bg-bg border border-border hover:border-brand rounded-lg text-[9px] font-black uppercase tracking-widest text-text-3 hover:text-brand transition-all" onClick={addAttribute}>{t('world.addRow')}</button>
+              <div className="rounded-3xl border border-border bg-card p-6">
+                <div className="mb-4 flex items-center justify-between">
+                  <div className="text-[10px] font-black uppercase tracking-[0.3em] text-text-3">{t('world.attributes')}</div>
+                  <button type="button" data-testid="dynamic-field-add-row" className="rounded-xl border border-border px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-text-2 hover:border-brand" onClick={() => setEditItem({ ...editItem, attributes: [...editItem.attributes, { key: '', value: '' }] })}>
+                    {t('world.addRow')}
+                  </button>
                 </div>
                 <div className="space-y-3">
-                  {editItem.attributes?.map((attr: any, idx: number) => (
-                    <div key={idx} className="flex gap-3">
-                      <input data-testid="dynamic-field-key-input" className="flex-1 bg-bg border border-border rounded-xl px-4 py-2.5 text-[11px] font-bold text-text-2 outline-none focus:border-brand transition-all" placeholder="Attribute" value={attr.key} onChange={(event) => {
-                        const attrs = [...editItem.attributes];
-                        attrs[idx].key = event.target.value;
-                        setEditItem({ ...editItem, attributes: attrs });
-                      }} />
-                      <input data-testid="dynamic-field-value-input" className="flex-[2] bg-bg border border-border rounded-xl px-4 py-2.5 text-[11px] text-text-2 outline-none focus:border-brand transition-all" placeholder="Value" value={attr.value} onChange={(event) => {
-                        const attrs = [...editItem.attributes];
-                        attrs[idx].value = event.target.value;
-                        setEditItem({ ...editItem, attributes: attrs });
-                      }} />
-                      <button className="p-2.5 text-text-3 hover:text-red transition-colors" onClick={() => {
-                        const attrs = editItem.attributes.filter((_: any, index: number) => index !== idx);
-                        setEditItem({ ...editItem, attributes: attrs });
-                      }}>
+                  {editItem.attributes.map((attribute, index) => (
+                    <div key={`${attribute.key}-${index}`} className="flex gap-3">
+                      <input data-testid="dynamic-field-key-input" value={attribute.key} onChange={(event) => {
+                        const next = [...editItem.attributes];
+                        next[index] = { ...next[index], key: event.target.value };
+                        setEditItem({ ...editItem, attributes: next });
+                      }} className="flex-1 rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder="Attribute" />
+                      <input data-testid="dynamic-field-value-input" value={attribute.value} onChange={(event) => {
+                        const next = [...editItem.attributes];
+                        next[index] = { ...next[index], value: event.target.value };
+                        setEditItem({ ...editItem, attributes: next });
+                      }} className="flex-[1.4] rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder="Value" />
+                      <button type="button" className="rounded-2xl border border-red/40 px-3 text-red" onClick={() => setEditItem({ ...editItem, attributes: editItem.attributes.filter((_, attrIndex) => attrIndex !== index) })}>
                         <Trash2 size={14} />
                       </button>
                     </div>
                   ))}
                 </div>
               </div>
-              <div className="pt-8 flex justify-between gap-4 border-t border-divider">
-                {editItem.type === 'location' && (
-                  <button type="button" className="px-5 py-3 border border-border hover:border-brand rounded-xl text-[11px] font-black uppercase tracking-widest text-text-2" onClick={() => openLocationTimeline(editItem.id)} data-testid="open-world-timeline-btn">
-                    <ExternalLink size={14} className="inline mr-2" /> {t('world.openTimeline')}
+              <div className="grid gap-6 lg:grid-cols-2">
+                <div className="rounded-3xl border border-border bg-card p-6">
+                  <div className="mb-4 text-[10px] font-black uppercase tracking-[0.3em] text-text-3">Linked Timeline</div>
+                  <div className="space-y-3">
+                    {reverseReferences.events.map((event) => (
+                      <button key={event.id} type="button" className="flex w-full items-center justify-between rounded-2xl border border-border bg-bg px-4 py-3 text-left hover:border-brand" onClick={() => navigate(`/timeline/events?event=${event.id}`)}>
+                        <span className="text-sm font-bold text-text">{event.title}</span>
+                        <ExternalLink size={14} />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="rounded-3xl border border-border bg-card p-6">
+                  <div className="mb-4 text-[10px] font-black uppercase tracking-[0.3em] text-text-3">Linked Scenes</div>
+                  <div className="space-y-3">
+                    {reverseReferences.scenes.map((scene) => (
+                      <button key={scene.id} type="button" className="flex w-full items-center justify-between rounded-2xl border border-border bg-bg px-4 py-3 text-left hover:border-brand" onClick={() => navigate(`/writing/scenes?scene=${scene.id}`)}>
+                        <span className="text-sm font-bold text-text">{scene.title}</span>
+                        <ExternalLink size={14} />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="flex justify-between gap-4 border-t border-divider pt-8">
+                {editItem.type === 'location' ? (
+                  <button type="button" data-testid="open-world-timeline-btn" className="rounded-xl border border-border px-5 py-3 text-sm text-text-2 hover:border-brand" onClick={() => openLocationTimeline(editItem.id)}>
+                    <ExternalLink size={14} className="mr-2 inline" />{t('world.openTimeline')}
                   </button>
-                )}
-                <button data-testid="inspector-save" className="ml-auto px-10 py-3 bg-brand hover:bg-brand-2 text-white font-black rounded-xl text-[11px] uppercase tracking-widest shadow-2" onClick={handleSaveItem}>{t('world.persist')}</button>
+                ) : <div />}
+                <button type="button" data-testid="inspector-save" className="rounded-xl bg-brand px-8 py-3 text-sm font-black text-white" onClick={() => {
+                  if (!editItem.name.trim()) return;
+                  if (worldItems.some((item) => item.id === editItem.id)) updateWorldItem(editItem);
+                  else addWorldItem(editItem);
+                  setSelectedEntity('world_item', editItem.id);
+                  setLastActionStatus(t('shell.saved'));
+                }}>
+                  Save Item
+                </button>
               </div>
             </div>
           </div>
         ) : (
-          <div className="h-full flex flex-col items-center justify-center text-text-3 select-none">
-            <Globe size={140} className="opacity-5 mb-8" />
-            <p className="text-[11px] font-black uppercase tracking-[0.5em] opacity-40 text-center">World Model</p>
-          </div>
+          <div className="flex h-full items-center justify-center text-text-3"><Globe size={120} className="opacity-10" /></div>
         )}
-      </div>
+      </main>
     </div>
   );
 };

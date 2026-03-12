@@ -1,74 +1,71 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { useProjectStore, useUIStore } from '../store';
-import { Plus, Check, X, User, Link as LinkIcon, Clock, Trash2, ChevronRight, UserPlus, Info, Sparkles, Upload, CalendarDays, ShieldCheck, Building2, Image as ImageIcon } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Building2, Check, ChevronRight, Clock3, Image as ImageIcon, Info, Link2, Plus, Search, Sparkles, Tag, Trash2, Upload, User, UserPlus } from 'lucide-react';
 import { projectService } from '../services/projectService';
+import { useProjectStore, useUIStore } from '../store';
 import { useI18n } from '../i18n';
-
-type CharacterTab = 'profile' | 'relationships' | 'timeline';
+import { cn } from '../utils';
 
 export const CharactersWorkspace = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { characterId } = useParams();
+  const [searchParams] = useSearchParams();
   const {
     characters,
+    characterTags,
     candidates,
+    relationships,
+    timelineEvents,
+    scenes,
+    projectRoot,
     selectedEntity,
     setSelectedEntity,
     addCharacter,
     updateCharacter,
+    addCharacterTag,
+    updateCharacterTag,
+    deleteCharacterTag,
+    toggleCharacterTagMembership,
     confirmCandidate,
     rejectCandidate,
-    relationships,
     addRelationship,
     deleteRelationship,
-    timelineEvents,
-    worldItems,
-    projectRoot,
-    scenes,
   } = useProjectStore();
-  const { setLastActionStatus, sidebarSection } = useUIStore();
+  const { setLastActionStatus, openContextMenu } = useUIStore();
   const { t } = useI18n();
 
   const portraitInputRef = useRef<HTMLInputElement | null>(null);
-  const [activeTab, setActiveTab] = useState<CharacterTab>('profile');
-  const [editChar, setEditChar] = useState<any>(null);
+  const [editChar, setEditChar] = useState<(typeof characters)[number] & { aliasesText: string; organizationText: string } | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [relationshipFilter, setRelationshipFilter] = useState('');
+  const [tagDraft, setTagDraft] = useState({ name: '', color: '#f59e0b', description: '' });
 
-  const showCandidates = sidebarSection === 'candidates';
+  const isCandidatesRoute = location.pathname.endsWith('/candidates');
+  const isRelationshipsRoute = location.pathname.endsWith('/relationships');
+  const isTagsRoute = location.pathname.endsWith('/tags');
+  const isListRoute = location.pathname.endsWith('/list');
+  const isProfileRoute = location.pathname.includes('/profile/');
+  const activeProfilePanel = searchParams.get('panel') === 'timeline' ? 'timeline' : 'profile';
   const invalidProfileId = Boolean(characterId && characterId !== 'new' && !characters.some((character) => character.id === characterId));
 
-  useEffect(() => {
-    if (!characterId) {
-      return;
-    }
+  const selectedCharacterId =
+    characterId && characterId !== 'new'
+      ? characterId
+      : selectedEntity.type === 'character'
+      ? selectedEntity.id
+      : characters[0]?.id || null;
+  const selectedCharacter = characters.find((character) => character.id === selectedCharacterId) || null;
 
+  useEffect(() => {
     if (characterId === 'new') {
-      if (selectedEntity.type !== 'character' || selectedEntity.id !== 'new') {
-        setSelectedEntity('character', 'new');
-      }
-      setActiveTab('profile');
-      return;
-    }
-
-    if (!invalidProfileId && (selectedEntity.type !== 'character' || selectedEntity.id !== characterId)) {
-      setSelectedEntity('character', characterId);
-    }
-  }, [characterId, invalidProfileId, selectedEntity.id, selectedEntity.type, setSelectedEntity]);
-
-  useEffect(() => {
-    if (selectedEntity.type !== 'character' || !selectedEntity.id) {
-      setEditChar(null);
-      return;
-    }
-
-    if (selectedEntity.id === 'new') {
       setEditChar({
         id: `char_${Date.now()}`,
         name: '',
         summary: '',
         background: '',
-        aliases: '',
+        aliases: [],
+        aliasesText: '',
         birthdayText: '',
         portraitAssetId: null,
         traits: '',
@@ -79,75 +76,73 @@ export const CharactersWorkspace = () => {
         arc: '',
         tagIds: [],
         organizationIds: [],
+        organizationText: '',
         linkedSceneIds: [],
         linkedEventIds: [],
         linkedWorldItemIds: [],
         statusFlags: { alive: true },
       });
-      setValidationError(null);
+      setSelectedEntity('character', 'new');
       return;
     }
 
-    const character = characters.find((item) => item.id === selectedEntity.id);
-    if (character) {
-      setEditChar({
-        ...character,
-        aliases: character.aliases.join(', '),
-        organizationText: character.organizationIds.join(', '),
-      });
-      setValidationError(null);
+    if (!selectedCharacter) {
+      setEditChar(null);
+      return;
     }
-  }, [selectedEntity, characters]);
 
-  const charRelationships = relationships.filter((relationship) => relationship.sourceId === selectedEntity.id || relationship.targetId === selectedEntity.id);
-  const charEvents = timelineEvents.filter((event) => event.participantCharacterIds.includes(selectedEntity.id || ''));
-  const linkedScenes = scenes.filter((scene) => scene.linkedCharacterIds.includes(selectedEntity.id || ''));
+    setSelectedEntity('character', selectedCharacter.id);
+    setEditChar({
+      ...selectedCharacter,
+      aliasesText: selectedCharacter.aliases.join(', '),
+      organizationText: selectedCharacter.organizationIds.join(', '),
+    });
+  }, [characterId, selectedCharacter, setSelectedEntity]);
+
+  const charRelationships = relationships.filter((relationship) => !selectedCharacterId || relationship.sourceId === selectedCharacterId || relationship.targetId === selectedCharacterId);
+  const charTimeline = timelineEvents.filter((event) => !selectedCharacterId || event.participantCharacterIds.includes(selectedCharacterId));
+  const linkedScenes = scenes.filter((scene) => !selectedCharacterId || scene.linkedCharacterIds.includes(selectedCharacterId));
+  const filteredRelationships = charRelationships.filter((relationship) => {
+    if (!relationshipFilter) return true;
+    const otherId = relationship.sourceId === selectedCharacterId ? relationship.targetId : relationship.sourceId;
+    const other = characters.find((character) => character.id === otherId);
+    return `${relationship.type} ${other?.name || ''}`.toLowerCase().includes(relationshipFilter.toLowerCase());
+  });
+
+  const openCharacterPanel = (panel: 'profile' | 'timeline' | 'relationships') => {
+    if (!selectedCharacterId) return;
+    if (panel === 'relationships') {
+      navigate('/characters/relationships');
+      return;
+    }
+    navigate(panel === 'timeline' ? `/characters/profile/${selectedCharacterId}?panel=timeline` : `/characters/profile/${selectedCharacterId}`);
+  };
 
   const handleSave = () => {
-    if (!editChar) {
-      return;
-    }
-    if (!editChar.name || !editChar.background) {
+    if (!editChar || !editChar.name.trim() || !editChar.background.trim()) {
       setValidationError('Name and background are required.');
       return;
     }
-
-    const normalizedCharacter = {
+    const normalized = {
       ...editChar,
-      summary: editChar.summary || editChar.background,
-      aliases: typeof editChar.aliases === 'string' ? editChar.aliases.split(',').map((value: string) => value.trim()).filter(Boolean) : editChar.aliases || [],
-      organizationIds: typeof editChar.organizationText === 'string' ? editChar.organizationText.split(',').map((value: string) => value.trim()).filter(Boolean) : editChar.organizationIds || [],
+      name: editChar.name.trim(),
+      background: editChar.background.trim(),
+      summary: editChar.summary || editChar.background.trim(),
+      aliases: editChar.aliasesText.split(',').map((value) => value.trim()).filter(Boolean),
+      organizationIds: editChar.organizationText.split(',').map((value) => value.trim()).filter(Boolean),
     };
-    delete normalizedCharacter.organizationText;
-
-    if (characters.some((character) => character.id === normalizedCharacter.id)) {
-      updateCharacter(normalizedCharacter);
-    } else {
-      addCharacter(normalizedCharacter);
-    }
-
-    setSelectedEntity('character', normalizedCharacter.id);
-    navigate(`/characters/profile/${normalizedCharacter.id}`);
+    delete (normalized as { aliasesText?: string }).aliasesText;
+    delete (normalized as { organizationText?: string }).organizationText;
+    if (characters.some((character) => character.id === normalized.id)) updateCharacter(normalized);
+    else addCharacter(normalized);
+    navigate(`/characters/profile/${normalized.id}`);
     setValidationError(null);
-    setLastActionStatus(t('shell.saved'));
-  };
-
-  const handleConfirmCandidate = (candidateId: string) => {
-    const confirmedId = confirmCandidate(candidateId);
-    if (!confirmedId) {
-      return;
-    }
-    setSelectedEntity('character', confirmedId);
-    navigate(`/characters/profile/${confirmedId}`);
     setLastActionStatus(t('shell.saved'));
   };
 
   const handleUploadPortrait = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (!file || !editChar) {
-      return;
-    }
-
+    if (!file || !editChar) return;
     const assetPath = await projectService.importAsset(file, 'portraits', projectRoot);
     setEditChar({ ...editChar, portraitAssetId: assetPath });
     setLastActionStatus('Portrait attached');
@@ -155,15 +150,13 @@ export const CharactersWorkspace = () => {
 
   if (invalidProfileId) {
     return (
-      <div className="flex h-full overflow-hidden bg-bg">
-        <div className="flex-1 flex items-center justify-center px-12" data-testid="entity-not-found">
-          <div className="max-w-xl rounded-2xl border border-red/30 bg-red/5 p-10 text-center shadow-1">
-            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full border border-red/30 text-red"><Info size={24} /></div>
-            <h2 className="text-2xl font-bold text-text">{t('characters.notFound')}</h2>
-            <button type="button" data-testid="entity-not-found-back" className="mt-6 inline-flex items-center gap-2 rounded-lg border border-border px-5 py-2.5 text-[11px] font-bold uppercase tracking-widest text-text-2 transition-all hover:border-brand hover:text-text" onClick={() => navigate('/characters/list')}>
-              {t('characters.backToList')}
-            </button>
-          </div>
+      <div className="flex h-full items-center justify-center" data-testid="entity-not-found">
+        <div className="rounded-3xl border border-red/30 bg-red/5 p-10 text-center shadow-1">
+          <Info className="mx-auto mb-4 text-red" size={24} />
+          <h2 className="text-2xl font-black text-text">{t('characters.notFound')}</h2>
+          <button type="button" data-testid="entity-not-found-back" className="mt-6 rounded-xl border border-border px-5 py-2 text-sm text-text-2 hover:border-brand hover:text-text" onClick={() => navigate('/characters/list')}>
+            {t('characters.backToList')}
+          </button>
         </div>
       </div>
     );
@@ -171,211 +164,316 @@ export const CharactersWorkspace = () => {
 
   return (
     <div className="flex h-full overflow-hidden bg-bg">
-      <div className="w-72 border-r border-border flex flex-col bg-bg-elev-1" data-testid="character-list">
-        <div className="p-4 border-b border-border flex items-center justify-between gap-2 bg-bg-elev-2">
-          <h3 className="text-[10px] font-bold uppercase tracking-widest text-text-3">{showCandidates ? t('characters.candidates') : t('characters.confirmed')}</h3>
-          <div className="flex items-center gap-2">
-            <button type="button" data-testid="generate-character-btn" className="rounded border border-border px-2.5 py-1 text-[9px] font-bold uppercase tracking-widest text-text-3 transition-colors hover:border-brand hover:text-text" onClick={() => setLastActionStatus('AI unavailable')}>
-              {t('characters.generate')}
-            </button>
-            {!showCandidates && (
-              <button type="button" data-testid="new-character-btn" className="p-1 hover:bg-hover rounded text-brand transition-colors" onClick={() => navigate('/characters/profile/new')}>
+      <aside className="w-72 border-r border-border bg-bg-elev-1" data-testid="character-list">
+        <div className="border-b border-border bg-bg-elev-2 p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <div>
+              <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('routes.characters.label')}</div>
+              <div className="text-sm font-black text-text">{isCandidatesRoute ? t('characters.candidates') : t('characters.confirmed')}</div>
+            </div>
+            {!isCandidatesRoute && (
+              <button type="button" data-testid="new-character-btn" className="rounded-xl border border-border p-2 text-brand hover:border-brand" onClick={() => navigate('/characters/profile/new')}>
                 <Plus size={16} />
               </button>
             )}
           </div>
+          <div className="rounded-2xl border border-border bg-bg px-3 py-2 text-sm text-text-2">
+            <div className="flex items-center gap-2"><Search size={13} /> {characters.length} profiles</div>
+          </div>
         </div>
-
-        <div className="flex-1 overflow-y-auto custom-scrollbar">
-          {showCandidates ? (
-            <div className="p-3">
+        <div className="h-full overflow-y-auto custom-scrollbar">
+          {isCandidatesRoute ? (
+            <div className="space-y-3 p-3">
               {candidates.map((candidate) => (
-                <div key={candidate.id} data-testid={`candidate-card-${candidate.id}`} className="p-4 mb-3 bg-card border border-border rounded-md shadow-1 group hover:border-border-2 transition-all">
-                  <div className="font-bold text-sm mb-2 text-text">{candidate.name}</div>
-                  <p className="text-[11px] text-text-2 mb-4 line-clamp-3 leading-relaxed opacity-80">{candidate.background}</p>
-                  <div className="flex gap-2">
-                    <button type="button" data-testid="candidate-confirm-btn" className="flex-1 py-1.5 bg-green text-text-invert rounded text-[10px] font-bold uppercase tracking-wider flex items-center justify-center gap-1.5" onClick={() => handleConfirmCandidate(candidate.id)}><Check size={12} /> Confirm</button>
-                    <button type="button" data-testid="candidate-reject-btn" className="p-1.5 bg-bg-elev-2 hover:bg-red/20 hover:text-red border border-border rounded text-text-3 transition-colors" onClick={() => rejectCandidate(candidate.id)}><X size={14} /></button>
+                <div key={candidate.id} data-testid={`candidate-card-${candidate.id}`} className="rounded-2xl border border-border bg-card p-4">
+                  <div className="text-sm font-black text-text">{candidate.name}</div>
+                  <p className="mt-2 text-xs leading-relaxed text-text-2">{candidate.background}</p>
+                  <div className="mt-4 flex gap-2">
+                    <button type="button" data-testid="candidate-confirm-btn" className="flex-1 rounded-xl bg-green px-3 py-2 text-[11px] font-black uppercase tracking-wider text-text-invert" onClick={() => {
+                      const confirmedId = confirmCandidate(candidate.id);
+                      if (confirmedId) navigate(`/characters/profile/${confirmedId}`);
+                    }}>
+                      <Check size={12} className="mr-2 inline" />Confirm
+                    </button>
+                    <button type="button" data-testid="candidate-reject-btn" className="rounded-xl border border-red/40 px-3 py-2 text-red" onClick={() => rejectCandidate(candidate.id)}>
+                      <Trash2 size={14} />
+                    </button>
                   </div>
                 </div>
               ))}
-              {candidates.length === 0 && <div className="p-12 text-center"><UserPlus size={32} className="mx-auto mb-3 text-text-3 opacity-20" /><p className="text-[10px] text-text-3 uppercase font-bold tracking-widest">{t('characters.noCandidates')}</p></div>}
+              {!candidates.length && <div className="p-10 text-center text-text-3"><UserPlus className="mx-auto mb-3 opacity-30" /><div className="text-xs uppercase tracking-[0.3em]">{t('characters.noCandidates')}</div></div>}
             </div>
           ) : (
             characters.map((character) => (
-              <div key={character.id} data-testid={`character-card-${character.id}`} className={`p-4 border-b border-divider cursor-pointer hover:bg-hover transition-all group relative ${selectedEntity.id === character.id ? 'bg-selected' : ''}`} onClick={() => navigate(`/characters/profile/${character.id}`)}>
-                {selectedEntity.id === character.id && <div className="absolute left-0 top-0 bottom-0 w-1 bg-brand"></div>}
-                <div className="flex items-center justify-between"><div className="font-bold text-sm text-text truncate pr-4">{character.name}</div><ChevronRight size={14} className={`transition-opacity text-text-3 ${selectedEntity.id === character.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`} /></div>
-                <div className="text-[11px] text-text-2 truncate mt-1.5 opacity-80">{character.summary}</div>
-              </div>
+              <button
+                type="button"
+                key={character.id}
+                data-testid={`character-card-${character.id}`}
+                className={cn('relative flex w-full items-center justify-between border-b border-divider px-4 py-4 text-left transition-colors', selectedCharacterId === character.id ? 'bg-selected text-text' : 'text-text-2 hover:bg-hover')}
+                onClick={() => navigate(isListRoute || isRelationshipsRoute || isTagsRoute ? `/characters/profile/${character.id}` : `/characters/profile/${character.id}`)}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  openContextMenu({
+                    x: event.clientX,
+                    y: event.clientY,
+                    items: [
+                      { id: 'open', label: 'Open Profile', action: () => navigate(`/characters/profile/${character.id}`) },
+                      { id: 'timeline', label: 'Open Timeline', action: () => navigate(`/timeline/events?character=${character.id}`) },
+                      { id: 'graph', label: 'Open Relationship Graph', action: () => navigate('/graph/relationships') },
+                    ],
+                  });
+                }}
+              >
+                <div className="pr-3">
+                  <div className="text-sm font-black">{character.name}</div>
+                  <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-text-3">{character.summary}</div>
+                </div>
+                <ChevronRight size={14} />
+              </button>
             ))
           )}
         </div>
-      </div>
+      </aside>
 
-      <div className="flex-1 flex flex-col bg-bg shadow-2xl relative z-0">
-        {selectedEntity.id && !showCandidates ? (
-          <>
-            <div className="h-11 border-b border-border flex items-center px-8 gap-10 bg-bg-elev-1">
-              <TabButton active={activeTab === 'profile'} label="Profile" onClick={() => setActiveTab('profile')} testId="char-tab-profile" />
-              <TabButton active={activeTab === 'relationships'} label={t('characters.relationships')} onClick={() => setActiveTab('relationships')} testId="char-tab-relationships" />
-              <TabButton active={activeTab === 'timeline'} label={t('characters.timeline')} onClick={() => setActiveTab('timeline')} testId="char-tab-timeline" />
+      <main className="flex-1 overflow-hidden">
+        {isRelationshipsRoute ? (
+          <div className="h-full overflow-y-auto custom-scrollbar p-8">
+            {selectedCharacter && (
+              <CharacterTabs active="relationships" onSelect={openCharacterPanel} />
+            )}
+            <div className="mb-6 flex items-center justify-between gap-4">
+              <div>
+                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">Relationship network</div>
+                <h2 className="text-3xl font-black text-text">{selectedCharacter?.name || 'Character Network'}</h2>
+              </div>
+              <button type="button" data-testid="add-relationship-btn" className="rounded-xl border border-brand px-4 py-3 text-sm font-bold text-brand" onClick={() => {
+                const source = selectedCharacterId || characters[0]?.id;
+                const target = characters.find((character) => character.id !== source);
+                if (!source || !target) return;
+                addRelationship({ id: `rel_${Date.now()}`, sourceId: source, targetId: target.id, type: 'New bond', description: 'Editable connection', strength: 50 });
+                setLastActionStatus('Relationship created');
+              }}>
+                <Plus size={14} className="mr-2 inline" />Add Relationship
+              </button>
             </div>
-
-            <div className="flex-1 overflow-y-auto custom-scrollbar">
-              {activeTab === 'profile' && editChar && (
-                <div className="max-w-5xl mx-auto p-12">
-                  <div className="flex items-start gap-8 mb-12">
-                    <div className="relative h-36 w-28 overflow-hidden rounded-2xl border border-border bg-bg-elev-2 shadow-1">
-                      {editChar.portraitAssetId ? (
-                        <img src={editChar.portraitAssetId} alt={editChar.name} className="h-full w-full object-cover" data-testid="character-portrait-preview" />
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center text-text-3"><ImageIcon size={36} /></div>
-                      )}
-                    </div>
-                    <div className="flex-1">
-                      <div className="mb-1 text-brand text-[10px] font-bold uppercase tracking-[0.25em]">{t('characters.identity')}</div>
-                      <input data-testid="character-name-input" className="bg-transparent text-5xl font-extrabold text-text outline-none w-full tracking-tight focus:text-brand transition-colors" placeholder="Character Name" value={editChar.name} onChange={(event) => setEditChar({ ...editChar, name: event.target.value })} />
-                      <div className="mt-6 flex flex-wrap gap-3">
-                        <button type="button" className="rounded-xl border border-border px-4 py-2 text-sm text-text" onClick={() => portraitInputRef.current?.click()} data-testid="character-upload-portrait-btn"><Upload size={14} className="inline mr-2" /> Upload Portrait</button>
-                        <button type="button" className="rounded-xl border border-border px-4 py-2 text-sm text-text" onClick={() => setLastActionStatus('Portrait generator unavailable')} data-testid="character-generate-portrait-btn"><Sparkles size={14} className="inline mr-2" /> Generate Portrait</button>
-                        <input ref={portraitInputRef} type="file" accept="image/*" className="hidden" onChange={handleUploadPortrait} data-testid="character-portrait-input" />
-                      </div>
-                    </div>
-                  </div>
-
-                  {validationError && <div className="mb-8 p-4 bg-red/10 border border-red/30 rounded-lg text-red text-xs font-bold">{validationError}</div>}
-
-                  <div className="grid gap-10 xl:grid-cols-[1.5fr_1fr]">
-                    <div className="space-y-8">
-                      <Field label={t('characters.background')}>
-                        <textarea data-testid="character-background-input" className="w-full h-44 bg-bg-elev-1 border border-border rounded-xl p-5 text-sm text-text-2 focus:border-brand outline-none transition-all font-serif leading-relaxed shadow-inner" value={editChar.background} onChange={(event) => setEditChar({ ...editChar, background: event.target.value })} />
-                      </Field>
-                      <div className="grid grid-cols-2 gap-6">
-                        <Field label={t('characters.aliases')}>
-                          <input data-testid="character-alias-input" className="w-full bg-bg-elev-1 border border-border rounded-lg p-3 text-sm text-text-2 focus:border-brand outline-none transition-all" value={editChar.aliases || ''} onChange={(event) => setEditChar({ ...editChar, aliases: event.target.value })} />
-                        </Field>
-                        <Field label={t('characters.traits')}>
-                          <input data-testid="character-traits-input" className="w-full bg-bg-elev-1 border border-border rounded-lg p-3 text-sm text-text-2 focus:border-brand outline-none transition-all" value={editChar.traits || ''} onChange={(event) => setEditChar({ ...editChar, traits: event.target.value })} />
-                        </Field>
-                      </div>
-                    </div>
-                    <div className="space-y-6">
-                      <Field label="Birthday"><div className="relative"><CalendarDays size={14} className="absolute left-3 top-3 text-text-3" /><input data-testid="character-birthday-input" className="w-full bg-bg-elev-1 border border-border rounded-lg py-3 pl-10 pr-3 text-sm text-text-2 focus:border-brand outline-none transition-all" value={editChar.birthdayText || ''} onChange={(event) => setEditChar({ ...editChar, birthdayText: event.target.value })} /></div></Field>
-                      <Field label="Organizations"><div className="relative"><Building2 size={14} className="absolute left-3 top-3 text-text-3" /><input data-testid="character-organization-input" className="w-full bg-bg-elev-1 border border-border rounded-lg py-3 pl-10 pr-3 text-sm text-text-2 focus:border-brand outline-none transition-all" value={editChar.organizationText || ''} onChange={(event) => setEditChar({ ...editChar, organizationText: event.target.value })} /></div></Field>
-                      <Field label="Status Flags">
-                        <div className="grid gap-3">
-                          {[
-                            ['protagonist', 'Protagonist'],
-                            ['antagonist', 'Antagonist'],
-                            ['alive', 'Alive'],
-                            ['deceased', 'Deceased'],
-                          ].map(([key, label]) => (
-                            <label key={key} className="flex items-center justify-between rounded-xl border border-border bg-bg px-4 py-3 text-sm text-text">
-                              <span className="flex items-center gap-3"><ShieldCheck size={14} /> {label}</span>
-                              <input type="checkbox" checked={Boolean(editChar.statusFlags?.[key])} onChange={(event) => setEditChar({ ...editChar, statusFlags: { ...editChar.statusFlags, [key]: event.target.checked } })} data-testid={`character-status-${key}`} />
-                            </label>
-                          ))}
+            <div className="mb-6 rounded-2xl border border-border bg-bg px-4 py-3">
+              <div className="flex items-center gap-2"><Search size={14} /><input value={relationshipFilter} onChange={(event) => setRelationshipFilter(event.target.value)} placeholder="Filter by type or character..." className="w-full bg-transparent outline-none" /></div>
+            </div>
+            <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
+              <div className="rounded-3xl border border-border bg-card p-6 shadow-1">
+                <div className="mb-4 text-[10px] font-black uppercase tracking-[0.25em] text-text-3">Network view</div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  {filteredRelationships.map((relationship) => {
+                    const otherId = relationship.sourceId === selectedCharacterId ? relationship.targetId : relationship.sourceId;
+                    const other = characters.find((character) => character.id === otherId);
+                    return (
+                      <div key={relationship.id} data-testid="relationship-card" className="rounded-2xl border border-border bg-bg-elev-1 p-5" onContextMenu={(event) => {
+                        event.preventDefault();
+                        openContextMenu({ x: event.clientX, y: event.clientY, items: [{ id: 'delete-rel', label: 'Delete Relationship', action: () => deleteRelationship(relationship.id), destructive: true }] });
+                      }}>
+                        <div className="mb-2 flex items-center justify-between">
+                          <div className="text-sm font-black text-text">{other?.name || relationship.targetId}</div>
+                          <div className="rounded-full border border-brand/30 bg-brand/10 px-2 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-brand-2">{relationship.type}</div>
                         </div>
-                      </Field>
-                    </div>
-                  </div>
-
-                  <div className="mt-10 rounded-2xl border border-border bg-card p-6 shadow-1">
-                    <div className="mb-3 text-[10px] font-black uppercase tracking-[0.25em] text-text-3">Linked Scenes</div>
-                    <div className="flex flex-wrap gap-3">
-                      {linkedScenes.map((scene) => (
-                        <button key={scene.id} type="button" className="rounded-xl border border-border px-4 py-2 text-sm text-text hover:border-brand" onClick={() => { setSelectedEntity('scene', scene.id); navigate('/writing/scenes'); }} data-testid="character-linked-scene-btn">
-                          {scene.title}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="pt-10 flex justify-end gap-4 border-t border-divider mt-10">
-                    <button type="button" data-testid="open-character-timeline-btn" className="px-5 py-3 border border-border hover:border-brand text-text-2 rounded-lg text-[11px] font-bold uppercase tracking-widest transition-all" onClick={() => navigate(`/timeline/events?character=${selectedEntity.id}`)}>{t('characters.timeline')}</button>
-                    <button type="button" data-testid="open-character-relationships-btn" className="px-5 py-3 border border-border hover:border-brand text-text-2 rounded-lg text-[11px] font-bold uppercase tracking-widest transition-all" onClick={() => navigate('/graph/relationships')}>{t('characters.relationships')}</button>
-                    <button type="button" data-testid="inspector-save" className="px-10 py-3 bg-brand hover:bg-brand-2 text-white font-bold rounded-lg text-[11px] uppercase tracking-widest shadow-2 transition-all flex items-center gap-2" onClick={handleSave}><Check size={16} /> {t('characters.persist')}</button>
-                  </div>
+                        <div className="text-xs leading-relaxed text-text-2">{relationship.description}</div>
+                      </div>
+                    );
+                  })}
                 </div>
-              )}
-
-              {activeTab === 'relationships' && (
-                <div className="max-w-4xl mx-auto p-12">
-                  <div className="flex items-center justify-between mb-10">
-                    <h2 className="text-2xl font-bold text-text flex items-center gap-3"><LinkIcon size={24} className="text-brand" /> {t('characters.network')}</h2>
-                    <button type="button" className="px-5 py-2 border border-brand text-brand hover:bg-brand hover:text-white rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all" onClick={() => {
-                      const other = characters.find((character) => character.id !== selectedEntity.id);
-                      if (other) {
-                        addRelationship({ id: `rel_${Date.now()}`, sourceId: selectedEntity.id!, targetId: other.id, type: 'Ally' });
-                      }
-                    }} data-testid="add-relationship-btn">Add Relationship</button>
+              </div>
+              <div className="rounded-3xl border border-border bg-card p-6 shadow-1">
+                <div className="mb-4 text-[10px] font-black uppercase tracking-[0.25em] text-text-3">Presence on timeline</div>
+                <div className="space-y-3">
+                  {charTimeline.map((event) => (
+                    <button key={event.id} type="button" className="flex w-full items-center justify-between rounded-2xl border border-border bg-bg px-4 py-3 text-left hover:border-brand" onClick={() => navigate(`/timeline/events?character=${selectedCharacterId}&event=${event.id}`)}>
+                      <div>
+                        <div className="text-sm font-bold text-text">{event.title}</div>
+                        <div className="mt-1 text-[11px] uppercase tracking-[0.2em] text-text-3">{event.time}</div>
+                      </div>
+                      <Clock3 size={14} />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : isTagsRoute ? (
+          <div className="h-full overflow-y-auto custom-scrollbar p-8">
+            <div className="mb-8 flex items-center justify-between">
+              <div>
+                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">Tag system</div>
+                <h2 className="text-3xl font-black text-text">Character Tags</h2>
+              </div>
+            </div>
+            <div className="mb-8 grid gap-4 rounded-3xl border border-border bg-card p-6 lg:grid-cols-[1fr_1fr_auto_auto]">
+              <input value={tagDraft.name} onChange={(event) => setTagDraft({ ...tagDraft, name: event.target.value })} placeholder="Tag name" className="rounded-xl border border-border bg-bg px-4 py-3 outline-none" />
+              <input value={tagDraft.description} onChange={(event) => setTagDraft({ ...tagDraft, description: event.target.value })} placeholder="Description" className="rounded-xl border border-border bg-bg px-4 py-3 outline-none" />
+              <input value={tagDraft.color} onChange={(event) => setTagDraft({ ...tagDraft, color: event.target.value })} className="h-12 rounded-xl border border-border bg-bg px-4 py-3 outline-none" />
+              <button type="button" className="rounded-xl bg-brand px-5 py-3 text-sm font-black text-white" onClick={() => {
+                if (!tagDraft.name.trim()) return;
+                addCharacterTag({ id: `tag_${Date.now()}`, name: tagDraft.name.trim(), color: tagDraft.color, description: tagDraft.description.trim(), characterIds: [] });
+                setTagDraft({ name: '', color: '#f59e0b', description: '' });
+                setLastActionStatus('Tag created');
+              }}>
+                <Plus size={14} className="mr-2 inline" />Create Tag
+              </button>
+            </div>
+            <div className="grid gap-5 lg:grid-cols-2">
+              {characterTags.map((tagEntry) => (
+                <div key={tagEntry.id} className="rounded-3xl border border-border bg-card p-6 shadow-1">
+                  <div className="mb-4 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="h-3 w-3 rounded-full" style={{ background: tagEntry.color }} />
+                      <div>
+                        <div className="text-lg font-black text-text">{tagEntry.name}</div>
+                        <div className="text-sm text-text-2">{tagEntry.description}</div>
+                      </div>
+                    </div>
+                    <button type="button" className="rounded-xl border border-red/40 px-3 py-2 text-red" onClick={() => deleteCharacterTag(tagEntry.id)}>
+                      <Trash2 size={14} />
+                    </button>
                   </div>
-                  <div className="grid grid-cols-1 gap-4">
-                    {charRelationships.map((relationship) => {
-                      const otherId = relationship.sourceId === selectedEntity.id ? relationship.targetId : relationship.sourceId;
-                      const otherCharacter = characters.find((character) => character.id === otherId);
+                  <div className="flex flex-wrap gap-2">
+                    {characters.map((character) => {
+                      const active = tagEntry.characterIds.includes(character.id);
                       return (
-                        <div key={relationship.id} className="bg-bg-elev-1 border border-border rounded-xl p-5 flex items-center justify-between group hover:border-border-2 transition-all shadow-1" data-testid="relationship-card">
-                          <div className="flex items-center gap-5">
-                            <div className="w-12 h-12 bg-bg-elev-2 rounded-full flex items-center justify-center border border-border shadow-inner"><User size={22} className="text-text-3" /></div>
-                            <div>
-                              <div className="text-base font-bold text-text">{otherCharacter?.name || 'Unknown Entity'}</div>
-                              <div className="inline-flex items-center px-2 py-0.5 rounded bg-brand/10 border border-brand/20 text-[10px] text-brand-2 uppercase font-bold tracking-widest mt-1.5">{relationship.type}</div>
-                            </div>
-                          </div>
-                          <button type="button" className="p-2.5 text-text-3 hover:text-red hover:bg-red/10 rounded-lg opacity-0 group-hover:opacity-100 transition-all" onClick={() => deleteRelationship(relationship.id)}>
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
+                        <button key={character.id} type="button" className={cn('rounded-full border px-3 py-2 text-xs font-bold transition-colors', active ? 'border-brand bg-brand/15 text-brand-2' : 'border-border text-text-2 hover:border-brand')} onClick={() => toggleCharacterTagMembership(tagEntry.id, character.id)}>
+                          <Tag size={10} className="mr-2 inline" />{character.name}
+                        </button>
                       );
                     })}
                   </div>
                 </div>
-              )}
-
-              {activeTab === 'timeline' && (
-                <div className="max-w-4xl mx-auto p-12">
-                  <h2 className="text-2xl font-bold text-text mb-12 flex items-center gap-3"><Clock size={24} className="text-brand" /> {t('characters.temporal')}</h2>
-                  <div className="space-y-6 relative before:absolute before:left-[17px] before:top-2 before:bottom-2 before:w-0.5 before:bg-divider">
-                    {charEvents.map((event) => (
-                      <div key={event.id} className="relative pl-12 pb-10 last:pb-0" data-testid="char-timeline-event">
-                        <div className="absolute left-0 top-1 w-[36px] h-[36px] rounded-full bg-bg border-2 border-brand flex items-center justify-center z-10 shadow-1"><div className="w-2 h-2 rounded-full bg-brand"></div></div>
-                        <button type="button" className="w-full text-left bg-bg-elev-1 border border-border rounded-xl p-6 hover:border-brand/40 transition-all shadow-1" onClick={() => navigate(`/timeline/events?character=${selectedEntity.id}&event=${event.id}`)}>
-                          <div className="flex items-center justify-between mb-3">
-                            <div className="text-[10px] text-brand-2 font-black uppercase tracking-[0.2em]">{event.time || 'Timeline'}</div>
-                            <ChevronRight size={14} className="text-text-3" />
-                          </div>
-                          <div className="text-lg font-bold text-text">{event.title}</div>
-                          <p className="text-sm text-text-2 mt-3 line-clamp-3 leading-relaxed opacity-80">{event.summary}</p>
-                        </button>
-                      </div>
-                    ))}
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="h-full overflow-y-auto custom-scrollbar p-10">
+            {editChar ? (
+              <div className="mx-auto max-w-5xl">
+                <CharacterTabs active={activeProfilePanel} onSelect={openCharacterPanel} />
+                <div className="mb-10 flex items-start gap-8">
+                  <div className="relative h-44 w-32 overflow-hidden rounded-3xl border border-border bg-bg-elev-2">
+                    {editChar.portraitAssetId ? <img src={editChar.portraitAssetId} alt={editChar.name} className="h-full w-full object-cover" data-testid="character-portrait-preview" /> : <div className="flex h-full items-center justify-center text-text-3"><ImageIcon size={42} /></div>}
+                  </div>
+                  <div className="flex-1">
+                    <div className="mb-2 text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('characters.identity')}</div>
+                    <input data-testid="character-name-input" value={editChar.name} onChange={(event) => setEditChar({ ...editChar, name: event.target.value })} placeholder="Character Name" className="w-full bg-transparent text-5xl font-black tracking-tight outline-none" />
+                    <div className="mt-6 flex flex-wrap gap-3">
+                      <button type="button" data-testid="character-upload-portrait-btn" className="rounded-xl border border-border px-4 py-2 text-sm text-text" onClick={() => portraitInputRef.current?.click()}><Upload size={14} className="mr-2 inline" />Upload Portrait</button>
+                      <button type="button" data-testid="character-generate-portrait-btn" className="rounded-xl border border-border px-4 py-2 text-sm text-text" onClick={() => setLastActionStatus('Portrait generator unavailable')}><Sparkles size={14} className="mr-2 inline" />Generate Portrait</button>
+                      <input ref={portraitInputRef} type="file" accept="image/*" className="hidden" onChange={handleUploadPortrait} data-testid="character-portrait-input" />
+                    </div>
                   </div>
                 </div>
-              )}
-            </div>
-          </>
-        ) : (
-          <div className="h-full flex flex-col items-center justify-center text-text-3 select-none">
-            {showCandidates ? <Sparkles size={140} className="opacity-5" /> : <User size={140} className="opacity-5" />}
+                {validationError && <div className="mb-8 rounded-2xl border border-red/30 bg-red/10 px-4 py-3 text-sm text-red">{validationError}</div>}
+                <div className="grid gap-6 xl:grid-cols-[1.4fr_1fr]">
+                  <div className="space-y-6">
+                    <textarea data-testid="character-background-input" value={editChar.background} onChange={(event) => setEditChar({ ...editChar, background: event.target.value })} className="h-56 w-full rounded-3xl border border-border bg-bg-elev-1 p-6 font-serif text-sm leading-relaxed text-text-2 outline-none" />
+                    <input data-testid="character-alias-input" value={editChar.aliasesText} onChange={(event) => setEditChar({ ...editChar, aliasesText: event.target.value })} placeholder="Aliases, comma separated" className="w-full rounded-2xl border border-border bg-bg px-4 py-3 outline-none" />
+                    <input data-testid="character-traits-input" value={editChar.traits || ''} onChange={(event) => setEditChar({ ...editChar, traits: event.target.value })} placeholder="Traits" className="w-full rounded-2xl border border-border bg-bg px-4 py-3 outline-none" />
+                  </div>
+                  <div className="space-y-4">
+                    <input data-testid="character-birthday-input" value={editChar.birthdayText || ''} onChange={(event) => setEditChar({ ...editChar, birthdayText: event.target.value })} placeholder="Birthday" className="w-full rounded-2xl border border-border bg-bg px-4 py-3 outline-none" />
+                    <div className="relative">
+                      <Building2 size={14} className="absolute left-4 top-4 text-text-3" />
+                      <input data-testid="character-organization-input" value={editChar.organizationText} onChange={(event) => setEditChar({ ...editChar, organizationText: event.target.value })} placeholder="Organizations" className="w-full rounded-2xl border border-border bg-bg py-3 pl-11 pr-4 outline-none" />
+                    </div>
+                    <div className="rounded-3xl border border-border bg-card p-4">
+                      <div className="mb-3 text-[10px] font-black uppercase tracking-[0.25em] text-text-3">Tags</div>
+                      <div className="flex flex-wrap gap-2">
+                        {characterTags.map((tagEntry) => (
+                          <button key={tagEntry.id} type="button" className={cn('rounded-full border px-3 py-2 text-xs font-bold', editChar.tagIds.includes(tagEntry.id) ? 'border-brand bg-brand/15 text-brand-2' : 'border-border text-text-2')} onClick={() => setEditChar({ ...editChar, tagIds: editChar.tagIds.includes(tagEntry.id) ? editChar.tagIds.filter((id) => id !== tagEntry.id) : [...editChar.tagIds, tagEntry.id] })}>
+                            {tagEntry.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-10 flex flex-wrap gap-3 rounded-3xl border border-border bg-card p-5">
+                  {linkedScenes.map((scene) => (
+                    <button key={scene.id} type="button" data-testid="character-linked-scene-btn" className="rounded-xl border border-border px-4 py-2 text-sm text-text hover:border-brand" onClick={() => navigate(`/writing/scenes?scene=${scene.id}`)}>
+                      {scene.title}
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-8 rounded-3xl border border-border bg-card p-6">
+                  <div className="mb-4 flex items-center justify-between">
+                    <div>
+                      <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">Temporal Presence</div>
+                      <div className="text-sm font-black text-text">Where this character intersects the narrative clock</div>
+                    </div>
+                    <button type="button" className={cn('rounded-xl border px-4 py-2 text-[11px] font-black uppercase tracking-[0.2em]', activeProfilePanel === 'timeline' ? 'border-brand bg-brand/10 text-brand' : 'border-border text-text-2 hover:border-brand')} onClick={() => openCharacterPanel('timeline')}>
+                      Timeline
+                    </button>
+                  </div>
+                  <div className="space-y-3">
+                    {charTimeline.map((event) => (
+                      <button key={event.id} type="button" className="flex w-full items-center justify-between rounded-2xl border border-border bg-bg px-4 py-3 text-left hover:border-brand" onClick={() => navigate(`/timeline/events?character=${selectedCharacterId}&event=${event.id}`)}>
+                        <div>
+                          <div className="text-sm font-bold text-text">{event.title}</div>
+                          <div className="mt-1 text-[10px] uppercase tracking-[0.2em] text-text-3">{event.time}</div>
+                        </div>
+                        <Clock3 size={14} />
+                      </button>
+                    ))}
+                    {!charTimeline.length && <div className="rounded-2xl border border-dashed border-border bg-bg px-4 py-5 text-sm text-text-3">No timeline events linked yet.</div>}
+                  </div>
+                </div>
+                <div className="mt-10 flex justify-end gap-4 border-t border-divider pt-8">
+                  <button type="button" data-testid="open-character-timeline-btn" className="rounded-xl border border-border px-5 py-3 text-sm text-text-2 hover:border-brand" onClick={() => navigate(`/timeline/events?character=${editChar.id}`)}>
+                    <Clock3 size={14} className="mr-2 inline" />{t('characters.timeline')}
+                  </button>
+                  <button type="button" data-testid="open-character-relationships-btn" className="rounded-xl border border-border px-5 py-3 text-sm text-text-2 hover:border-brand" onClick={() => navigate('/graph/relationships')}>
+                    <Link2 size={14} className="mr-2 inline" />{t('characters.relationships')}
+                  </button>
+                  <button type="button" data-testid="inspector-save" className="rounded-xl bg-brand px-8 py-3 text-sm font-black text-white" onClick={handleSave}>
+                    <Check size={14} className="mr-2 inline" />{t('characters.persist')}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex h-full items-center justify-center text-text-3"><User size={120} className="opacity-15" /></div>
+            )}
           </div>
         )}
-      </div>
+      </main>
     </div>
   );
 };
 
-const TabButton = ({ active, label, onClick, testId }: { active: boolean; label: string; onClick: () => void; testId: string }) => (
-  <button type="button" data-testid={testId} className={`h-full px-1 text-[11px] font-bold uppercase tracking-[0.2em] transition-all relative ${active ? 'text-brand' : 'text-text-3 hover:text-text-2'}`} onClick={onClick}>
-    {label}
-    {active && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-brand rounded-t"></div>}
-  </button>
-);
-
-const Field = ({ label, children }: { label: string; children: React.ReactNode }) => (
-  <div className="group">
-    <label className="block text-[10px] font-bold text-text-3 uppercase tracking-[0.3em] mb-4">{label}</label>
-    {children}
+const CharacterTabs = ({
+  active,
+  onSelect,
+}: {
+  active: 'profile' | 'timeline' | 'relationships';
+  onSelect: (panel: 'profile' | 'timeline' | 'relationships') => void;
+}) => (
+  <div className="mb-8 flex flex-wrap gap-3 rounded-full border border-border bg-bg-elev-1 p-2">
+    <button
+      type="button"
+      data-testid="char-tab-profile"
+      className={cn('rounded-full px-4 py-2 text-[11px] font-black uppercase tracking-[0.2em]', active === 'profile' ? 'bg-brand text-white' : 'text-text-2 hover:bg-hover')}
+      onClick={() => onSelect('profile')}
+    >
+      Profile
+    </button>
+    <button
+      type="button"
+      data-testid="char-tab-relationships"
+      className={cn('rounded-full px-4 py-2 text-[11px] font-black uppercase tracking-[0.2em]', active === 'relationships' ? 'bg-brand text-white' : 'text-text-2 hover:bg-hover')}
+      onClick={() => onSelect('relationships')}
+    >
+      Relationships
+    </button>
+    <button
+      type="button"
+      data-testid="char-tab-timeline"
+      className={cn('rounded-full px-4 py-2 text-[11px] font-black uppercase tracking-[0.2em]', active === 'timeline' ? 'bg-brand text-white' : 'text-text-2 hover:bg-hover')}
+      onClick={() => onSelect('timeline')}
+    >
+      Timeline
+    </button>
   </div>
 );

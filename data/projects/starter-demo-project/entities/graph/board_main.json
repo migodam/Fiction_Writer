@@ -120,5 +120,12 @@
       "targetId": "graph_event_bridge",
       "label": "aftershock"
     }
-  ]
+  ],
+  "view": {
+    "zoom": 1,
+    "panX": 0,
+    "panY": 0
+  },
+  "selectedNodeIds": [],
+  "sortOrder": 0
 }

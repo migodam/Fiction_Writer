@@ -8,6 +8,7 @@ import type {
   Proposal,
   StorageMode,
 } from '../models/project';
+import { PROJECT_SCHEMA_VERSION } from '../models/project';
 import { createBlankProject, createStarterProject } from '../mock/seedProject';
 
 const STORAGE_KEY = 'narrative-ide-project';
@@ -67,6 +68,135 @@ const createProjectByTemplate = (
     : createStarterProject(name, rootPath, locale, storageMode);
 };
 
+const safeReadJson = (fs: typeof import('fs'), filePath: string, fallback: unknown) => {
+  return fs.existsSync(filePath) ? JSON.parse(fs.readFileSync(filePath, 'utf8')) : fallback;
+};
+
+const normalizeBranches = (branches: unknown): NarrativeProject['timelineBranches'] =>
+  Array.isArray(branches)
+    ? branches.map((branch, index) => {
+        const value = branch as Record<string, unknown>;
+        return {
+          id: String(value.id || `branch_${index}`),
+          name: String(value.name || `Branch ${index + 1}`),
+          description: value.description ? String(value.description) : '',
+          parentBranchId: value.parentBranchId ? String(value.parentBranchId) : null,
+          forkEventId: value.forkEventId ? String(value.forkEventId) : null,
+          mergeEventId: value.mergeEventId ? String(value.mergeEventId) : null,
+          color: value.color ? String(value.color) : '#f59e0b',
+          sortOrder: typeof value.sortOrder === 'number' ? value.sortOrder : index,
+          collapsed: Boolean(value.collapsed),
+        };
+      })
+    : [];
+
+const normalizeGraphBoards = (boards: unknown): NarrativeProject['graphBoards'] =>
+  Array.isArray(boards)
+    ? boards.map((board, index) => {
+        const value = board as Record<string, unknown>;
+        return {
+          id: String(value.id || `board_${index}`),
+          name: String(value.name || `Board ${index + 1}`),
+          description: String(value.description || ''),
+          nodes: Array.isArray(value.nodes) ? (value.nodes as NarrativeProject['graphBoards'][number]['nodes']) : [],
+          edges: Array.isArray(value.edges) ? (value.edges as NarrativeProject['graphBoards'][number]['edges']) : [],
+          view: {
+            zoom: typeof (value.view as Record<string, unknown> | undefined)?.zoom === 'number' ? Number((value.view as Record<string, unknown>).zoom) : 1,
+            panX: typeof (value.view as Record<string, unknown> | undefined)?.panX === 'number' ? Number((value.view as Record<string, unknown>).panX) : 0,
+            panY: typeof (value.view as Record<string, unknown> | undefined)?.panY === 'number' ? Number((value.view as Record<string, unknown>).panY) : 0,
+          },
+          selectedNodeIds: Array.isArray(value.selectedNodeIds) ? (value.selectedNodeIds as string[]) : [],
+          sortOrder: typeof value.sortOrder === 'number' ? value.sortOrder : index,
+        };
+      })
+    : [];
+
+const normalizeUiState = (raw: unknown, fallbackProject: NarrativeProject): NarrativeProject['uiState'] => {
+  const value = (raw || {}) as Partial<NarrativeProject['uiState']>;
+  const fallback = fallbackProject.uiState;
+  return {
+    panes: {
+      ...fallback.panes,
+      ...(value.panes || {}),
+    },
+    view: {
+      ...fallback.view,
+      ...(value.view || {}),
+    },
+    density: value.density || fallback.density,
+    editorWidth: value.editorWidth || fallback.editorWidth,
+    motionLevel: value.motionLevel || fallback.motionLevel,
+    experimentalFlags: value.experimentalFlags || fallback.experimentalFlags,
+  };
+};
+
+const migrateProject = (
+  rawProject: Partial<NarrativeProject>,
+  rootPath: string,
+  storageMode: StorageMode,
+  locale?: Locale
+): NarrativeProject => {
+  const fallbackProject = createStarterProject(
+    (rawProject.metadata?.name as string | undefined) || 'Starter Demo Project',
+    rootPath,
+    locale || (rawProject.metadata?.locale as Locale | undefined) || 'en',
+    storageMode
+  );
+
+  const migrated: NarrativeProject = {
+    ...fallbackProject,
+    ...rawProject,
+    metadata: {
+      ...fallbackProject.metadata,
+      ...(rawProject.metadata || {}),
+      schemaVersion: PROJECT_SCHEMA_VERSION,
+      rootPath,
+      storageMode,
+      locale: locale || rawProject.metadata?.locale || fallbackProject.metadata.locale,
+      updatedAt: new Date().toISOString(),
+    },
+    characters: rawProject.characters || fallbackProject.characters,
+    characterTags: rawProject.characterTags || fallbackProject.characterTags,
+    candidates: rawProject.candidates || fallbackProject.candidates,
+    timelineBranches: normalizeBranches(rawProject.timelineBranches || fallbackProject.timelineBranches),
+    timelineEvents: (rawProject.timelineEvents || fallbackProject.timelineEvents).map((event, index) => ({
+      ...event,
+      orderIndex: typeof event.orderIndex === 'number' ? event.orderIndex : index,
+      sharedBranchIds: event.sharedBranchIds || [],
+    })),
+    relationships: rawProject.relationships || fallbackProject.relationships,
+    chapters: rawProject.chapters || fallbackProject.chapters,
+    scenes: rawProject.scenes || fallbackProject.scenes,
+    worldContainers: rawProject.worldContainers || fallbackProject.worldContainers,
+    worldItems: rawProject.worldItems || fallbackProject.worldItems,
+    graphBoards: normalizeGraphBoards(rawProject.graphBoards || fallbackProject.graphBoards),
+    betaPersonas: rawProject.betaPersonas || fallbackProject.betaPersonas,
+    betaRuns: rawProject.betaRuns || fallbackProject.betaRuns,
+    taskRequests: rawProject.taskRequests || [],
+    taskRuns: rawProject.taskRuns || [],
+    taskArtifacts: rawProject.taskArtifacts || [],
+    proposals: rawProject.proposals || fallbackProject.proposals,
+    proposalHistory: rawProject.proposalHistory || fallbackProject.proposalHistory,
+    issues: rawProject.issues || fallbackProject.issues,
+    exports: rawProject.exports || [],
+    unreadUpdates: rawProject.unreadUpdates || fallbackProject.unreadUpdates,
+    archivedIds: rawProject.archivedIds || [],
+    uiState: normalizeUiState(rawProject.uiState, fallbackProject),
+  };
+
+  if (!migrated.uiState.view.activeGraphBoardId) {
+    migrated.uiState.view.activeGraphBoardId = migrated.graphBoards[0]?.id || null;
+  }
+  if (!migrated.uiState.view.activeTimelineBranchId) {
+    migrated.uiState.view.activeTimelineBranchId = migrated.timelineBranches[0]?.id || null;
+  }
+  if (!migrated.uiState.view.lastOpenedSceneId) {
+    migrated.uiState.view.lastOpenedSceneId = migrated.scenes[0]?.id || null;
+  }
+
+  return migrated;
+};
+
 const serializeProjectToFolder = (
   project: NarrativeProject,
   runtime: NodeRuntime,
@@ -84,6 +214,9 @@ const serializeProjectToFolder = (
   const chaptersDir = path.join(writingDir, 'chapters');
   const scenesDir = path.join(writingDir, 'scenes');
   const systemDir = path.join(rootPath, 'system');
+  const schemaDir = path.join(systemDir, 'schema');
+  const tasksDir = path.join(systemDir, 'tasks');
+  const runsDir = path.join(systemDir, 'runs');
   const assetsDir = path.join(rootPath, 'assets');
   const exportsDir = path.join(rootPath, 'exports');
 
@@ -97,6 +230,9 @@ const serializeProjectToFolder = (
     chaptersDir,
     scenesDir,
     systemDir,
+    schemaDir,
+    tasksDir,
+    runsDir,
     path.join(assetsDir, 'portraits'),
     path.join(assetsDir, 'world'),
     path.join(assetsDir, 'maps'),
@@ -121,6 +257,7 @@ const serializeProjectToFolder = (
     writeJson(fs, path.join(charactersDir, `${character.id}.json`), character);
   });
 
+  writeJson(fs, path.join(entitiesDir, 'character-tags.json'), project.characterTags);
   writeJson(fs, path.join(entitiesDir, 'candidates.json'), project.candidates);
   writeJson(fs, path.join(entitiesDir, 'relationships.json'), project.relationships);
   writeJson(fs, path.join(timelineDir, 'branches.json'), project.timelineBranches);
@@ -148,6 +285,16 @@ const serializeProjectToFolder = (
   writeJson(fs, path.join(systemDir, 'history.json'), project.proposalHistory);
   writeJson(fs, path.join(systemDir, 'issues.json'), project.issues);
   writeJson(fs, path.join(systemDir, 'exports.json'), project.exports);
+  writeJson(fs, path.join(schemaDir, 'schema.json'), {
+    schemaVersion: project.metadata.schemaVersion,
+    updatedAt: project.metadata.updatedAt,
+  });
+  writeJson(fs, path.join(systemDir, 'ui-state.json'), project.uiState);
+  writeJson(fs, path.join(tasksDir, 'requests.json'), project.taskRequests);
+  writeJson(fs, path.join(runsDir, 'runs.json'), project.taskRuns);
+  writeJson(fs, path.join(runsDir, 'artifacts.json'), project.taskArtifacts);
+  writeJson(fs, path.join(systemDir, 'beta-personas.json'), project.betaPersonas);
+  writeJson(fs, path.join(systemDir, 'beta-runs.json'), project.betaRuns);
   writeJson(fs, path.join(systemDir, 'index-cache.json'), {
     unreadUpdates: project.unreadUpdates,
     archivedIds: project.archivedIds,
@@ -163,6 +310,7 @@ const hydrateProjectMetadata = (
   ...project,
   metadata: {
     ...project.metadata,
+    schemaVersion: PROJECT_SCHEMA_VERSION,
     rootPath,
     storageMode,
     locale: locale || project.metadata.locale,
@@ -181,12 +329,12 @@ export const projectService = {
     const runtime = getNodeRuntime();
     const fallbackRoot = `memory://${slugify(input.name)}`;
     const rootPath = input.rootPath || (runtime ? getDefaultProjectDir(runtime, input.name) : fallbackRoot);
-    const project = hydrateProjectMetadata(
+    const project = migrateProject(hydrateProjectMetadata(
       createProjectByTemplate(input.template, input.name, rootPath, input.locale, runtime ? 'nodefs' : 'memory'),
       rootPath,
       runtime ? 'nodefs' : 'memory',
       input.locale
-    );
+    ), rootPath, runtime ? 'nodefs' : 'memory', input.locale);
 
     if (!runtime) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(project));
@@ -206,7 +354,7 @@ export const projectService = {
     if (!runtime) {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
-        return JSON.parse(stored) as NarrativeProject;
+        return migrateProject(JSON.parse(stored) as NarrativeProject, resolvedPath || 'memory://starter-demo-project', 'memory');
       }
       const project = createStarterProject();
       localStorage.setItem(STORAGE_KEY, JSON.stringify(project));
@@ -232,6 +380,8 @@ export const projectService = {
     const chaptersDir = runtime.path.join(resolvedPath, 'writing', 'chapters');
     const scenesDir = runtime.path.join(resolvedPath, 'writing', 'scenes');
     const systemDir = runtime.path.join(resolvedPath, 'system');
+    const tasksDir = runtime.path.join(systemDir, 'tasks');
+    const runsDir = runtime.path.join(systemDir, 'runs');
 
     const readJsonFiles = (directory: string) =>
       runtime.fs
@@ -245,9 +395,10 @@ export const projectService = {
       .map((fileName) => JSON.parse(runtime.fs.readFileSync(runtime.path.join(scenesDir, fileName), 'utf8')));
 
     const exportsPath = runtime.path.join(systemDir, 'exports.json');
-    const project: NarrativeProject = {
+    const project = {
       metadata: projectIndex.metadata,
       characters: readJsonFiles(runtime.path.join(entitiesDir, 'characters')),
+      characterTags: safeReadJson(runtime.fs, runtime.path.join(entitiesDir, 'character-tags.json'), []),
       candidates: JSON.parse(runtime.fs.readFileSync(runtime.path.join(entitiesDir, 'candidates.json'), 'utf8')),
       timelineBranches: JSON.parse(runtime.fs.readFileSync(runtime.path.join(timelineDir, 'branches.json'), 'utf8')),
       timelineEvents: readJsonFiles(timelineDir).filter((item) => item.id),
@@ -266,16 +417,32 @@ export const projectService = {
       exports: runtime.fs.existsSync(exportsPath)
         ? JSON.parse(runtime.fs.readFileSync(exportsPath, 'utf8'))
         : [],
-      ...JSON.parse(runtime.fs.readFileSync(runtime.path.join(systemDir, 'index-cache.json'), 'utf8')),
+      betaPersonas: safeReadJson(runtime.fs, runtime.path.join(systemDir, 'beta-personas.json'), []),
+      betaRuns: safeReadJson(runtime.fs, runtime.path.join(systemDir, 'beta-runs.json'), []),
+      taskRequests: safeReadJson(runtime.fs, runtime.path.join(tasksDir, 'requests.json'), []),
+      taskRuns: safeReadJson(runtime.fs, runtime.path.join(runsDir, 'runs.json'), []),
+      taskArtifacts: safeReadJson(runtime.fs, runtime.path.join(runsDir, 'artifacts.json'), []),
+      uiState: safeReadJson(runtime.fs, runtime.path.join(systemDir, 'ui-state.json'), undefined),
+      ...safeReadJson(runtime.fs, runtime.path.join(systemDir, 'index-cache.json'), {
+        unreadUpdates: { activities: {}, sections: {}, entities: {} },
+        archivedIds: [],
+      }),
     };
 
     localStorage.setItem(LAST_PATH_KEY, resolvedPath);
-    return hydrateProjectMetadata(project, resolvedPath, 'nodefs', project.metadata.locale);
+    const migrated = migrateProject(project, resolvedPath, 'nodefs', project.metadata.locale);
+    serializeProjectToFolder(migrated, runtime, resolvedPath);
+    return hydrateProjectMetadata(migrated, resolvedPath, 'nodefs', migrated.metadata.locale);
   },
 
   saveProject(project: NarrativeProject): NarrativeProject {
     const runtime = getNodeRuntime();
-    const updatedProject = hydrateProjectMetadata(project, project.metadata.rootPath, runtime ? 'nodefs' : 'memory', project.metadata.locale);
+    const updatedProject = migrateProject(
+      hydrateProjectMetadata(project, project.metadata.rootPath, runtime ? 'nodefs' : 'memory', project.metadata.locale),
+      project.metadata.rootPath,
+      runtime ? 'nodefs' : 'memory',
+      project.metadata.locale
+    );
     if (!runtime) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedProject));
       localStorage.setItem(LAST_PATH_KEY, updatedProject.metadata.rootPath);

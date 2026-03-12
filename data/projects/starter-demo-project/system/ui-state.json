@@ -1,0 +1,25 @@
+{
+  "panes": {
+    "sidebarWidth": 280,
+    "inspectorWidth": 360,
+    "agentDockWidth": 320,
+    "writingOutlineWidth": 320,
+    "writingContextWidth": 340,
+    "isSidebarCollapsed": false,
+    "isAgentDockOpen": true,
+    "isWritingOutlineCollapsed": false,
+    "isWritingContextCollapsed": false
+  },
+  "view": {
+    "activeGraphBoardId": "board_main",
+    "activeTimelineBranchId": "branch_main",
+    "lastOpenedSceneId": "scene_arrival"
+  },
+  "density": "comfortable",
+  "editorWidth": "focused",
+  "motionLevel": "full",
+  "experimentalFlags": [
+    "context-menu",
+    "graph-canvas-pan"
+  ]
+}

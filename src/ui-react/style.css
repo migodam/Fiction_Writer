@@ -33,8 +33,8 @@
     --text-invert: #0B0F14;
 
     /* Brand / Accents */
-    --brand: #7C3AED;
-    --brand-2: #A78BFA;
+    --brand: #c98328;
+    --brand-2: #f2c879;
     --blue: #3B82F6;
     --green: #22C55E;
     --red: #EF4444;
@@ -80,13 +80,23 @@
     overflow: hidden;
     color: var(--text);
     background: var(--bg);
-    font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    font-family: "Segoe UI Variable Display", "Bahnschrift", "Aptos", "Trebuchet MS", sans-serif;
   }
 
   *:focus-visible {
     outline: none;
     box-shadow: 0 0 0 3px var(--focus);
     border-radius: var(--r-sm);
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(242, 200, 121, 0.48) transparent;
+  }
+
+  ::selection {
+    background: rgba(201, 131, 40, 0.34);
+    color: #fff4de;
   }
 }
 
@@ -318,5 +328,30 @@
 
   .ai-suggestion--brand {
     border-left: 4px solid var(--brand);
+  }
+
+  .custom-scrollbar {
+    scrollbar-gutter: stable;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 9px;
+    height: 9px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, rgba(242, 200, 121, 0.35), rgba(201, 131, 40, 0.6));
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, rgba(242, 200, 121, 0.5), rgba(201, 131, 40, 0.8));
+    background-clip: padding-box;
   }
 }
