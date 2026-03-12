@@ -1,0 +1,37 @@
+[
+  {
+    "id": "rel_aria_rowan",
+    "sourceId": "char_aria",
+    "targetId": "char_rowan",
+    "type": "Uneasy alliance",
+    "description": "Professional trust forming under pressure."
+  },
+  {
+    "id": "rel_aria_seren",
+    "sourceId": "char_aria",
+    "targetId": "char_seren",
+    "type": "Negotiated trust",
+    "description": "They need each other but disagree on exposure."
+  },
+  {
+    "id": "rel_aria_vesper",
+    "sourceId": "char_aria",
+    "targetId": "char_vesper",
+    "type": "Hidden rivalry",
+    "description": "Aria suspects Vesper before she can prove it."
+  },
+  {
+    "id": "rel_rowan_nila",
+    "sourceId": "char_rowan",
+    "targetId": "char_nila",
+    "type": "Tactical banter",
+    "description": "A fast-moving analyst duo."
+  },
+  {
+    "id": "rel_seren_vesper",
+    "sourceId": "char_seren",
+    "targetId": "char_vesper",
+    "type": "Political opposition",
+    "description": "They understand each other too well."
+  }
+]

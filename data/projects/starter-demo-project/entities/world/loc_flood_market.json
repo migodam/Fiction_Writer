@@ -1,0 +1,35 @@
+{
+  "id": "loc_flood_market",
+  "containerId": "cont_locations",
+  "type": "location",
+  "name": "Flood Market",
+  "description": "An undercity bazaar rebuilt around old water channels and rumor traders.",
+  "attributes": [
+    {
+      "key": "Mood",
+      "value": "Noisy, unstable, transactional"
+    }
+  ],
+  "linkedCharacterIds": [
+    "char_rowan"
+  ],
+  "linkedEventIds": [
+    "event_market"
+  ],
+  "linkedSceneIds": [
+    "scene_market"
+  ],
+  "mapMarkers": [
+    {
+      "id": "marker_market",
+      "label": "Flood Market",
+      "x": 0.41,
+      "y": 0.66,
+      "linkedEntityId": "loc_flood_market"
+    }
+  ],
+  "assetPath": null,
+  "tagIds": [
+    "undercity"
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "id": "event_arrival",
+  "title": "Arrival at Sky Dock",
+  "summary": "Aria reaches the city ring and recruits Rowan to trace the first courier route.",
+  "time": "Day 1 - Dawn",
+  "branchId": "branch_main",
+  "orderIndex": 0,
+  "locationIds": [
+    "loc_sky_dock"
+  ],
+  "participantCharacterIds": [
+    "char_aria",
+    "char_rowan"
+  ],
+  "linkedSceneIds": [
+    "scene_arrival"
+  ],
+  "linkedWorldItemIds": [
+    "loc_sky_dock"
+  ],
+  "tags": [
+    "arrival"
+  ]
+}

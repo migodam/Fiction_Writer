@@ -1,0 +1,20 @@
+{
+  "id": "scene_consul",
+  "chapterId": "chap_2",
+  "title": "Consul's Smile",
+  "summary": "Vesper publicly performs calm while privately steering the breach review.",
+  "orderIndex": 2,
+  "povCharacterId": "char_vesper",
+  "linkedCharacterIds": [
+    "char_vesper",
+    "char_aria"
+  ],
+  "linkedEventIds": [
+    "event_shard"
+  ],
+  "linkedWorldItemIds": [
+    "org_black_tide",
+    "item_memory_shard"
+  ],
+  "status": "draft"
+}

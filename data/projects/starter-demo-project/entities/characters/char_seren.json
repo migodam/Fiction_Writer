@@ -1,0 +1,38 @@
+{
+  "id": "char_seren",
+  "name": "Seren Thorne",
+  "summary": "Leader of the Glass Choir opposition cell.",
+  "background": "Seren rallies civic resistance against state memory control from hidden salons in Lantern Ward.",
+  "aliases": [
+    "The Choir Keeper"
+  ],
+  "birthdayText": "High Ember 22",
+  "portraitAssetId": null,
+  "traits": "Charismatic, idealistic, relentless",
+  "goals": "Turn the shard theft into public leverage.",
+  "fears": "Compromising people she has sworn to protect.",
+  "secrets": "She financed one of the thieves without knowing the full buyer chain.",
+  "speechStyle": "Measured and theatrical.",
+  "arc": "From agitator to reluctant coalition partner.",
+  "tagIds": [
+    "opposition"
+  ],
+  "organizationIds": [
+    "org_glass_choir"
+  ],
+  "linkedSceneIds": [
+    "scene_choir",
+    "scene_bridge"
+  ],
+  "linkedEventIds": [
+    "event_choir",
+    "event_bridge"
+  ],
+  "linkedWorldItemIds": [
+    "org_glass_choir",
+    "loc_lantern_ward"
+  ],
+  "statusFlags": {
+    "alive": true
+  }
+}

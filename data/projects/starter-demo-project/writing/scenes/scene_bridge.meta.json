@@ -1,0 +1,23 @@
+{
+  "id": "scene_bridge",
+  "chapterId": "chap_2",
+  "title": "Glass Bridge Intercept",
+  "summary": "All threads converge at the bridge as the convoy attempts its escape.",
+  "orderIndex": 3,
+  "povCharacterId": "char_aria",
+  "linkedCharacterIds": [
+    "char_aria",
+    "char_seren",
+    "char_vesper",
+    "char_nila"
+  ],
+  "linkedEventIds": [
+    "event_bridge"
+  ],
+  "linkedWorldItemIds": [
+    "loc_glass_bridge",
+    "item_memory_shard",
+    "item_city_map"
+  ],
+  "status": "draft"
+}

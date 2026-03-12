@@ -1,0 +1,28 @@
+{
+  "id": "lore_memory_tax",
+  "containerId": "cont_lore",
+  "type": "lore",
+  "name": "Memory Tax",
+  "description": "A public levy that allows the state to record and resell fragments of civic memory.",
+  "attributes": [
+    {
+      "key": "Effect",
+      "value": "Fuel for unrest"
+    }
+  ],
+  "linkedCharacterIds": [
+    "char_seren",
+    "char_aria"
+  ],
+  "linkedEventIds": [
+    "event_choir"
+  ],
+  "linkedSceneIds": [
+    "scene_choir"
+  ],
+  "mapMarkers": [],
+  "assetPath": null,
+  "tagIds": [
+    "policy"
+  ]
+}

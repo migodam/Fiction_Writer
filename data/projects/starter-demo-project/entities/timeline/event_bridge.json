@@ -1,0 +1,28 @@
+{
+  "id": "event_bridge",
+  "title": "Bridge Intercept",
+  "summary": "All branches converge as the shard convoy attempts to cross the Glass Bridge.",
+  "time": "Day 2 - Sunset",
+  "branchId": "branch_main",
+  "orderIndex": 2,
+  "locationIds": [
+    "loc_glass_bridge"
+  ],
+  "participantCharacterIds": [
+    "char_aria",
+    "char_seren",
+    "char_vesper",
+    "char_nila"
+  ],
+  "linkedSceneIds": [
+    "scene_bridge"
+  ],
+  "linkedWorldItemIds": [
+    "loc_glass_bridge",
+    "item_memory_shard",
+    "item_city_map"
+  ],
+  "tags": [
+    "climax"
+  ]
+}

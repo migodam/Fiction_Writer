@@ -1,0 +1,60 @@
+[
+  {
+    "id": "issue_bridge_name",
+    "title": "Bridge location mismatch",
+    "description": "One note still references South Bridge while the canonical location is Glass Bridge.",
+    "severity": "high",
+    "status": "open",
+    "referenceIds": [
+      {
+        "type": "timeline_event",
+        "id": "event_bridge"
+      },
+      {
+        "type": "scene",
+        "id": "scene_bridge"
+      },
+      {
+        "type": "world_item",
+        "id": "loc_glass_bridge"
+      }
+    ],
+    "fixSuggestion": "Create a Workbench fix proposal that rewrites the stale location reference to Glass Bridge."
+  },
+  {
+    "id": "issue_duplicate_market",
+    "title": "Possible duplicate market route intel",
+    "description": "A graph note and a lore note appear to describe the same hidden route network.",
+    "severity": "medium",
+    "status": "open",
+    "referenceIds": [
+      {
+        "type": "world_item",
+        "id": "note_open_questions"
+      },
+      {
+        "type": "graph_node",
+        "id": "graph_note_public"
+      }
+    ],
+    "fixSuggestion": "Merge the duplicated route phrasing through Workbench before chapter three drafting."
+  },
+  {
+    "id": "issue_state_flag",
+    "title": "Character state flag review",
+    "description": "Vesper appears in one draft outline as deceased while all current scenes still use him as active.",
+    "severity": "low",
+    "status": "open",
+    "referenceIds": [
+      {
+        "type": "character",
+        "id": "char_vesper"
+      },
+      {
+        "type": "scene",
+        "id": "scene_bridge"
+      }
+    ],
+    "fixSuggestion": "Keep Vesper alive for the current draft and move the death note to future branching notes."
+  }
+]

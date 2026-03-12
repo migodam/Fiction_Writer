@@ -1,0 +1,1 @@
+By the time the convoy reached the Glass Bridge, every alliance had already become conditional. Aria tracked the shard, Seren controlled the crowd, Nila corrected the map in real time, and Vesper smiled like he had authored the weather.

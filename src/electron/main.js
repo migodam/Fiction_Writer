@@ -1,19 +1,26 @@
-const { app, BrowserWindow } = require('electron');
-const path = require('path');
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import electron from 'electron';
+
+const { app, BrowserWindow, dialog, ipcMain } = electron;
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 function createWindow() {
   const win = new BrowserWindow({
-    width: 1440,
-    height: 900,
+    width: 1600,
+    height: 960,
+    minWidth: 1200,
+    minHeight: 720,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
     },
   });
 
-  // In development, load from Vite dev server
   const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
-  
+
   if (isDev) {
     win.loadURL('http://localhost:3000');
     win.webContents.openDevTools();
@@ -21,6 +28,18 @@ function createWindow() {
     win.loadFile(path.join(__dirname, '../../dist/index.html'));
   }
 }
+
+ipcMain.handle('dialog:pick-directory', async (_event, payload = { mode: 'open' }) => {
+  const result = await dialog.showOpenDialog({
+    title: payload.mode === 'create' ? 'Choose Project Parent Folder' : 'Open Narrative Project Folder',
+    properties: ['openDirectory', 'createDirectory'],
+  });
+
+  return {
+    canceled: result.canceled,
+    path: result.canceled ? null : result.filePaths[0],
+  };
+});
 
 app.whenReady().then(() => {
   createWindow();

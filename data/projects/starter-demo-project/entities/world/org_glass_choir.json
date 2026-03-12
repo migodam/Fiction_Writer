@@ -1,0 +1,27 @@
+{
+  "id": "org_glass_choir",
+  "containerId": "cont_orgs",
+  "type": "organization",
+  "name": "Glass Choir",
+  "description": "Civic opposition network that opposes controlled-memory monopolies.",
+  "attributes": [
+    {
+      "key": "Alignment",
+      "value": "Resistance"
+    }
+  ],
+  "linkedCharacterIds": [
+    "char_seren"
+  ],
+  "linkedEventIds": [
+    "event_choir"
+  ],
+  "linkedSceneIds": [
+    "scene_choir"
+  ],
+  "mapMarkers": [],
+  "assetPath": null,
+  "tagIds": [
+    "resistance"
+  ]
+}

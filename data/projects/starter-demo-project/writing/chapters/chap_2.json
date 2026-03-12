@@ -1,0 +1,15 @@
+{
+  "id": "chap_2",
+  "title": "Pressure Lines",
+  "summary": "Political pressure, archive reconstruction, and the bridge setup collide.",
+  "goal": "Align the public, covert, and personal stakes before the intercept.",
+  "notes": "Chapter two should cross-cut between official and civilian spaces.",
+  "sceneIds": [
+    "scene_choir",
+    "scene_archive",
+    "scene_consul",
+    "scene_bridge"
+  ],
+  "orderIndex": 1,
+  "status": "revised"
+}

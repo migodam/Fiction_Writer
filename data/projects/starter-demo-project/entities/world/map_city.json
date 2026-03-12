@@ -1,0 +1,56 @@
+{
+  "id": "map_city",
+  "containerId": "cont_world_map",
+  "type": "map",
+  "name": "Asterfall City Map",
+  "description": "Annotated base map used for route, location, and pursuit planning.",
+  "attributes": [
+    {
+      "key": "Revision",
+      "value": "3.2"
+    }
+  ],
+  "linkedCharacterIds": [
+    "char_nila"
+  ],
+  "linkedEventIds": [
+    "event_bridge"
+  ],
+  "linkedSceneIds": [
+    "scene_bridge"
+  ],
+  "mapMarkers": [
+    {
+      "id": "marker_sky_map",
+      "label": "Sky Dock",
+      "x": 0.23,
+      "y": 0.21,
+      "linkedEntityId": "loc_sky_dock"
+    },
+    {
+      "id": "marker_market_map",
+      "label": "Flood Market",
+      "x": 0.41,
+      "y": 0.66,
+      "linkedEntityId": "loc_flood_market"
+    },
+    {
+      "id": "marker_lantern_map",
+      "label": "Lantern Ward",
+      "x": 0.68,
+      "y": 0.28,
+      "linkedEntityId": "loc_lantern_ward"
+    },
+    {
+      "id": "marker_bridge_map",
+      "label": "Glass Bridge",
+      "x": 0.59,
+      "y": 0.5,
+      "linkedEntityId": "loc_glass_bridge"
+    }
+  ],
+  "assetPath": "data:image/svg+xml;charset=utf-8,%0A%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%201200%20800%22%3E%0A%20%20%3Cdefs%3E%0A%20%20%20%20%3ClinearGradient%20id%3D%22bg%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%221%22%20y2%3D%221%22%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23112032%22%20%2F%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%230b1520%22%20%2F%3E%0A%20%20%20%20%3C%2FlinearGradient%3E%0A%20%20%3C%2Fdefs%3E%0A%20%20%3Crect%20width%3D%221200%22%20height%3D%22800%22%20fill%3D%22url(%23bg)%22%20%2F%3E%0A%20%20%3Cpath%20d%3D%22M80%20620%20C240%20470%2C%20360%20460%2C%20470%20540%20S700%20730%2C%201110%20520%22%20fill%3D%22none%22%20stroke%3D%22%238ecae6%22%20stroke-width%3D%2224%22%20stroke-linecap%3D%22round%22%20opacity%3D%220.55%22%20%2F%3E%0A%20%20%3Cpath%20d%3D%22M140%20140%20C210%20210%2C%20300%20230%2C%20430%20190%20S700%20120%2C%20980%20220%22%20fill%3D%22none%22%20stroke%3D%22%23d4a373%22%20stroke-width%3D%2218%22%20stroke-linecap%3D%22round%22%20opacity%3D%220.35%22%20%2F%3E%0A%20%20%3Ccircle%20cx%3D%22250%22%20cy%3D%22280%22%20r%3D%22130%22%20fill%3D%22%231d3557%22%20opacity%3D%220.45%22%20%2F%3E%0A%20%20%3Ccircle%20cx%3D%22780%22%20cy%3D%22240%22%20r%3D%22180%22%20fill%3D%22%23264653%22%20opacity%3D%220.33%22%20%2F%3E%0A%20%20%3Ccircle%20cx%3D%22620%22%20cy%3D%22560%22%20r%3D%22200%22%20fill%3D%22%233a5a40%22%20opacity%3D%220.22%22%20%2F%3E%0A%3C%2Fsvg%3E%0A",
+  "tagIds": [
+    "map"
+  ]
+}

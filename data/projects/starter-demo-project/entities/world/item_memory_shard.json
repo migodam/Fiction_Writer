@@ -1,0 +1,30 @@
+{
+  "id": "item_memory_shard",
+  "containerId": "cont_items",
+  "type": "item",
+  "name": "Memory Shard",
+  "description": "The artifact at the center of the theft and every faction objective.",
+  "attributes": [
+    {
+      "key": "State",
+      "value": "Fragmented but active"
+    }
+  ],
+  "linkedCharacterIds": [
+    "char_aria",
+    "char_vesper"
+  ],
+  "linkedEventIds": [
+    "event_shard",
+    "event_bridge"
+  ],
+  "linkedSceneIds": [
+    "scene_archive",
+    "scene_bridge"
+  ],
+  "mapMarkers": [],
+  "assetPath": null,
+  "tagIds": [
+    "artifact"
+  ]
+}

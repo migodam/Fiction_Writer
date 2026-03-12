@@ -1,0 +1,17 @@
+[
+  {
+    "id": "branch_main",
+    "name": "Main Investigation",
+    "description": "Primary narrative thread."
+  },
+  {
+    "id": "branch_shadow",
+    "name": "Shadow Routes",
+    "description": "Undercity movements and hidden handoffs."
+  },
+  {
+    "id": "branch_public",
+    "name": "Public Pressure",
+    "description": "Political and civic fallout."
+  }
+]

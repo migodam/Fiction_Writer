@@ -1,8 +1,16 @@
 import React from 'react';
-import { 
-  Layout, Users, Clock, Network, Globe, 
-  PlayCircle, CheckCircle, FileText, PenTool, 
-  BarChart2, Terminal
+import {
+  Layout,
+  Users,
+  Clock,
+  Network,
+  Globe,
+  PlayCircle,
+  CheckCircle,
+  FileText,
+  PenTool,
+  BarChart2,
+  Terminal,
 } from 'lucide-react';
 
 export interface RouteConfig {
@@ -15,9 +23,6 @@ export interface RouteConfig {
   sidebarActions?: { label: string; icon: React.ReactNode; testId: string }[];
 }
 
-// Fallback empty actions
-const noActions: any[] = [];
-
 export const APP_ROUTES: RouteConfig[] = [
   {
     id: 'workbench',
@@ -26,10 +31,10 @@ export const APP_ROUTES: RouteConfig[] = [
     icon: <Terminal size={20} />,
     testId: 'activity-btn-workbench',
     sidebarSections: [
-      { id: 'console', label: 'Agent Console' },
-      { id: 'prompts', label: 'Prompt Library' },
-      { id: 'history', label: 'AI History' },
-      { id: 'logs', label: 'System Logs' },
+      { id: 'inbox', label: 'Inbox' },
+      { id: 'history', label: 'History' },
+      { id: 'issues', label: 'Issues' },
+      { id: 'bulk', label: 'Bulk Actions' },
     ],
   },
   {

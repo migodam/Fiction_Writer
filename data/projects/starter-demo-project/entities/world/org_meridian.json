@@ -1,0 +1,29 @@
+{
+  "id": "org_meridian",
+  "containerId": "cont_orgs",
+  "type": "organization",
+  "name": "Meridian Bureau",
+  "description": "State archive agency responsible for memory shard custody and route surveillance.",
+  "attributes": [
+    {
+      "key": "Alignment",
+      "value": "Official"
+    }
+  ],
+  "linkedCharacterIds": [
+    "char_aria",
+    "char_nila"
+  ],
+  "linkedEventIds": [
+    "event_arrival",
+    "event_shard"
+  ],
+  "linkedSceneIds": [
+    "scene_archive"
+  ],
+  "mapMarkers": [],
+  "assetPath": null,
+  "tagIds": [
+    "bureau"
+  ]
+}

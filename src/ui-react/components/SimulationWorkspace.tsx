@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useProjectStore, useUIStore } from '../store';
+import { useI18n } from '../i18n';
 import { 
     PlayCircle, Sparkles, ChevronRight, Zap, 
     History, Plus, Trash2, Save, Terminal,
@@ -9,6 +10,7 @@ import {
 export const SimulationWorkspace = () => {
   const { characters, timelineEvents } = useProjectStore();
   const { setLastActionStatus } = useUIStore();
+  const { t } = useI18n();
   
   const [activeScenario, setActiveScenario] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
@@ -31,7 +33,7 @@ export const SimulationWorkspace = () => {
       {/* Left: Scenarios List */}
       <div className="w-72 border-r border-border flex flex-col bg-bg-elev-1 shadow-1" data-testid="simulation-scenario-list">
         <div className="p-4 border-b border-border flex items-center justify-between bg-bg-elev-2">
-            <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-text-3">Scenarios</h3>
+            <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-text-3">{t('simulation.scenarios')}</h3>
             <button 
                 className="p-1 hover:bg-hover rounded-lg text-brand transition-colors"
                 title="New Scenario"
@@ -68,8 +70,8 @@ export const SimulationWorkspace = () => {
                             <Brain size={28} />
                         </div>
                         <div>
-                            <h2 className="text-2xl font-black text-text uppercase tracking-tight">Scenario Engine</h2>
-                            <p className="text-[10px] font-bold text-text-3 uppercase tracking-[0.3em] mt-1">Stochastic Outcome Projection</p>
+                            <h2 className="text-2xl font-black text-text uppercase tracking-tight">{t('simulation.title')}</h2>
+                            <p className="text-[10px] font-bold text-text-3 uppercase tracking-[0.3em] mt-1">{t('simulation.subtitle')}</p>
                         </div>
                     </div>
                     <button 
@@ -78,7 +80,7 @@ export const SimulationWorkspace = () => {
                         onClick={handleRunSimulation}
                     >
                         {isRunning ? <FastForward size={16} className="animate-spin" /> : <Zap size={16} />}
-                        {isRunning ? 'Synthesizing...' : 'Execute Run'}
+                        {isRunning ? 'Synthesizing...' : t('simulation.execute')}
                     </button>
                 </div>
 
@@ -86,7 +88,7 @@ export const SimulationWorkspace = () => {
                 <div className="grid grid-cols-2 gap-8 mb-12">
                     <div className="p-6 bg-bg-elev-1 border border-border rounded-2xl shadow-1">
                         <h4 className="text-[10px] font-black text-text-3 uppercase tracking-[0.2em] mb-6 flex items-center gap-2">
-                            <Microscope size={12} className="text-brand" /> Primary Variables
+                            <Microscope size={12} className="text-brand" /> {t('simulation.variables')}
                         </h4>
                         <div className="space-y-4">
                             <VariableRow label="Character Agency" value="High" />
@@ -96,7 +98,7 @@ export const SimulationWorkspace = () => {
                     </div>
                     <div className="p-6 bg-bg-elev-1 border border-border rounded-2xl shadow-1">
                         <h4 className="text-[10px] font-black text-text-3 uppercase tracking-[0.2em] mb-6 flex items-center gap-2">
-                            <History size={12} className="text-amber" /> Anchors
+                            <History size={12} className="text-amber" /> {t('simulation.anchors')}
                         </h4>
                         <div className="space-y-4">
                             <VariableRow label="Timeline Start" value="Event A" />
@@ -111,7 +113,7 @@ export const SimulationWorkspace = () => {
                     <div className="h-10 border-b border-border bg-bg-elev-1 flex items-center px-6 justify-between">
                         <div className="flex items-center gap-2">
                             <Terminal size={12} className="text-text-3" />
-                            <span className="text-[9px] font-black uppercase tracking-[0.3em] text-text-3">Console Output</span>
+                            <span className="text-[9px] font-black uppercase tracking-[0.3em] text-text-3">{t('simulation.console')}</span>
                         </div>
                         <div className="flex gap-1.5">
                             <div className="w-2 h-2 rounded-full bg-red/20"></div>
@@ -128,7 +130,7 @@ export const SimulationWorkspace = () => {
                             </div>
                         ) : (
                             <div className="space-y-2">
-                                <p className="text-text-3 opacity-40 italic font-sans py-20 text-center uppercase tracking-widest text-[9px]">Awaiting Run Execution</p>
+                                <p className="text-text-3 opacity-40 italic font-sans py-20 text-center uppercase tracking-widest text-[9px]">{t('simulation.awaiting')}</p>
                             </div>
                         )}
                     </div>
@@ -138,7 +140,7 @@ export const SimulationWorkspace = () => {
             <div className="h-full flex flex-col items-center justify-center text-text-3 select-none">
                 <Activity size={120} className="opacity-5 mb-8" />
                 <p className="text-[11px] font-black uppercase tracking-[0.5em] opacity-40">Narrative Laboratory</p>
-                <p className="text-[9px] mt-4 opacity-20 uppercase tracking-widest font-medium">Select a scenario to project alternate timelines</p>
+                <p className="text-[9px] mt-4 opacity-20 uppercase tracking-widest font-medium">{t('simulation.awaitingBody')}</p>
             </div>
         )}
       </div>

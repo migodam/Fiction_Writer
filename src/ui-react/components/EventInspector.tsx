@@ -21,13 +21,24 @@ export const EventInspector = () => {
           id: 'event_' + Date.now(), 
           title: '', 
           summary: '', 
+          time: '',
           branchId: timelineBranches[0]?.id || 'branch_main',
           orderIndex: timelineEvents.length,
-          participants: []
+          locationIds: [],
+          participantCharacterIds: [],
+          linkedSceneIds: [],
+          linkedWorldItemIds: [],
+          tags: [],
         });
       } else {
         const event = timelineEvents.find(e => e.id === selectedEntity.id);
-        if (event) setEditEvent({ ...event });
+        if (event) {
+          setEditEvent({
+            ...event,
+            location: event.locationIds[0]?.replace(/-/g, ' ') || '',
+            participants: event.participantCharacterIds,
+          });
+        }
       }
       setValidationError(null);
     } else {
@@ -42,10 +53,24 @@ export const EventInspector = () => {
         return;
     }
 
+    const normalizedEvent = {
+      ...editEvent,
+      locationIds: editEvent.location
+        ? [String(editEvent.location).trim().toLowerCase().replace(/\s+/g, '-')]
+        : [],
+      participantCharacterIds: editEvent.participants || [],
+      linkedSceneIds: editEvent.linkedSceneIds || [],
+      linkedWorldItemIds: editEvent.linkedWorldItemIds || [],
+      tags: editEvent.tags || [],
+    };
+
+    delete normalizedEvent.location;
+    delete normalizedEvent.participants;
+
     if (timelineEvents.find(e => e.id === editEvent.id)) {
-      updateTimelineEvent(editEvent);
+      updateTimelineEvent(normalizedEvent);
     } else {
-      addTimelineEvent(editEvent);
+      addTimelineEvent(normalizedEvent);
       setSelectedEntity('timeline_event', editEvent.id);
     }
     setValidationError(null);
@@ -173,7 +198,7 @@ export const EventInspector = () => {
          <button 
            data-testid="open-scene-btn"
            className="w-full py-2.5 border border-border hover:bg-bg hover:border-brand-2 text-text-2 text-[11px] font-bold uppercase tracking-widest rounded-lg flex items-center justify-center gap-2.5 transition-all shadow-sm group"
-           onClick={() => navigate('/writing')}
+           onClick={() => navigate('/writing/scenes')}
          >
            <BookOpen size={16} className="text-text-3 group-hover:text-brand" /> Writing Studio
          </button>

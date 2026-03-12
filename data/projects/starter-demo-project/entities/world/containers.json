@@ -1,0 +1,38 @@
+[
+  {
+    "id": "cont_locations",
+    "name": "Locations",
+    "type": "notebook",
+    "isDefault": true
+  },
+  {
+    "id": "cont_orgs",
+    "name": "Organizations",
+    "type": "graph",
+    "isDefault": true
+  },
+  {
+    "id": "cont_items",
+    "name": "Items",
+    "type": "notebook",
+    "isDefault": true
+  },
+  {
+    "id": "cont_lore",
+    "name": "Lore",
+    "type": "notebook",
+    "isDefault": true
+  },
+  {
+    "id": "cont_world_map",
+    "name": "World Map",
+    "type": "map",
+    "isDefault": true
+  },
+  {
+    "id": "cont_notes",
+    "name": "Notes",
+    "type": "notebook",
+    "isDefault": true
+  }
+]

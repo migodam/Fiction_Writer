@@ -1,0 +1,27 @@
+{
+  "id": "org_black_tide",
+  "containerId": "cont_orgs",
+  "type": "organization",
+  "name": "Black Tide Consortium",
+  "description": "A covert broker network moving restricted knowledge and recovered artifacts.",
+  "attributes": [
+    {
+      "key": "Alignment",
+      "value": "Hostile market network"
+    }
+  ],
+  "linkedCharacterIds": [
+    "char_vesper"
+  ],
+  "linkedEventIds": [
+    "event_shard"
+  ],
+  "linkedSceneIds": [
+    "scene_consul"
+  ],
+  "mapMarkers": [],
+  "assetPath": null,
+  "tagIds": [
+    "antagonist"
+  ]
+}

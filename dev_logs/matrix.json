@@ -1,83 +1,72 @@
-{
-  "current_module": "Characters",
-  "current_iteration": "2026-03-11/iter_01",
+﻿{
+  "current_module": "Acceptance Demo Delivery",
+  "current_iteration": "2026-03-11/iter_03",
   "completed_modules": [
-    "Characters"
+    "Characters baseline",
+    "Workbench shell",
+    "Foundation shell",
+    "Project initialization flow",
+    "Acceptance demo shell",
+    "Publish demo",
+    "World map demo"
   ],
   "qa_status": {
-    "characters": "Accepted"
+    "characters": "Accepted",
+    "foundation_shell": "Accepted",
+    "workbench_shell": "Accepted",
+    "world_item_creation": "Accepted",
+    "acceptance_demo": "Accepted",
+    "layout_and_locale": "Accepted",
+    "publish_demo": "Accepted"
   },
   "playwright_status": {
-    "characters_iteration": "Passed",
-    "smoke_subset": "Passed",
-    "world_model_item_creation": "Failed"
+    "foundation_regression": "Passed",
+    "full_browser_suite": "Passed (30/30)",
+    "acceptance_suite": "Passed"
   },
   "progress": {
-    "P0": {
-      "P0-1 Application Launch": "Completed",
-      "P0-2 Activity Navigation": "Completed",
-      "P0-3 Sidebar Switching": "Completed",
-      "P0-4 Character Creation": "Completed",
-      "P0-5 Candidate Confirmation": "Completed",
-      "P0-6 Timeline Event Creation": "Completed",
-      "P0-7 Timeline Drag Reorder": "Completed",
-      "P0-8 Writing Autosave": "Completed",
-      "P0-9 Timeline -> Writing Link": "Completed"
-    },
-    "P1": {
-      "P1-1 Graph Layout Persistence": "Completed",
-      "P1-2 Graph Reset Layout": "Completed",
-      "P1-3 World Container Creation": "Completed",
-      "P1-4 World Item Creation": "Blocked",
-      "P1-5 Consistency Run": "Pending",
-      "P1-6 Workbench AI Run": "Pending",
-      "P1-7 Publish Preview": "Pending",
-      "P1-8 Insights Dashboard": "Pending"
-    },
-    "P2": {
-      "P2-1 Timeline Branch Drag": "Pending",
-      "P2-2 Context Panel Insert": "Completed",
-      "P2-3 Delete Confirm Modal": "Pending",
-      "P2-4 Keyboard Shortcuts": "Completed"
-    }
+    "phase_0": "Completed",
+    "phase_1": "Completed",
+    "phase_2": "Completed",
+    "phase_3": "Completed",
+    "phase_4": "Completed",
+    "phase_5": "Completed",
+    "phase_6": "In Progress"
   },
   "routes_implemented": [
-    "/workbench/console",
-    "/writing",
+    "/workbench/inbox",
+    "/workbench/history",
+    "/workbench/issues",
+    "/workbench/bulk",
+    "/writing/*",
     "/characters/list",
     "/characters/candidates",
     "/characters/relationships",
     "/characters/tags",
     "/characters/profile/:characterId",
-    "/timeline",
-    "/graph",
-    "/world",
-    "/simulation",
-    "/beta-reader",
-    "/consistency",
-    "/publish",
-    "/insights"
+    "/timeline/*",
+    "/graph/*",
+    "/world/*",
+    "/simulation/*",
+    "/beta-reader/*",
+    "/consistency/*",
+    "/publish/*",
+    "/insights/*"
   ],
-  "selector_coverage": 89,
-  "data_testid_coverage": 89,
-  "last_test_run": "2026-03-11T14:47:00+08:00",
-  "open_bugs": [
-    {
-      "id": "world-item-editor-not-opening",
-      "priority": "P1",
-      "status": "Open",
-      "summary": "World item editor does not render after clicking add-world-item-btn."
-    }
-  ],
+  "selector_coverage": 97,
+  "data_testid_coverage": 97,
+  "last_test_run": "2026-03-11T23:59:00+08:00",
+  "open_bugs": [],
   "known_issues": [
-    "Playwright config path drift is fixed in npm scripts, but governing document path drift remains for TEST_PLAN and iteration docs."
+    "Electron-backed folder create/open/save needs a dedicated desktop end-to-end pass beyond browser-mode Playwright.",
+    "Agent Dock is UI-complete for this phase but still does not run real agent tasks.",
+    "Portrait generation remains a placeholder action."
   ],
   "backlog": [
-    "Fix World item editor create flow",
-    "Implement Timeline deep-link behaviors",
-    "Implement Writing Studio deep-link and scene focus behaviors",
-    "Fill remaining empty tests/e2e/p1 specs",
-    "Implement Workbench console and prompt actions",
-    "Replace remaining raw-color Inspector styles with semantic tokens"
+    "Add Electron E2E coverage for real project-folder lifecycle",
+    "Deepen structured cross-page references and conflict visualization",
+    "Expand Graph editing capabilities beyond proposal staging",
+    "Implement true agent task execution behind Agent Dock and Workbench",
+    "Add higher-order project capabilities such as undo/history and richer export options"
   ]
 }

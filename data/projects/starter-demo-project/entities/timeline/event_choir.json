@@ -1,0 +1,25 @@
+{
+  "id": "event_choir",
+  "title": "Choir Salon Meeting",
+  "summary": "Seren reveals the public stakes and offers civilian support in exchange for truth.",
+  "time": "Day 1 - Night",
+  "branchId": "branch_public",
+  "orderIndex": 0,
+  "locationIds": [
+    "loc_lantern_ward"
+  ],
+  "participantCharacterIds": [
+    "char_aria",
+    "char_seren"
+  ],
+  "linkedSceneIds": [
+    "scene_choir"
+  ],
+  "linkedWorldItemIds": [
+    "lore_memory_tax",
+    "org_glass_choir"
+  ],
+  "tags": [
+    "politics"
+  ]
+}

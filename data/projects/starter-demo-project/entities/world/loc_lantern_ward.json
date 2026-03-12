@@ -1,0 +1,35 @@
+{
+  "id": "loc_lantern_ward",
+  "containerId": "cont_locations",
+  "type": "location",
+  "name": "Lantern Ward",
+  "description": "A cultural quarter of salons, hidden stages, and encrypted meeting houses.",
+  "attributes": [
+    {
+      "key": "Security",
+      "value": "Civilian cover with hidden sentries"
+    }
+  ],
+  "linkedCharacterIds": [
+    "char_seren"
+  ],
+  "linkedEventIds": [
+    "event_choir"
+  ],
+  "linkedSceneIds": [
+    "scene_choir"
+  ],
+  "mapMarkers": [
+    {
+      "id": "marker_lantern",
+      "label": "Lantern Ward",
+      "x": 0.68,
+      "y": 0.28,
+      "linkedEntityId": "loc_lantern_ward"
+    }
+  ],
+  "assetPath": null,
+  "tagIds": [
+    "culture"
+  ]
+}

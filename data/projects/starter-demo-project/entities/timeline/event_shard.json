@@ -1,0 +1,27 @@
+{
+  "id": "event_shard",
+  "title": "Archive Breach Review",
+  "summary": "The team reconstructs how the Memory Shard was stolen from a locked chamber.",
+  "time": "Day 2 - Morning",
+  "branchId": "branch_main",
+  "orderIndex": 1,
+  "locationIds": [
+    "loc_sky_dock"
+  ],
+  "participantCharacterIds": [
+    "char_aria",
+    "char_nila",
+    "char_vesper"
+  ],
+  "linkedSceneIds": [
+    "scene_archive",
+    "scene_consul"
+  ],
+  "linkedWorldItemIds": [
+    "item_memory_shard",
+    "org_meridian"
+  ],
+  "tags": [
+    "artifact"
+  ]
+}

@@ -1,0 +1,1 @@
+Seren did not greet Aria with suspicion but with receipts, witness statements, and names of families priced out of their own memories. The room listened for Aria's answer before anyone reached for wine.

@@ -1,0 +1,1 @@
+Aria stepped off the lift into the Sky Dock haze, where the city smelled like cold copper and stormwater. Rowan waited beside a stack of confiscated trunks, already bored by her questions and curious in spite of himself.

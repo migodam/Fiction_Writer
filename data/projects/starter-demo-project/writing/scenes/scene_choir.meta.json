@@ -1,0 +1,21 @@
+{
+  "id": "scene_choir",
+  "chapterId": "chap_2",
+  "title": "Choir in Lantern Ward",
+  "summary": "Seren lays out the public consequences of the theft and asks Aria to choose transparency.",
+  "orderIndex": 0,
+  "povCharacterId": "char_seren",
+  "linkedCharacterIds": [
+    "char_aria",
+    "char_seren"
+  ],
+  "linkedEventIds": [
+    "event_choir"
+  ],
+  "linkedWorldItemIds": [
+    "loc_lantern_ward",
+    "lore_memory_tax",
+    "org_glass_choir"
+  ],
+  "status": "revised"
+}

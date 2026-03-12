@@ -1,0 +1,124 @@
+{
+  "id": "board_main",
+  "name": "Main Storyboard",
+  "description": "Mixed-mode board for sketching conflicts, routes, and sync candidates.",
+  "nodes": [
+    {
+      "id": "graph_char_aria",
+      "kind": "character_ref",
+      "label": "Aria Solis",
+      "description": "Lead investigator card.",
+      "x": 80,
+      "y": 80,
+      "width": 220,
+      "height": 170,
+      "linkedEntityId": "char_aria",
+      "linkedEntityType": "character",
+      "imageAssetId": null
+    },
+    {
+      "id": "graph_event_bridge",
+      "kind": "event_ref",
+      "label": "Bridge Intercept",
+      "description": "Climax event card.",
+      "x": 390,
+      "y": 90,
+      "width": 240,
+      "height": 170,
+      "linkedEntityId": "event_bridge",
+      "linkedEntityType": "timeline_event",
+      "imageAssetId": null
+    },
+    {
+      "id": "graph_loc_bridge",
+      "kind": "location_ref",
+      "label": "Glass Bridge",
+      "description": "Climax location node.",
+      "x": 720,
+      "y": 110,
+      "width": 230,
+      "height": 160,
+      "linkedEntityId": "loc_glass_bridge",
+      "linkedEntityType": "world_item",
+      "imageAssetId": null
+    },
+    {
+      "id": "graph_item_shard",
+      "kind": "world_item_ref",
+      "label": "Memory Shard",
+      "description": "Central artifact.",
+      "x": 420,
+      "y": 320,
+      "width": 230,
+      "height": 160,
+      "linkedEntityId": "item_memory_shard",
+      "linkedEntityType": "world_item",
+      "imageAssetId": null
+    },
+    {
+      "id": "graph_note_public",
+      "kind": "free_note",
+      "label": "Public fallout escalates after bridge damage",
+      "description": "Potential expansion for Chapter 3.",
+      "x": 95,
+      "y": 360,
+      "width": 260,
+      "height": 180,
+      "linkedEntityId": null,
+      "linkedEntityType": null,
+      "imageAssetId": null
+    },
+    {
+      "id": "graph_image_city",
+      "kind": "image_card",
+      "label": "City mood board",
+      "description": "Reference texture for Asterfall.",
+      "x": 720,
+      "y": 340,
+      "width": 230,
+      "height": 180,
+      "linkedEntityId": null,
+      "linkedEntityType": null,
+      "imageAssetId": "data:image/svg+xml;charset=utf-8,%0A%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%201200%20800%22%3E%0A%20%20%3Cdefs%3E%0A%20%20%20%20%3ClinearGradient%20id%3D%22bg%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%221%22%20y2%3D%221%22%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23112032%22%20%2F%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%230b1520%22%20%2F%3E%0A%20%20%20%20%3C%2FlinearGradient%3E%0A%20%20%3C%2Fdefs%3E%0A%20%20%3Crect%20width%3D%221200%22%20height%3D%22800%22%20fill%3D%22url(%23bg)%22%20%2F%3E%0A%20%20%3Cpath%20d%3D%22M80%20620%20C240%20470%2C%20360%20460%2C%20470%20540%20S700%20730%2C%201110%20520%22%20fill%3D%22none%22%20stroke%3D%22%238ecae6%22%20stroke-width%3D%2224%22%20stroke-linecap%3D%22round%22%20opacity%3D%220.55%22%20%2F%3E%0A%20%20%3Cpath%20d%3D%22M140%20140%20C210%20210%2C%20300%20230%2C%20430%20190%20S700%20120%2C%20980%20220%22%20fill%3D%22none%22%20stroke%3D%22%23d4a373%22%20stroke-width%3D%2218%22%20stroke-linecap%3D%22round%22%20opacity%3D%220.35%22%20%2F%3E%0A%20%20%3Ccircle%20cx%3D%22250%22%20cy%3D%22280%22%20r%3D%22130%22%20fill%3D%22%231d3557%22%20opacity%3D%220.45%22%20%2F%3E%0A%20%20%3Ccircle%20cx%3D%22780%22%20cy%3D%22240%22%20r%3D%22180%22%20fill%3D%22%23264653%22%20opacity%3D%220.33%22%20%2F%3E%0A%20%20%3Ccircle%20cx%3D%22620%22%20cy%3D%22560%22%20r%3D%22200%22%20fill%3D%22%233a5a40%22%20opacity%3D%220.22%22%20%2F%3E%0A%3C%2Fsvg%3E%0A"
+    },
+    {
+      "id": "graph_frame_climax",
+      "kind": "group_frame",
+      "label": "Climax cluster",
+      "description": "All elements needed for the intercept.",
+      "x": 360,
+      "y": 40,
+      "width": 620,
+      "height": 500,
+      "linkedEntityId": null,
+      "linkedEntityType": null,
+      "imageAssetId": null
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge_aria_bridge",
+      "sourceId": "graph_char_aria",
+      "targetId": "graph_event_bridge",
+      "label": "drives"
+    },
+    {
+      "id": "edge_bridge_loc",
+      "sourceId": "graph_event_bridge",
+      "targetId": "graph_loc_bridge",
+      "label": "happens at"
+    },
+    {
+      "id": "edge_bridge_shard",
+      "sourceId": "graph_event_bridge",
+      "targetId": "graph_item_shard",
+      "label": "centers on"
+    },
+    {
+      "id": "edge_note_bridge",
+      "sourceId": "graph_note_public",
+      "targetId": "graph_event_bridge",
+      "label": "aftershock"
+    }
+  ]
+}

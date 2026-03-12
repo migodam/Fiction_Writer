@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useProjectStore, useUIStore } from '../store';
+import { useI18n } from '../i18n';
 import { 
     Users, Heart, Brain, Search, MessageSquare, 
     Star, TrendingUp, ChevronDown, BarChart3,
@@ -9,6 +10,7 @@ import {
 export const BetaReaderWorkspace = () => {
   const { chapters, scenes } = useProjectStore();
   const { setLastActionStatus } = useUIStore();
+  const { t } = useI18n();
   
   const [isRunning, setIsRunning] = useState(false);
   const [activeReader, setActiveReader] = useState<string | null>(null);
@@ -32,7 +34,7 @@ export const BetaReaderWorkspace = () => {
       {/* Left: Readers Panel */}
       <div className="w-72 border-r border-border flex flex-col bg-bg-elev-1 shadow-1" data-testid="beta-reader-list">
         <div className="p-4 border-b border-border flex items-center justify-between bg-bg-elev-2">
-            <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-text-3">Synthetic Cohort</h3>
+            <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-text-3">{t('beta.title')}</h3>
             <button className="p-1 hover:bg-hover rounded-lg text-brand transition-colors"><Users size={16} /></button>
         </div>
         <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1">
@@ -68,7 +70,7 @@ export const BetaReaderWorkspace = () => {
                         <div>
                             <h2 className="text-3xl font-black text-text uppercase tracking-tight">{readers.find(r => r.id === activeReader)?.name}</h2>
                             <div className="flex items-center gap-3 mt-1">
-                                <span className="text-[10px] font-bold text-text-3 uppercase tracking-[0.3em]">Analysis Mode: {activeReader === 'read_1' ? 'Syntactic / Logical' : 'Affective / Emotional'}</span>
+                                <span className="text-[10px] font-bold text-text-3 uppercase tracking-[0.3em]">{t('beta.subtitle')}: {activeReader === 'read_1' ? 'Syntactic / Logical' : 'Affective / Emotional'}</span>
                                 <div className="w-1 h-1 rounded-full bg-divider"></div>
                                 <span className="text-[10px] font-bold text-green uppercase tracking-[0.3em]">Confidence: 94%</span>
                             </div>
@@ -80,7 +82,7 @@ export const BetaReaderWorkspace = () => {
                         onClick={handleRunSimulation}
                     >
                         {isRunning ? <Sparkles size={18} className="animate-spin" /> : <Flame size={18} />}
-                        {isRunning ? 'Deconstructing...' : 'Ignite Simulation'}
+                        {isRunning ? 'Deconstructing...' : t('beta.run')}
                     </button>
                 </div>
 
@@ -95,7 +97,7 @@ export const BetaReaderWorkspace = () => {
                 <div className="space-y-6">
                     <div className="flex items-center gap-3 mb-8 opacity-40">
                         <MessageSquare size={16} />
-                        <h3 className="text-[11px] font-black uppercase tracking-[0.4em]">Reader Impressions</h3>
+                        <h3 className="text-[11px] font-black uppercase tracking-[0.4em]">{t('beta.feedback')}</h3>
                         <div className="h-px flex-1 bg-divider"></div>
                     </div>
 

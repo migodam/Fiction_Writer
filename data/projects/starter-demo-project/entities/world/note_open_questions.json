@@ -1,0 +1,28 @@
+{
+  "id": "note_open_questions",
+  "containerId": "cont_notes",
+  "type": "note",
+  "name": "Open Questions",
+  "description": "List of unresolved motives and route contradictions.",
+  "attributes": [
+    {
+      "key": "Owner",
+      "value": "Workbench"
+    }
+  ],
+  "linkedCharacterIds": [
+    "char_aria",
+    "char_vesper"
+  ],
+  "linkedEventIds": [
+    "event_shard"
+  ],
+  "linkedSceneIds": [
+    "scene_archive"
+  ],
+  "mapMarkers": [],
+  "assetPath": null,
+  "tagIds": [
+    "todo"
+  ]
+}

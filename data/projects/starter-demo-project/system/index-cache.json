@@ -1,0 +1,19 @@
+{
+  "unreadUpdates": {
+    "activities": {
+      "workbench": true,
+      "graph": true,
+      "consistency": true
+    },
+    "sections": {
+      "workbench.inbox": true,
+      "graph.narrative": true,
+      "consistency.issues": true
+    },
+    "entities": {
+      "proposal_graph_public_fallout": true,
+      "issue_bridge_name": true
+    }
+  },
+  "archivedIds": []
+}

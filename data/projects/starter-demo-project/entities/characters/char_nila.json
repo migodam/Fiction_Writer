@@ -1,0 +1,37 @@
+{
+  "id": "char_nila",
+  "name": "Nila Quill",
+  "summary": "Cartographer and world-map specialist for the Bureau.",
+  "background": "Nila maintains the city map overlays and traces route anomalies faster than anyone else.",
+  "aliases": [
+    "Linekeeper"
+  ],
+  "birthdayText": "Riversend 18",
+  "portraitAssetId": null,
+  "traits": "Playful, obsessive, kind under pressure",
+  "goals": "Prove the theft route crosses impossible map layers.",
+  "fears": "Being treated as support instead of primary analyst.",
+  "secrets": "She has been feeding Seren anonymized transit data.",
+  "speechStyle": "Fast, diagram-heavy explanations.",
+  "arc": "Support specialist who becomes indispensable.",
+  "tagIds": [
+    "cartographer"
+  ],
+  "organizationIds": [
+    "org_meridian"
+  ],
+  "linkedSceneIds": [
+    "scene_archive",
+    "scene_bridge"
+  ],
+  "linkedEventIds": [
+    "event_shard",
+    "event_bridge"
+  ],
+  "linkedWorldItemIds": [
+    "item_city_map"
+  ],
+  "statusFlags": {
+    "alive": true
+  }
+}

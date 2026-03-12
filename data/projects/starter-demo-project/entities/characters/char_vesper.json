@@ -1,0 +1,39 @@
+{
+  "id": "char_vesper",
+  "name": "Vesper Hale",
+  "summary": "A polished antagonist directing the theft network.",
+  "background": "Vesper fronts as a trade consul while quietly assembling a private memory market.",
+  "aliases": [
+    "Consul Hale"
+  ],
+  "birthdayText": "Ashfall 9",
+  "portraitAssetId": null,
+  "traits": "Elegant, patient, manipulative",
+  "goals": "Monopolize shard access before the city council reacts.",
+  "fears": "Losing narrative control and public image.",
+  "secrets": "He orchestrated the bridge collapse years ago to erase a witness circle.",
+  "speechStyle": "Soft, surgical, never hurried.",
+  "arc": "Antagonist hidden in plain sight.",
+  "tagIds": [
+    "antagonist"
+  ],
+  "organizationIds": [
+    "org_black_tide"
+  ],
+  "linkedSceneIds": [
+    "scene_consul",
+    "scene_bridge"
+  ],
+  "linkedEventIds": [
+    "event_shard",
+    "event_bridge"
+  ],
+  "linkedWorldItemIds": [
+    "org_black_tide",
+    "item_memory_shard"
+  ],
+  "statusFlags": {
+    "antagonist": true,
+    "alive": true
+  }
+}

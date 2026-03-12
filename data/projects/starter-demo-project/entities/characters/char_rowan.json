@@ -1,0 +1,35 @@
+{
+  "id": "char_rowan",
+  "name": "Rowan Vale",
+  "summary": "A disgraced tactician who knows the undercity routes.",
+  "background": "Former Meridian strategist, now trading maps and rumors in the flood markets.",
+  "aliases": [
+    "Map Fox"
+  ],
+  "birthdayText": "Rainswell 3",
+  "portraitAssetId": null,
+  "traits": "Dry, analytical, defensive",
+  "goals": "Pay off old debts and stay out of Bureau reach.",
+  "fears": "Being pulled back into command and losing autonomy.",
+  "secrets": "He leaked a route chart years ago that enabled the current theft ring.",
+  "speechStyle": "Short tactical sentences.",
+  "arc": "From detached fixer to invested ally.",
+  "tagIds": [
+    "strategist"
+  ],
+  "organizationIds": [],
+  "linkedSceneIds": [
+    "scene_arrival",
+    "scene_market"
+  ],
+  "linkedEventIds": [
+    "event_arrival",
+    "event_market"
+  ],
+  "linkedWorldItemIds": [
+    "loc_flood_market"
+  ],
+  "statusFlags": {
+    "alive": true
+  }
+}

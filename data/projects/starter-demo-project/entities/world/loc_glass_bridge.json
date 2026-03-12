@@ -1,0 +1,37 @@
+{
+  "id": "loc_glass_bridge",
+  "containerId": "cont_locations",
+  "type": "location",
+  "name": "Glass Bridge",
+  "description": "A suspended transit line where the decisive interception will happen.",
+  "attributes": [
+    {
+      "key": "Risk",
+      "value": "High vertical exposure"
+    }
+  ],
+  "linkedCharacterIds": [
+    "char_aria",
+    "char_seren",
+    "char_vesper"
+  ],
+  "linkedEventIds": [
+    "event_bridge"
+  ],
+  "linkedSceneIds": [
+    "scene_bridge"
+  ],
+  "mapMarkers": [
+    {
+      "id": "marker_bridge",
+      "label": "Glass Bridge",
+      "x": 0.59,
+      "y": 0.5,
+      "linkedEntityId": "loc_glass_bridge"
+    }
+  ],
+  "assetPath": null,
+  "tagIds": [
+    "climax"
+  ]
+}

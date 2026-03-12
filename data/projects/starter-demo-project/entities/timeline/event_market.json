@@ -1,0 +1,24 @@
+{
+  "id": "event_market",
+  "title": "Market Route Leak",
+  "summary": "A hidden seller exposes a transit path that should not exist on official maps.",
+  "time": "Day 1 - Midday",
+  "branchId": "branch_shadow",
+  "orderIndex": 0,
+  "locationIds": [
+    "loc_flood_market"
+  ],
+  "participantCharacterIds": [
+    "char_rowan",
+    "char_nila"
+  ],
+  "linkedSceneIds": [
+    "scene_market"
+  ],
+  "linkedWorldItemIds": [
+    "item_city_map"
+  ],
+  "tags": [
+    "intel"
+  ]
+}

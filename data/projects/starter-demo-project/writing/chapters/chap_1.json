@@ -1,0 +1,13 @@
+{
+  "id": "chap_1",
+  "title": "Fractured Arrival",
+  "summary": "The investigation begins and the first hidden route surfaces.",
+  "goal": "Establish the cast, the city, and the theft stakes.",
+  "notes": "Chapter one should feel investigative and urban.",
+  "sceneIds": [
+    "scene_arrival",
+    "scene_market"
+  ],
+  "orderIndex": 0,
+  "status": "draft"
+}

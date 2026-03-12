@@ -1,0 +1,21 @@
+{
+  "id": "scene_archive",
+  "chapterId": "chap_2",
+  "title": "Archive Reconstruction",
+  "summary": "Aria and Nila discover the shard breach overlaps with erased route layers.",
+  "orderIndex": 1,
+  "povCharacterId": "char_nila",
+  "linkedCharacterIds": [
+    "char_aria",
+    "char_nila"
+  ],
+  "linkedEventIds": [
+    "event_shard"
+  ],
+  "linkedWorldItemIds": [
+    "item_memory_shard",
+    "item_city_map",
+    "org_meridian"
+  ],
+  "status": "revised"
+}

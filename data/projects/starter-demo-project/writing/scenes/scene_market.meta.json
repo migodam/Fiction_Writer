@@ -1,0 +1,20 @@
+{
+  "id": "scene_market",
+  "chapterId": "chap_1",
+  "title": "Flood Market Line",
+  "summary": "Rowan and Nila compare impossible route markings beneath the market canopies.",
+  "orderIndex": 1,
+  "povCharacterId": "char_rowan",
+  "linkedCharacterIds": [
+    "char_rowan",
+    "char_nila"
+  ],
+  "linkedEventIds": [
+    "event_market"
+  ],
+  "linkedWorldItemIds": [
+    "loc_flood_market",
+    "item_city_map"
+  ],
+  "status": "draft"
+}

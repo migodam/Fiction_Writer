@@ -1,0 +1,42 @@
+{
+  "id": "char_aria",
+  "name": "Aria Solis",
+  "summary": "Lead investigator chasing the memory archive theft.",
+  "background": "Aria grew up in the Ember Quarter and now works as a field archivist for the Meridian Bureau.",
+  "aliases": [
+    "Archivist Aria"
+  ],
+  "birthdayText": "Late Frost 14",
+  "portraitAssetId": null,
+  "traits": "Observant, stubborn, quietly compassionate",
+  "goals": "Recover the stolen archive shard before the city fractures.",
+  "fears": "Repeating the failure that cost her mentor.",
+  "secrets": "She already touched the shard and hears fragments of future memories.",
+  "speechStyle": "Precise with sudden flashes of warmth.",
+  "arc": "From guarded investigator to visible leader.",
+  "tagIds": [
+    "lead",
+    "bureau"
+  ],
+  "organizationIds": [
+    "org_meridian"
+  ],
+  "linkedSceneIds": [
+    "scene_arrival",
+    "scene_archive",
+    "scene_bridge"
+  ],
+  "linkedEventIds": [
+    "event_arrival",
+    "event_shard",
+    "event_bridge"
+  ],
+  "linkedWorldItemIds": [
+    "loc_sky_dock",
+    "item_memory_shard"
+  ],
+  "statusFlags": {
+    "protagonist": true,
+    "alive": true
+  }
+}

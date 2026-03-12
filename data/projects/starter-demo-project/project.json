@@ -1,0 +1,25 @@
+{
+  "metadata": {
+    "projectId": "project_starter-demo_starter_demo_project",
+    "name": "Starter Demo Project",
+    "description": "A guided starter project for the acceptance walkthrough.",
+    "createdAt": "2026-03-12T02:40:26.701Z",
+    "updatedAt": "2026-03-12T02:40:26.701Z",
+    "version": 2,
+    "rootPath": "D:\\NUS\\Computing\\Projects\\Fiction_Writer\\data\\projects\\starter-demo-project",
+    "storageMode": "nodefs",
+    "locale": "en",
+    "template": "starter-demo",
+    "lastOpenedModule": "workbench",
+    "lastOpenedSceneId": "scene_arrival",
+    "lastOpenedBoardId": "board_main"
+  },
+  "counts": {
+    "characters": 5,
+    "timelineEvents": 5,
+    "scenes": 6,
+    "worldItems": 12,
+    "proposals": 2,
+    "exports": 0
+  }
+}

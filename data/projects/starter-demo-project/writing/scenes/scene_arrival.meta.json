@@ -1,0 +1,19 @@
+{
+  "id": "scene_arrival",
+  "chapterId": "chap_1",
+  "title": "Dockside Arrival",
+  "summary": "Aria reaches Asterfall and persuades Rowan to guide her below the official transit lines.",
+  "orderIndex": 0,
+  "povCharacterId": "char_aria",
+  "linkedCharacterIds": [
+    "char_aria",
+    "char_rowan"
+  ],
+  "linkedEventIds": [
+    "event_arrival"
+  ],
+  "linkedWorldItemIds": [
+    "loc_sky_dock"
+  ],
+  "status": "draft"
+}

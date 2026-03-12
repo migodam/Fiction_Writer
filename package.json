@@ -12,7 +12,7 @@
     "ui:format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
     "build": "npm run ui:build",
     "preview": "vite preview",
-    "electron:dev": "concurrently \"npm run ui:dev\" \"wait-on http://localhost:3000 && electron .\"",
+    "electron:dev": "node scripts/electron-dev.mjs",
     "test:e2e": "npx playwright test --config tests/playwright.config.ts"
   },
   "dependencies": {

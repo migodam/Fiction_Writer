@@ -1,0 +1,27 @@
+{
+  "id": "item_city_map",
+  "containerId": "cont_items",
+  "type": "item",
+  "name": "Layered City Map",
+  "description": "Nila's annotated atlas revealing impossible route overlays.",
+  "attributes": [
+    {
+      "key": "Status",
+      "value": "Updated hourly"
+    }
+  ],
+  "linkedCharacterIds": [
+    "char_nila"
+  ],
+  "linkedEventIds": [
+    "event_bridge"
+  ],
+  "linkedSceneIds": [
+    "scene_archive"
+  ],
+  "mapMarkers": [],
+  "assetPath": null,
+  "tagIds": [
+    "map"
+  ]
+}
