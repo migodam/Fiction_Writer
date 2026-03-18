@@ -21,6 +21,7 @@ export const CharactersWorkspace = () => {
     timelineEvents,
     addCharacter,
     updateCharacter,
+    deleteCharacter,
     addCharacterTag,
     addRelationship,
     updateRelationship,
@@ -29,7 +30,8 @@ export const CharactersWorkspace = () => {
     rejectCandidate,
     toggleCharacterTagMembership,
   } = useProjectStore();
-  const { locale } = useI18n();
+  const { locale, t } = useI18n();
+  const { openContextMenu, setLastActionStatus } = useUIStore();
   const zh = locale === 'zh-CN';
   const [search, setSearch] = useState('');
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -141,7 +143,7 @@ export const CharactersWorkspace = () => {
                   <span className="rounded-full border border-border bg-bg px-2 py-0.5 text-[10px] font-black text-text-3">{group.items.length}</span>
                 </button>
                 {!collapsed[group.group] && group.items.map((character) => (
-                  <button key={character.id} type="button" data-testid={`character-card-${character.id}`} className={cn('flex w-full items-center justify-between border-t border-divider px-4 py-3 text-left', selected?.id === character.id ? 'bg-selected text-text' : 'text-text-2 hover:bg-hover')} onClick={() => navigate(`/characters/profile/${character.id}`)}>
+                  <button key={character.id} type="button" data-testid={`character-card-${character.id}`} className={cn('flex w-full items-center justify-between border-t border-divider px-4 py-3 text-left', selected?.id === character.id ? 'bg-selected text-text' : 'text-text-2 hover:bg-hover')} onClick={() => navigate(`/characters/profile/${character.id}`)} onContextMenu={(e) => { e.preventDefault(); openContextMenu({ x: e.clientX, y: e.clientY, items: [{ id: 'delete', label: t('common.delete'), action: () => { deleteCharacter(character.id); setLastActionStatus('Character deleted'); }, destructive: true }] }); }}>
                     <span className="text-sm font-black">{character.name}</span>
                   </button>
                 ))}

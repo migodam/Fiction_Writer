@@ -150,6 +150,7 @@ interface ProjectState {
   syncProjectUiState: () => void;
   addCharacter: (character: Character) => void;
   updateCharacter: (character: Character) => void;
+  deleteCharacter: (id: string) => void;
   addCharacterTag: (tag: CharacterTag) => void;
   updateCharacterTag: (tag: CharacterTag) => void;
   deleteCharacterTag: (tagId: string) => void;
@@ -158,6 +159,7 @@ interface ProjectState {
   rejectCandidate: (candidateId: string) => void;
   addTimelineEvent: (event: TimelineEvent) => void;
   updateTimelineEvent: (event: TimelineEvent) => void;
+  deleteTimelineEvent: (id: string) => void;
   addTimelineBranch: (branch: TimelineBranch) => void;
   updateTimelineBranch: (branch: TimelineBranch) => void;
   createTimelineBranch: (mode: TimelineBranch['mode'], anchor?: { branchId: string; eventId: string } | null) => string | null;
@@ -170,6 +172,7 @@ interface ProjectState {
   updateChapter: (chapter: Chapter) => void;
   addScene: (scene: Scene) => void;
   updateScene: (scene: Scene) => void;
+  deleteScene: (id: string) => void;
   updateScript: (script: ScriptDocument) => void;
   addScript: (script: ScriptDocument) => void;
   addStoryboard: (storyboard: StoryboardPlan) => void;
@@ -491,6 +494,21 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   syncProjectUiState: () => set((state) => ({ currentProject: cloneProject(state, useUIStore.getState().locale), saveStatus: state.saveStatus === 'Idle' ? 'Unsaved changes' : state.saveStatus })),
   addCharacter: (character) => set((state) => withDirtyState({ characters: [...state.characters, character] })),
   updateCharacter: (character) => set((state) => withDirtyState({ characters: state.characters.map((entry) => entry.id === character.id ? character : entry) })),
+  deleteCharacter: (id) => set((state) => withDirtyState({
+    characters: state.characters
+      .filter((entry) => entry.id !== id)
+      .map((entry) => ({
+        ...entry,
+        relationshipIds: (entry.relationshipIds ?? []).filter(
+          (rid) => !state.relationships.some(
+            (rel) => rel.id === rid && (rel.sourceId === id || rel.targetId === id)
+          )
+        ),
+      })),
+    relationships: state.relationships.filter(
+      (entry) => entry.sourceId !== id && entry.targetId !== id
+    ),
+  })),
   addCharacterTag: (tag) => set((state) => withDirtyState({ characterTags: [...state.characterTags, tag] })),
   updateCharacterTag: (tag) => set((state) => withDirtyState({ characterTags: state.characterTags.map((entry) => entry.id === tag.id ? tag : entry) })),
   deleteCharacterTag: (tagId) => set((state) => withDirtyState({
@@ -515,6 +533,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   rejectCandidate: (candidateId) => set((state) => withDirtyState({ candidates: state.candidates.filter((entry) => entry.id !== candidateId) })),
   addTimelineEvent: (event) => set((state) => withDirtyState({ timelineEvents: [...state.timelineEvents, event] })),
   updateTimelineEvent: (event) => set((state) => withDirtyState({ timelineEvents: state.timelineEvents.map((entry) => entry.id === event.id ? event : entry) })),
+  deleteTimelineEvent: (id) => set((state) => withDirtyState({
+    timelineEvents: state.timelineEvents.filter((entry) => entry.id !== id),
+  })),
   addTimelineBranch: (branch) => set((state) => withDirtyState({ timelineBranches: [...state.timelineBranches, branch] })),
   updateTimelineBranch: (branch) => set((state) => withDirtyState({ timelineBranches: state.timelineBranches.map((entry) => entry.id === branch.id ? branch : entry) })),
   createTimelineBranch: (mode, anchor) => {
@@ -586,6 +607,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   updateChapter: (chapter) => set((state) => withDirtyState({ chapters: state.chapters.map((entry) => entry.id === chapter.id ? chapter : entry) })),
   addScene: (scene) => set((state) => withDirtyState({ scenes: [...state.scenes, scene] })),
   updateScene: (scene) => set((state) => withDirtyState({ scenes: state.scenes.map((entry) => entry.id === scene.id ? scene : entry), currentSceneContent: scene.content })),
+  deleteScene: (id) => set((state) => withDirtyState({
+    scenes: state.scenes.filter((entry) => entry.id !== id),
+    chapters: state.chapters.map((ch) => ({ ...ch, sceneIds: ch.sceneIds.filter((sid) => sid !== id) })),
+  })),
   updateScript: (script) => set((state) => withDirtyState({ scripts: state.scripts.map((entry) => entry.id === script.id ? script : entry) })),
   addScript: (script) => set((state) => withDirtyState({ scripts: [...state.scripts, script] })),
   addStoryboard: (storyboard) => set((state) => withDirtyState({ storyboards: [...state.storyboards, storyboard] })),

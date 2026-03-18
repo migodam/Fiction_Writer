@@ -657,6 +657,7 @@ const AppContent = () => {
     taskRuns,
     videoPackages,
     saveStatus,
+    saveProject,
     openProject,
     createProject,
     setSelectedEntity,
@@ -705,6 +706,25 @@ const AppContent = () => {
   useEffect(() => {
     syncProjectUiState();
   }, [sidebarWidth, inspectorWidth, agentDockWidth, isSidebarCollapsed, isAgentDockOpen, density, editorWidth, motionLevel, syncProjectUiState]);
+
+  useEffect(() => {
+    if (saveStatus !== 'Unsaved changes') return;
+    const timer = setTimeout(() => {
+      saveProject();
+    }, 2000); // 2-second debounce
+    return () => clearTimeout(timer);
+  }, [saveStatus, saveProject]);
+
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (saveStatus === 'Unsaved changes') {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [saveStatus]);
 
   const selectedLabel =
     selectedEntity.type === 'character'

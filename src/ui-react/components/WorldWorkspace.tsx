@@ -7,8 +7,8 @@ import { useI18n } from '../i18n';
 
 export const WorldWorkspace = () => {
   const navigate = useNavigate();
-  const { sidebarSection } = useUIStore();
-  const { locale } = useI18n();
+  const { sidebarSection, openContextMenu, setLastActionStatus } = useUIStore();
+  const { locale, t } = useI18n();
   const zh = locale === 'zh-CN';
   const {
     worldContainers,
@@ -20,6 +20,7 @@ export const WorldWorkspace = () => {
     addWorldContainer,
     addWorldItem,
     updateWorldItem,
+    deleteWorldItem,
     updateWorldSettings,
     createWorldMap,
     updateWorldMap,
@@ -163,7 +164,7 @@ export const WorldWorkspace = () => {
         </div>
         <div className="h-full overflow-y-auto custom-scrollbar">
           {containerItems.map((item) => (
-            <button key={item.id} type="button" className={cn('w-full border-b border-divider px-4 py-4 text-left transition-colors', activeItemId === item.id ? 'bg-selected' : 'hover:bg-hover')} onClick={() => setActiveItemId(item.id)}>
+            <button key={item.id} type="button" className={cn('w-full border-b border-divider px-4 py-4 text-left transition-colors', activeItemId === item.id ? 'bg-selected' : 'hover:bg-hover')} onClick={() => setActiveItemId(item.id)} onContextMenu={(e) => { e.preventDefault(); openContextMenu({ x: e.clientX, y: e.clientY, items: [{ id: 'delete', label: t('common.delete'), action: () => { deleteWorldItem(item.id); if (activeItemId === item.id) setActiveItemId(null); setLastActionStatus('World item deleted'); }, destructive: true }] }); }}>
               <div className="text-sm font-black text-text">{item.name}</div>
               <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-text-3">{item.description}</div>
             </button>

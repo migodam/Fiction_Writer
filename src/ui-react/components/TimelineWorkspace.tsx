@@ -19,13 +19,14 @@ export const TimelineWorkspace = () => {
     scenes,
     addTimelineEvent,
     updateTimelineEvent,
+    deleteTimelineEvent,
     updateTimelineBranch,
     createTimelineBranch,
     moveTimelineEvent,
     setTimelineBranchGeometry,
   } = useProjectStore();
-  const { setLastActionStatus } = useUIStore();
-  const { locale } = useI18n();
+  const { setLastActionStatus, openContextMenu } = useUIStore();
+  const { locale, t } = useI18n();
   const zh = locale === 'zh-CN';
   const [searchParams] = useSearchParams();
   const canvasRef = useRef<HTMLDivElement | null>(null);
@@ -380,6 +381,7 @@ export const TimelineWorkspace = () => {
                           setActiveEventId(event.id);
                           setEventModalId(event.id);
                         }}
+                        onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); openContextMenu({ x: e.clientX, y: e.clientY, items: [{ id: 'delete', label: t('common.delete'), action: () => { deleteTimelineEvent(event.id); if (activeEventId === event.id) setActiveEventId(null); if (eventModalId === event.id) setEventModalId(null); setLastActionStatus('Event deleted'); }, destructive: true }] }); }}
                         onMouseEnter={() => setHoveredEventId(event.id)}
                         onMouseLeave={() => setHoveredEventId((current) => (current === event.id ? null : current))}
                       />
