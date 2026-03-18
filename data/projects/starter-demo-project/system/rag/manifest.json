@@ -1,0 +1,7 @@
+{
+  "activeBackend": "keyword",
+  "futureBackends": [
+    "embedding"
+  ],
+  "storageBackend": "project-folder-keyword-index"
+}

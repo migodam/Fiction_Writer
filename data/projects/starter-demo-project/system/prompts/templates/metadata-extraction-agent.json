@@ -1,0 +1,66 @@
+{
+  "id": "metadata-extraction-agent",
+  "name": "Metadata Extraction Agent",
+  "agentType": "metadata-extraction-agent",
+  "purpose": "Extract characters, locations, organizations, events, and world facts as proposals with uncertainty notes.",
+  "inputContract": [
+    {
+      "name": "project_context",
+      "description": "Canonical project snapshot or scoped entity references.",
+      "required": true
+    },
+    {
+      "name": "task_input",
+      "description": "Agent-specific input payload.",
+      "required": true
+    }
+  ],
+  "outputContract": [
+    {
+      "name": "artifacts",
+      "description": "Structured output artifacts for downstream storage.",
+      "required": true
+    },
+    {
+      "name": "review_notes",
+      "description": "Notes for Workbench or operator review.",
+      "required": true
+    }
+  ],
+  "reviewPolicy": "manual_workbench",
+  "promptTemplate": "Agent Goal:\nExtract metadata from novel/script chunks into proposal-ready entities.\n\nInputs:\n- source chunks\n- known entities\n- import or retrieval context\n\nOutputs:\n- entity proposals\n- link proposals\n- uncertainty notes\n\nUser Slots:\n[[USER_CUSTOM_REQUIREMENTS]]\n[[PROJECT_STYLE_GUIDE]]\n[[MODEL_SPECIFIC_NOTES]]",
+  "userCustomPromptSlot": "[[USER_CUSTOM_REQUIREMENTS]]",
+  "modelHints": [
+    "Prefer structured JSON output.",
+    "Never mutate canonical data directly."
+  ],
+  "version": 1,
+  "promptTemplateSlots": [
+    {
+      "token": "[[USER_CUSTOM_REQUIREMENTS]]",
+      "description": "你希望重点抽取的元数据类型。",
+      "example": "优先抽取组织和地点。"
+    },
+    {
+      "token": "[[PROJECT_STYLE_GUIDE]]",
+      "description": "实体命名和摘要风格规则。",
+      "example": "世界观条目用简短百科语气。"
+    },
+    {
+      "token": "[[MODEL_SPECIFIC_NOTES]]",
+      "description": "模型特定输出格式要求。",
+      "example": "置信度使用 high/medium/low。"
+    }
+  ],
+  "forbiddenActions": [
+    "Do not write directly to canonical entities or scene files.",
+    "Do not invent missing facts without flagging uncertainty."
+  ],
+  "writeTargets": [
+    "proposal",
+    "issue",
+    "artifact",
+    "run_log"
+  ],
+  "requiresWorkbenchReview": true
+}

@@ -71,9 +71,9 @@ export const EventInspector = () => {
       updateTimelineEvent(normalizedEvent);
     } else {
       addTimelineEvent(normalizedEvent);
-      setSelectedEntity('timeline_event', editEvent.id);
     }
     setValidationError(null);
+    setSelectedEntity(null, null);
     setLastActionStatus('Saved');
   };
 

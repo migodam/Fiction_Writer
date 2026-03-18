@@ -5,13 +5,25 @@ import { useI18n } from '../i18n';
 
 export const AgentDock = () => {
   const { isAgentDockOpen, toggleAgentDock } = useUIStore();
-  const { projectRoot, projectName, proposals, issues, selectedEntity, taskRequests, taskRuns, taskArtifacts } = useProjectStore();
+  const {
+    projectRoot,
+    projectName,
+    proposals,
+    issues,
+    selectedEntity,
+    taskRequests,
+    taskRuns,
+    taskArtifacts,
+    importJobs,
+    promptTemplates,
+    videoPackages,
+  } = useProjectStore();
   const { t } = useI18n();
 
   if (!isAgentDockOpen) {
     return (
       <aside
-        className="h-full border-l border-border bg-bg-elev-1 flex flex-col items-center py-4 gap-4"
+        className="flex h-full flex-col items-center gap-4 border-l border-border bg-bg-elev-1 py-4"
         data-testid="agent-dock-collapsed"
       >
         <button
@@ -31,9 +43,13 @@ export const AgentDock = () => {
     );
   }
 
+  const awaitingRuns = taskRuns.filter((run) => run.status === 'awaiting_user_input');
+  const latestRun = taskRuns[0] || null;
+  const latestArtifact = taskArtifacts[0] || null;
+
   return (
-    <aside className="h-full border-l border-border bg-bg-elev-1 flex flex-col" data-testid="agent-dock">
-      <div className="flex items-center justify-between border-b border-border px-4 py-3 bg-bg-elev-2">
+    <aside className="flex h-full flex-col border-l border-border bg-bg-elev-1" data-testid="agent-dock">
+      <div className="flex items-center justify-between border-b border-border bg-bg-elev-2 px-4 py-3">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-brand/30 bg-brand/10 text-brand">
             <Bot size={18} />
@@ -53,7 +69,7 @@ export const AgentDock = () => {
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-4">
+      <div className="flex-1 space-y-4 overflow-y-auto p-4 custom-scrollbar">
         <section className="rounded-2xl border border-border bg-card p-4 shadow-1">
           <div className="text-[10px] font-black uppercase tracking-[0.2em] text-text-3">{t('agentDock.project')}</div>
           <div className="mt-2 text-lg font-black text-text">{projectName}</div>
@@ -65,7 +81,7 @@ export const AgentDock = () => {
           <div className="mt-4 grid grid-cols-2 gap-3">
             <Metric label="Inbox" value={String(proposals.length)} />
             <Metric label="Issues" value={String(issues.length)} />
-            <Metric label="Tasks" value={String(taskRequests.filter((entry) => entry.status === 'queued' || entry.status === 'running').length)} />
+            <Metric label="Tasks" value={String(taskRequests.filter((entry) => entry.status === 'queued' || entry.status === 'running' || entry.status === 'awaiting_user_input').length)} />
             <Metric label="Runs" value={String(taskRuns.length)} />
           </div>
         </section>
@@ -83,21 +99,54 @@ export const AgentDock = () => {
             {taskRequests.slice(0, 4).map((task) => (
               <div key={task.id} className="rounded-xl border border-border bg-bg p-3">
                 <div className="text-sm font-bold text-text">{task.title}</div>
-                <div className="mt-1 text-[10px] uppercase tracking-[0.2em] text-text-3">{task.status} · {task.source}</div>
+                <div className="mt-1 text-[10px] uppercase tracking-[0.2em] text-text-3">{task.status} / {task.source}</div>
               </div>
             ))}
           </div>
         </section>
 
         <section className="rounded-2xl border border-border bg-card p-4 shadow-1">
-          <div className="text-[10px] font-black uppercase tracking-[0.2em] text-text-3">Artifacts</div>
+          <div className="text-[10px] font-black uppercase tracking-[0.2em] text-text-3">Adapters</div>
           <div className="mt-3 space-y-3">
-            {taskArtifacts.slice(0, 3).map((artifact) => (
-              <div key={artifact.id} className="rounded-xl border border-border bg-bg p-3">
-                <div className="text-sm font-bold text-text">{artifact.summary}</div>
-                <div className="mt-1 text-[10px] uppercase tracking-[0.2em] text-text-3">{artifact.type}</div>
+            <div className="rounded-xl border border-border bg-bg p-3 text-sm text-text-2">Prompt registry adapter: {promptTemplates.length > 0 ? 'ready' : 'empty'}</div>
+            <div className="rounded-xl border border-border bg-bg p-3 text-sm text-text-2">Import adapter: {importJobs.length > 0 ? 'staged' : 'idle'}</div>
+            <div className="rounded-xl border border-border bg-bg p-3 text-sm text-text-2">Video provider adapter: {videoPackages.some((entry) => entry.status !== 'not_configured') ? 'contract-only' : 'not configured'}</div>
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-border bg-card p-4 shadow-1">
+          <div className="text-[10px] font-black uppercase tracking-[0.2em] text-text-3">Latest Run</div>
+          <div className="mt-3 space-y-3">
+            {latestRun ? (
+              <div className="rounded-xl border border-border bg-bg p-3">
+                <div className="text-sm font-bold text-text">{latestRun.summary}</div>
+                <div className="mt-1 text-[10px] uppercase tracking-[0.2em] text-text-3">{latestRun.status} / {latestRun.adapter}</div>
               </div>
-            ))}
+            ) : (
+              <div className="rounded-xl border border-border bg-bg p-3 text-sm text-text-2">No runs yet.</div>
+            )}
+            {latestArtifact ? (
+              <div className="rounded-xl border border-border bg-bg p-3">
+                <div className="text-sm font-bold text-text">{latestArtifact.summary}</div>
+                <div className="mt-1 text-[10px] uppercase tracking-[0.2em] text-text-3">{latestArtifact.type}</div>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-border bg-bg p-3 text-sm text-text-2">No artifacts yet.</div>
+            )}
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-border bg-card p-4 shadow-1">
+          <div className="text-[10px] font-black uppercase tracking-[0.2em] text-text-3">Awaiting Input</div>
+          <div className="mt-3 space-y-3">
+            {awaitingRuns.length > 0 ? awaitingRuns.map((run) => (
+              <div key={run.id} className="rounded-xl border border-amber/30 bg-amber/10 p-3 text-sm text-text-2">
+                <div className="font-bold text-text">{run.summary}</div>
+                <div className="mt-1 text-xs">{run.awaitingUserInput?.reason}</div>
+              </div>
+            )) : (
+              <div className="rounded-xl border border-border bg-bg p-3 text-sm text-text-2">No runs are awaiting user input.</div>
+            )}
           </div>
         </section>
 

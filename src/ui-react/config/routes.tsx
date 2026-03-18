@@ -11,6 +11,7 @@ import {
   PenTool,
   BarChart2,
   Terminal,
+  Bot,
 } from 'lucide-react';
 
 export interface RouteConfig {
@@ -34,7 +35,9 @@ export const APP_ROUTES: RouteConfig[] = [
       { id: 'inbox', label: 'Inbox' },
       { id: 'history', label: 'History' },
       { id: 'issues', label: 'Issues' },
-      { id: 'bulk', label: 'Bulk Actions' },
+      { id: 'imports', label: 'Imports' },
+      { id: 'runs', label: 'Runs' },
+      { id: 'prompts', label: 'Prompts' },
     ],
   },
   {
@@ -44,10 +47,10 @@ export const APP_ROUTES: RouteConfig[] = [
     icon: <PenTool size={20} />,
     testId: 'activity-btn-writing',
     sidebarSections: [
-      { id: 'chapters', label: 'Chapters' },
       { id: 'scenes', label: 'Scenes' },
-      { id: 'pov', label: 'POV Characters' },
-      { id: 'beats', label: 'Story Beats' },
+      { id: 'chapters', label: 'Chapters' },
+      { id: 'scripts', label: 'Scripts' },
+      { id: 'storyboards', label: 'Storyboards' },
     ],
   },
   {
@@ -70,10 +73,7 @@ export const APP_ROUTES: RouteConfig[] = [
     icon: <Clock size={20} />,
     testId: 'activity-btn-timeline',
     sidebarSections: [
-      { id: 'events', label: 'Events' },
-      { id: 'locations', label: 'Locations' },
-      { id: 'chapters', label: 'Chapters' },
-      { id: 'branches', label: 'Branches' },
+      { id: 'overview', label: 'Overview' },
     ],
   },
   {
@@ -83,10 +83,7 @@ export const APP_ROUTES: RouteConfig[] = [
     icon: <Network size={20} />,
     testId: 'activity-btn-graph',
     sidebarSections: [
-      { id: 'narrative', label: 'Narrative Graph' },
-      { id: 'relationships', label: 'Relationship Graph' },
-      { id: 'causality', label: 'Causality Graph' },
-      { id: 'location', label: 'Location Graph' },
+      { id: 'boards', label: 'Boards' },
     ],
   },
   {
@@ -96,7 +93,7 @@ export const APP_ROUTES: RouteConfig[] = [
     icon: <Globe size={20} />,
     testId: 'activity-btn-world',
     sidebarSections: [
-      { id: 'notebooks', label: 'Notebooks' },
+      { id: 'entries', label: 'Entries' },
       { id: 'maps', label: 'Maps' },
       { id: 'organizations', label: 'Organizations' },
       { id: 'lore', label: 'Lore' },
@@ -109,10 +106,7 @@ export const APP_ROUTES: RouteConfig[] = [
     icon: <PlayCircle size={20} />,
     testId: 'activity-btn-simulation',
     sidebarSections: [
-      { id: 'runs', label: 'Runs' },
-      { id: 'scenarios', label: 'Scenarios' },
-      { id: 'comparisons', label: 'Comparisons' },
-      { id: 'reports', label: 'Reports' },
+      { id: 'lab', label: 'Lab' },
     ],
   },
   {
@@ -122,7 +116,6 @@ export const APP_ROUTES: RouteConfig[] = [
     icon: <FileText size={20} />,
     testId: 'activity-btn-beta',
     sidebarSections: [
-      { id: 'feedback', label: 'Feedback' },
       { id: 'personas', label: 'Personas' },
     ],
   },
@@ -133,9 +126,17 @@ export const APP_ROUTES: RouteConfig[] = [
     icon: <CheckCircle size={20} />,
     testId: 'activity-btn-consistency',
     sidebarSections: [
-      { id: 'categories', label: 'Categories' },
       { id: 'issues', label: 'Issues' },
-      { id: 'ignored', label: 'Ignored' },
+    ],
+  },
+  {
+    id: 'agents',
+    path: '/agents',
+    label: 'Agents',
+    icon: <Bot size={20} />,
+    testId: 'activity-btn-agents',
+    sidebarSections: [
+      { id: 'console', label: 'Console' },
     ],
   },
   {
@@ -145,10 +146,8 @@ export const APP_ROUTES: RouteConfig[] = [
     icon: <Layout size={20} />,
     testId: 'activity-btn-publish',
     sidebarSections: [
-      { id: 'formats', label: 'Formats' },
-      { id: 'metadata', label: 'Metadata' },
-      { id: 'preview', label: 'Preview' },
-      { id: 'assets', label: 'Assets' },
+      { id: 'exports', label: 'Exports' },
+      { id: 'video', label: 'Video' },
     ],
   },
   {
@@ -158,10 +157,7 @@ export const APP_ROUTES: RouteConfig[] = [
     icon: <BarChart2 size={20} />,
     testId: 'activity-btn-insights',
     sidebarSections: [
-      { id: 'project', label: 'Project Stats' },
-      { id: 'characters', label: 'Character Stats' },
-      { id: 'pacing', label: 'Pacing' },
-      { id: 'narrative', label: 'Narrative Insights' },
+      { id: 'overview', label: 'Overview' },
     ],
   }
 ];

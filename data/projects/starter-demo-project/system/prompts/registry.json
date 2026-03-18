@@ -1,0 +1,58 @@
+[
+  {
+    "id": "import-agent",
+    "name": "Import Agent",
+    "agentType": "import-agent",
+    "version": 1,
+    "path": "system/prompts/templates/import-agent.json"
+  },
+  {
+    "id": "metadata-extraction-agent",
+    "name": "Metadata Extraction Agent",
+    "agentType": "metadata-extraction-agent",
+    "version": 1,
+    "path": "system/prompts/templates/metadata-extraction-agent.json"
+  },
+  {
+    "id": "novel-writing-agent",
+    "name": "Novel Writing Agent",
+    "agentType": "novel-writing-agent",
+    "version": 1,
+    "path": "system/prompts/templates/novel-writing-agent.json"
+  },
+  {
+    "id": "qa-consistency-agent",
+    "name": "QA / Consistency Agent",
+    "agentType": "qa-consistency-agent",
+    "version": 1,
+    "path": "system/prompts/templates/qa-consistency-agent.json"
+  },
+  {
+    "id": "retrieval-agent",
+    "name": "Retrieval Agent",
+    "agentType": "retrieval-agent",
+    "version": 1,
+    "path": "system/prompts/templates/retrieval-agent.json"
+  },
+  {
+    "id": "script-writing-agent",
+    "name": "Script Writing Agent",
+    "agentType": "script-writing-agent",
+    "version": 1,
+    "path": "system/prompts/templates/script-writing-agent.json"
+  },
+  {
+    "id": "storyboard-shot-planning-agent",
+    "name": "Storyboard / Shot Planning Agent",
+    "agentType": "storyboard-shot-planning-agent",
+    "version": 1,
+    "path": "system/prompts/templates/storyboard-shot-planning-agent.json"
+  },
+  {
+    "id": "video-generation-orchestration-agent",
+    "name": "Video Generation Orchestration Agent",
+    "agentType": "video-generation-orchestration-agent",
+    "version": 1,
+    "path": "system/prompts/templates/video-generation-orchestration-agent.json"
+  }
+]

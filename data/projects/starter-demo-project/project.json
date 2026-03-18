@@ -1,16 +1,32 @@
 {
   "metadata": {
-    "schemaVersion": 3,
+    "schemaVersion": 4,
     "projectId": "project_starter-demo_starter_demo_project",
     "name": "Starter Demo Project",
     "description": "A guided starter project for the acceptance walkthrough.",
     "createdAt": "2026-03-12T02:40:26.701Z",
-    "updatedAt": "2026-03-12T05:29:12.723Z",
+    "updatedAt": "2026-03-18T03:54:44.749Z",
     "version": 2,
     "rootPath": "D:\\NUS\\Computing\\Projects\\Fiction_Writer\\data\\projects\\starter-demo-project",
     "storageMode": "nodefs",
     "locale": "en",
     "template": "starter-demo",
+    "capabilities": {
+      "import": true,
+      "rag": true,
+      "scripts": true,
+      "videoWorkflow": true,
+      "promptTemplates": true
+    },
+    "storageBackends": {
+      "canonical": "project-folder-json",
+      "rag": "project-folder-keyword-index"
+    },
+    "futureBackends": [
+      "sqlite",
+      "embedding-provider",
+      "video-provider"
+    ],
     "lastOpenedModule": "workbench",
     "lastOpenedSceneId": "scene_arrival",
     "lastOpenedBoardId": "board_main"
@@ -20,6 +36,9 @@
     "timelineEvents": 5,
     "scenes": 6,
     "worldItems": 12,
+    "scripts": 0,
+    "storyboards": 0,
+    "importJobs": 0,
     "proposals": 2,
     "exports": 0
   }

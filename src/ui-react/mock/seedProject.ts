@@ -8,17 +8,25 @@ import type {
   ConsistencyIssue,
   ExportArtifact,
   GraphBoard,
+  ImportJob,
   Locale,
   NarrativeProject,
+  PromptTemplate,
   ProjectTemplate,
   Proposal,
+  RagChunk,
+  RagDocument,
   Relationship,
   Scene,
+  ScriptDocument,
+  StoryboardPlan,
   TaskArtifact,
   TaskRequest,
   TaskRun,
+  TaskRunLogRef,
   TimelineBranch,
   TimelineEvent,
+  VideoGenerationPackage,
   WorldContainer,
   WorldItem,
 } from '../models/project';
@@ -110,13 +118,42 @@ const createStarterTaskRequests = (): TaskRequest[] => [
   {
     id: 'task_graph_sync',
     title: 'Graph sync candidate review',
+    taskType: 'proposal_generation',
+    agentType: 'qa-consistency-agent',
     source: 'manual',
     status: 'queued',
     prompt: 'Review selected graph notes and prepare canonical-safe proposals.',
+    input: {
+      objective: 'Turn reviewed graph notes into Workbench-safe proposals.',
+    },
+    contextScope: {
+      graphBoardIds: ['board_main'],
+      targetEntityIds: ['event_bridge'],
+    },
     targetIds: [
       { type: 'graph_board', id: 'board_main' },
       { type: 'timeline_event', id: 'event_bridge' },
     ],
+    reviewPolicy: 'manual_workbench',
+    createdAt: now(),
+  },
+  {
+    id: 'task_import_seed',
+    title: 'Starter import review',
+    taskType: 'novel_import',
+    agentType: 'import-agent',
+    source: 'local-cli',
+    status: 'awaiting_user_input',
+    prompt: 'Validate imported chapter and scene structure before metadata extraction.',
+    input: {
+      importJobId: 'import_seed_project',
+      sourceFormat: 'md',
+    },
+    contextScope: {
+      importJobIds: ['import_seed_project'],
+    },
+    targetIds: [{ type: 'import_job', id: 'import_seed_project' }],
+    reviewPolicy: 'manual_workbench',
     createdAt: now(),
   },
 ];
@@ -126,10 +163,31 @@ const createStarterTaskRuns = (): TaskRun[] => [
     id: 'run_graph_sync_seed',
     taskRequestId: 'task_graph_sync',
     status: 'completed',
+    executor: 'manual',
+    adapter: 'noop-qa-adapter',
+    attempt: 1,
     startedAt: now(),
+    heartbeatAt: now(),
     finishedAt: now(),
     summary: 'Generated one graph sync proposal and one consistency summary.',
     artifactIds: ['artifact_graph_sync_seed'],
+  },
+  {
+    id: 'run_import_seed',
+    taskRequestId: 'task_import_seed',
+    status: 'awaiting_user_input',
+    executor: 'local-cli',
+    adapter: 'rule-import-adapter',
+    attempt: 1,
+    startedAt: now(),
+    heartbeatAt: now(),
+    summary: 'Imported manuscript skeleton and paused for user confirmation.',
+    artifactIds: ['artifact_import_manifest_seed', 'artifact_context_seed'],
+    awaitingUserInput: {
+      prompt: 'Confirm whether imported chapter boundaries are acceptable before metadata extraction.',
+      fields: ['chapter_boundaries', 'scene_split_quality'],
+      reason: 'Import staging needs human review before downstream agent steps.',
+    },
   },
 ];
 
@@ -140,6 +198,39 @@ const createStarterTaskArtifacts = (): TaskArtifact[] => [
     type: 'report',
     summary: 'Seed analysis bundle for review.',
     path: null,
+    mimeType: 'application/json',
+    entityRefs: [{ type: 'proposal', id: 'proposal_graph_public_fallout' }],
+  },
+  {
+    id: 'artifact_import_manifest_seed',
+    taskRunId: 'run_import_seed',
+    type: 'import-manifest',
+    summary: 'Staged import manifest for starter demo project.',
+    path: 'system/imports/staging/import_seed_project/manifest.json',
+    mimeType: 'application/json',
+    entityRefs: [{ type: 'import_job', id: 'import_seed_project' }],
+  },
+  {
+    id: 'artifact_context_seed',
+    taskRunId: 'run_import_seed',
+    type: 'context-package',
+    summary: 'Keyword retrieval context generated from imported source.',
+    path: 'system/rag/indexes/keyword-index.json',
+    mimeType: 'application/json',
+    entityRefs: [{ type: 'rag_document', id: 'rag_doc_import_seed' }],
+  },
+];
+
+const createStarterTaskRunLogs = (): TaskRunLogRef[] => [
+  {
+    taskRunId: 'run_graph_sync_seed',
+    path: 'system/runs/logs/run_graph_sync_seed.jsonl',
+    entryCount: 3,
+  },
+  {
+    taskRunId: 'run_import_seed',
+    path: 'system/runs/logs/run_import_seed.jsonl',
+    entryCount: 4,
   },
 ];
 
@@ -724,15 +815,517 @@ const createStarterBoards = (): GraphBoard[] => [
   },
 ];
 
+const createStarterImportJobs = (): ImportJob[] => [
+  {
+    id: 'import_seed_project',
+    sourceFileName: 'starter-manuscript.md',
+    sourcePath: 'system/imports/staging/import_seed_project/source.md',
+    sourceFormat: 'md',
+    status: 'awaiting_user_input',
+    stage: 'proposal_generated',
+    segmentationConfidence: 'high',
+    createdAt: now(),
+    updatedAt: now(),
+    taskRequestId: 'task_import_seed',
+    taskRunId: 'run_import_seed',
+    canonicalChapterIds: ['chap_1', 'chap_2'],
+    canonicalSceneIds: ['scene_arrival', 'scene_market', 'scene_choir', 'scene_archive', 'scene_consul', 'scene_bridge'],
+    chapterCandidates: [
+      { id: 'import_chap_1', title: 'Fractured Arrival', summary: 'Imported from markdown heading.', confidence: 'high', contentPath: 'system/imports/staging/import_seed_project/chapter_candidates.json' },
+      { id: 'import_chap_2', title: 'Pressure Lines', summary: 'Imported from markdown heading.', confidence: 'high', contentPath: 'system/imports/staging/import_seed_project/chapter_candidates.json' },
+    ],
+    sceneCandidates: [
+      { id: 'import_scene_arrival', title: 'Dockside Arrival', summary: 'Imported from second-level heading.', confidence: 'high', contentPath: 'system/imports/staging/import_seed_project/scene_candidates.json' },
+      { id: 'import_scene_bridge', title: 'Glass Bridge Intercept', summary: 'Imported from second-level heading.', confidence: 'high', contentPath: 'system/imports/staging/import_seed_project/scene_candidates.json' },
+    ],
+    proposalIds: ['proposal_import_entities_seed'],
+    issueIds: [],
+    notes: ['Deterministic chapter split succeeded.', 'Metadata extraction is staged behind Workbench review.'],
+  },
+];
+
+const createPromptTemplate = (
+  id: PromptTemplate['id'],
+  name: string,
+  agentType: PromptTemplate['agentType'],
+  purpose: string,
+  reviewPolicy: PromptTemplate['reviewPolicy'],
+  promptTemplate: string,
+  userSlot: string,
+  extraSlots: PromptTemplate['promptTemplateSlots'],
+  requiresWorkbenchReview: boolean,
+): PromptTemplate => ({
+  id,
+  name,
+  agentType,
+  purpose,
+  inputContract: [
+    { name: 'project_context', description: 'Canonical project snapshot or scoped entity references.', required: true },
+    { name: 'task_input', description: 'Agent-specific input payload.', required: true },
+  ],
+  outputContract: [
+    { name: 'artifacts', description: 'Structured output artifacts for downstream storage.', required: true },
+    { name: 'review_notes', description: 'Notes for Workbench or operator review.', required: true },
+  ],
+  reviewPolicy,
+  promptTemplate,
+  userCustomPromptSlot: userSlot,
+  modelHints: ['Prefer structured JSON output.', 'Never mutate canonical data directly.'],
+  version: 1,
+  promptTemplateSlots: extraSlots,
+  forbiddenActions: [
+    'Do not write directly to canonical entities or scene files.',
+    'Do not invent missing facts without flagging uncertainty.',
+  ],
+  writeTargets: requiresWorkbenchReview ? ['proposal', 'issue', 'artifact', 'run_log'] : ['artifact', 'run_log'],
+  requiresWorkbenchReview,
+});
+
+const createStarterPromptTemplates = (): PromptTemplate[] => [
+  createPromptTemplate(
+    'import-agent',
+    'Import Agent',
+    'import-agent',
+    'Import raw novel files and produce canonical-safe chapter/scene skeletons plus review artifacts.',
+    'manual_workbench',
+    `Agent Goal:
+Import raw manuscript content and extract deterministic structure only.
+
+Inputs:
+- source document
+- import config
+- canonical project snapshot
+
+Outputs:
+- import manifest
+- chapter/scene candidates
+- import review proposals
+
+Forbidden:
+- no silent metadata writes
+- no direct mutation of canonical world or character entities
+
+Review Boundary:
+- all inferred metadata must go to Workbench
+
+User Slots:
+${'[[USER_CUSTOM_REQUIREMENTS]]'}
+${'[[PROJECT_STYLE_GUIDE]]'}
+${'[[MODEL_SPECIFIC_NOTES]]'}`,
+    '[[USER_CUSTOM_REQUIREMENTS]]',
+    [
+      { token: '[[USER_CUSTOM_REQUIREMENTS]]', description: '导入时的额外偏好，例如章节点切分偏好。', example: '优先保留原文章节名，不要自动润色。' },
+      { token: '[[PROJECT_STYLE_GUIDE]]', description: '项目通用风格和命名约束。', example: '角色和地点命名尽量沿用原文译名。' },
+      { token: '[[MODEL_SPECIFIC_NOTES]]', description: '模型输出格式或长度约束。', example: '输出仅限 JSON。' },
+    ],
+    true,
+  ),
+  createPromptTemplate(
+    'metadata-extraction-agent',
+    'Metadata Extraction Agent',
+    'metadata-extraction-agent',
+    'Extract characters, locations, organizations, events, and world facts as proposals with uncertainty notes.',
+    'manual_workbench',
+    `Agent Goal:
+Extract metadata from novel/script chunks into proposal-ready entities.
+
+Inputs:
+- source chunks
+- known entities
+- import or retrieval context
+
+Outputs:
+- entity proposals
+- link proposals
+- uncertainty notes
+
+User Slots:
+${'[[USER_CUSTOM_REQUIREMENTS]]'}
+${'[[PROJECT_STYLE_GUIDE]]'}
+${'[[MODEL_SPECIFIC_NOTES]]'}`,
+    '[[USER_CUSTOM_REQUIREMENTS]]',
+    [
+      { token: '[[USER_CUSTOM_REQUIREMENTS]]', description: '你希望重点抽取的元数据类型。', example: '优先抽取组织和地点。' },
+      { token: '[[PROJECT_STYLE_GUIDE]]', description: '实体命名和摘要风格规则。', example: '世界观条目用简短百科语气。' },
+      { token: '[[MODEL_SPECIFIC_NOTES]]', description: '模型特定输出格式要求。', example: '置信度使用 high/medium/low。' },
+    ],
+    true,
+  ),
+  createPromptTemplate(
+    'retrieval-agent',
+    'Retrieval Agent',
+    'retrieval-agent',
+    'Retrieve local project context from the keyword RAG layer without mutating canonical data.',
+    'artifact_only',
+    `Agent Goal:
+Return the most relevant local context package for a given query.
+
+Inputs:
+- retrieval query
+- scope filters
+- local RAG manifest
+
+Outputs:
+- retrieved chunks
+- entity matches
+- context package
+
+User Slots:
+${'[[USER_CUSTOM_REQUIREMENTS]]'}
+${'[[PROJECT_STYLE_GUIDE]]'}
+${'[[MODEL_SPECIFIC_NOTES]]'}`,
+    '[[USER_CUSTOM_REQUIREMENTS]]',
+    [
+      { token: '[[USER_CUSTOM_REQUIREMENTS]]', description: '检索偏好，例如召回更重角色或场景。', example: '优先返回和角色动机相关的片段。' },
+      { token: '[[PROJECT_STYLE_GUIDE]]', description: '上下文包的表达偏好。', example: '摘要尽量简短，方便写作 agent 消费。' },
+      { token: '[[MODEL_SPECIFIC_NOTES]]', description: '模型运行时注意事项。', example: '输出不超过 8 个 chunk。' },
+    ],
+    false,
+  ),
+  createPromptTemplate(
+    'novel-writing-agent',
+    'Novel Writing Agent',
+    'novel-writing-agent',
+    'Produce scene/chapter drafts, rewrites, or alternatives from structured context.',
+    'manual_workbench',
+    `Agent Goal:
+Assist with novel chapter or scene writing while preserving canonical consistency.
+
+Inputs:
+- scene brief
+- context package
+- style guide
+
+Outputs:
+- draft
+- rewrite alternatives
+- editorial notes
+
+User Slots:
+${'[[USER_CUSTOM_REQUIREMENTS]]'}
+${'[[PROJECT_STYLE_GUIDE]]'}
+${'[[STORY_STYLE_REQUIREMENTS]]'}
+${'[[MODEL_SPECIFIC_NOTES]]'}`,
+    '[[USER_CUSTOM_REQUIREMENTS]]',
+    [
+      { token: '[[USER_CUSTOM_REQUIREMENTS]]', description: '这次写作任务的具体要求。', example: '强调压迫感和调查推进。' },
+      { token: '[[PROJECT_STYLE_GUIDE]]', description: '项目级长期风格要求。', example: '保持第三人称近距离视角。' },
+      { token: '[[STORY_STYLE_REQUIREMENTS]]', description: '当前故事段落的风格要求。', example: '更 noir、更克制。' },
+      { token: '[[MODEL_SPECIFIC_NOTES]]', description: '模型长度或格式限制。', example: '先给 2 个版本，不要自动决定。' },
+    ],
+    true,
+  ),
+  createPromptTemplate(
+    'script-writing-agent',
+    'Script Writing Agent',
+    'script-writing-agent',
+    'Adapt novel material into script episodes, scenes, and dialogue blocks.',
+    'manual_workbench',
+    `Agent Goal:
+Turn novel or outline content into script drafts suitable for review and storyboard planning.
+
+Inputs:
+- source scenes or outline
+- metadata
+- style guide
+
+Outputs:
+- script draft
+- episode breakdown
+- dialogue blocks
+
+User Slots:
+${'[[USER_CUSTOM_REQUIREMENTS]]'}
+${'[[PROJECT_STYLE_GUIDE]]'}
+${'[[SCRIPT_STYLE_REQUIREMENTS]]'}
+${'[[MODEL_SPECIFIC_NOTES]]'}`,
+    '[[USER_CUSTOM_REQUIREMENTS]]',
+    [
+      { token: '[[USER_CUSTOM_REQUIREMENTS]]', description: '这次剧本任务的具体目标。', example: '改编成短剧第一集，节奏更快。' },
+      { token: '[[PROJECT_STYLE_GUIDE]]', description: '项目通用风格要求。', example: '人物对白要保留原著辨识度。' },
+      { token: '[[SCRIPT_STYLE_REQUIREMENTS]]', description: '剧本格式和节奏偏好。', example: '对白短促，动作提示清晰。' },
+      { token: '[[MODEL_SPECIFIC_NOTES]]', description: '模型输出约束。', example: '输出 Fountain 风格文本。' },
+    ],
+    true,
+  ),
+  createPromptTemplate(
+    'storyboard-shot-planning-agent',
+    'Storyboard / Shot Planning Agent',
+    'storyboard-shot-planning-agent',
+    'Plan shots and prompt packages from scripts and linked project metadata.',
+    'manual_workbench',
+    `Agent Goal:
+Create shot lists and visual prompt packages from approved scripts.
+
+Inputs:
+- script
+- character/location metadata
+- visual style notes
+
+Outputs:
+- storyboard notes
+- shot list
+- prompt package
+
+User Slots:
+${'[[USER_CUSTOM_REQUIREMENTS]]'}
+${'[[PROJECT_STYLE_GUIDE]]'}
+${'[[VIDEO_STYLE_REQUIREMENTS]]'}
+${'[[MODEL_SPECIFIC_NOTES]]'}`,
+    '[[USER_CUSTOM_REQUIREMENTS]]',
+    [
+      { token: '[[USER_CUSTOM_REQUIREMENTS]]', description: '分镜重点，例如镜头密度或人物优先级。', example: '每场戏控制在 6 个镜头以内。' },
+      { token: '[[PROJECT_STYLE_GUIDE]]', description: '项目级视觉叙事要求。', example: '保持工业奇幻视觉基调。' },
+      { token: '[[VIDEO_STYLE_REQUIREMENTS]]', description: '视频或短剧风格要求。', example: '偏短剧竖屏节奏，强近景。' },
+      { token: '[[MODEL_SPECIFIC_NOTES]]', description: '模型输出限制。', example: '每个 shot 都给一句 visual prompt。' },
+    ],
+    true,
+  ),
+  createPromptTemplate(
+    'video-generation-orchestration-agent',
+    'Video Generation Orchestration Agent',
+    'video-generation-orchestration-agent',
+    'Transform prompt packages into provider-ready video tasks and status artifacts.',
+    'manual_workbench',
+    `Agent Goal:
+Prepare provider-ready video generation tasks without pretending generation has already succeeded.
+
+Inputs:
+- shot plan
+- provider config
+- asset refs
+
+Outputs:
+- video task requests
+- provider payloads
+- failure or pending logs
+
+User Slots:
+${'[[USER_CUSTOM_REQUIREMENTS]]'}
+${'[[PROJECT_STYLE_GUIDE]]'}
+${'[[VIDEO_STYLE_REQUIREMENTS]]'}
+${'[[MODEL_SPECIFIC_NOTES]]'}`,
+    '[[USER_CUSTOM_REQUIREMENTS]]',
+    [
+      { token: '[[USER_CUSTOM_REQUIREMENTS]]', description: '编排要求，例如 provider 选择或批次大小。', example: '优先拆成 shot 级任务。' },
+      { token: '[[PROJECT_STYLE_GUIDE]]', description: '项目全局约束。', example: '人物设定不能与 canonical metadata 冲突。' },
+      { token: '[[VIDEO_STYLE_REQUIREMENTS]]', description: '视频风格要求。', example: '冷色调、低饱和、悬疑感。' },
+      { token: '[[MODEL_SPECIFIC_NOTES]]', description: 'provider 或模型注意事项。', example: '如果 provider 未配置，只输出 placeholder artifact。' },
+    ],
+    true,
+  ),
+  createPromptTemplate(
+    'qa-consistency-agent',
+    'QA / Consistency Agent',
+    'qa-consistency-agent',
+    'Review novel/script/project metadata and emit issues or fix proposals.',
+    'manual_workbench',
+    `Agent Goal:
+Find consistency issues and propose safe fixes.
+
+Inputs:
+- project metadata
+- novel/script content
+- retrieval context
+
+Outputs:
+- issues
+- fix suggestions
+- review proposals
+
+User Slots:
+${'[[USER_CUSTOM_REQUIREMENTS]]'}
+${'[[PROJECT_STYLE_GUIDE]]'}
+${'[[MODEL_SPECIFIC_NOTES]]'}`,
+    '[[USER_CUSTOM_REQUIREMENTS]]',
+    [
+      { token: '[[USER_CUSTOM_REQUIREMENTS]]', description: '你当前最关心的 QA 范围。', example: '重点检查角色时间线和地点连续性。' },
+      { token: '[[PROJECT_STYLE_GUIDE]]', description: '项目级审校偏好。', example: '尽量保守，不要提出风格性重写。' },
+      { token: '[[MODEL_SPECIFIC_NOTES]]', description: '输出要求。', example: '每个 issue 必须附带 evidence。' },
+    ],
+    true,
+  ),
+];
+
+const createStarterScripts = (): ScriptDocument[] => [
+  {
+    id: 'script_episode_1',
+    title: 'Short Drama Episode 1',
+    mode: 'adaptation',
+    summary: 'Adapts the arrival and market investigation into a fast-paced short drama pilot.',
+    sourceSceneIds: ['scene_arrival', 'scene_market'],
+    sourceChapterIds: ['chap_1'],
+    linkedCharacterIds: ['char_aria', 'char_rowan', 'char_nila'],
+    linkedWorldItemIds: ['loc_sky_dock', 'loc_flood_market', 'item_city_map'],
+    status: 'review',
+    reviewState: 'pending',
+    version: 1,
+    draftPath: 'entities/scripts/script_episode_1.fountain',
+    content: `INT. SKY DOCK - DAWN
+
+Aria steps out of the lift into cold copper haze.
+
+ARIA
+The theft route starts here. You still know the undercity?
+
+ROWAN
+I know where official maps start lying.
+
+INT. FLOOD MARKET - DAY
+
+Nila spreads a layered city map across a tea crate.`,
+    episodes: [
+      { id: 'script_ep1', title: 'Episode 1', summary: 'Arrival, uneasy alliance, first route anomaly.', sceneIds: ['scene_arrival', 'scene_market'] },
+    ],
+    createdAt: now(),
+    updatedAt: now(),
+  },
+];
+
+const createStarterStoryboards = (): StoryboardPlan[] => [
+  {
+    id: 'storyboard_ep1',
+    scriptId: 'script_episode_1',
+    episodeId: 'script_ep1',
+    title: 'Episode 1 Vertical Drama Storyboard',
+    shots: [
+      {
+        id: 'shot_1',
+        title: 'Dock Reveal',
+        summary: 'Wide shot establishing Sky Dock and Aria arrival.',
+        visualPrompt: 'Cinematic industrial fantasy sky dock at dawn, cold copper haze, lone investigator stepping from lift, vertical frame.',
+        linkedCharacterIds: ['char_aria'],
+        linkedWorldItemIds: ['loc_sky_dock'],
+        durationSeconds: 4,
+      },
+      {
+        id: 'shot_2',
+        title: 'Map Tension',
+        summary: 'Close-up on city map as Rowan points to impossible route.',
+        visualPrompt: 'Close-up layered city map over tea crate, gloved hand tracing hidden route, neon market reflections.',
+        dialogueCue: 'I know where official maps start lying.',
+        linkedCharacterIds: ['char_rowan', 'char_nila'],
+        linkedWorldItemIds: ['loc_flood_market', 'item_city_map'],
+        durationSeconds: 5,
+      },
+    ],
+    visualStyleNotes: 'Vertical short-drama framing, industrial fantasy, blue-amber palette, moody practical lighting.',
+    assetRefs: ['script_episode_1'],
+    promptPackagePath: 'exports/video/video_pkg_ep1.json',
+    status: 'review',
+    createdAt: now(),
+    updatedAt: now(),
+  },
+];
+
+const createStarterVideoPackages = (): VideoGenerationPackage[] => [
+  {
+    id: 'video_pkg_ep1',
+    storyboardId: 'storyboard_ep1',
+    provider: 'placeholder-runway',
+    status: 'not_configured',
+    promptPackagePath: 'exports/video/video_pkg_ep1.json',
+    providerPayloadPath: 'exports/video/video_pkg_ep1.provider.json',
+    providerResponsePath: 'exports/video/video_pkg_ep1.response.json',
+    renderManifestPath: 'exports/video/video_pkg_ep1.render.json',
+    createdAt: now(),
+    updatedAt: now(),
+  },
+];
+
+const createStarterRagDocuments = (): RagDocument[] => [
+  {
+    id: 'rag_doc_scene_arrival',
+    sourceType: 'scene',
+    sourceId: 'scene_arrival',
+    title: 'Dockside Arrival',
+    path: 'writing/scenes/scene_arrival.md',
+    entityRefs: [
+      { type: 'scene', id: 'scene_arrival' },
+      { type: 'character', id: 'char_aria' },
+      { type: 'character', id: 'char_rowan' },
+    ],
+    chunkIds: ['rag_chunk_scene_arrival_1'],
+    updatedAt: now(),
+  },
+  {
+    id: 'rag_doc_script_ep1',
+    sourceType: 'script',
+    sourceId: 'script_episode_1',
+    title: 'Short Drama Episode 1',
+    path: 'entities/scripts/script_episode_1.fountain',
+    entityRefs: [{ type: 'script', id: 'script_episode_1' }],
+    chunkIds: ['rag_chunk_script_ep1_1'],
+    updatedAt: now(),
+  },
+  {
+    id: 'rag_doc_import_seed',
+    sourceType: 'import_source',
+    sourceId: 'import_seed_project',
+    title: 'Starter manuscript import source',
+    path: 'system/imports/staging/import_seed_project/source.md',
+    entityRefs: [{ type: 'import_job', id: 'import_seed_project' }],
+    chunkIds: ['rag_chunk_import_seed_1'],
+    updatedAt: now(),
+  },
+];
+
+const createStarterRagChunks = (): RagChunk[] => [
+  {
+    id: 'rag_chunk_scene_arrival_1',
+    documentId: 'rag_doc_scene_arrival',
+    text: 'Aria stepped off the lift into the Sky Dock haze, where the city smelled like cold copper and stormwater.',
+    tokenCount: 18,
+    keywords: ['aria', 'sky', 'dock', 'lift', 'city'],
+    entityRefs: [{ type: 'scene', id: 'scene_arrival' }],
+    sourcePath: 'writing/scenes/scene_arrival.md',
+  },
+  {
+    id: 'rag_chunk_script_ep1_1',
+    documentId: 'rag_doc_script_ep1',
+    text: 'INT. SKY DOCK - DAWN. Aria steps out of the lift into cold copper haze.',
+    tokenCount: 14,
+    keywords: ['script', 'sky', 'dock', 'aria', 'dawn'],
+    entityRefs: [{ type: 'script', id: 'script_episode_1' }],
+    sourcePath: 'entities/scripts/script_episode_1.fountain',
+  },
+  {
+    id: 'rag_chunk_import_seed_1',
+    documentId: 'rag_doc_import_seed',
+    text: '# Fractured Arrival ## Dockside Arrival Aria arrives at Asterfall and recruits Rowan.',
+    tokenCount: 15,
+    keywords: ['fractured', 'arrival', 'dockside', 'rowan', 'asterfall'],
+    entityRefs: [{ type: 'import_job', id: 'import_seed_project' }],
+    sourcePath: 'system/imports/staging/import_seed_project/source.md',
+  },
+];
+
 const createStarterProposals = (): Proposal[] => [
   {
     id: 'proposal_graph_public_fallout',
     title: 'Convert public fallout note into timeline candidate',
     source: 'graph',
+    kind: 'entity_update',
     description: 'Graph selection suggests a new event after the bridge intercept.',
     targetEntityType: 'timeline_event',
     targetEntityId: null,
+    targetEntityRefs: [{ type: 'timeline_event', id: 'event_bridge' }],
     preview: 'Create event: Public Hearing After Bridge Collapse on branch Public Pressure.',
+    proposedOperations: [
+      {
+        op: 'create',
+        entityType: 'timeline_event',
+        fields: {
+          title: 'Public Hearing After Bridge Collapse',
+          branchId: 'branch_public',
+        },
+      },
+    ],
+    reviewNotes: 'Derived from graph free-note and existing public pressure branch.',
+    confidence: 0.84,
+    payloadPath: 'system/runs/artifacts/proposal_graph_public_fallout.json',
+    originTaskRunId: 'run_graph_sync_seed',
+    reviewPolicy: 'manual_workbench',
     status: 'pending',
     createdAt: now(),
   },
@@ -740,10 +1333,50 @@ const createStarterProposals = (): Proposal[] => [
     id: 'proposal_consistency_fix_bridge',
     title: 'Resolve bridge location mismatch',
     source: 'consistency',
+    kind: 'qa_fix',
     description: 'One note refers to South Bridge while every linked scene uses Glass Bridge.',
     targetEntityType: 'world_item',
     targetEntityId: 'loc_glass_bridge',
+    targetEntityRefs: [{ type: 'world_item', id: 'loc_glass_bridge' }],
     preview: 'Update the inconsistent location reference to Glass Bridge.',
+    proposedOperations: [
+      {
+        op: 'update',
+        entityType: 'world_item',
+        entityId: 'loc_glass_bridge',
+        fields: { description: 'Glass Bridge remains the canonical location reference.' },
+      },
+    ],
+    reviewNotes: 'Safe rename alignment across references.',
+    confidence: 0.91,
+    payloadPath: 'system/runs/artifacts/proposal_consistency_fix_bridge.json',
+    originTaskRunId: 'run_graph_sync_seed',
+    reviewPolicy: 'manual_workbench',
+    status: 'pending',
+    createdAt: now(),
+  },
+  {
+    id: 'proposal_import_entities_seed',
+    title: 'Review imported metadata candidates',
+    source: 'import',
+    kind: 'import_review',
+    description: 'Imported manuscript suggests new entity candidates and link proposals.',
+    targetEntityType: 'proposal',
+    targetEntityId: null,
+    targetEntityRefs: [{ type: 'import_job', id: 'import_seed_project' }],
+    preview: 'Create import review batch for character, location, and organization candidates extracted from source manuscript.',
+    proposedOperations: [
+      {
+        op: 'create',
+        entityType: 'proposal',
+        fields: { source: 'import', relatedImportJobId: 'import_seed_project' },
+      },
+    ],
+    reviewNotes: 'Metadata extraction stayed in staging and has not modified canonical entities.',
+    confidence: 0.72,
+    payloadPath: 'system/imports/staging/import_seed_project/proposals.json',
+    originTaskRunId: 'run_import_seed',
+    reviewPolicy: 'manual_workbench',
     status: 'pending',
     createdAt: now(),
   },
@@ -754,10 +1387,12 @@ const createStarterHistory = (): Proposal[] => [
     id: 'proposal_hist_candidate',
     title: 'Promote courier witness into candidate profile',
     source: 'agent',
+    kind: 'entity_update',
     description: 'Resolved earlier narrative import.',
     targetEntityType: 'candidate',
     targetEntityId: 'cand_mina',
     preview: 'Created candidate Mina Vale from scene witness notes.',
+    reviewPolicy: 'manual_workbench',
     status: 'accepted',
     createdAt: now(),
     resolvedAt: now(),
@@ -771,11 +1406,14 @@ const createStarterIssues = (): ConsistencyIssue[] => [
     description: 'One note still references South Bridge while the canonical location is Glass Bridge.',
     severity: 'high',
     status: 'open',
+    source: 'consistency',
     referenceIds: [
       { type: 'timeline_event', id: 'event_bridge' },
       { type: 'scene', id: 'scene_bridge' },
       { type: 'world_item', id: 'loc_glass_bridge' },
     ],
+    originTaskRunId: 'run_graph_sync_seed',
+    suggestedProposalIds: ['proposal_consistency_fix_bridge'],
     fixSuggestion: 'Create a Workbench fix proposal that rewrites the stale location reference to Glass Bridge.',
   },
   {
@@ -784,6 +1422,7 @@ const createStarterIssues = (): ConsistencyIssue[] => [
     description: 'A graph note and a lore note appear to describe the same hidden route network.',
     severity: 'medium',
     status: 'open',
+    source: 'qa',
     referenceIds: [
       { type: 'world_item', id: 'note_open_questions' },
       { type: 'graph_node', id: 'graph_note_public' },
@@ -796,6 +1435,7 @@ const createStarterIssues = (): ConsistencyIssue[] => [
     description: 'Vesper appears in one draft outline as deceased while all current scenes still use him as active.',
     severity: 'low',
     status: 'open',
+    source: 'qa',
     referenceIds: [
       { type: 'character', id: 'char_vesper' },
       { type: 'scene', id: 'scene_bridge' },
@@ -830,11 +1470,23 @@ const buildProject = (
     description: template === 'starter-demo' ? 'A guided starter project for the acceptance walkthrough.' : 'A blank narrative project.',
     createdAt: now(),
     updatedAt: now(),
-    version: 3,
+    version: 4,
     rootPath,
     storageMode,
     locale,
     template,
+    capabilities: {
+      import: true,
+      rag: true,
+      scripts: true,
+      videoWorkflow: true,
+      promptTemplates: true,
+    },
+    storageBackends: {
+      canonical: 'project-folder-json',
+      rag: 'project-folder-keyword-index',
+    },
+    futureBackends: ['sqlite', 'embedding-provider', 'video-provider'],
     lastOpenedModule: 'workbench',
     lastOpenedSceneId: body.scenes[0]?.id || null,
     lastOpenedBoardId: body.graphBoards[0]?.id || null,
@@ -865,6 +1517,35 @@ export const createStarterProject = (
     taskRequests: createStarterTaskRequests(),
     taskRuns: createStarterTaskRuns(),
     taskArtifacts: createStarterTaskArtifacts(),
+    taskRunLogs: createStarterTaskRunLogs(),
+    importJobs: createStarterImportJobs(),
+    promptTemplates: createStarterPromptTemplates(),
+    ragDocuments: createStarterRagDocuments(),
+    ragChunks: createStarterRagChunks(),
+    ragManifest: {
+      activeBackend: 'keyword',
+      futureBackends: ['embedding'],
+      storageBackend: 'project-folder-keyword-index',
+    },
+    retrievalHistory: [
+      {
+        requestId: 'retrieval_seed_1',
+        backend: 'keyword',
+        items: [
+          {
+            chunkId: 'rag_chunk_scene_arrival_1',
+            documentId: 'rag_doc_scene_arrival',
+            excerpt: 'Aria stepped off the lift into the Sky Dock haze...',
+            score: 0.88,
+            entityRefs: [{ type: 'scene', id: 'scene_arrival' }],
+            sourcePath: 'writing/scenes/scene_arrival.md',
+          },
+        ],
+      },
+    ],
+    scripts: createStarterScripts(),
+    storyboards: createStarterStoryboards(),
+    videoPackages: createStarterVideoPackages(),
     proposals: createStarterProposals(),
     proposalHistory: createStarterHistory(),
     issues: createStarterIssues(),
@@ -952,6 +1633,20 @@ export const createBlankProject = (
     taskRequests: [],
     taskRuns: [],
     taskArtifacts: [],
+    taskRunLogs: [],
+    importJobs: [],
+    promptTemplates: createStarterPromptTemplates(),
+    ragDocuments: [],
+    ragChunks: [],
+    ragManifest: {
+      activeBackend: 'keyword',
+      futureBackends: ['embedding'],
+      storageBackend: 'project-folder-keyword-index',
+    },
+    retrievalHistory: [],
+    scripts: [],
+    storyboards: [],
+    videoPackages: [],
     proposals: [],
     proposalHistory: [],
     issues: [],

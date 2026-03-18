@@ -1,0 +1,64 @@
+{
+  "id": "retrieval-agent",
+  "name": "Retrieval Agent",
+  "agentType": "retrieval-agent",
+  "purpose": "Retrieve local project context from the keyword RAG layer without mutating canonical data.",
+  "inputContract": [
+    {
+      "name": "project_context",
+      "description": "Canonical project snapshot or scoped entity references.",
+      "required": true
+    },
+    {
+      "name": "task_input",
+      "description": "Agent-specific input payload.",
+      "required": true
+    }
+  ],
+  "outputContract": [
+    {
+      "name": "artifacts",
+      "description": "Structured output artifacts for downstream storage.",
+      "required": true
+    },
+    {
+      "name": "review_notes",
+      "description": "Notes for Workbench or operator review.",
+      "required": true
+    }
+  ],
+  "reviewPolicy": "artifact_only",
+  "promptTemplate": "Agent Goal:\nReturn the most relevant local context package for a given query.\n\nInputs:\n- retrieval query\n- scope filters\n- local RAG manifest\n\nOutputs:\n- retrieved chunks\n- entity matches\n- context package\n\nUser Slots:\n[[USER_CUSTOM_REQUIREMENTS]]\n[[PROJECT_STYLE_GUIDE]]\n[[MODEL_SPECIFIC_NOTES]]",
+  "userCustomPromptSlot": "[[USER_CUSTOM_REQUIREMENTS]]",
+  "modelHints": [
+    "Prefer structured JSON output.",
+    "Never mutate canonical data directly."
+  ],
+  "version": 1,
+  "promptTemplateSlots": [
+    {
+      "token": "[[USER_CUSTOM_REQUIREMENTS]]",
+      "description": "检索偏好，例如召回更重角色或场景。",
+      "example": "优先返回和角色动机相关的片段。"
+    },
+    {
+      "token": "[[PROJECT_STYLE_GUIDE]]",
+      "description": "上下文包的表达偏好。",
+      "example": "摘要尽量简短，方便写作 agent 消费。"
+    },
+    {
+      "token": "[[MODEL_SPECIFIC_NOTES]]",
+      "description": "模型运行时注意事项。",
+      "example": "输出不超过 8 个 chunk。"
+    }
+  ],
+  "forbiddenActions": [
+    "Do not write directly to canonical entities or scene files.",
+    "Do not invent missing facts without flagging uncertainty."
+  ],
+  "writeTargets": [
+    "artifact",
+    "run_log"
+  ],
+  "requiresWorkbenchReview": false
+}

@@ -1,4 +1,4 @@
-export const PROJECT_SCHEMA_VERSION = 3;
+export const PROJECT_SCHEMA_VERSION = 4;
 
 export type EntityKind =
   | 'character'
@@ -17,7 +17,15 @@ export type EntityKind =
   | 'graph_board'
   | 'beta_persona'
   | 'task_request'
-  | 'task_run';
+  | 'task_run'
+  | 'task_artifact'
+  | 'import_job'
+  | 'prompt_template'
+  | 'rag_document'
+  | 'rag_chunk'
+  | 'script'
+  | 'storyboard'
+  | 'video_package';
 
 export type SaveStatus = 'Idle' | 'Unsaved changes' | 'Saving' | 'Saved' | 'Error';
 export type StorageMode = 'memory' | 'nodefs';
@@ -25,7 +33,28 @@ export type ProjectTemplate = 'blank' | 'starter-demo';
 export type Locale = 'en' | 'zh-CN';
 export type ProposalStatus = 'pending' | 'accepted' | 'rejected' | 'archived';
 export type IssueStatus = 'open' | 'resolved' | 'ignored';
-export type TaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'canceled';
+export type TaskStatus = 'queued' | 'running' | 'awaiting_user_input' | 'completed' | 'failed' | 'canceled';
+export type ProposalSource = 'graph' | 'consistency' | 'agent' | 'import' | 'script' | 'video';
+export type ProposalKind =
+  | 'entity_update'
+  | 'import_review'
+  | 'metadata_extraction'
+  | 'script_generation'
+  | 'storyboard_generation'
+  | 'video_workflow'
+  | 'qa_fix';
+export type ReviewPolicy = 'manual_workbench' | 'issue_review' | 'artifact_only';
+export type IssueSource = 'consistency' | 'import' | 'qa' | 'agent' | 'video';
+export type TaskSource = 'manual' | 'local-cli' | 'langgraph' | 'external-ai';
+export type AgentType =
+  | 'import-agent'
+  | 'metadata-extraction-agent'
+  | 'retrieval-agent'
+  | 'novel-writing-agent'
+  | 'script-writing-agent'
+  | 'storyboard-shot-planning-agent'
+  | 'video-generation-orchestration-agent'
+  | 'qa-consistency-agent';
 export type GraphNodeKind =
   | 'free_note'
   | 'character_ref'
@@ -226,14 +255,29 @@ export interface GraphBoard {
   sortOrder: number;
 }
 
+export interface ProposalOperation {
+  op: 'create' | 'update' | 'delete' | 'link' | 'unlink';
+  entityType: EntityKind;
+  entityId?: string | null;
+  fields?: Record<string, unknown>;
+}
+
 export interface Proposal {
   id: string;
   title: string;
-  source: 'graph' | 'consistency' | 'agent';
+  source: ProposalSource;
+  kind: ProposalKind;
   description: string;
   targetEntityType: EntityKind;
   targetEntityId?: string | null;
+  targetEntityRefs?: EntityReference[];
   preview: string;
+  proposedOperations?: ProposalOperation[];
+  reviewNotes?: string;
+  confidence?: number;
+  payloadPath?: string | null;
+  originTaskRunId?: string | null;
+  reviewPolicy: ReviewPolicy;
   status: ProposalStatus;
   createdAt: string;
   resolvedAt?: string;
@@ -245,7 +289,10 @@ export interface ConsistencyIssue {
   description: string;
   severity: 'high' | 'medium' | 'low';
   status: IssueStatus;
+  source: IssueSource;
   referenceIds: EntityReference[];
+  originTaskRunId?: string | null;
+  suggestedProposalIds?: string[];
   fixSuggestion?: string;
 }
 
@@ -299,32 +346,268 @@ export interface BetaRun {
   feedback: BetaFeedbackItem[];
 }
 
+export interface ImportCandidate {
+  id: string;
+  title: string;
+  summary: string;
+  confidence: 'high' | 'medium' | 'low';
+  contentPath?: string | null;
+}
+
+export interface ImportJob {
+  id: string;
+  sourceFileName: string;
+  sourcePath: string | null;
+  sourceFormat: 'txt' | 'md' | 'docx';
+  status: TaskStatus;
+  stage: 'queued' | 'copied' | 'parsed' | 'canonical_written' | 'proposal_generated' | 'indexed' | 'failed';
+  segmentationConfidence: 'high' | 'medium' | 'low';
+  createdAt: string;
+  updatedAt: string;
+  taskRequestId?: string | null;
+  taskRunId?: string | null;
+  canonicalChapterIds: string[];
+  canonicalSceneIds: string[];
+  chapterCandidates: ImportCandidate[];
+  sceneCandidates: ImportCandidate[];
+  proposalIds: string[];
+  issueIds: string[];
+  notes: string[];
+}
+
+export interface TaskRunLogRef {
+  taskRunId: string;
+  path: string | null;
+  entryCount: number;
+}
+
+export interface TaskRunFailure {
+  code: string;
+  message: string;
+  retryable: boolean;
+  details?: string;
+}
+
+export interface AwaitingUserInputPayload {
+  prompt: string;
+  fields: string[];
+  reason: string;
+}
+
 export interface TaskRequest {
   id: string;
   title: string;
-  source: 'manual' | 'local-cli' | 'langgraph' | 'external-ai';
+  taskType: string;
+  agentType: AgentType;
+  source: TaskSource;
   status: TaskStatus;
   prompt: string;
+  input: Record<string, unknown>;
+  contextScope?: Record<string, unknown>;
   targetIds: EntityReference[];
+  reviewPolicy: ReviewPolicy;
   createdAt: string;
 }
 
 export interface TaskArtifact {
   id: string;
   taskRunId: string;
-  type: 'log' | 'proposal-batch' | 'issue-batch' | 'report' | 'patch-preview';
+  type:
+    | 'log'
+    | 'proposal-batch'
+    | 'issue-batch'
+    | 'report'
+    | 'patch-preview'
+    | 'import-manifest'
+    | 'context-package'
+    | 'script-draft'
+    | 'storyboard'
+    | 'video-package'
+    | 'provider-payload';
   summary: string;
   path: string | null;
+  mimeType?: string;
+  entityRefs?: EntityReference[];
 }
 
 export interface TaskRun {
   id: string;
   taskRequestId: string;
   status: TaskStatus;
+  executor: TaskSource;
+  adapter: string;
+  attempt: number;
   startedAt: string;
+  heartbeatAt?: string;
   finishedAt?: string;
   summary: string;
   artifactIds: string[];
+  failure?: TaskRunFailure;
+  awaitingUserInput?: AwaitingUserInputPayload | null;
+}
+
+export interface PromptTemplateInputField {
+  name: string;
+  description: string;
+  required: boolean;
+}
+
+export interface PromptTemplateOutputField {
+  name: string;
+  description: string;
+  required: boolean;
+}
+
+export interface PromptTemplateSlot {
+  token: string;
+  description: string;
+  example: string;
+}
+
+export interface PromptTemplate {
+  id: string;
+  name: string;
+  agentType: AgentType;
+  purpose: string;
+  inputContract: PromptTemplateInputField[];
+  outputContract: PromptTemplateOutputField[];
+  reviewPolicy: ReviewPolicy;
+  promptTemplate: string;
+  userCustomPromptSlot: string;
+  modelHints: string[];
+  version: number;
+  promptTemplateSlots: PromptTemplateSlot[];
+  forbiddenActions: string[];
+  writeTargets: string[];
+  requiresWorkbenchReview: boolean;
+}
+
+export interface RagDocument {
+  id: string;
+  sourceType: 'chapter' | 'scene' | 'character' | 'world_item' | 'script' | 'storyboard' | 'import_source';
+  sourceId: string;
+  title: string;
+  path: string | null;
+  entityRefs: EntityReference[];
+  chunkIds: string[];
+  updatedAt: string;
+}
+
+export interface RagChunk {
+  id: string;
+  documentId: string;
+  text: string;
+  tokenCount: number;
+  keywords: string[];
+  entityRefs: EntityReference[];
+  sourcePath: string | null;
+}
+
+export interface RetrievalRequest {
+  id: string;
+  query: string;
+  scope: {
+    entityKinds?: EntityKind[];
+    sourceIds?: string[];
+  };
+  filters?: {
+    ids?: string[];
+  };
+  topK: number;
+  includeNeighborChunks: boolean;
+}
+
+export interface RetrievalResultItem {
+  chunkId: string;
+  documentId: string;
+  excerpt: string;
+  score: number;
+  entityRefs: EntityReference[];
+  sourcePath: string | null;
+}
+
+export interface RetrievalResult {
+  requestId: string;
+  backend: 'keyword' | 'embedding';
+  items: RetrievalResultItem[];
+}
+
+export interface ScriptEpisode {
+  id: string;
+  title: string;
+  summary: string;
+  sceneIds: string[];
+}
+
+export interface ScriptDocument {
+  id: string;
+  title: string;
+  mode: 'adaptation' | 'original';
+  summary: string;
+  sourceSceneIds: string[];
+  sourceChapterIds: string[];
+  linkedCharacterIds: string[];
+  linkedWorldItemIds: string[];
+  status: 'draft' | 'review' | 'approved';
+  reviewState: 'pending' | 'approved' | 'changes_requested';
+  version: number;
+  draftPath: string | null;
+  content: string;
+  episodes: ScriptEpisode[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StoryboardShot {
+  id: string;
+  title: string;
+  summary: string;
+  visualPrompt: string;
+  dialogueCue?: string;
+  linkedCharacterIds: string[];
+  linkedWorldItemIds: string[];
+  durationSeconds?: number;
+}
+
+export interface StoryboardPlan {
+  id: string;
+  scriptId: string;
+  episodeId: string;
+  title: string;
+  shots: StoryboardShot[];
+  visualStyleNotes: string;
+  assetRefs: string[];
+  promptPackagePath?: string | null;
+  status: 'draft' | 'review' | 'approved';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VideoGenerationPackage {
+  id: string;
+  storyboardId: string;
+  provider: string;
+  status: 'draft' | 'pending' | 'unsupported' | 'not_configured' | 'completed' | 'failed';
+  promptPackagePath: string | null;
+  providerPayloadPath?: string | null;
+  providerResponsePath?: string | null;
+  renderManifestPath?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RagManifest {
+  activeBackend: 'keyword' | 'embedding';
+  futureBackends: string[];
+  storageBackend: string;
+}
+
+export interface ProjectCapabilities {
+  import: boolean;
+  rag: boolean;
+  scripts: boolean;
+  videoWorkflow: boolean;
+  promptTemplates: boolean;
 }
 
 export interface UnreadUpdateState {
@@ -372,6 +655,12 @@ export interface ProjectMetadata {
   storageMode: StorageMode;
   locale: Locale;
   template: ProjectTemplate;
+  capabilities?: ProjectCapabilities;
+  storageBackends?: {
+    canonical: string;
+    rag: string;
+  };
+  futureBackends?: string[];
   lastOpenedModule?: string;
   lastOpenedSceneId?: string | null;
   lastOpenedBoardId?: string | null;
@@ -395,6 +684,16 @@ export interface NarrativeProject {
   taskRequests: TaskRequest[];
   taskRuns: TaskRun[];
   taskArtifacts: TaskArtifact[];
+  taskRunLogs: TaskRunLogRef[];
+  importJobs: ImportJob[];
+  promptTemplates: PromptTemplate[];
+  ragDocuments: RagDocument[];
+  ragChunks: RagChunk[];
+  ragManifest: RagManifest;
+  retrievalHistory: RetrievalResult[];
+  scripts: ScriptDocument[];
+  storyboards: StoryboardPlan[];
+  videoPackages: VideoGenerationPackage[];
   proposals: Proposal[];
   proposalHistory: Proposal[];
   issues: ConsistencyIssue[];

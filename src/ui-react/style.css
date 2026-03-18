@@ -83,6 +83,34 @@
     font-family: "Segoe UI Variable Display", "Bahnschrift", "Aptos", "Trebuchet MS", sans-serif;
   }
 
+  .density-compact {
+    --top-toolbar-height: 40px;
+    --status-bar-height: 24px;
+    --activity-bar-width: 56px;
+  }
+
+  .density-compact [data-testid="top-toolbar"] {
+    font-size: 13px;
+  }
+
+  .density-compact [data-testid="activity-bar"] button {
+    height: 42px;
+    width: 42px;
+  }
+
+  .density-compact [data-testid="sidebar"] {
+    font-size: 13px;
+  }
+
+  .motion-reduced *,
+  .motion-reduced *::before,
+  .motion-reduced *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
   *:focus-visible {
     outline: none;
     box-shadow: 0 0 0 3px var(--focus);

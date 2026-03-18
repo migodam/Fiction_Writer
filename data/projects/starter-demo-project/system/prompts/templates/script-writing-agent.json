@@ -1,0 +1,71 @@
+{
+  "id": "script-writing-agent",
+  "name": "Script Writing Agent",
+  "agentType": "script-writing-agent",
+  "purpose": "Adapt novel material into script episodes, scenes, and dialogue blocks.",
+  "inputContract": [
+    {
+      "name": "project_context",
+      "description": "Canonical project snapshot or scoped entity references.",
+      "required": true
+    },
+    {
+      "name": "task_input",
+      "description": "Agent-specific input payload.",
+      "required": true
+    }
+  ],
+  "outputContract": [
+    {
+      "name": "artifacts",
+      "description": "Structured output artifacts for downstream storage.",
+      "required": true
+    },
+    {
+      "name": "review_notes",
+      "description": "Notes for Workbench or operator review.",
+      "required": true
+    }
+  ],
+  "reviewPolicy": "manual_workbench",
+  "promptTemplate": "Agent Goal:\nTurn novel or outline content into script drafts suitable for review and storyboard planning.\n\nInputs:\n- source scenes or outline\n- metadata\n- style guide\n\nOutputs:\n- script draft\n- episode breakdown\n- dialogue blocks\n\nUser Slots:\n[[USER_CUSTOM_REQUIREMENTS]]\n[[PROJECT_STYLE_GUIDE]]\n[[SCRIPT_STYLE_REQUIREMENTS]]\n[[MODEL_SPECIFIC_NOTES]]",
+  "userCustomPromptSlot": "[[USER_CUSTOM_REQUIREMENTS]]",
+  "modelHints": [
+    "Prefer structured JSON output.",
+    "Never mutate canonical data directly."
+  ],
+  "version": 1,
+  "promptTemplateSlots": [
+    {
+      "token": "[[USER_CUSTOM_REQUIREMENTS]]",
+      "description": "这次剧本任务的具体目标。",
+      "example": "改编成短剧第一集，节奏更快。"
+    },
+    {
+      "token": "[[PROJECT_STYLE_GUIDE]]",
+      "description": "项目通用风格要求。",
+      "example": "人物对白要保留原著辨识度。"
+    },
+    {
+      "token": "[[SCRIPT_STYLE_REQUIREMENTS]]",
+      "description": "剧本格式和节奏偏好。",
+      "example": "对白短促，动作提示清晰。"
+    },
+    {
+      "token": "[[MODEL_SPECIFIC_NOTES]]",
+      "description": "模型输出约束。",
+      "example": "输出 Fountain 风格文本。"
+    }
+  ],
+  "forbiddenActions": [
+    "Do not write directly to canonical entities or scene files.",
+    "Do not invent missing facts without flagging uncertainty."
+  ],
+  "writeTargets": [
+    "proposal",
+    "issue",
+    "artifact",
+    "run_log"
+  ],
+  "requiresWorkbenchReview": true
+}

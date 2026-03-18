@@ -10,7 +10,6 @@ test.describe('Narrative IDE Smoke Test', () => {
     await expect(page.getByTestId('activity-bar')).toBeVisible();
     await expect(page.getByTestId('sidebar')).toBeVisible();
     await expect(page.getByTestId('workspace')).toBeVisible();
-    await expect(page.getByTestId('inspector')).toBeVisible();
     await expect(page.getByTestId('status-bar')).toBeVisible();
   });
 
@@ -18,23 +17,42 @@ test.describe('Narrative IDE Smoke Test', () => {
     await page.getByTestId('activity-btn-workbench').click();
     await expect(page.getByTestId('sidebar-section-workbench-inbox')).toBeVisible();
     await expect(page.getByTestId('sidebar-section-workbench-history')).toBeVisible();
+    await expect(page.getByTestId('sidebar-section-workbench-imports')).toBeVisible();
+    await expect(page.getByTestId('sidebar-section-workbench-runs')).toBeVisible();
+    await expect(page.getByTestId('sidebar-section-workbench-prompts')).toBeVisible();
 
     await page.getByTestId('activity-btn-characters').click();
     await expect(page.getByTestId('sidebar-section-characters-list')).toBeVisible();
     await expect(page.getByTestId('sidebar-section-characters-candidates')).toBeVisible();
 
     await page.getByTestId('activity-btn-timeline').click();
-    await expect(page.getByTestId('sidebar-section-timeline-events')).toBeVisible();
-    await expect(page.getByTestId('sidebar-section-timeline-branches')).toBeVisible();
+    await expect(page.getByTestId('sidebar-section-timeline-overview')).toBeVisible();
 
     await page.getByTestId('activity-btn-world').click();
     await expect(page.getByTestId('world-container-list')).toBeVisible();
 
+    await page.getByTestId('activity-btn-agents').click();
+    await expect(page.getByTestId('agent-workspace')).toBeVisible();
+
     await page.getByTestId('activity-btn-publish').click();
     await expect(page.getByTestId('publish-workspace')).toBeVisible();
+    await expect(page.getByTestId('sidebar-section-publish-video')).toBeVisible();
 
     await page.getByTestId('activity-btn-insights').click();
     await expect(page.getByTestId('insights-workspace')).toBeVisible();
+  });
+
+  test('workbench routes expose imports runs and prompts', async ({ page }) => {
+    await page.getByTestId('activity-btn-workbench').click();
+
+    await page.getByTestId('sidebar-section-workbench-imports').click();
+    await expect(page.getByTestId('workbench-imports-list')).toBeVisible();
+
+    await page.getByTestId('sidebar-section-workbench-runs').click();
+    await expect(page.getByTestId('workbench-runs-list')).toBeVisible();
+
+    await page.getByTestId('sidebar-section-workbench-prompts').click();
+    await expect(page.getByTestId('workbench-prompts-list')).toBeVisible();
   });
 
   test('command palette opens and navigates', async ({ page }) => {
@@ -106,12 +124,8 @@ test.describe('Narrative IDE Smoke Test', () => {
     await page.getByTestId('event-summary-input').fill('The beginning of time.');
     await page.getByTestId('inspector-save').click();
     await expect(page.getByText(/Saved|已保存/)).toBeVisible();
-
-    const node = page.getByText('Chronicle Start').first();
-    await expect(node).toBeVisible();
-
-    await node.dragTo(page.getByTestId('timeline-branch-branch_main'));
-    await expect(node).toBeVisible();
+    await expect(page.getByTestId('detail-modal')).not.toBeVisible();
+    await expect(page.getByTestId('timeline-linear-inspector')).toContainText('Chronicle Start');
   });
 
   test('can use writing studio with sidebar and context panel', async ({ page }) => {
@@ -148,11 +162,66 @@ test.describe('Narrative IDE Smoke Test', () => {
     await page.getByTestId('activity-btn-graph').click();
     await expect(page.getByTestId('graph-canvas')).toBeVisible();
 
+    await page.getByTestId('graph-add-node-btn').click();
+    await page.getByTestId('graph-node-kind-input').selectOption('event_ref');
+    await page.getByTestId('graph-node-label-input').fill('Graph Event');
+    await page.getByTestId('graph-node-description-input').fill('Typed graph node.');
+    await page.getByTestId('graph-node-save-btn').click();
+    await expect(page.getByText('Node created', { exact: true })).toBeVisible();
+
     await page.getByTestId('graph-auto-layout-btn').click();
     await expect(page.getByText('Layout updated', { exact: true })).toBeVisible();
 
+    await page.getByTestId('graph-fit-board-btn').click();
+    await expect(page.getByTestId('graph-zoom-label')).toBeVisible();
+
     await page.getByTestId('graph-reset-layout-btn').click();
     await expect(page.getByText('Layout reset', { exact: true })).toBeVisible();
+  });
+
+  test('timeline renders explicit fork and merge markers', async ({ page }) => {
+    await page.getByTestId('activity-btn-timeline').click();
+    await expect(page.getByTestId('timeline-mainline')).toHaveCount(1);
+    await expect(page.getByTestId('timeline-branch-branch_main')).toBeVisible();
+    await expect(page.getByTestId('timeline-fork-branch_shadow')).toBeVisible();
+    await expect(page.getByTestId('timeline-merge-branch_shadow')).toBeVisible();
+    await expect(page.getByTestId('timeline-linear-inspector')).toBeVisible();
+  });
+
+  test('writing surfaces scripts and storyboards', async ({ page }) => {
+    await page.getByTestId('activity-btn-writing').click();
+    await page.getByTestId('sidebar-section-writing-chapters').click();
+    await expect(page.getByTestId('chapter-editor')).toBeVisible();
+
+    await page.getByTestId('add-chapter-btn').click();
+    await page.getByTestId('chapter-title-input').fill('New Manual Chapter');
+    await page.getByTestId('save-chapter-btn').click();
+    await expect(page.getByText(/Saved|已保存/)).toBeVisible();
+
+    await page.getByTestId('sidebar-section-writing-scenes').click();
+    await page.getByTestId('add-scene-btn').click();
+    await expect(page.getByTestId('writing-editor')).toBeVisible();
+
+    await page.getByTestId('sidebar-section-writing-scripts').click();
+    await expect(page.getByTestId('script-manuscript-panel')).toBeVisible();
+
+    await page.getByTestId('sidebar-section-writing-storyboards').click();
+    await expect(page.getByTestId('storyboard-panel')).toBeVisible();
+  });
+
+  test('publish surfaces video workflow packages', async ({ page }) => {
+    await page.getByTestId('activity-btn-publish').click();
+    await page.getByTestId('sidebar-section-publish-video').click();
+    await expect(page.getByTestId('publish-video-workspace')).toBeVisible();
+    await expect(page.getByTestId('video-package-video_pkg_ep1')).toBeVisible();
+  });
+
+  test('agent console captures instructions', async ({ page }) => {
+    await page.getByTestId('activity-btn-agents').click();
+    await page.getByTestId('agent-command-input').fill('Retrieve context for scene_arrival and prepare a summary.');
+    await page.getByTestId('agent-command-submit').click();
+    await expect(page.getByText('Agent instruction queued', { exact: true })).toBeVisible();
+    await expect(page.getByTestId('agent-workspace')).toContainText('Retrieve context for scene_arrival');
   });
 
   test('can manage world model containers and items', async ({ page }) => {

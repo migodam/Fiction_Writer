@@ -26,10 +26,12 @@ export const ConsistencyWorkspace = () => {
       id: `proposal_fix_${issue.id}_${Date.now()}`,
       title: `Fix: ${issue.title}`,
       source: 'consistency',
+      kind: 'qa_fix',
       description: issue.description,
       targetEntityType: 'issue',
       targetEntityId: issue.id,
       preview: issue.fixSuggestion || 'Review and resolve the reported inconsistency.',
+      reviewPolicy: 'manual_workbench',
       status: 'pending',
       createdAt: new Date().toISOString(),
     });

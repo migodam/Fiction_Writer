@@ -1,0 +1,71 @@
+{
+  "id": "novel-writing-agent",
+  "name": "Novel Writing Agent",
+  "agentType": "novel-writing-agent",
+  "purpose": "Produce scene/chapter drafts, rewrites, or alternatives from structured context.",
+  "inputContract": [
+    {
+      "name": "project_context",
+      "description": "Canonical project snapshot or scoped entity references.",
+      "required": true
+    },
+    {
+      "name": "task_input",
+      "description": "Agent-specific input payload.",
+      "required": true
+    }
+  ],
+  "outputContract": [
+    {
+      "name": "artifacts",
+      "description": "Structured output artifacts for downstream storage.",
+      "required": true
+    },
+    {
+      "name": "review_notes",
+      "description": "Notes for Workbench or operator review.",
+      "required": true
+    }
+  ],
+  "reviewPolicy": "manual_workbench",
+  "promptTemplate": "Agent Goal:\nAssist with novel chapter or scene writing while preserving canonical consistency.\n\nInputs:\n- scene brief\n- context package\n- style guide\n\nOutputs:\n- draft\n- rewrite alternatives\n- editorial notes\n\nUser Slots:\n[[USER_CUSTOM_REQUIREMENTS]]\n[[PROJECT_STYLE_GUIDE]]\n[[STORY_STYLE_REQUIREMENTS]]\n[[MODEL_SPECIFIC_NOTES]]",
+  "userCustomPromptSlot": "[[USER_CUSTOM_REQUIREMENTS]]",
+  "modelHints": [
+    "Prefer structured JSON output.",
+    "Never mutate canonical data directly."
+  ],
+  "version": 1,
+  "promptTemplateSlots": [
+    {
+      "token": "[[USER_CUSTOM_REQUIREMENTS]]",
+      "description": "这次写作任务的具体要求。",
+      "example": "强调压迫感和调查推进。"
+    },
+    {
+      "token": "[[PROJECT_STYLE_GUIDE]]",
+      "description": "项目级长期风格要求。",
+      "example": "保持第三人称近距离视角。"
+    },
+    {
+      "token": "[[STORY_STYLE_REQUIREMENTS]]",
+      "description": "当前故事段落的风格要求。",
+      "example": "更 noir、更克制。"
+    },
+    {
+      "token": "[[MODEL_SPECIFIC_NOTES]]",
+      "description": "模型长度或格式限制。",
+      "example": "先给 2 个版本，不要自动决定。"
+    }
+  ],
+  "forbiddenActions": [
+    "Do not write directly to canonical entities or scene files.",
+    "Do not invent missing facts without flagging uncertainty."
+  ],
+  "writeTargets": [
+    "proposal",
+    "issue",
+    "artifact",
+    "run_log"
+  ],
+  "requiresWorkbenchReview": true
+}

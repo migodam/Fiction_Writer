@@ -50,6 +50,10 @@ const writeJson = (fs: typeof import('fs'), filePath: string, payload: unknown) 
   fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
 };
 
+const writeText = (fs: typeof import('fs'), filePath: string, payload: string) => {
+  fs.writeFileSync(filePath, payload, 'utf8');
+};
+
 const ensureDir = (fs: typeof import('fs'), directory: string) => {
   if (!fs.existsSync(directory)) {
     fs.mkdirSync(directory, { recursive: true });
@@ -68,8 +72,22 @@ const createProjectByTemplate = (
     : createStarterProject(name, rootPath, locale, storageMode);
 };
 
-const safeReadJson = (fs: typeof import('fs'), filePath: string, fallback: unknown) => {
-  return fs.existsSync(filePath) ? JSON.parse(fs.readFileSync(filePath, 'utf8')) : fallback;
+const safeReadJson = <T>(fs: typeof import('fs'), filePath: string, fallback: T): T => {
+  return fs.existsSync(filePath) ? (JSON.parse(fs.readFileSync(filePath, 'utf8')) as T) : fallback;
+};
+
+const safeReadText = (fs: typeof import('fs'), filePath: string, fallback = '') => {
+  return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : fallback;
+};
+
+const readJsonFilesSafe = <T = Record<string, unknown>>(runtime: NodeRuntime, directory: string): T[] => {
+  if (!runtime.fs.existsSync(directory)) {
+    return [] as T[];
+  }
+  return runtime.fs
+    .readdirSync(directory)
+    .filter((fileName) => fileName.endsWith('.json'))
+    .map((fileName) => JSON.parse(runtime.fs.readFileSync(runtime.path.join(directory, fileName), 'utf8')) as T);
 };
 
 const normalizeBranches = (branches: unknown): NarrativeProject['timelineBranches'] =>
@@ -154,6 +172,9 @@ const migrateProject = (
       storageMode,
       locale: locale || rawProject.metadata?.locale || fallbackProject.metadata.locale,
       updatedAt: new Date().toISOString(),
+      capabilities: rawProject.metadata?.capabilities || fallbackProject.metadata.capabilities,
+      storageBackends: rawProject.metadata?.storageBackends || fallbackProject.metadata.storageBackends,
+      futureBackends: rawProject.metadata?.futureBackends || fallbackProject.metadata.futureBackends,
     },
     characters: rawProject.characters || fallbackProject.characters,
     characterTags: rawProject.characterTags || fallbackProject.characterTags,
@@ -175,6 +196,19 @@ const migrateProject = (
     taskRequests: rawProject.taskRequests || [],
     taskRuns: rawProject.taskRuns || [],
     taskArtifacts: rawProject.taskArtifacts || [],
+    taskRunLogs: rawProject.taskRunLogs || [],
+    importJobs: rawProject.importJobs || [],
+    promptTemplates:
+      Array.isArray(rawProject.promptTemplates) && rawProject.promptTemplates.length > 0
+        ? rawProject.promptTemplates
+        : fallbackProject.promptTemplates,
+    ragDocuments: rawProject.ragDocuments || [],
+    ragChunks: rawProject.ragChunks || [],
+    ragManifest: rawProject.ragManifest || fallbackProject.ragManifest,
+    retrievalHistory: rawProject.retrievalHistory || [],
+    scripts: rawProject.scripts || [],
+    storyboards: rawProject.storyboards || [],
+    videoPackages: rawProject.videoPackages || [],
     proposals: rawProject.proposals || fallbackProject.proposals,
     proposalHistory: rawProject.proposalHistory || fallbackProject.proposalHistory,
     issues: rawProject.issues || fallbackProject.issues,
@@ -210,6 +244,8 @@ const serializeProjectToFolder = (
   const timelineDir = path.join(entitiesDir, 'timeline');
   const worldDir = path.join(entitiesDir, 'world');
   const graphDir = path.join(entitiesDir, 'graph');
+  const scriptsDir = path.join(entitiesDir, 'scripts');
+  const storyboardsDir = path.join(entitiesDir, 'storyboards');
   const writingDir = path.join(rootPath, 'writing');
   const chaptersDir = path.join(writingDir, 'chapters');
   const scenesDir = path.join(writingDir, 'scenes');
@@ -217,8 +253,18 @@ const serializeProjectToFolder = (
   const schemaDir = path.join(systemDir, 'schema');
   const tasksDir = path.join(systemDir, 'tasks');
   const runsDir = path.join(systemDir, 'runs');
+  const runLogsDir = path.join(runsDir, 'logs');
+  const promptsDir = path.join(systemDir, 'prompts');
+  const promptTemplatesDir = path.join(promptsDir, 'templates');
+  const importsDir = path.join(systemDir, 'imports');
+  const importStagingDir = path.join(importsDir, 'staging');
+  const ragDir = path.join(systemDir, 'rag');
+  const ragDocsDir = path.join(ragDir, 'documents');
+  const ragChunksDir = path.join(ragDir, 'chunks');
+  const ragIndexesDir = path.join(ragDir, 'indexes');
   const assetsDir = path.join(rootPath, 'assets');
   const exportsDir = path.join(rootPath, 'exports');
+  const videoExportsDir = path.join(exportsDir, 'video');
 
   [
     entitiesDir,
@@ -226,6 +272,8 @@ const serializeProjectToFolder = (
     timelineDir,
     worldDir,
     graphDir,
+    scriptsDir,
+    storyboardsDir,
     writingDir,
     chaptersDir,
     scenesDir,
@@ -233,12 +281,22 @@ const serializeProjectToFolder = (
     schemaDir,
     tasksDir,
     runsDir,
+    runLogsDir,
+    promptsDir,
+    promptTemplatesDir,
+    importsDir,
+    importStagingDir,
+    ragDir,
+    ragDocsDir,
+    ragChunksDir,
+    ragIndexesDir,
     path.join(assetsDir, 'portraits'),
     path.join(assetsDir, 'world'),
     path.join(assetsDir, 'maps'),
     path.join(assetsDir, 'graph'),
     path.join(exportsDir, 'markdown'),
     path.join(exportsDir, 'html'),
+    videoExportsDir,
   ].forEach((directory) => ensureDir(fs, directory));
 
   writeJson(fs, path.join(rootPath, 'project.json'), {
@@ -248,6 +306,9 @@ const serializeProjectToFolder = (
       timelineEvents: project.timelineEvents.length,
       scenes: project.scenes.length,
       worldItems: project.worldItems.length,
+      scripts: project.scripts.length,
+      storyboards: project.storyboards.length,
+      importJobs: project.importJobs.length,
       proposals: project.proposals.length,
       exports: project.exports.length,
     },
@@ -271,6 +332,16 @@ const serializeProjectToFolder = (
   project.graphBoards.forEach((board) => {
     writeJson(fs, path.join(graphDir, `${board.id}.json`), board);
   });
+  project.scripts.forEach((script) => {
+    writeJson(fs, path.join(scriptsDir, `${script.id}.json`), {
+      ...script,
+      content: undefined,
+    });
+    writeText(fs, path.join(scriptsDir, `${script.id}.fountain`), script.content || '');
+  });
+  project.storyboards.forEach((storyboard) => {
+    writeJson(fs, path.join(storyboardsDir, `${storyboard.id}.json`), storyboard);
+  });
   project.chapters.forEach((chapter) => {
     writeJson(fs, path.join(chaptersDir, `${chapter.id}.json`), chapter);
   });
@@ -288,13 +359,93 @@ const serializeProjectToFolder = (
   writeJson(fs, path.join(schemaDir, 'schema.json'), {
     schemaVersion: project.metadata.schemaVersion,
     updatedAt: project.metadata.updatedAt,
+    capabilities: project.metadata.capabilities,
+    storageBackends: project.metadata.storageBackends,
+    futureBackends: project.metadata.futureBackends,
   });
   writeJson(fs, path.join(systemDir, 'ui-state.json'), project.uiState);
   writeJson(fs, path.join(tasksDir, 'requests.json'), project.taskRequests);
   writeJson(fs, path.join(runsDir, 'runs.json'), project.taskRuns);
   writeJson(fs, path.join(runsDir, 'artifacts.json'), project.taskArtifacts);
+  writeJson(fs, path.join(runsDir, 'logs.json'), project.taskRunLogs);
+  project.taskRunLogs.forEach((logRef) => {
+    if (logRef.path) {
+      const resolvedLogPath = path.join(rootPath, logRef.path);
+      ensureDir(fs, path.dirname(resolvedLogPath));
+      if (!fs.existsSync(resolvedLogPath)) {
+        writeText(fs, resolvedLogPath, '');
+      }
+    }
+  });
   writeJson(fs, path.join(systemDir, 'beta-personas.json'), project.betaPersonas);
   writeJson(fs, path.join(systemDir, 'beta-runs.json'), project.betaRuns);
+  writeJson(fs, path.join(importsDir, 'jobs.json'), project.importJobs);
+  project.importJobs.forEach((job) => {
+    const jobDir = path.join(importStagingDir, job.id);
+    ensureDir(fs, jobDir);
+    writeJson(fs, path.join(jobDir, 'manifest.json'), job);
+    writeJson(fs, path.join(jobDir, 'chapter_candidates.json'), job.chapterCandidates);
+    writeJson(fs, path.join(jobDir, 'scene_candidates.json'), job.sceneCandidates);
+    if (job.sourcePath) {
+      const sourcePath = path.join(rootPath, job.sourcePath);
+      ensureDir(fs, path.dirname(sourcePath));
+      if (!fs.existsSync(sourcePath)) {
+        const sourceBody = project.chapters.map((chapter) => `# ${chapter.title}`).join('\n\n');
+        writeText(fs, sourcePath, sourceBody);
+      }
+    }
+  });
+  writeJson(fs, path.join(promptsDir, 'registry.json'), project.promptTemplates.map((template) => ({
+    id: template.id,
+    name: template.name,
+    agentType: template.agentType,
+    version: template.version,
+    path: `system/prompts/templates/${template.id}.json`,
+  })));
+  project.promptTemplates.forEach((template) => {
+    writeJson(fs, path.join(promptTemplatesDir, `${template.id}.json`), template);
+  });
+  writeJson(fs, path.join(ragDir, 'manifest.json'), project.ragManifest);
+  writeJson(fs, path.join(ragDir, 'retrieval-history.json'), project.retrievalHistory);
+  project.ragDocuments.forEach((document) => {
+    writeJson(fs, path.join(ragDocsDir, `${document.id}.json`), document);
+  });
+  project.ragChunks.forEach((chunk) => {
+    writeJson(fs, path.join(ragChunksDir, `${chunk.id}.json`), chunk);
+  });
+  writeJson(fs, path.join(ragIndexesDir, 'keyword-index.json'), {
+    backend: project.ragManifest.activeBackend,
+    documents: project.ragDocuments.map((document) => ({
+      id: document.id,
+      title: document.title,
+      chunkIds: document.chunkIds,
+    })),
+    chunks: project.ragChunks.map((chunk) => ({
+      id: chunk.id,
+      documentId: chunk.documentId,
+      keywords: chunk.keywords,
+    })),
+  });
+  project.videoPackages.forEach((videoPackage) => {
+    writeJson(fs, path.join(videoExportsDir, `${videoPackage.id}.json`), videoPackage);
+    const manifestTargets = [
+      videoPackage.promptPackagePath,
+      videoPackage.providerPayloadPath,
+      videoPackage.providerResponsePath,
+      videoPackage.renderManifestPath,
+    ].filter(Boolean) as string[];
+    manifestTargets.forEach((target) => {
+      const resolvedTarget = path.join(rootPath, target);
+      ensureDir(fs, path.dirname(resolvedTarget));
+      if (!fs.existsSync(resolvedTarget)) {
+        writeJson(fs, resolvedTarget, {
+          videoPackageId: videoPackage.id,
+          status: videoPackage.status,
+          provider: videoPackage.provider,
+        });
+      }
+    });
+  });
   writeJson(fs, path.join(systemDir, 'index-cache.json'), {
     unreadUpdates: project.unreadUpdates,
     archivedIds: project.archivedIds,
@@ -314,6 +465,9 @@ const hydrateProjectMetadata = (
     rootPath,
     storageMode,
     locale: locale || project.metadata.locale,
+    capabilities: project.metadata.capabilities,
+    storageBackends: project.metadata.storageBackends,
+    futureBackends: project.metadata.futureBackends,
     updatedAt: new Date().toISOString(),
   },
 });
@@ -377,43 +531,52 @@ export const projectService = {
     const timelineDir = runtime.path.join(entitiesDir, 'timeline');
     const worldDir = runtime.path.join(entitiesDir, 'world');
     const graphDir = runtime.path.join(entitiesDir, 'graph');
+    const scriptsDir = runtime.path.join(entitiesDir, 'scripts');
+    const storyboardsDir = runtime.path.join(entitiesDir, 'storyboards');
     const chaptersDir = runtime.path.join(resolvedPath, 'writing', 'chapters');
     const scenesDir = runtime.path.join(resolvedPath, 'writing', 'scenes');
     const systemDir = runtime.path.join(resolvedPath, 'system');
     const tasksDir = runtime.path.join(systemDir, 'tasks');
     const runsDir = runtime.path.join(systemDir, 'runs');
+    const promptsDir = runtime.path.join(systemDir, 'prompts');
+    const promptTemplatesDir = runtime.path.join(promptsDir, 'templates');
+    const importsDir = runtime.path.join(systemDir, 'imports');
+    const ragDir = runtime.path.join(systemDir, 'rag');
+    const ragDocsDir = runtime.path.join(ragDir, 'documents');
+    const ragChunksDir = runtime.path.join(ragDir, 'chunks');
+    const videoExportsDir = runtime.path.join(resolvedPath, 'exports', 'video');
 
-    const readJsonFiles = (directory: string) =>
-      runtime.fs
-        .readdirSync(directory)
-        .filter((fileName) => fileName.endsWith('.json'))
-        .map((fileName) => JSON.parse(runtime.fs.readFileSync(runtime.path.join(directory, fileName), 'utf8')));
-
-    const sceneMetas = runtime.fs
-      .readdirSync(scenesDir)
+    const sceneMetas = (runtime.fs.existsSync(scenesDir) ? runtime.fs.readdirSync(scenesDir) : [])
       .filter((fileName) => fileName.endsWith('.meta.json'))
       .map((fileName) => JSON.parse(runtime.fs.readFileSync(runtime.path.join(scenesDir, fileName), 'utf8')));
+
+    const scriptMetas = readJsonFilesSafe<NarrativeProject['scripts'][number]>(runtime, scriptsDir);
 
     const exportsPath = runtime.path.join(systemDir, 'exports.json');
     const project = {
       metadata: projectIndex.metadata,
-      characters: readJsonFiles(runtime.path.join(entitiesDir, 'characters')),
+      characters: readJsonFilesSafe<NarrativeProject['characters'][number]>(runtime, runtime.path.join(entitiesDir, 'characters')),
       characterTags: safeReadJson(runtime.fs, runtime.path.join(entitiesDir, 'character-tags.json'), []),
-      candidates: JSON.parse(runtime.fs.readFileSync(runtime.path.join(entitiesDir, 'candidates.json'), 'utf8')),
-      timelineBranches: JSON.parse(runtime.fs.readFileSync(runtime.path.join(timelineDir, 'branches.json'), 'utf8')),
-      timelineEvents: readJsonFiles(timelineDir).filter((item) => item.id),
-      relationships: JSON.parse(runtime.fs.readFileSync(runtime.path.join(entitiesDir, 'relationships.json'), 'utf8')),
-      chapters: readJsonFiles(chaptersDir),
+      candidates: safeReadJson(runtime.fs, runtime.path.join(entitiesDir, 'candidates.json'), []),
+      timelineBranches: safeReadJson(runtime.fs, runtime.path.join(timelineDir, 'branches.json'), []),
+      timelineEvents: readJsonFilesSafe<NarrativeProject['timelineEvents'][number]>(runtime, timelineDir).filter((item) => item.id),
+      relationships: safeReadJson(runtime.fs, runtime.path.join(entitiesDir, 'relationships.json'), []),
+      chapters: readJsonFilesSafe<NarrativeProject['chapters'][number]>(runtime, chaptersDir),
       scenes: sceneMetas.map((meta) => ({
         ...meta,
-        content: runtime.fs.readFileSync(runtime.path.join(scenesDir, `${meta.id}.md`), 'utf8'),
+        content: safeReadText(runtime.fs, runtime.path.join(scenesDir, `${meta.id}.md`), ''),
       })),
-      worldContainers: JSON.parse(runtime.fs.readFileSync(runtime.path.join(worldDir, 'containers.json'), 'utf8')),
-      worldItems: readJsonFiles(worldDir).filter((item) => item.id),
-      graphBoards: readJsonFiles(graphDir),
-      proposals: JSON.parse(runtime.fs.readFileSync(runtime.path.join(systemDir, 'inbox.json'), 'utf8')),
-      proposalHistory: JSON.parse(runtime.fs.readFileSync(runtime.path.join(systemDir, 'history.json'), 'utf8')),
-      issues: JSON.parse(runtime.fs.readFileSync(runtime.path.join(systemDir, 'issues.json'), 'utf8')),
+      worldContainers: safeReadJson(runtime.fs, runtime.path.join(worldDir, 'containers.json'), []),
+      worldItems: readJsonFilesSafe<NarrativeProject['worldItems'][number]>(runtime, worldDir).filter((item) => item.id),
+      graphBoards: readJsonFilesSafe<NarrativeProject['graphBoards'][number]>(runtime, graphDir),
+      scripts: scriptMetas.map((meta) => ({
+        ...meta,
+        content: safeReadText(runtime.fs, runtime.path.join(scriptsDir, `${meta.id}.fountain`), ''),
+      })),
+      storyboards: readJsonFilesSafe<NarrativeProject['storyboards'][number]>(runtime, storyboardsDir),
+      proposals: safeReadJson(runtime.fs, runtime.path.join(systemDir, 'inbox.json'), []),
+      proposalHistory: safeReadJson(runtime.fs, runtime.path.join(systemDir, 'history.json'), []),
+      issues: safeReadJson(runtime.fs, runtime.path.join(systemDir, 'issues.json'), []),
       exports: runtime.fs.existsSync(exportsPath)
         ? JSON.parse(runtime.fs.readFileSync(exportsPath, 'utf8'))
         : [],
@@ -422,6 +585,18 @@ export const projectService = {
       taskRequests: safeReadJson(runtime.fs, runtime.path.join(tasksDir, 'requests.json'), []),
       taskRuns: safeReadJson(runtime.fs, runtime.path.join(runsDir, 'runs.json'), []),
       taskArtifacts: safeReadJson(runtime.fs, runtime.path.join(runsDir, 'artifacts.json'), []),
+      taskRunLogs: safeReadJson(runtime.fs, runtime.path.join(runsDir, 'logs.json'), []),
+      importJobs: safeReadJson(runtime.fs, runtime.path.join(importsDir, 'jobs.json'), []),
+      promptTemplates: readJsonFilesSafe<NarrativeProject['promptTemplates'][number]>(runtime, promptTemplatesDir),
+      ragDocuments: readJsonFilesSafe<NarrativeProject['ragDocuments'][number]>(runtime, ragDocsDir),
+      ragChunks: readJsonFilesSafe<NarrativeProject['ragChunks'][number]>(runtime, ragChunksDir),
+      ragManifest: safeReadJson<NarrativeProject['ragManifest']>(runtime.fs, runtime.path.join(ragDir, 'manifest.json'), {
+        activeBackend: 'keyword',
+        futureBackends: ['embedding'],
+        storageBackend: 'project-folder-keyword-index',
+      }),
+      retrievalHistory: safeReadJson(runtime.fs, runtime.path.join(ragDir, 'retrieval-history.json'), []),
+      videoPackages: readJsonFilesSafe<NarrativeProject['videoPackages'][number]>(runtime, videoExportsDir),
       uiState: safeReadJson(runtime.fs, runtime.path.join(systemDir, 'ui-state.json'), undefined),
       ...safeReadJson(runtime.fs, runtime.path.join(systemDir, 'index-cache.json'), {
         unreadUpdates: { activities: {}, sections: {}, entities: {} },

@@ -1,0 +1,66 @@
+{
+  "id": "import-agent",
+  "name": "Import Agent",
+  "agentType": "import-agent",
+  "purpose": "Import raw novel files and produce canonical-safe chapter/scene skeletons plus review artifacts.",
+  "inputContract": [
+    {
+      "name": "project_context",
+      "description": "Canonical project snapshot or scoped entity references.",
+      "required": true
+    },
+    {
+      "name": "task_input",
+      "description": "Agent-specific input payload.",
+      "required": true
+    }
+  ],
+  "outputContract": [
+    {
+      "name": "artifacts",
+      "description": "Structured output artifacts for downstream storage.",
+      "required": true
+    },
+    {
+      "name": "review_notes",
+      "description": "Notes for Workbench or operator review.",
+      "required": true
+    }
+  ],
+  "reviewPolicy": "manual_workbench",
+  "promptTemplate": "Agent Goal:\nImport raw manuscript content and extract deterministic structure only.\n\nInputs:\n- source document\n- import config\n- canonical project snapshot\n\nOutputs:\n- import manifest\n- chapter/scene candidates\n- import review proposals\n\nForbidden:\n- no silent metadata writes\n- no direct mutation of canonical world or character entities\n\nReview Boundary:\n- all inferred metadata must go to Workbench\n\nUser Slots:\n[[USER_CUSTOM_REQUIREMENTS]]\n[[PROJECT_STYLE_GUIDE]]\n[[MODEL_SPECIFIC_NOTES]]",
+  "userCustomPromptSlot": "[[USER_CUSTOM_REQUIREMENTS]]",
+  "modelHints": [
+    "Prefer structured JSON output.",
+    "Never mutate canonical data directly."
+  ],
+  "version": 1,
+  "promptTemplateSlots": [
+    {
+      "token": "[[USER_CUSTOM_REQUIREMENTS]]",
+      "description": "导入时的额外偏好，例如章节点切分偏好。",
+      "example": "优先保留原文章节名，不要自动润色。"
+    },
+    {
+      "token": "[[PROJECT_STYLE_GUIDE]]",
+      "description": "项目通用风格和命名约束。",
+      "example": "角色和地点命名尽量沿用原文译名。"
+    },
+    {
+      "token": "[[MODEL_SPECIFIC_NOTES]]",
+      "description": "模型输出格式或长度约束。",
+      "example": "输出仅限 JSON。"
+    }
+  ],
+  "forbiddenActions": [
+    "Do not write directly to canonical entities or scene files.",
+    "Do not invent missing facts without flagging uncertainty."
+  ],
+  "writeTargets": [
+    "proposal",
+    "issue",
+    "artifact",
+    "run_log"
+  ],
+  "requiresWorkbenchReview": true
+}

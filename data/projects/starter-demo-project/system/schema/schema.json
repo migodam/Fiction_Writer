@@ -1,4 +1,20 @@
 {
-  "schemaVersion": 3,
-  "updatedAt": "2026-03-12T05:29:12.723Z"
+  "schemaVersion": 4,
+  "updatedAt": "2026-03-18T03:54:44.749Z",
+  "capabilities": {
+    "import": true,
+    "rag": true,
+    "scripts": true,
+    "videoWorkflow": true,
+    "promptTemplates": true
+  },
+  "storageBackends": {
+    "canonical": "project-folder-json",
+    "rag": "project-folder-keyword-index"
+  },
+  "futureBackends": [
+    "sqlite",
+    "embedding-provider",
+    "video-provider"
+  ]
 }

@@ -1,0 +1,71 @@
+{
+  "id": "storyboard-shot-planning-agent",
+  "name": "Storyboard / Shot Planning Agent",
+  "agentType": "storyboard-shot-planning-agent",
+  "purpose": "Plan shots and prompt packages from scripts and linked project metadata.",
+  "inputContract": [
+    {
+      "name": "project_context",
+      "description": "Canonical project snapshot or scoped entity references.",
+      "required": true
+    },
+    {
+      "name": "task_input",
+      "description": "Agent-specific input payload.",
+      "required": true
+    }
+  ],
+  "outputContract": [
+    {
+      "name": "artifacts",
+      "description": "Structured output artifacts for downstream storage.",
+      "required": true
+    },
+    {
+      "name": "review_notes",
+      "description": "Notes for Workbench or operator review.",
+      "required": true
+    }
+  ],
+  "reviewPolicy": "manual_workbench",
+  "promptTemplate": "Agent Goal:\nCreate shot lists and visual prompt packages from approved scripts.\n\nInputs:\n- script\n- character/location metadata\n- visual style notes\n\nOutputs:\n- storyboard notes\n- shot list\n- prompt package\n\nUser Slots:\n[[USER_CUSTOM_REQUIREMENTS]]\n[[PROJECT_STYLE_GUIDE]]\n[[VIDEO_STYLE_REQUIREMENTS]]\n[[MODEL_SPECIFIC_NOTES]]",
+  "userCustomPromptSlot": "[[USER_CUSTOM_REQUIREMENTS]]",
+  "modelHints": [
+    "Prefer structured JSON output.",
+    "Never mutate canonical data directly."
+  ],
+  "version": 1,
+  "promptTemplateSlots": [
+    {
+      "token": "[[USER_CUSTOM_REQUIREMENTS]]",
+      "description": "分镜重点，例如镜头密度或人物优先级。",
+      "example": "每场戏控制在 6 个镜头以内。"
+    },
+    {
+      "token": "[[PROJECT_STYLE_GUIDE]]",
+      "description": "项目级视觉叙事要求。",
+      "example": "保持工业奇幻视觉基调。"
+    },
+    {
+      "token": "[[VIDEO_STYLE_REQUIREMENTS]]",
+      "description": "视频或短剧风格要求。",
+      "example": "偏短剧竖屏节奏，强近景。"
+    },
+    {
+      "token": "[[MODEL_SPECIFIC_NOTES]]",
+      "description": "模型输出限制。",
+      "example": "每个 shot 都给一句 visual prompt。"
+    }
+  ],
+  "forbiddenActions": [
+    "Do not write directly to canonical entities or scene files.",
+    "Do not invent missing facts without flagging uncertainty."
+  ],
+  "writeTargets": [
+    "proposal",
+    "issue",
+    "artifact",
+    "run_log"
+  ],
+  "requiresWorkbenchReview": true
+}

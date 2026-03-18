@@ -1,0 +1,71 @@
+{
+  "id": "video-generation-orchestration-agent",
+  "name": "Video Generation Orchestration Agent",
+  "agentType": "video-generation-orchestration-agent",
+  "purpose": "Transform prompt packages into provider-ready video tasks and status artifacts.",
+  "inputContract": [
+    {
+      "name": "project_context",
+      "description": "Canonical project snapshot or scoped entity references.",
+      "required": true
+    },
+    {
+      "name": "task_input",
+      "description": "Agent-specific input payload.",
+      "required": true
+    }
+  ],
+  "outputContract": [
+    {
+      "name": "artifacts",
+      "description": "Structured output artifacts for downstream storage.",
+      "required": true
+    },
+    {
+      "name": "review_notes",
+      "description": "Notes for Workbench or operator review.",
+      "required": true
+    }
+  ],
+  "reviewPolicy": "manual_workbench",
+  "promptTemplate": "Agent Goal:\nPrepare provider-ready video generation tasks without pretending generation has already succeeded.\n\nInputs:\n- shot plan\n- provider config\n- asset refs\n\nOutputs:\n- video task requests\n- provider payloads\n- failure or pending logs\n\nUser Slots:\n[[USER_CUSTOM_REQUIREMENTS]]\n[[PROJECT_STYLE_GUIDE]]\n[[VIDEO_STYLE_REQUIREMENTS]]\n[[MODEL_SPECIFIC_NOTES]]",
+  "userCustomPromptSlot": "[[USER_CUSTOM_REQUIREMENTS]]",
+  "modelHints": [
+    "Prefer structured JSON output.",
+    "Never mutate canonical data directly."
+  ],
+  "version": 1,
+  "promptTemplateSlots": [
+    {
+      "token": "[[USER_CUSTOM_REQUIREMENTS]]",
+      "description": "编排要求，例如 provider 选择或批次大小。",
+      "example": "优先拆成 shot 级任务。"
+    },
+    {
+      "token": "[[PROJECT_STYLE_GUIDE]]",
+      "description": "项目全局约束。",
+      "example": "人物设定不能与 canonical metadata 冲突。"
+    },
+    {
+      "token": "[[VIDEO_STYLE_REQUIREMENTS]]",
+      "description": "视频风格要求。",
+      "example": "冷色调、低饱和、悬疑感。"
+    },
+    {
+      "token": "[[MODEL_SPECIFIC_NOTES]]",
+      "description": "provider 或模型注意事项。",
+      "example": "如果 provider 未配置，只输出 placeholder artifact。"
+    }
+  ],
+  "forbiddenActions": [
+    "Do not write directly to canonical entities or scene files.",
+    "Do not invent missing facts without flagging uncertainty."
+  ],
+  "writeTargets": [
+    "proposal",
+    "issue",
+    "artifact",
+    "run_log"
+  ],
+  "requiresWorkbenchReview": true
+}

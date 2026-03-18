@@ -27,7 +27,14 @@ export const WorldWorkspace = () => {
   const [renamingContainerId, setRenamingContainerId] = useState<string | null>(null);
 
   useEffect(() => {
-    const preferred = sidebarSection === 'maps' ? 'cont_world_map' : sidebarSection === 'organizations' ? 'cont_orgs' : sidebarSection === 'lore' ? 'cont_lore' : 'cont_locations';
+    const preferred =
+      sidebarSection === 'maps'
+        ? 'cont_world_map'
+        : sidebarSection === 'organizations'
+        ? 'cont_orgs'
+        : sidebarSection === 'lore'
+        ? 'cont_lore'
+        : 'cont_locations';
     if (worldContainers.some((entry) => entry.id === preferred)) setActiveContainerId(preferred);
   }, [sidebarSection, worldContainers]);
 

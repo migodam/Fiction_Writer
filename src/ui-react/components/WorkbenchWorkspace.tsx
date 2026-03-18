@@ -16,13 +16,14 @@ import { useI18n } from '../i18n';
 
 export const WorkbenchWorkspace = () => {
   const { sidebarSection } = useUIStore();
-  const { proposals, proposalHistory, issues, resolveProposal, addGraphSyncProposal } = useProjectStore();
+  const { proposals, proposalHistory, issues, importJobs, taskRuns, taskArtifacts, promptTemplates, resolveProposal, addGraphSyncProposal, setSelectedEntity } = useProjectStore();
   const { t } = useI18n();
 
   return (
     <div className="flex h-full bg-bg">
       <div className="flex-1 overflow-y-auto p-8 custom-scrollbar" data-testid="agent-console">
         <WorkbenchHeader />
+        <WorkbenchSummary />
         {sidebarSection === 'inbox' && (
           <InboxPanel
             proposals={proposals}
@@ -32,6 +33,9 @@ export const WorkbenchWorkspace = () => {
         )}
         {sidebarSection === 'history' && <HistoryPanel proposalHistory={proposalHistory} />}
         {sidebarSection === 'issues' && <IssuesPanel issues={issues} />}
+        {sidebarSection === 'imports' && <ImportsPanel importJobs={importJobs} onSelect={(id) => setSelectedEntity('import_job', id)} />}
+        {sidebarSection === 'runs' && <RunsPanel taskRuns={taskRuns} taskArtifacts={taskArtifacts} />}
+        {sidebarSection === 'prompts' && <PromptsPanel promptTemplates={promptTemplates} onSelect={(id) => setSelectedEntity('prompt_template', id)} />}
         {sidebarSection === 'bulk' && (
           <BulkPanel
             pendingCount={proposals.length}
@@ -49,6 +53,144 @@ export const WorkbenchWorkspace = () => {
   );
 };
 
+const ImportsPanel = ({
+  importJobs,
+  onSelect,
+}: {
+  importJobs: ReturnType<typeof useProjectStore.getState>['importJobs'];
+  onSelect: (id: string) => void;
+}) => (
+  <div className="space-y-4" data-testid="workbench-imports-list">
+    {importJobs.map((job) => (
+      <button key={job.id} type="button" className="w-full rounded-2xl border border-border bg-card p-6 text-left shadow-1 transition-colors hover:border-brand/40" onClick={() => onSelect(job.id)}>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <div className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-2">Import Job</div>
+            <h2 className="mt-2 text-xl font-black text-text">{job.sourceFileName}</h2>
+          </div>
+          <div className="rounded-full border border-border px-3 py-1 text-[10px] font-black uppercase tracking-widest text-text-2">
+            {job.stage}
+          </div>
+        </div>
+        <p className="text-sm leading-relaxed text-text-2">
+          Segmentation: {job.segmentationConfidence}. Chapters: {job.chapterCandidates.length}. Scenes: {job.sceneCandidates.length}. Pending proposals: {job.proposalIds.length}.
+        </p>
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          <SummaryPill label="status" value={job.status} />
+          <SummaryPill label="stage" value={job.stage} />
+          <SummaryPill label="review" value={`${job.proposalIds.length} proposals`} />
+        </div>
+        <div className="mt-4 rounded-xl border border-border bg-bg-elev-1 p-4 text-sm text-text-2">
+          {job.notes.join(' ')}
+        </div>
+      </button>
+    ))}
+    {importJobs.length === 0 && (
+      <EmptyState
+        icon={<Inbox size={56} />}
+        title="No imports"
+        description="Novel import jobs and staging summaries will appear here."
+      />
+    )}
+  </div>
+);
+
+const RunsPanel = ({
+  taskRuns,
+  taskArtifacts,
+}: {
+  taskRuns: ReturnType<typeof useProjectStore.getState>['taskRuns'];
+  taskArtifacts: ReturnType<typeof useProjectStore.getState>['taskArtifacts'];
+}) => (
+  <div className="space-y-4" data-testid="workbench-runs-list">
+    {taskRuns.map((run) => (
+      <div key={run.id} className="rounded-2xl border border-border bg-card p-6 shadow-1">
+        <div className="mb-3 flex items-start justify-between gap-4">
+          <div>
+            <div className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-2">{run.executor} / {run.adapter}</div>
+            <h2 className="mt-2 text-lg font-black text-text">{run.summary}</h2>
+          </div>
+          <div className="rounded-full border border-border px-3 py-1 text-[10px] font-black uppercase tracking-widest text-text-2">
+            {run.status}
+          </div>
+        </div>
+        {run.awaitingUserInput && (
+          <div className="mb-4 rounded-xl border border-amber/30 bg-amber/10 p-4 text-sm text-text-2">
+            Awaiting user input: {run.awaitingUserInput.reason}
+          </div>
+        )}
+        {run.failure && (
+          <div className="mb-4 rounded-xl border border-red/30 bg-red/10 p-4 text-sm text-text-2">
+            Failure: {run.failure.message}
+          </div>
+        )}
+        <div className="space-y-2">
+          {taskArtifacts
+            .filter((artifact) => run.artifactIds.includes(artifact.id))
+            .map((artifact) => (
+              <div key={artifact.id} className="rounded-xl border border-border bg-bg-elev-1 p-3 text-sm text-text-2">
+                <div className="font-bold text-text">{artifact.summary}</div>
+                <div className="mt-1 text-[10px] uppercase tracking-[0.2em] text-text-3">{artifact.type}</div>
+              </div>
+            ))}
+        </div>
+      </div>
+    ))}
+    {taskRuns.length === 0 && (
+      <EmptyState
+        icon={<History size={56} />}
+        title="No runs"
+        description="Task run logs and artifacts will appear here."
+      />
+    )}
+  </div>
+);
+
+const PromptsPanel = ({
+  promptTemplates,
+  onSelect,
+}: {
+  promptTemplates: ReturnType<typeof useProjectStore.getState>['promptTemplates'];
+  onSelect: (id: string) => void;
+}) => (
+  <div className="space-y-4" data-testid="workbench-prompts-list">
+    {promptTemplates.map((template) => (
+      <button key={template.id} type="button" className="w-full rounded-2xl border border-border bg-card p-6 text-left shadow-1 transition-colors hover:border-brand/40" onClick={() => onSelect(template.id)}>
+        <div className="mb-3 flex items-start justify-between gap-4">
+          <div>
+            <div className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-2">{template.agentType}</div>
+            <h2 className="mt-2 text-lg font-black text-text">{template.name}</h2>
+          </div>
+          <div className="rounded-full border border-border px-3 py-1 text-[10px] font-black uppercase tracking-widest text-text-2">
+            v{template.version}
+          </div>
+        </div>
+        <p className="text-sm leading-relaxed text-text-2">{template.purpose}</p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <SummaryPill label="review" value={template.reviewPolicy} />
+          <SummaryPill label="target" value={template.writeTargets.join(', ')} />
+          <SummaryPill label="slot" value={template.userCustomPromptSlot} />
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          {template.promptTemplateSlots.map((slot) => (
+            <div key={slot.token} className="rounded-xl border border-border bg-bg-elev-1 p-3">
+              <div className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-2">{slot.token}</div>
+              <div className="mt-2 text-sm text-text-2">{slot.description}</div>
+            </div>
+          ))}
+        </div>
+      </button>
+    ))}
+    {promptTemplates.length === 0 && (
+      <EmptyState
+        icon={<Sparkles size={56} />}
+        title="No prompt templates"
+        description="Project-local agent prompt templates will appear here."
+      />
+    )}
+  </div>
+);
+
 const WorkbenchHeader = () => {
   const { t } = useI18n();
   return (
@@ -64,6 +206,19 @@ const WorkbenchHeader = () => {
       </p>
     </div>
   </div>
+  );
+};
+
+const WorkbenchSummary = () => {
+  const { proposals, issues, importJobs, taskRuns, promptTemplates } = useProjectStore();
+  return (
+    <div className="mb-8 grid gap-4 md:grid-cols-5">
+      <SummaryCard label="Inbox" value={String(proposals.length)} />
+      <SummaryCard label="Issues" value={String(issues.length)} />
+      <SummaryCard label="Imports" value={String(importJobs.length)} />
+      <SummaryCard label="Active Runs" value={String(taskRuns.filter((run) => run.status === 'running' || run.status === 'awaiting_user_input' || run.status === 'queued').length)} />
+      <SummaryCard label="Prompt Templates" value={String(promptTemplates.length)} />
+    </div>
   );
 };
 
@@ -285,5 +440,18 @@ const EmptyState = ({
     <div className="mb-5 opacity-30">{icon}</div>
     <h2 className="text-lg font-black uppercase tracking-[0.2em]">{title}</h2>
     <p className="mt-3 max-w-md text-sm leading-relaxed text-text-2">{description}</p>
+  </div>
+);
+
+const SummaryCard = ({ label, value }: { label: string; value: string }) => (
+  <div className="rounded-2xl border border-border bg-card p-4 shadow-1">
+    <div className="text-[10px] font-black uppercase tracking-[0.2em] text-text-3">{label}</div>
+    <div className="mt-2 text-2xl font-black text-text">{value}</div>
+  </div>
+);
+
+const SummaryPill = ({ label, value }: { label: string; value: string }) => (
+  <div className="rounded-full border border-border bg-bg px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">
+    {label}: {value}
   </div>
 );

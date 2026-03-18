@@ -13,18 +13,26 @@ import type {
   ExportArtifact,
   GraphBoard,
   GraphNode,
+  ImportJob,
   Locale,
   NarrativeProject,
+  PromptTemplate,
   Proposal,
+  RagChunk,
+  RagDocument,
   SaveStatus,
   Scene,
   SearchResult,
   Selection,
+  StoryboardPlan,
+  ScriptDocument,
   TaskArtifact,
   TaskRequest,
   TaskRun,
+  TaskRunLogRef,
   TimelineBranch,
   TimelineEvent,
+  VideoGenerationPackage,
   WorldContainer,
   WorldItem,
 } from './models/project';
@@ -99,6 +107,14 @@ interface ProjectState {
   taskRequests: TaskRequest[];
   taskRuns: TaskRun[];
   taskArtifacts: TaskArtifact[];
+  taskRunLogs: TaskRunLogRef[];
+  importJobs: ImportJob[];
+  promptTemplates: PromptTemplate[];
+  ragDocuments: RagDocument[];
+  ragChunks: RagChunk[];
+  scripts: ScriptDocument[];
+  storyboards: StoryboardPlan[];
+  videoPackages: VideoGenerationPackage[];
   proposals: Proposal[];
   proposalHistory: Proposal[];
   issues: ConsistencyIssue[];
@@ -132,6 +148,7 @@ interface ProjectState {
   updateChapter: (chapter: Chapter) => void;
   addScene: (scene: Scene) => void;
   updateScene: (scene: Scene) => void;
+  updateScript: (script: ScriptDocument) => void;
   addWorldContainer: (container: WorldContainer) => void;
   updateWorldContainer: (container: WorldContainer) => void;
   deleteWorldContainer: (id: string) => void;
@@ -190,6 +207,14 @@ const deriveState = (project: NarrativeProject) => ({
   taskRequests: project.taskRequests,
   taskRuns: project.taskRuns,
   taskArtifacts: project.taskArtifacts,
+  taskRunLogs: project.taskRunLogs,
+  importJobs: project.importJobs,
+  promptTemplates: project.promptTemplates,
+  ragDocuments: project.ragDocuments,
+  ragChunks: project.ragChunks,
+  scripts: project.scripts,
+  storyboards: project.storyboards,
+  videoPackages: project.videoPackages,
   proposals: project.proposals,
   proposalHistory: project.proposalHistory,
   issues: project.issues,
@@ -225,6 +250,16 @@ const cloneProject = (state: ProjectState, locale?: Locale): NarrativeProject =>
   taskRequests: state.taskRequests,
   taskRuns: state.taskRuns,
   taskArtifacts: state.taskArtifacts,
+  taskRunLogs: state.taskRunLogs,
+  importJobs: state.importJobs,
+  promptTemplates: state.promptTemplates,
+  ragDocuments: state.ragDocuments,
+  ragChunks: state.ragChunks,
+  ragManifest: state.currentProject?.ragManifest || defaultProject.ragManifest,
+  retrievalHistory: state.currentProject?.retrievalHistory || defaultProject.retrievalHistory,
+  scripts: state.scripts,
+  storyboards: state.storyboards,
+  videoPackages: state.videoPackages,
   proposals: state.proposals,
   proposalHistory: state.proposalHistory,
   issues: state.issues,
@@ -298,11 +333,11 @@ export const useUIStore = create<UIState>((set) => ({
   setPanelWidth: (panel, width) => set(() => {
     const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
     const next =
-      panel === 'sidebar' ? { sidebarWidth: clamp(width, 220, 420) } :
-      panel === 'inspector' ? { inspectorWidth: clamp(width, 280, 560) } :
-      panel === 'agentDock' ? { agentDockWidth: clamp(width, 260, 520) } :
-      panel === 'writingOutline' ? { writingOutlineWidth: clamp(width, 240, 460) } :
-      { writingContextWidth: clamp(width, 260, 520) };
+      panel === 'sidebar' ? { sidebarWidth: clamp(width, 120, 420) } :
+      panel === 'inspector' ? { inspectorWidth: clamp(width, 220, 560) } :
+      panel === 'agentDock' ? { agentDockWidth: clamp(width, 180, 520) } :
+      panel === 'writingOutline' ? { writingOutlineWidth: clamp(width, 160, 500) } :
+      { writingContextWidth: clamp(width, 180, 520) };
     persistUiSettings(next);
     return next as Partial<UIState>;
   }),
@@ -402,6 +437,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   updateChapter: (chapter) => set((state) => withDirtyState({ chapters: state.chapters.map((entry) => entry.id === chapter.id ? chapter : entry) })),
   addScene: (scene) => set((state) => withDirtyState({ scenes: [...state.scenes, scene] })),
   updateScene: (scene) => set((state) => withDirtyState({ scenes: state.scenes.map((entry) => entry.id === scene.id ? scene : entry), currentSceneContent: scene.content })),
+  updateScript: (script) => set((state) => withDirtyState({ scripts: state.scripts.map((entry) => entry.id === script.id ? script : entry) })),
   addWorldContainer: (container) => set((state) => withDirtyState({ worldContainers: [...state.worldContainers, container] })),
   updateWorldContainer: (container) => set((state) => withDirtyState({ worldContainers: state.worldContainers.map((entry) => entry.id === container.id ? container : entry) })),
   deleteWorldContainer: (id) => set((state) => withDirtyState({ worldContainers: state.worldContainers.filter((entry) => entry.id !== id), worldItems: state.worldItems.filter((entry) => entry.containerId !== id) })),
@@ -422,7 +458,20 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   resolveProposal: (proposalId, status) => set((state) => withDirtyState(projectService.resolveProposal(cloneProject(state, useUIStore.getState().locale), proposalId, status))),
   addProposal: (proposal) => set((state) => withDirtyState({ proposals: [proposal, ...state.proposals], unreadUpdates: { ...state.unreadUpdates, activities: { ...state.unreadUpdates.activities, workbench: true }, sections: { ...state.unreadUpdates.sections, 'workbench.inbox': true }, entities: { ...state.unreadUpdates.entities, [proposal.id]: true } } })),
   addGraphSyncProposal: (title, preview) => set((state) => {
-    const proposal: Proposal = { id: `proposal_${Date.now()}`, title, source: 'graph', description: 'Generated from graph selection and routed into Workbench.', targetEntityType: 'proposal', targetEntityId: null, preview, status: 'pending', createdAt: now() };
+    const proposal: Proposal = {
+      id: `proposal_${Date.now()}`,
+      title,
+      source: 'graph',
+      kind: 'entity_update',
+      description: 'Generated from graph selection and routed into Workbench.',
+      targetEntityType: 'proposal',
+      targetEntityId: null,
+      targetEntityRefs: [],
+      preview,
+      reviewPolicy: 'manual_workbench',
+      status: 'pending',
+      createdAt: now(),
+    };
     return withDirtyState({ proposals: [proposal, ...state.proposals], unreadUpdates: { ...state.unreadUpdates, activities: { ...state.unreadUpdates.activities, workbench: true, graph: true }, sections: { ...state.unreadUpdates.sections, 'workbench.inbox': true }, entities: { ...state.unreadUpdates.entities, [proposal.id]: true } } });
   }),
   addExportArtifact: (artifact) => set((state) => withDirtyState({ exports: [artifact, ...state.exports] })),
@@ -479,6 +528,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     pushMatches(state.worldItems, 'world_item', (item) => item.name, (item) => item.type);
     pushMatches(state.proposals, 'proposal', (item) => item.title, 'Workbench Proposal');
     pushMatches(state.scenes, 'scene', (item) => item.title, 'Scene');
+    pushMatches(state.scripts, 'script', (item) => item.title, 'Script');
+    pushMatches(state.storyboards, 'storyboard', (item) => item.title, 'Storyboard');
+    pushMatches(state.importJobs, 'import_job', (item) => item.sourceFileName, 'Import Job');
+    pushMatches(state.promptTemplates, 'prompt_template', (item) => item.name, 'Prompt Template');
     pushMatches(state.graphBoards, 'graph_board', (item) => item.name, 'Graph Board');
     pushMatches(state.betaPersonas, 'beta_persona', (item) => item.name, 'Beta Persona');
     return stateResults;
