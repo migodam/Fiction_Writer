@@ -19,6 +19,10 @@ import type {
   Relationship,
   Scene,
   ScriptDocument,
+  SimulationEngine,
+  SimulationLab,
+  SimulationReviewer,
+  SimulationRun,
   StoryboardPlan,
   TaskArtifact,
   TaskRequest,
@@ -28,6 +32,8 @@ import type {
   TimelineEvent,
   VideoGenerationPackage,
   WorldContainer,
+  WorldMapDocument,
+  WorldSettings,
   WorldItem,
 } from '../models/project';
 import { PROJECT_SCHEMA_VERSION } from '../models/project';
@@ -250,12 +256,81 @@ const createDefaultUiState = (): NarrativeProject['uiState'] => ({
     activeGraphBoardId: 'board_main',
     activeTimelineBranchId: 'branch_main',
     lastOpenedSceneId: 'scene_arrival',
+    importSessionId: null,
   },
   density: 'comfortable',
   editorWidth: 'focused',
   motionLevel: 'full',
   experimentalFlags: ['context-menu', 'graph-canvas-pan'],
 });
+
+const createWorldSettings = (): WorldSettings => ({
+  projectType: 'urban fantasy mystery',
+  narrativePacing: 'tight, escalating, chapter-end hooks',
+  languageStyle: 'cinematic, tactile, precise',
+  narrativePerspective: 'close third person with rotating POV',
+  lengthStrategy: 'supports long serial arcs and thousand-chapter expansion',
+  worldRulesSummary: 'Memory shards alter political power, routes, and identity; public institutions and covert networks compete to control them.',
+});
+
+const createWorldMaps = (): WorldMapDocument[] => [
+  {
+    id: 'map_city_primary',
+    title: 'Asterfall City Map',
+    description: 'Annotated city map with route and location markers.',
+    assetPath: defaultMapAsset,
+    markerIds: ['marker_sky_map', 'marker_market_map', 'marker_lantern_map', 'marker_bridge_map'],
+    sortOrder: 0,
+  },
+  {
+    id: 'map_routes_overlay',
+    title: 'Shadow Routes Overlay',
+    description: 'Secondary map showing illicit paths and missing transit layers.',
+    assetPath: defaultMapAsset,
+    markerIds: ['marker_market_map', 'marker_bridge_map'],
+    sortOrder: 1,
+  },
+];
+
+const createSimulationEngines = (): SimulationEngine[] => [
+  { id: 'engine_lab_main_scenario', name: 'Scenario Engine', type: 'scenario', summary: 'Predict likely next scenario threads.', promptOverride: 'Focus on next 3 scenario beats.', enabled: true, inputNotes: 'Use current chapters and open issues.' },
+  { id: 'engine_lab_main_character', name: 'Character Engine', type: 'character', summary: 'Predict likely next character decisions.', promptOverride: 'Weight protagonist and antagonist motivations first.', enabled: true, targetCharacterId: 'char_aria' },
+  { id: 'engine_lab_main_author', name: 'Author Engine', type: 'author', summary: 'Forecast twists, reversals, and pacing spikes.', promptOverride: 'Prioritize escalation and reversals every 2-3 chapters.', enabled: true },
+  { id: 'engine_lab_main_reader', name: 'Reader Engine', type: 'reader', summary: 'Infer what readers may want next.', promptOverride: 'Bias toward beta reader aggregate preferences.', enabled: true },
+  { id: 'engine_lab_main_logic', name: 'Logic Engine', type: 'logic', summary: 'Forecast from established story logic and constraints.', promptOverride: 'Disallow contradictions with world rules.', enabled: true },
+  { id: 'engine_reviewer_logic', name: 'Reviewer Logic', type: 'logic', summary: 'Score logical consistency and point out weak causal links.', promptOverride: 'Output critique and scores only.', enabled: true },
+];
+
+const createSimulationLabs = (): SimulationLab[] => [
+  {
+    id: 'lab_main',
+    name: 'Main Forecast Lab',
+    description: 'Primary lab for predicting next developments across scenario, character, author, reader, and logic engines.',
+    engineIds: ['engine_lab_main_scenario', 'engine_lab_main_character', 'engine_lab_main_author', 'engine_lab_main_reader', 'engine_lab_main_logic'],
+    summary: 'Use this lab when you want a broad prediction sweep.',
+  },
+];
+
+const createSimulationReviewers = (): SimulationReviewer[] => [
+  {
+    id: 'reviewer_main',
+    name: 'Narrative Reviewer',
+    description: 'Checks coherence, scores current material, and flags weaknesses.',
+    engineIds: ['engine_reviewer_logic'],
+    scoringNotes: 'Logic-heavy reviewer with explicit scoring output.',
+  },
+];
+
+const createSimulationRuns = (): SimulationRun[] => [
+  {
+    id: 'sim_run_seed_lab',
+    entityId: 'lab_main',
+    entityType: 'lab',
+    createdAt: now(),
+    status: 'completed',
+    output: 'Scenario engine expects a public fallout chapter, character engine expects Aria to trust Rowan reluctantly, author engine suggests a reveal reversal by chapter 3.',
+  },
+];
 
 const mapSvg = encodeURIComponent(`
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800">
@@ -295,6 +370,26 @@ const createStarterCharacters = (): Character[] => [
     linkedSceneIds: ['scene_arrival', 'scene_archive', 'scene_bridge'],
     linkedEventIds: ['event_arrival', 'event_shard', 'event_bridge'],
     linkedWorldItemIds: ['loc_sky_dock', 'item_memory_shard'],
+    importance: 'core',
+    groupKey: 'core',
+    relationshipIds: ['rel_aria_rowan', 'rel_aria_seren', 'rel_aria_vesper'],
+    povInsights: {
+      summary: 'Aria carries the clearest POV spine and the strongest duty-vs-trust conflict.',
+      scores: [
+        { key: 'agency', label: 'Agency', score: 92 },
+        { key: 'volatility', label: 'Volatility', score: 68 },
+        { key: 'mystery', label: 'Mystery Value', score: 88 },
+      ],
+      radar: [
+        { key: 'resolve', label: 'Resolve', score: 90 },
+        { key: 'empathy', label: 'Empathy', score: 76 },
+        { key: 'risk', label: 'Risk Appetite', score: 71 },
+        { key: 'secrecy', label: 'Secrecy', score: 84 },
+        { key: 'leadership', label: 'Leadership', score: 79 },
+      ],
+      source: 'placeholder',
+      updatedAt: now(),
+    },
     statusFlags: { protagonist: true, alive: true },
   },
   {
@@ -316,6 +411,26 @@ const createStarterCharacters = (): Character[] => [
     linkedSceneIds: ['scene_arrival', 'scene_market'],
     linkedEventIds: ['event_arrival', 'event_market'],
     linkedWorldItemIds: ['loc_flood_market'],
+    importance: 'major',
+    groupKey: 'major',
+    relationshipIds: ['rel_aria_rowan', 'rel_rowan_nila'],
+    povInsights: {
+      summary: 'Rowan is a pressure-release POV with tactical ambiguity and strong decision prediction value.',
+      scores: [
+        { key: 'agency', label: 'Agency', score: 74 },
+        { key: 'volatility', label: 'Volatility', score: 63 },
+        { key: 'mystery', label: 'Mystery Value', score: 82 },
+      ],
+      radar: [
+        { key: 'resolve', label: 'Resolve', score: 72 },
+        { key: 'empathy', label: 'Empathy', score: 58 },
+        { key: 'risk', label: 'Risk Appetite', score: 66 },
+        { key: 'secrecy', label: 'Secrecy', score: 88 },
+        { key: 'leadership', label: 'Leadership', score: 54 },
+      ],
+      source: 'placeholder',
+      updatedAt: now(),
+    },
     statusFlags: { alive: true },
   },
   {
@@ -337,6 +452,26 @@ const createStarterCharacters = (): Character[] => [
     linkedSceneIds: ['scene_choir', 'scene_bridge'],
     linkedEventIds: ['event_choir', 'event_bridge'],
     linkedWorldItemIds: ['org_glass_choir', 'loc_lantern_ward'],
+    importance: 'major',
+    groupKey: 'major',
+    relationshipIds: ['rel_aria_seren', 'rel_seren_vesper'],
+    povInsights: {
+      summary: 'Seren works best as a conviction-driven POV that sharpens public stakes.',
+      scores: [
+        { key: 'agency', label: 'Agency', score: 85 },
+        { key: 'volatility', label: 'Volatility', score: 57 },
+        { key: 'mystery', label: 'Mystery Value', score: 61 },
+      ],
+      radar: [
+        { key: 'resolve', label: 'Resolve', score: 94 },
+        { key: 'empathy', label: 'Empathy', score: 81 },
+        { key: 'risk', label: 'Risk Appetite', score: 75 },
+        { key: 'secrecy', label: 'Secrecy', score: 46 },
+        { key: 'leadership', label: 'Leadership', score: 88 },
+      ],
+      source: 'placeholder',
+      updatedAt: now(),
+    },
     statusFlags: { alive: true },
   },
   {
@@ -358,6 +493,26 @@ const createStarterCharacters = (): Character[] => [
     linkedSceneIds: ['scene_consul', 'scene_bridge'],
     linkedEventIds: ['event_shard', 'event_bridge'],
     linkedWorldItemIds: ['org_black_tide', 'item_memory_shard'],
+    importance: 'core',
+    groupKey: 'core',
+    relationshipIds: ['rel_aria_vesper', 'rel_seren_vesper'],
+    povInsights: {
+      summary: 'Vesper is a high-control antagonist POV best used sparingly for precision reveals.',
+      scores: [
+        { key: 'agency', label: 'Agency', score: 89 },
+        { key: 'volatility', label: 'Volatility', score: 44 },
+        { key: 'mystery', label: 'Mystery Value', score: 95 },
+      ],
+      radar: [
+        { key: 'resolve', label: 'Resolve', score: 87 },
+        { key: 'empathy', label: 'Empathy', score: 28 },
+        { key: 'risk', label: 'Risk Appetite', score: 52 },
+        { key: 'secrecy', label: 'Secrecy', score: 97 },
+        { key: 'leadership', label: 'Leadership', score: 83 },
+      ],
+      source: 'placeholder',
+      updatedAt: now(),
+    },
     statusFlags: { antagonist: true, alive: true },
   },
   {
@@ -379,6 +534,26 @@ const createStarterCharacters = (): Character[] => [
     linkedSceneIds: ['scene_archive', 'scene_bridge'],
     linkedEventIds: ['event_shard', 'event_bridge'],
     linkedWorldItemIds: ['item_city_map'],
+    importance: 'supporting',
+    groupKey: 'supporting',
+    relationshipIds: ['rel_rowan_nila'],
+    povInsights: {
+      summary: 'Nila adds analytic clarity and map-centric exposition without stalling pace.',
+      scores: [
+        { key: 'agency', label: 'Agency', score: 67 },
+        { key: 'volatility', label: 'Volatility', score: 51 },
+        { key: 'mystery', label: 'Mystery Value', score: 72 },
+      ],
+      radar: [
+        { key: 'resolve', label: 'Resolve', score: 69 },
+        { key: 'empathy', label: 'Empathy', score: 73 },
+        { key: 'risk', label: 'Risk Appetite', score: 48 },
+        { key: 'secrecy', label: 'Secrecy', score: 58 },
+        { key: 'leadership', label: 'Leadership', score: 44 },
+      ],
+      source: 'placeholder',
+      updatedAt: now(),
+    },
     statusFlags: { alive: true },
   },
 ];
@@ -569,9 +744,9 @@ const createWorldItems = (): WorldItem[] => [
 ];
 
 const createStarterBranches = (): TimelineBranch[] => [
-  { id: 'branch_main', name: 'Main Investigation', description: 'Primary narrative thread.', parentBranchId: null, forkEventId: null, mergeEventId: 'event_merge_public', color: '#f59e0b', sortOrder: 0, collapsed: false },
-  { id: 'branch_shadow', name: 'Shadow Routes', description: 'Undercity movements and hidden handoffs.', parentBranchId: 'branch_main', forkEventId: 'event_arrival', mergeEventId: 'event_bridge', color: '#38bdf8', sortOrder: 1, collapsed: false },
-  { id: 'branch_public', name: 'Public Pressure', description: 'Political and civic fallout.', parentBranchId: 'branch_main', forkEventId: 'event_arrival', mergeEventId: 'event_merge_public', color: '#22c55e', sortOrder: 2, collapsed: false },
+  { id: 'branch_main', name: 'Main Investigation', description: 'Primary narrative thread.', parentBranchId: null, forkEventId: null, mergeEventId: 'event_merge_public', color: '#f59e0b', sortOrder: 0, collapsed: false, mode: 'root', startAnchor: null, endMode: 'open', mergeTargetBranchId: null, geometry: { laneOffset: 0, bend: 0.18, thickness: 1 } },
+  { id: 'branch_shadow', name: 'Shadow Routes', description: 'Undercity movements and hidden handoffs.', parentBranchId: 'branch_main', forkEventId: 'event_arrival', mergeEventId: 'event_bridge', color: '#38bdf8', sortOrder: 1, collapsed: false, mode: 'forked', startAnchor: { branchId: 'branch_main', eventId: 'event_arrival' }, endMode: 'merge', mergeTargetBranchId: 'branch_main', geometry: { laneOffset: -90, bend: 0.36, thickness: 1 } },
+  { id: 'branch_public', name: 'Public Pressure', description: 'Political and civic fallout.', parentBranchId: 'branch_main', forkEventId: 'event_arrival', mergeEventId: 'event_merge_public', color: '#22c55e', sortOrder: 2, collapsed: false, mode: 'forked', startAnchor: { branchId: 'branch_main', eventId: 'event_arrival' }, endMode: 'merge', mergeTargetBranchId: 'branch_main', geometry: { laneOffset: 110, bend: 0.28, thickness: 1 } },
 ];
 
 const createStarterEvents = (): TimelineEvent[] => [
@@ -588,6 +763,10 @@ const createStarterEvents = (): TimelineEvent[] => [
     linkedWorldItemIds: ['loc_sky_dock'],
     tags: ['arrival'],
     sharedBranchIds: ['branch_shadow', 'branch_public'],
+    importance: 'high',
+    colorToken: 'amber',
+    layoutLock: true,
+    modalStateHints: ['fork-anchor'],
   },
   {
     id: 'event_market',
@@ -601,6 +780,10 @@ const createStarterEvents = (): TimelineEvent[] => [
     linkedSceneIds: ['scene_market'],
     linkedWorldItemIds: ['item_city_map'],
     tags: ['intel'],
+    importance: 'medium',
+    colorToken: 'sky',
+    layoutLock: false,
+    modalStateHints: ['branch-shadow'],
   },
   {
     id: 'event_choir',
@@ -614,6 +797,10 @@ const createStarterEvents = (): TimelineEvent[] => [
     linkedSceneIds: ['scene_choir'],
     linkedWorldItemIds: ['lore_memory_tax', 'org_glass_choir'],
     tags: ['politics'],
+    importance: 'medium',
+    colorToken: 'emerald',
+    layoutLock: false,
+    modalStateHints: ['branch-public'],
   },
   {
     id: 'event_shard',
@@ -627,6 +814,10 @@ const createStarterEvents = (): TimelineEvent[] => [
     linkedSceneIds: ['scene_archive', 'scene_consul'],
     linkedWorldItemIds: ['item_memory_shard', 'org_meridian'],
     tags: ['artifact'],
+    importance: 'high',
+    colorToken: 'amber',
+    layoutLock: false,
+    modalStateHints: ['mainline'],
   },
   {
     id: 'event_bridge',
@@ -641,6 +832,10 @@ const createStarterEvents = (): TimelineEvent[] => [
     linkedWorldItemIds: ['loc_glass_bridge', 'item_memory_shard', 'item_city_map'],
     tags: ['climax'],
     sharedBranchIds: ['branch_shadow'],
+    importance: 'critical',
+    colorToken: 'red',
+    layoutLock: true,
+    modalStateHints: ['merge-anchor'],
   },
   {
     id: 'event_merge_public',
@@ -655,6 +850,10 @@ const createStarterEvents = (): TimelineEvent[] => [
     linkedWorldItemIds: ['loc_glass_bridge'],
     tags: ['merge'],
     sharedBranchIds: ['branch_public'],
+    importance: 'high',
+    colorToken: 'emerald',
+    layoutLock: true,
+    modalStateHints: ['merge-anchor'],
   },
 ];
 
@@ -763,11 +962,11 @@ const createStarterScenes = (): Scene[] => [
 ];
 
 const createStarterRelationships = (): Relationship[] => [
-  { id: 'rel_aria_rowan', sourceId: 'char_aria', targetId: 'char_rowan', type: 'Uneasy alliance', description: 'Professional trust forming under pressure.' },
-  { id: 'rel_aria_seren', sourceId: 'char_aria', targetId: 'char_seren', type: 'Negotiated trust', description: 'They need each other but disagree on exposure.' },
-  { id: 'rel_aria_vesper', sourceId: 'char_aria', targetId: 'char_vesper', type: 'Hidden rivalry', description: 'Aria suspects Vesper before she can prove it.' },
-  { id: 'rel_rowan_nila', sourceId: 'char_rowan', targetId: 'char_nila', type: 'Tactical banter', description: 'A fast-moving analyst duo.' },
-  { id: 'rel_seren_vesper', sourceId: 'char_seren', targetId: 'char_vesper', type: 'Political opposition', description: 'They understand each other too well.' },
+  { id: 'rel_aria_rowan', sourceId: 'char_aria', targetId: 'char_rowan', type: 'Uneasy alliance', description: 'Professional trust forming under pressure.', category: 'alliance', directionality: 'bidirectional', status: 'active', sourceNotes: 'Starts transactional, trends toward trust.' },
+  { id: 'rel_aria_seren', sourceId: 'char_aria', targetId: 'char_seren', type: 'Negotiated trust', description: 'They need each other but disagree on exposure.', category: 'political', directionality: 'bidirectional', status: 'strained', sourceNotes: 'Useful alliance with ideological friction.' },
+  { id: 'rel_aria_vesper', sourceId: 'char_aria', targetId: 'char_vesper', type: 'Hidden rivalry', description: 'Aria suspects Vesper before she can prove it.', category: 'conflict', directionality: 'source_to_target', status: 'active', sourceNotes: 'Suspicion escalates across archive and bridge scenes.' },
+  { id: 'rel_rowan_nila', sourceId: 'char_rowan', targetId: 'char_nila', type: 'Tactical banter', description: 'A fast-moving analyst duo.', category: 'alliance', directionality: 'bidirectional', status: 'active', sourceNotes: 'High chemistry in route-analysis scenes.' },
+  { id: 'rel_seren_vesper', sourceId: 'char_seren', targetId: 'char_vesper', type: 'Political opposition', description: 'They understand each other too well.', category: 'conflict', directionality: 'bidirectional', status: 'active', sourceNotes: 'Public and covert power centers collide here.' },
 ];
 
 const createStarterBoards = (): GraphBoard[] => [
@@ -1415,6 +1614,7 @@ const createStarterIssues = (): ConsistencyIssue[] => [
     originTaskRunId: 'run_graph_sync_seed',
     suggestedProposalIds: ['proposal_consistency_fix_bridge'],
     fixSuggestion: 'Create a Workbench fix proposal that rewrites the stale location reference to Glass Bridge.',
+    visibility: 'default',
   },
   {
     id: 'issue_duplicate_market',
@@ -1428,6 +1628,7 @@ const createStarterIssues = (): ConsistencyIssue[] => [
       { type: 'graph_node', id: 'graph_note_public' },
     ],
     fixSuggestion: 'Merge the duplicated route phrasing through Workbench before chapter three drafting.',
+    visibility: 'default',
   },
   {
     id: 'issue_state_flag',
@@ -1441,6 +1642,7 @@ const createStarterIssues = (): ConsistencyIssue[] => [
       { type: 'scene', id: 'scene_bridge' },
     ],
     fixSuggestion: 'Keep Vesper alive for the current draft and move the death note to future branching notes.',
+    visibility: 'default',
   },
 ];
 
@@ -1511,9 +1713,15 @@ export const createStarterProject = (
     scenes: createStarterScenes(),
     worldContainers: createWorldContainers(),
     worldItems: createWorldItems(),
+    worldSettings: createWorldSettings(),
+    worldMaps: createWorldMaps(),
     graphBoards: createStarterBoards(),
     betaPersonas: createStarterBetaPersonas(),
     betaRuns: createStarterBetaRuns(),
+    simulationEngines: createSimulationEngines(),
+    simulationLabs: createSimulationLabs(),
+    simulationReviewers: createSimulationReviewers(),
+    simulationRuns: createSimulationRuns(),
     taskRequests: createStarterTaskRequests(),
     taskRuns: createStarterTaskRuns(),
     taskArtifacts: createStarterTaskArtifacts(),
@@ -1616,6 +1824,24 @@ export const createBlankProject = (
         tagIds: ['map'],
       },
     ],
+    worldSettings: {
+      projectType: 'long-form serial novel',
+      narrativePacing: 'to be defined',
+      languageStyle: 'to be defined',
+      narrativePerspective: 'to be defined',
+      lengthStrategy: 'supports long-form expansion',
+      worldRulesSummary: '',
+    },
+    worldMaps: [
+      {
+        id: 'map_city_primary',
+        title: 'World Map',
+        description: 'Default blank map for your project.',
+        assetPath: defaultMapAsset,
+        markerIds: [],
+        sortOrder: 0,
+      },
+    ],
     graphBoards: [
       {
         id: 'board_main',
@@ -1630,6 +1856,10 @@ export const createBlankProject = (
     ],
     betaPersonas: createStarterBetaPersonas(),
     betaRuns: [],
+    simulationEngines: [],
+    simulationLabs: [],
+    simulationReviewers: [],
+    simulationRuns: [],
     taskRequests: [],
     taskRuns: [],
     taskArtifacts: [],

@@ -6,6 +6,7 @@ import type {
   Candidate,
   Chapter,
   Character,
+  CharacterPovInsights,
   CharacterTag,
   ConsistencyIssue,
   CreateProjectInput,
@@ -20,8 +21,13 @@ import type {
   Proposal,
   RagChunk,
   RagDocument,
+  Relationship,
   SaveStatus,
   Scene,
+  SimulationEngine,
+  SimulationLab,
+  SimulationReviewer,
+  SimulationRun,
   SearchResult,
   Selection,
   StoryboardPlan,
@@ -33,11 +39,15 @@ import type {
   TimelineBranch,
   TimelineEvent,
   VideoGenerationPackage,
+  WorldMapDocument,
+  WorldSettings,
   WorldContainer,
   WorldItem,
+  AppSettings,
 } from './models/project';
 import { createStarterProject } from './mock/seedProject';
 import { projectService } from './services/projectService';
+import { appSettingsService, defaultAppSettings } from './services/appSettingsService';
 
 const UI_SETTINGS_KEY = 'narrative-ide-ui-settings';
 
@@ -63,6 +73,7 @@ interface UIState {
   writingContextWidth: number;
   isWritingOutlineCollapsed: boolean;
   isWritingContextCollapsed: boolean;
+  appSettings: AppSettings;
   lastActionStatus: string | null;
   contextMenu: ContextMenuState;
   setActivity: (id: string) => void;
@@ -81,6 +92,8 @@ interface UIState {
   setLastActionStatus: (status: string | null) => void;
   openContextMenu: (menu: ContextMenuState) => void;
   closeContextMenu: () => void;
+  loadAppSettings: () => Promise<void>;
+  saveAppSettings: (partial: Partial<AppSettings>) => Promise<void>;
   hydrateFromProjectUiState: (uiState: NarrativeProject['uiState']) => void;
 }
 
@@ -100,10 +113,16 @@ interface ProjectState {
   currentSceneContent: string;
   worldContainers: WorldContainer[];
   worldItems: WorldItem[];
+  worldSettings: WorldSettings;
+  worldMaps: WorldMapDocument[];
   graphBoards: GraphBoard[];
   activeGraphBoardId: string | null;
   betaPersonas: BetaPersona[];
   betaRuns: BetaRun[];
+  simulationEngines: SimulationEngine[];
+  simulationLabs: SimulationLab[];
+  simulationReviewers: SimulationReviewer[];
+  simulationRuns: SimulationRun[];
   taskRequests: TaskRequest[];
   taskRuns: TaskRun[];
   taskArtifacts: TaskArtifact[];
@@ -141,20 +160,29 @@ interface ProjectState {
   updateTimelineEvent: (event: TimelineEvent) => void;
   addTimelineBranch: (branch: TimelineBranch) => void;
   updateTimelineBranch: (branch: TimelineBranch) => void;
-  addRelationship: (relationship: NarrativeProject['relationships'][number]) => void;
-  updateRelationship: (relationship: NarrativeProject['relationships'][number]) => void;
+  createTimelineBranch: (mode: TimelineBranch['mode'], anchor?: { branchId: string; eventId: string } | null) => string | null;
+  moveTimelineEvent: (eventId: string, targetBranchId: string, targetSlot: number) => void;
+  setTimelineBranchGeometry: (branchId: string, geometry: TimelineBranch['geometry']) => void;
+  addRelationship: (relationship: Relationship) => void;
+  updateRelationship: (relationship: Relationship) => void;
   deleteRelationship: (id: string) => void;
   addChapter: (chapter: Chapter) => void;
   updateChapter: (chapter: Chapter) => void;
   addScene: (scene: Scene) => void;
   updateScene: (scene: Scene) => void;
   updateScript: (script: ScriptDocument) => void;
+  addScript: (script: ScriptDocument) => void;
+  addStoryboard: (storyboard: StoryboardPlan) => void;
+  updateStoryboard: (storyboard: StoryboardPlan) => void;
   addWorldContainer: (container: WorldContainer) => void;
   updateWorldContainer: (container: WorldContainer) => void;
   deleteWorldContainer: (id: string) => void;
   addWorldItem: (item: WorldItem) => void;
   updateWorldItem: (item: WorldItem) => void;
   deleteWorldItem: (id: string) => void;
+  updateWorldSettings: (settings: WorldSettings) => void;
+  createWorldMap: (map: WorldMapDocument) => void;
+  updateWorldMap: (map: WorldMapDocument) => void;
   addGraphBoard: (board: GraphBoard) => void;
   updateGraphBoard: (board: GraphBoard) => void;
   deleteGraphBoard: (boardId: string) => void;
@@ -164,6 +192,8 @@ interface ProjectState {
   addGraphEdge: (boardId: string, edge: GraphBoard['edges'][number]) => void;
   setGraphBoardView: (boardId: string, view: GraphBoard['view']) => void;
   resolveProposal: (proposalId: string, status: Proposal['status']) => void;
+  resolveIssue: (issueId: string, resolution: 'resolved' | 'ignored') => void;
+  dismissIssue: (issueId: string) => void;
   addProposal: (proposal: Proposal) => void;
   addGraphSyncProposal: (title: string, preview: string) => void;
   addExportArtifact: (artifact: ExportArtifact) => void;
@@ -171,8 +201,20 @@ interface ProjectState {
   updateBetaPersona: (persona: BetaPersona) => void;
   deleteBetaPersona: (personaId: string) => void;
   runBetaPersona: (personaId: string) => void;
+  addSimulationEngine: (engine: SimulationEngine) => void;
+  updateSimulationEngine: (engine: SimulationEngine) => void;
+  createSimulationLab: (lab: SimulationLab) => void;
+  updateSimulationLab: (lab: SimulationLab) => void;
+  runSimulationLab: (labId: string) => void;
+  createSimulationReviewer: (reviewer: SimulationReviewer) => void;
+  updateSimulationReviewer: (reviewer: SimulationReviewer) => void;
+  runSimulationReviewer: (reviewerId: string) => void;
+  runSimulationEngine: (engineId: string, context: { entityId: string; entityType: 'lab' | 'reviewer' }) => void;
   addTaskRequest: (task: TaskRequest) => void;
   addTaskRun: (run: TaskRun, artifact?: TaskArtifact) => void;
+  addImportJob: (job: ImportJob) => void;
+  updateImportJob: (job: ImportJob) => void;
+  upsertCharacterPovInsights: (characterId: string, insights: CharacterPovInsights) => void;
   clearUnreadEntity: (entityId: string) => void;
   clearUnreadActivity: (activityId: string) => void;
   searchEntities: (query: string) => SearchResult[];
@@ -200,10 +242,16 @@ const deriveState = (project: NarrativeProject) => ({
   currentSceneContent: project.scenes[0]?.content || '',
   worldContainers: project.worldContainers,
   worldItems: project.worldItems,
+  worldSettings: project.worldSettings,
+  worldMaps: project.worldMaps,
   graphBoards: project.graphBoards,
   activeGraphBoardId: project.uiState.view.activeGraphBoardId || project.metadata.lastOpenedBoardId || project.graphBoards[0]?.id || null,
   betaPersonas: project.betaPersonas,
   betaRuns: project.betaRuns,
+  simulationEngines: project.simulationEngines,
+  simulationLabs: project.simulationLabs,
+  simulationReviewers: project.simulationReviewers,
+  simulationRuns: project.simulationRuns,
   taskRequests: project.taskRequests,
   taskRuns: project.taskRuns,
   taskArtifacts: project.taskArtifacts,
@@ -244,9 +292,15 @@ const cloneProject = (state: ProjectState, locale?: Locale): NarrativeProject =>
   scenes: state.scenes,
   worldContainers: state.worldContainers,
   worldItems: state.worldItems,
+  worldSettings: state.worldSettings,
+  worldMaps: state.worldMaps,
   graphBoards: state.graphBoards,
   betaPersonas: state.betaPersonas,
   betaRuns: state.betaRuns,
+  simulationEngines: state.simulationEngines,
+  simulationLabs: state.simulationLabs,
+  simulationReviewers: state.simulationReviewers,
+  simulationRuns: state.simulationRuns,
   taskRequests: state.taskRequests,
   taskRuns: state.taskRuns,
   taskArtifacts: state.taskArtifacts,
@@ -312,6 +366,7 @@ export const useUIStore = create<UIState>((set) => ({
   writingContextWidth: defaultUi.writingContextWidth || defaultPaneState.writingContextWidth,
   isWritingOutlineCollapsed: defaultUi.isWritingOutlineCollapsed ?? defaultPaneState.isWritingOutlineCollapsed,
   isWritingContextCollapsed: defaultUi.isWritingContextCollapsed ?? defaultPaneState.isWritingContextCollapsed,
+  appSettings: defaultAppSettings,
   lastActionStatus: null,
   contextMenu: null,
   setActivity: (id) => set({ currentActivity: id }),
@@ -333,11 +388,11 @@ export const useUIStore = create<UIState>((set) => ({
   setPanelWidth: (panel, width) => set(() => {
     const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
     const next =
-      panel === 'sidebar' ? { sidebarWidth: clamp(width, 120, 420) } :
-      panel === 'inspector' ? { inspectorWidth: clamp(width, 220, 560) } :
-      panel === 'agentDock' ? { agentDockWidth: clamp(width, 180, 520) } :
-      panel === 'writingOutline' ? { writingOutlineWidth: clamp(width, 160, 500) } :
-      { writingContextWidth: clamp(width, 180, 520) };
+      panel === 'sidebar' ? { sidebarWidth: clamp(width, 96, 480) } :
+      panel === 'inspector' ? { inspectorWidth: clamp(width, 180, 640) } :
+      panel === 'agentDock' ? { agentDockWidth: clamp(width, 140, 560) } :
+      panel === 'writingOutline' ? { writingOutlineWidth: clamp(width, 120, 560) } :
+      { writingContextWidth: clamp(width, 140, 560) };
     persistUiSettings(next);
     return next as Partial<UIState>;
   }),
@@ -356,6 +411,38 @@ export const useUIStore = create<UIState>((set) => ({
   },
   openContextMenu: (contextMenu) => set({ contextMenu }),
   closeContextMenu: () => set({ contextMenu: null }),
+  loadAppSettings: async () => {
+    const settings = await appSettingsService.load();
+    persistUiSettings({
+      locale: settings.locale,
+      density: settings.density,
+      editorWidth: settings.editorWidth,
+      motionLevel: settings.motionLevel,
+    });
+    set({
+      appSettings: settings,
+      locale: settings.locale,
+      density: settings.density,
+      editorWidth: settings.editorWidth,
+      motionLevel: settings.motionLevel,
+    });
+  },
+  saveAppSettings: async (partial) => {
+    const next = await appSettingsService.save({ ...useUIStore.getState().appSettings, ...partial });
+    persistUiSettings({
+      locale: next.locale,
+      density: next.density,
+      editorWidth: next.editorWidth,
+      motionLevel: next.motionLevel,
+    });
+    set({
+      appSettings: next,
+      locale: next.locale,
+      density: next.density,
+      editorWidth: next.editorWidth,
+      motionLevel: next.motionLevel,
+    });
+  },
   hydrateFromProjectUiState: (uiState) => {
     const next = {
       ...uiState.panes,
@@ -419,7 +506,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set((state) => {
       const candidate = state.candidates.find((entry) => entry.id === candidateId);
       if (!candidate) return state;
-      const promoted: Character = { id: candidate.id, name: candidate.name, summary: candidate.summary, background: candidate.background, aliases: [], birthdayText: '', portraitAssetId: null, traits: '', goals: '', fears: '', secrets: '', speechStyle: '', arc: '', tagIds: [], organizationIds: [], linkedSceneIds: [], linkedEventIds: [], linkedWorldItemIds: [], statusFlags: { alive: true } };
+      const promoted: Character = { id: candidate.id, name: candidate.name, summary: candidate.summary, background: candidate.background, aliases: [], birthdayText: '', portraitAssetId: null, traits: '', goals: '', fears: '', secrets: '', speechStyle: '', arc: '', tagIds: [], organizationIds: [], linkedSceneIds: [], linkedEventIds: [], linkedWorldItemIds: [], importance: 'supporting', groupKey: 'supporting', relationshipIds: [], povInsights: null, statusFlags: { alive: true } };
       confirmedId = promoted.id;
       return withDirtyState({ candidates: state.candidates.filter((entry) => entry.id !== candidateId), characters: [...state.characters, promoted] });
     });
@@ -430,20 +517,88 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   updateTimelineEvent: (event) => set((state) => withDirtyState({ timelineEvents: state.timelineEvents.map((entry) => entry.id === event.id ? event : entry) })),
   addTimelineBranch: (branch) => set((state) => withDirtyState({ timelineBranches: [...state.timelineBranches, branch] })),
   updateTimelineBranch: (branch) => set((state) => withDirtyState({ timelineBranches: state.timelineBranches.map((entry) => entry.id === branch.id ? branch : entry) })),
-  addRelationship: (relationship) => set((state) => withDirtyState({ relationships: [...state.relationships, relationship] })),
+  createTimelineBranch: (mode, anchor) => {
+    const state = get();
+    const parentBranchId = mode === 'forked' ? anchor?.branchId || state.timelineBranches[0]?.id || null : null;
+    const branchId = `branch_${Date.now()}`;
+    const branch: TimelineBranch = {
+      id: branchId,
+      name: mode === 'independent' ? `Independent Branch ${state.timelineBranches.length + 1}` : `Branch ${state.timelineBranches.length + 1}`,
+      description: mode === 'independent' ? 'Independent branch start.' : 'Forked branch.',
+      parentBranchId,
+      forkEventId: mode === 'forked' ? anchor?.eventId || null : null,
+      mergeEventId: null,
+      color: ['#f59e0b', '#38bdf8', '#22c55e', '#ef4444', '#a855f7'][state.timelineBranches.length % 5],
+      sortOrder: state.timelineBranches.length,
+      collapsed: false,
+      mode: mode || 'independent',
+      startAnchor: mode === 'forked' && anchor ? anchor : null,
+      endMode: 'open',
+      mergeTargetBranchId: null,
+      geometry: {
+        laneOffset: state.timelineBranches.length * 90,
+        bend: 0.25,
+        thickness: 1,
+      },
+    };
+    set((current) => withDirtyState({ timelineBranches: [...current.timelineBranches, branch] }));
+    return branchId;
+  },
+  moveTimelineEvent: (eventId, targetBranchId, targetSlot) => set((state) => {
+    const moving = state.timelineEvents.find((entry) => entry.id === eventId);
+    if (!moving) return state;
+    const otherEvents = state.timelineEvents.filter((entry) => entry.id !== eventId);
+    const targetEvents = otherEvents
+      .filter((entry) => entry.branchId === targetBranchId)
+      .sort((a, b) => a.orderIndex - b.orderIndex);
+    const insertAt = Math.min(Math.max(targetSlot, 0), targetEvents.length);
+    const reorderedTarget = [...targetEvents.slice(0, insertAt), { ...moving, branchId: targetBranchId }, ...targetEvents.slice(insertAt)]
+      .map((entry, index) => ({ ...entry, orderIndex: index }));
+    const untouched = otherEvents
+      .filter((entry) => entry.branchId !== targetBranchId && entry.branchId !== moving.branchId)
+      .map((entry) => entry);
+    const sourceRemainder = otherEvents
+      .filter((entry) => entry.branchId === moving.branchId && moving.branchId !== targetBranchId)
+      .sort((a, b) => a.orderIndex - b.orderIndex)
+      .map((entry, index) => ({ ...entry, orderIndex: index }));
+    return withDirtyState({ timelineEvents: [...untouched, ...sourceRemainder, ...reorderedTarget] });
+  }),
+  setTimelineBranchGeometry: (branchId, geometry) => set((state) => withDirtyState({
+    timelineBranches: state.timelineBranches.map((entry) => entry.id === branchId ? {
+      ...entry,
+      geometry: {
+        laneOffset: geometry?.laneOffset ?? entry.geometry?.laneOffset ?? 0,
+        bend: geometry?.bend ?? entry.geometry?.bend ?? 0.25,
+        thickness: geometry?.thickness ?? entry.geometry?.thickness ?? 1,
+      },
+    } : entry),
+  })),
+  addRelationship: (relationship) => set((state) => withDirtyState({
+    relationships: [...state.relationships, relationship],
+    characters: state.characters.map((character) => character.id === relationship.sourceId || character.id === relationship.targetId ? { ...character, relationshipIds: Array.from(new Set([...(character.relationshipIds || []), relationship.id])) } : character),
+  })),
   updateRelationship: (relationship) => set((state) => withDirtyState({ relationships: state.relationships.map((entry) => entry.id === relationship.id ? relationship : entry) })),
-  deleteRelationship: (id) => set((state) => withDirtyState({ relationships: state.relationships.filter((entry) => entry.id !== id) })),
+  deleteRelationship: (id) => set((state) => withDirtyState({
+    relationships: state.relationships.filter((entry) => entry.id !== id),
+    characters: state.characters.map((character) => ({ ...character, relationshipIds: (character.relationshipIds || []).filter((entry) => entry !== id) })),
+  })),
   addChapter: (chapter) => set((state) => withDirtyState({ chapters: [...state.chapters, chapter] })),
   updateChapter: (chapter) => set((state) => withDirtyState({ chapters: state.chapters.map((entry) => entry.id === chapter.id ? chapter : entry) })),
   addScene: (scene) => set((state) => withDirtyState({ scenes: [...state.scenes, scene] })),
   updateScene: (scene) => set((state) => withDirtyState({ scenes: state.scenes.map((entry) => entry.id === scene.id ? scene : entry), currentSceneContent: scene.content })),
   updateScript: (script) => set((state) => withDirtyState({ scripts: state.scripts.map((entry) => entry.id === script.id ? script : entry) })),
+  addScript: (script) => set((state) => withDirtyState({ scripts: [...state.scripts, script] })),
+  addStoryboard: (storyboard) => set((state) => withDirtyState({ storyboards: [...state.storyboards, storyboard] })),
+  updateStoryboard: (storyboard) => set((state) => withDirtyState({ storyboards: state.storyboards.map((entry) => entry.id === storyboard.id ? storyboard : entry) })),
   addWorldContainer: (container) => set((state) => withDirtyState({ worldContainers: [...state.worldContainers, container] })),
   updateWorldContainer: (container) => set((state) => withDirtyState({ worldContainers: state.worldContainers.map((entry) => entry.id === container.id ? container : entry) })),
   deleteWorldContainer: (id) => set((state) => withDirtyState({ worldContainers: state.worldContainers.filter((entry) => entry.id !== id), worldItems: state.worldItems.filter((entry) => entry.containerId !== id) })),
   addWorldItem: (item) => set((state) => withDirtyState({ worldItems: [...state.worldItems, item] })),
   updateWorldItem: (item) => set((state) => withDirtyState({ worldItems: state.worldItems.map((entry) => entry.id === item.id ? item : entry) })),
   deleteWorldItem: (id) => set((state) => withDirtyState({ worldItems: state.worldItems.filter((entry) => entry.id !== id) })),
+  updateWorldSettings: (worldSettings) => set(() => withDirtyState({ worldSettings })),
+  createWorldMap: (map) => set((state) => withDirtyState({ worldMaps: [...state.worldMaps, map] })),
+  updateWorldMap: (map) => set((state) => withDirtyState({ worldMaps: state.worldMaps.map((entry) => entry.id === map.id ? map : entry) })),
   addGraphBoard: (board) => set((state) => withDirtyState({ graphBoards: [...state.graphBoards, board], activeGraphBoardId: board.id })),
   updateGraphBoard: (board) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((entry) => entry.id === board.id ? board : entry) })),
   deleteGraphBoard: (boardId) => set((state) => {
@@ -456,6 +611,12 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   addGraphEdge: (boardId, edge) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, edges: [...board.edges, edge] } : board) })),
   setGraphBoardView: (boardId, view) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, view } : board) })),
   resolveProposal: (proposalId, status) => set((state) => withDirtyState(projectService.resolveProposal(cloneProject(state, useUIStore.getState().locale), proposalId, status))),
+  resolveIssue: (issueId, resolution) => set((state) => withDirtyState({
+    issues: state.issues.map((issue) => issue.id === issueId ? { ...issue, status: resolution, visibility: 'history', dismissedAt: new Date().toISOString() } : issue),
+  })),
+  dismissIssue: (issueId) => set((state) => withDirtyState({
+    issues: state.issues.map((issue) => issue.id === issueId ? { ...issue, status: 'ignored', visibility: 'hidden', dismissedAt: new Date().toISOString() } : issue),
+  })),
   addProposal: (proposal) => set((state) => withDirtyState({ proposals: [proposal, ...state.proposals], unreadUpdates: { ...state.unreadUpdates, activities: { ...state.unreadUpdates.activities, workbench: true }, sections: { ...state.unreadUpdates.sections, 'workbench.inbox': true }, entities: { ...state.unreadUpdates.entities, [proposal.id]: true } } })),
   addGraphSyncProposal: (title, preview) => set((state) => {
     const proposal: Proposal = {
@@ -504,8 +665,65 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const run: BetaRun = { id: `beta_run_${Date.now()}`, personaId, createdAt: now(), aggregate, feedback };
     return withDirtyState({ betaRuns: [run, ...state.betaRuns] });
   }),
+  addSimulationEngine: (engine) => set((state) => withDirtyState({ simulationEngines: [...state.simulationEngines, engine] })),
+  updateSimulationEngine: (engine) => set((state) => withDirtyState({ simulationEngines: state.simulationEngines.map((entry) => entry.id === engine.id ? engine : entry) })),
+  createSimulationLab: (lab) => set((state) => withDirtyState({ simulationLabs: [...state.simulationLabs, lab] })),
+  updateSimulationLab: (lab) => set((state) => withDirtyState({ simulationLabs: state.simulationLabs.map((entry) => entry.id === lab.id ? lab : entry) })),
+  runSimulationLab: (labId) => set((state) => {
+    const lab = state.simulationLabs.find((entry) => entry.id === labId);
+    if (!lab) return state;
+    const run: SimulationRun = {
+      id: `sim_run_${Date.now()}`,
+      entityId: labId,
+      entityType: 'lab',
+      createdAt: now(),
+      status: 'completed',
+      output: lab.engineIds.map((engineId) => {
+        const engine = state.simulationEngines.find((entry) => entry.id === engineId);
+        return `${engine?.name || engineId}: placeholder analysis generated.`;
+      }).join('\n'),
+    };
+    return withDirtyState({ simulationRuns: [run, ...state.simulationRuns] });
+  }),
+  createSimulationReviewer: (reviewer) => set((state) => withDirtyState({ simulationReviewers: [...state.simulationReviewers, reviewer] })),
+  updateSimulationReviewer: (reviewer) => set((state) => withDirtyState({ simulationReviewers: state.simulationReviewers.map((entry) => entry.id === reviewer.id ? reviewer : entry) })),
+  runSimulationReviewer: (reviewerId) => set((state) => {
+    const reviewer = state.simulationReviewers.find((entry) => entry.id === reviewerId);
+    if (!reviewer) return state;
+    const run: SimulationRun = {
+      id: `sim_run_${Date.now()}`,
+      entityId: reviewerId,
+      entityType: 'reviewer',
+      createdAt: now(),
+      status: 'completed',
+      output: reviewer.engineIds.map((engineId) => {
+        const engine = state.simulationEngines.find((entry) => entry.id === engineId);
+        return `${engine?.name || engineId}: reviewer output placeholder with scores and issues.`;
+      }).join('\n'),
+    };
+    return withDirtyState({ simulationRuns: [run, ...state.simulationRuns] });
+  }),
+  runSimulationEngine: (engineId, context) => set((state) => {
+    const engine = state.simulationEngines.find((entry) => entry.id === engineId);
+    if (!engine) return state;
+    const run: SimulationRun = {
+      id: `sim_run_${Date.now()}`,
+      entityId: context.entityId,
+      entityType: context.entityType,
+      engineId,
+      createdAt: now(),
+      status: 'completed',
+      output: `${engine.name}: placeholder result for ${context.entityType} ${context.entityId}.`,
+    };
+    return withDirtyState({ simulationRuns: [run, ...state.simulationRuns] });
+  }),
   addTaskRequest: (task) => set((state) => withDirtyState({ taskRequests: [task, ...state.taskRequests] })),
   addTaskRun: (run, artifact) => set((state) => withDirtyState({ taskRuns: [run, ...state.taskRuns], taskArtifacts: artifact ? [artifact, ...state.taskArtifacts] : state.taskArtifacts })),
+  addImportJob: (job) => set((state) => withDirtyState({ importJobs: [job, ...state.importJobs] })),
+  updateImportJob: (job) => set((state) => withDirtyState({ importJobs: state.importJobs.map((entry) => entry.id === job.id ? job : entry) })),
+  upsertCharacterPovInsights: (characterId, insights) => set((state) => withDirtyState({
+    characters: state.characters.map((character) => character.id === characterId ? { ...character, povInsights: insights } : character),
+  })),
   clearUnreadEntity: (entityId) => set((state) => ({ unreadUpdates: { ...state.unreadUpdates, entities: { ...state.unreadUpdates.entities, [entityId]: false } } })),
   clearUnreadActivity: (activityId) => set((state) => ({ unreadUpdates: { ...state.unreadUpdates, activities: { ...state.unreadUpdates.activities, [activityId]: false } } })),
   searchEntities: (query) => {

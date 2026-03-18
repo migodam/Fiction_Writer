@@ -1,0 +1,15 @@
+[
+  {
+    "id": "lab_main",
+    "name": "Main Forecast Lab",
+    "description": "Primary lab for predicting next developments across scenario, character, author, reader, and logic engines.",
+    "engineIds": [
+      "engine_lab_main_scenario",
+      "engine_lab_main_character",
+      "engine_lab_main_author",
+      "engine_lab_main_reader",
+      "engine_lab_main_logic"
+    ],
+    "summary": "Use this lab when you want a broad prediction sweep."
+  }
+]

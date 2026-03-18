@@ -19,7 +19,11 @@
         "id": "loc_glass_bridge"
       }
     ],
-    "fixSuggestion": "Create a Workbench fix proposal that rewrites the stale location reference to Glass Bridge."
+    "fixSuggestion": "Create a Workbench fix proposal that rewrites the stale location reference to Glass Bridge.",
+    "visibility": "default",
+    "dismissedAt": null,
+    "resolvedByProposalId": null,
+    "resolvedByRunId": null
   },
   {
     "id": "issue_duplicate_market",
@@ -37,7 +41,11 @@
         "id": "graph_note_public"
       }
     ],
-    "fixSuggestion": "Merge the duplicated route phrasing through Workbench before chapter three drafting."
+    "fixSuggestion": "Merge the duplicated route phrasing through Workbench before chapter three drafting.",
+    "visibility": "default",
+    "dismissedAt": null,
+    "resolvedByProposalId": null,
+    "resolvedByRunId": null
   },
   {
     "id": "issue_state_flag",
@@ -55,6 +63,10 @@
         "id": "scene_bridge"
       }
     ],
-    "fixSuggestion": "Keep Vesper alive for the current draft and move the death note to future branching notes."
+    "fixSuggestion": "Keep Vesper alive for the current draft and move the death note to future branching notes.",
+    "visibility": "default",
+    "dismissedAt": null,
+    "resolvedByProposalId": null,
+    "resolvedByRunId": null
   }
 ]

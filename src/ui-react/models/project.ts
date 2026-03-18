@@ -101,7 +101,25 @@ export interface Character {
   linkedSceneIds: string[];
   linkedEventIds: string[];
   linkedWorldItemIds: string[];
+  importance?: 'core' | 'major' | 'supporting' | 'minor' | 'ungrouped';
+  groupKey?: string;
+  relationshipIds?: string[];
+  povInsights?: CharacterPovInsights | null;
   statusFlags: CharacterStatusFlags;
+}
+
+export interface CharacterPovScore {
+  key: string;
+  label: string;
+  score: number;
+}
+
+export interface CharacterPovInsights {
+  summary: string;
+  scores: CharacterPovScore[];
+  radar: CharacterPovScore[];
+  source: 'manual' | 'ai' | 'placeholder';
+  updatedAt: string;
 }
 
 export interface CharacterTag {
@@ -129,6 +147,18 @@ export interface TimelineBranch {
   color?: string;
   sortOrder: number;
   collapsed?: boolean;
+  mode?: 'root' | 'forked' | 'independent';
+  startAnchor?: {
+    branchId: string;
+    eventId: string;
+  } | null;
+  endMode?: 'open' | 'merge' | 'closed';
+  mergeTargetBranchId?: string | null;
+  geometry?: {
+    laneOffset: number;
+    bend: number;
+    thickness: number;
+  };
 }
 
 export interface TimelineEvent {
@@ -144,6 +174,10 @@ export interface TimelineEvent {
   linkedWorldItemIds: string[];
   tags: string[];
   sharedBranchIds?: string[];
+  importance?: 'critical' | 'high' | 'medium' | 'low';
+  colorToken?: string;
+  layoutLock?: boolean;
+  modalStateHints?: string[];
 }
 
 export interface Relationship {
@@ -153,6 +187,10 @@ export interface Relationship {
   type: string;
   description?: string;
   strength?: number;
+  category?: string;
+  directionality?: 'bidirectional' | 'source_to_target' | 'target_to_source';
+  status?: 'active' | 'strained' | 'broken' | 'unknown';
+  sourceNotes?: string;
 }
 
 export interface Chapter {
@@ -217,6 +255,24 @@ export interface WorldItem {
   tagIds?: string[];
 }
 
+export interface WorldSettings {
+  projectType: string;
+  narrativePacing: string;
+  languageStyle: string;
+  narrativePerspective: string;
+  lengthStrategy: string;
+  worldRulesSummary: string;
+}
+
+export interface WorldMapDocument {
+  id: string;
+  title: string;
+  description: string;
+  assetPath: string | null;
+  markerIds: string[];
+  sortOrder: number;
+}
+
 export interface GraphNode {
   id: string;
   kind: GraphNodeKind;
@@ -277,6 +333,7 @@ export interface Proposal {
   confidence?: number;
   payloadPath?: string | null;
   originTaskRunId?: string | null;
+  originIssueId?: string | null;
   reviewPolicy: ReviewPolicy;
   status: ProposalStatus;
   createdAt: string;
@@ -294,6 +351,10 @@ export interface ConsistencyIssue {
   originTaskRunId?: string | null;
   suggestedProposalIds?: string[];
   fixSuggestion?: string;
+  dismissedAt?: string | null;
+  resolvedByProposalId?: string | null;
+  resolvedByRunId?: string | null;
+  visibility?: 'default' | 'history' | 'hidden';
 }
 
 export interface ExportArtifact {
@@ -303,6 +364,8 @@ export interface ExportArtifact {
   path: string | null;
   createdAt: string;
   preview: string;
+  scope?: 'project' | 'chapter';
+  chapterIds?: string[];
 }
 
 export interface BetaPersona {
@@ -596,6 +659,43 @@ export interface VideoGenerationPackage {
   updatedAt: string;
 }
 
+export interface SimulationEngine {
+  id: string;
+  name: string;
+  type: 'scenario' | 'character' | 'author' | 'reader' | 'logic' | 'custom';
+  summary: string;
+  promptOverride: string;
+  enabled: boolean;
+  targetCharacterId?: string | null;
+  inputNotes?: string;
+}
+
+export interface SimulationRun {
+  id: string;
+  entityId: string;
+  entityType: 'lab' | 'reviewer';
+  engineId?: string | null;
+  createdAt: string;
+  status: 'idle' | 'running' | 'completed';
+  output: string;
+}
+
+export interface SimulationLab {
+  id: string;
+  name: string;
+  description: string;
+  engineIds: string[];
+  summary: string;
+}
+
+export interface SimulationReviewer {
+  id: string;
+  name: string;
+  description: string;
+  engineIds: string[];
+  scoringNotes: string;
+}
+
 export interface RagManifest {
   activeBackend: 'keyword' | 'embedding';
   futureBackends: string[];
@@ -632,6 +732,7 @@ export interface ProjectViewState {
   activeGraphBoardId?: string | null;
   activeTimelineBranchId?: string | null;
   lastOpenedSceneId?: string | null;
+  importSessionId?: string | null;
 }
 
 export interface ProjectUIState {
@@ -641,6 +742,40 @@ export interface ProjectUIState {
   editorWidth: 'focused' | 'wide';
   motionLevel: 'full' | 'reduced';
   experimentalFlags: string[];
+}
+
+export interface AppProviderConfig {
+  id: string;
+  provider: string;
+  label: string;
+  endpoint: string;
+  apiKey: string;
+  organization?: string;
+  project?: string;
+  enabled: boolean;
+}
+
+export interface ModelProfile {
+  id: string;
+  label: string;
+  model: string;
+  temperature: number;
+  topP: number;
+  useCase: string;
+}
+
+export interface AppSettings {
+  locale: Locale;
+  density: 'comfortable' | 'compact';
+  editorWidth: 'focused' | 'wide';
+  motionLevel: 'full' | 'reduced';
+  theme: 'dark' | 'light';
+  defaultExportFormat: 'markdown' | 'html';
+  defaultChapterExportScope: 'project' | 'chapter';
+  providerProfiles: AppProviderConfig[];
+  modelProfiles: ModelProfile[];
+  selectedProviderProfileId?: string | null;
+  selectedModelProfileId?: string | null;
 }
 
 export interface ProjectMetadata {
@@ -664,6 +799,8 @@ export interface ProjectMetadata {
   lastOpenedModule?: string;
   lastOpenedSceneId?: string | null;
   lastOpenedBoardId?: string | null;
+  selectedProviderProfileId?: string | null;
+  selectedModelProfileId?: string | null;
 }
 
 export interface NarrativeProject {
@@ -678,9 +815,15 @@ export interface NarrativeProject {
   scenes: Scene[];
   worldContainers: WorldContainer[];
   worldItems: WorldItem[];
+  worldSettings: WorldSettings;
+  worldMaps: WorldMapDocument[];
   graphBoards: GraphBoard[];
   betaPersonas: BetaPersona[];
   betaRuns: BetaRun[];
+  simulationEngines: SimulationEngine[];
+  simulationLabs: SimulationLab[];
+  simulationReviewers: SimulationReviewer[];
+  simulationRuns: SimulationRun[];
   taskRequests: TaskRequest[];
   taskRuns: TaskRun[];
   taskArtifacts: TaskArtifact[];
@@ -720,4 +863,6 @@ export interface SearchResult {
 export interface ExportProjectInput {
   format: 'markdown' | 'html';
   includeAppendices: boolean;
+  scope?: 'project' | 'chapter';
+  chapterIds?: string[];
 }

@@ -1,0 +1,11 @@
+[
+  {
+    "id": "reviewer_main",
+    "name": "Narrative Reviewer",
+    "description": "Checks coherence, scores current material, and flags weaknesses.",
+    "engineIds": [
+      "engine_reviewer_logic"
+    ],
+    "scoringNotes": "Logic-heavy reviewer with explicit scoring output."
+  }
+]

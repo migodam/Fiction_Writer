@@ -8,7 +8,16 @@
     "mergeEventId": null,
     "color": "#f59e0b",
     "sortOrder": 0,
-    "collapsed": false
+    "collapsed": false,
+    "mode": "root",
+    "startAnchor": null,
+    "endMode": "open",
+    "mergeTargetBranchId": null,
+    "geometry": {
+      "laneOffset": 0,
+      "bend": 0.25,
+      "thickness": 1
+    }
   },
   {
     "id": "branch_shadow",
@@ -19,7 +28,16 @@
     "mergeEventId": null,
     "color": "#f59e0b",
     "sortOrder": 1,
-    "collapsed": false
+    "collapsed": false,
+    "mode": "independent",
+    "startAnchor": null,
+    "endMode": "open",
+    "mergeTargetBranchId": null,
+    "geometry": {
+      "laneOffset": 96,
+      "bend": 0.25,
+      "thickness": 1
+    }
   },
   {
     "id": "branch_public",
@@ -30,6 +48,15 @@
     "mergeEventId": null,
     "color": "#f59e0b",
     "sortOrder": 2,
-    "collapsed": false
+    "collapsed": false,
+    "mode": "independent",
+    "startAnchor": null,
+    "endMode": "open",
+    "mergeTargetBranchId": null,
+    "geometry": {
+      "laneOffset": 192,
+      "bend": 0.25,
+      "thickness": 1
+    }
   }
 ]

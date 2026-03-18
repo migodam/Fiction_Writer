@@ -1,0 +1,52 @@
+[
+  {
+    "id": "engine_lab_main_scenario",
+    "name": "Scenario Engine",
+    "type": "scenario",
+    "summary": "Predict likely next scenario threads.",
+    "promptOverride": "Focus on next 3 scenario beats.",
+    "enabled": true,
+    "inputNotes": "Use current chapters and open issues."
+  },
+  {
+    "id": "engine_lab_main_character",
+    "name": "Character Engine",
+    "type": "character",
+    "summary": "Predict likely next character decisions.",
+    "promptOverride": "Weight protagonist and antagonist motivations first.",
+    "enabled": true,
+    "targetCharacterId": "char_aria"
+  },
+  {
+    "id": "engine_lab_main_author",
+    "name": "Author Engine",
+    "type": "author",
+    "summary": "Forecast twists, reversals, and pacing spikes.",
+    "promptOverride": "Prioritize escalation and reversals every 2-3 chapters.",
+    "enabled": true
+  },
+  {
+    "id": "engine_lab_main_reader",
+    "name": "Reader Engine",
+    "type": "reader",
+    "summary": "Infer what readers may want next.",
+    "promptOverride": "Bias toward beta reader aggregate preferences.",
+    "enabled": true
+  },
+  {
+    "id": "engine_lab_main_logic",
+    "name": "Logic Engine",
+    "type": "logic",
+    "summary": "Forecast from established story logic and constraints.",
+    "promptOverride": "Disallow contradictions with world rules.",
+    "enabled": true
+  },
+  {
+    "id": "engine_reviewer_logic",
+    "name": "Reviewer Logic",
+    "type": "logic",
+    "summary": "Score logical consistency and point out weak causal links.",
+    "promptOverride": "Output critique and scores only.",
+    "enabled": true
+  }
+]

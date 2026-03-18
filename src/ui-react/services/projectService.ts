@@ -104,6 +104,15 @@ const normalizeBranches = (branches: unknown): NarrativeProject['timelineBranche
           color: value.color ? String(value.color) : '#f59e0b',
           sortOrder: typeof value.sortOrder === 'number' ? value.sortOrder : index,
           collapsed: Boolean(value.collapsed),
+          mode: (value.mode as NarrativeProject['timelineBranches'][number]['mode']) || (index === 0 ? 'root' : value.parentBranchId ? 'forked' : 'independent'),
+          startAnchor: value.startAnchor ? (value.startAnchor as NarrativeProject['timelineBranches'][number]['startAnchor']) : null,
+          endMode: (value.endMode as NarrativeProject['timelineBranches'][number]['endMode']) || 'open',
+          mergeTargetBranchId: value.mergeTargetBranchId ? String(value.mergeTargetBranchId) : null,
+          geometry: {
+            laneOffset: typeof (value.geometry as Record<string, unknown> | undefined)?.laneOffset === 'number' ? Number((value.geometry as Record<string, unknown>).laneOffset) : index * 96,
+            bend: typeof (value.geometry as Record<string, unknown> | undefined)?.bend === 'number' ? Number((value.geometry as Record<string, unknown>).bend) : 0.25,
+            thickness: typeof (value.geometry as Record<string, unknown> | undefined)?.thickness === 'number' ? Number((value.geometry as Record<string, unknown>).thickness) : 1,
+          },
         };
       })
     : [];
@@ -176,7 +185,13 @@ const migrateProject = (
       storageBackends: rawProject.metadata?.storageBackends || fallbackProject.metadata.storageBackends,
       futureBackends: rawProject.metadata?.futureBackends || fallbackProject.metadata.futureBackends,
     },
-    characters: rawProject.characters || fallbackProject.characters,
+    characters: (rawProject.characters || fallbackProject.characters).map((character) => ({
+      ...character,
+      importance: character.importance || 'ungrouped',
+      groupKey: character.groupKey || character.importance || 'ungrouped',
+      relationshipIds: character.relationshipIds || [],
+      povInsights: character.povInsights || null,
+    })),
     characterTags: rawProject.characterTags || fallbackProject.characterTags,
     candidates: rawProject.candidates || fallbackProject.candidates,
     timelineBranches: normalizeBranches(rawProject.timelineBranches || fallbackProject.timelineBranches),
@@ -184,15 +199,31 @@ const migrateProject = (
       ...event,
       orderIndex: typeof event.orderIndex === 'number' ? event.orderIndex : index,
       sharedBranchIds: event.sharedBranchIds || [],
+      importance: event.importance || 'medium',
+      colorToken: event.colorToken || '',
+      layoutLock: Boolean(event.layoutLock),
+      modalStateHints: event.modalStateHints || [],
     })),
-    relationships: rawProject.relationships || fallbackProject.relationships,
+    relationships: (rawProject.relationships || fallbackProject.relationships).map((relationship) => ({
+      ...relationship,
+      category: relationship.category || 'general',
+      directionality: relationship.directionality || 'bidirectional',
+      status: relationship.status || 'active',
+      sourceNotes: relationship.sourceNotes || '',
+    })),
     chapters: rawProject.chapters || fallbackProject.chapters,
     scenes: rawProject.scenes || fallbackProject.scenes,
     worldContainers: rawProject.worldContainers || fallbackProject.worldContainers,
     worldItems: rawProject.worldItems || fallbackProject.worldItems,
+    worldSettings: rawProject.worldSettings || fallbackProject.worldSettings,
+    worldMaps: rawProject.worldMaps || fallbackProject.worldMaps,
     graphBoards: normalizeGraphBoards(rawProject.graphBoards || fallbackProject.graphBoards),
     betaPersonas: rawProject.betaPersonas || fallbackProject.betaPersonas,
     betaRuns: rawProject.betaRuns || fallbackProject.betaRuns,
+    simulationEngines: rawProject.simulationEngines || fallbackProject.simulationEngines,
+    simulationLabs: rawProject.simulationLabs || fallbackProject.simulationLabs,
+    simulationReviewers: rawProject.simulationReviewers || fallbackProject.simulationReviewers,
+    simulationRuns: rawProject.simulationRuns || fallbackProject.simulationRuns,
     taskRequests: rawProject.taskRequests || [],
     taskRuns: rawProject.taskRuns || [],
     taskArtifacts: rawProject.taskArtifacts || [],
@@ -211,8 +242,18 @@ const migrateProject = (
     videoPackages: rawProject.videoPackages || [],
     proposals: rawProject.proposals || fallbackProject.proposals,
     proposalHistory: rawProject.proposalHistory || fallbackProject.proposalHistory,
-    issues: rawProject.issues || fallbackProject.issues,
-    exports: rawProject.exports || [],
+    issues: (rawProject.issues || fallbackProject.issues).map((issue) => ({
+      ...issue,
+      visibility: issue.visibility || 'default',
+      dismissedAt: issue.dismissedAt || null,
+      resolvedByProposalId: issue.resolvedByProposalId || null,
+      resolvedByRunId: issue.resolvedByRunId || null,
+    })),
+    exports: (rawProject.exports || []).map((artifact) => ({
+      ...artifact,
+      scope: artifact.scope || 'project',
+      chapterIds: artifact.chapterIds || [],
+    })),
     unreadUpdates: rawProject.unreadUpdates || fallbackProject.unreadUpdates,
     archivedIds: rawProject.archivedIds || [],
     uiState: normalizeUiState(rawProject.uiState, fallbackProject),
@@ -326,6 +367,8 @@ const serializeProjectToFolder = (
     writeJson(fs, path.join(timelineDir, `${event.id}.json`), event);
   });
   writeJson(fs, path.join(worldDir, 'containers.json'), project.worldContainers);
+  writeJson(fs, path.join(worldDir, 'settings.json'), project.worldSettings);
+  writeJson(fs, path.join(worldDir, 'maps.json'), project.worldMaps);
   project.worldItems.forEach((item) => {
     writeJson(fs, path.join(worldDir, `${item.id}.json`), item);
   });
@@ -379,6 +422,10 @@ const serializeProjectToFolder = (
   });
   writeJson(fs, path.join(systemDir, 'beta-personas.json'), project.betaPersonas);
   writeJson(fs, path.join(systemDir, 'beta-runs.json'), project.betaRuns);
+  writeJson(fs, path.join(systemDir, 'simulation-engines.json'), project.simulationEngines);
+  writeJson(fs, path.join(systemDir, 'simulation-labs.json'), project.simulationLabs);
+  writeJson(fs, path.join(systemDir, 'simulation-reviewers.json'), project.simulationReviewers);
+  writeJson(fs, path.join(systemDir, 'simulation-runs.json'), project.simulationRuns);
   writeJson(fs, path.join(importsDir, 'jobs.json'), project.importJobs);
   project.importJobs.forEach((job) => {
     const jobDir = path.join(importStagingDir, job.id);
@@ -551,6 +598,7 @@ export const projectService = {
       .map((fileName) => JSON.parse(runtime.fs.readFileSync(runtime.path.join(scenesDir, fileName), 'utf8')));
 
     const scriptMetas = readJsonFilesSafe<NarrativeProject['scripts'][number]>(runtime, scriptsDir);
+    const folderFallback = createStarterProject(projectIndex.metadata?.name || 'Starter Demo Project', resolvedPath, projectIndex.metadata?.locale || 'en', 'nodefs');
 
     const exportsPath = runtime.path.join(systemDir, 'exports.json');
     const project = {
@@ -567,6 +615,8 @@ export const projectService = {
         content: safeReadText(runtime.fs, runtime.path.join(scenesDir, `${meta.id}.md`), ''),
       })),
       worldContainers: safeReadJson(runtime.fs, runtime.path.join(worldDir, 'containers.json'), []),
+      worldSettings: safeReadJson(runtime.fs, runtime.path.join(worldDir, 'settings.json'), folderFallback.worldSettings),
+      worldMaps: safeReadJson(runtime.fs, runtime.path.join(worldDir, 'maps.json'), folderFallback.worldMaps),
       worldItems: readJsonFilesSafe<NarrativeProject['worldItems'][number]>(runtime, worldDir).filter((item) => item.id),
       graphBoards: readJsonFilesSafe<NarrativeProject['graphBoards'][number]>(runtime, graphDir),
       scripts: scriptMetas.map((meta) => ({
@@ -582,6 +632,10 @@ export const projectService = {
         : [],
       betaPersonas: safeReadJson(runtime.fs, runtime.path.join(systemDir, 'beta-personas.json'), []),
       betaRuns: safeReadJson(runtime.fs, runtime.path.join(systemDir, 'beta-runs.json'), []),
+      simulationEngines: safeReadJson(runtime.fs, runtime.path.join(systemDir, 'simulation-engines.json'), folderFallback.simulationEngines),
+      simulationLabs: safeReadJson(runtime.fs, runtime.path.join(systemDir, 'simulation-labs.json'), folderFallback.simulationLabs),
+      simulationReviewers: safeReadJson(runtime.fs, runtime.path.join(systemDir, 'simulation-reviewers.json'), folderFallback.simulationReviewers),
+      simulationRuns: safeReadJson(runtime.fs, runtime.path.join(systemDir, 'simulation-runs.json'), folderFallback.simulationRuns),
       taskRequests: safeReadJson(runtime.fs, runtime.path.join(tasksDir, 'requests.json'), []),
       taskRuns: safeReadJson(runtime.fs, runtime.path.join(runsDir, 'runs.json'), []),
       taskArtifacts: safeReadJson(runtime.fs, runtime.path.join(runsDir, 'artifacts.json'), []),
@@ -664,6 +718,8 @@ export const projectService = {
         path: null,
         createdAt: new Date().toISOString(),
         preview,
+        scope: input.scope || 'project',
+        chapterIds: input.chapterIds || [],
       };
     }
 
@@ -678,12 +734,16 @@ export const projectService = {
       path: exportPath,
       createdAt: new Date().toISOString(),
       preview,
+      scope: input.scope || 'project',
+      chapterIds: input.chapterIds || [],
     };
   },
 
   renderExport(project: NarrativeProject, input: ExportProjectInput): string {
-    const sceneBlocks = project.chapters
+    const chapters = project.chapters
       .sort((a, b) => a.orderIndex - b.orderIndex)
+      .filter((chapter) => input.scope !== 'chapter' || !input.chapterIds?.length || input.chapterIds.includes(chapter.id));
+    const sceneBlocks = chapters
       .map((chapter) => {
         const scenes = project.scenes
           .filter((scene) => scene.chapterId === chapter.id)
@@ -706,8 +766,7 @@ export const projectService = {
       return `# ${project.metadata.name}\n\n${sceneBlocks}${appendices}`;
     }
 
-    return `<!DOCTYPE html><html><head><meta charset="utf-8" /><title>${project.metadata.name}</title><style>body{font-family:Georgia,serif;max-width:900px;margin:40px auto;line-height:1.7;color:#111}h1,h2{font-family:Arial,sans-serif}</style></head><body><h1>${project.metadata.name}</h1>${project.chapters
-      .sort((a, b) => a.orderIndex - b.orderIndex)
+    return `<!DOCTYPE html><html><head><meta charset="utf-8" /><title>${project.metadata.name}</title><style>body{font-family:Georgia,serif;max-width:900px;margin:40px auto;line-height:1.7;color:#111}h1,h2{font-family:Arial,sans-serif}</style></head><body><h1>${project.metadata.name}</h1>${chapters
       .map((chapter) => {
         const scenes = project.scenes
           .filter((scene) => scene.chapterId === chapter.id)
@@ -737,6 +796,19 @@ export const projectService = {
       ...project,
       proposals: project.proposals.filter((proposal) => proposal.id !== proposalId),
       proposalHistory: [resolvedProposal, ...project.proposalHistory],
+      issues: project.issues.map((issue) => {
+        const relatesToProposal = issue.id === target.originIssueId || issue.suggestedProposalIds?.includes(proposalId);
+        if (!relatesToProposal) {
+          return issue;
+        }
+        return {
+          ...issue,
+          status: nextStatus === 'accepted' ? 'resolved' : issue.status,
+          visibility: nextStatus === 'accepted' ? 'history' : issue.visibility || 'default',
+          dismissedAt: nextStatus === 'rejected' ? new Date().toISOString() : issue.dismissedAt || null,
+          resolvedByProposalId: nextStatus === 'accepted' ? proposalId : issue.resolvedByProposalId || null,
+        };
+      }),
       unreadUpdates: {
         ...project.unreadUpdates,
         entities: {

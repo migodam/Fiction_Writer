@@ -28,7 +28,7 @@ export const Sidebar = () => {
     if (currentActivity === 'workbench') {
       if (sectionId === 'inbox') return proposals.length;
       if (sectionId === 'history') return proposalHistory.length;
-      if (sectionId === 'issues') return issues.length;
+      if (sectionId === 'issues') return issues.filter((issue) => issue.status === 'open' && issue.visibility !== 'hidden').length;
       if (sectionId === 'imports') return importJobs.length;
       if (sectionId === 'runs') return taskRuns.filter((run) => run.status === 'running' || run.status === 'queued' || run.status === 'awaiting_user_input').length;
       if (sectionId === 'prompts') return promptTemplates.length;
@@ -72,7 +72,7 @@ export const Sidebar = () => {
           {config.sidebarSections.map((section) => (
             <div
               key={section.id}
-              data-testid={`sidebar-section-${currentActivity}-${section.id}`}
+              data-testid={currentActivity === 'characters' && section.id === 'overview' ? 'sidebar-section-characters-list' : `sidebar-section-${currentActivity}-${section.id}`}
               className={`px-4 py-2 text-sm cursor-pointer flex items-center gap-2 transition-colors ${
                 sidebarSection === section.id
                   ? 'bg-active text-text font-medium border-l-2 border-brand'

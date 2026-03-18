@@ -21,5 +21,9 @@
   "tags": [
     "intel"
   ],
-  "sharedBranchIds": []
+  "sharedBranchIds": [],
+  "importance": "medium",
+  "colorToken": "",
+  "layoutLock": false,
+  "modalStateHints": []
 }

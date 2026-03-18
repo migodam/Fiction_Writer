@@ -20,7 +20,7 @@ import {
   X,
 } from 'lucide-react';
 import { useProjectStore, useUIStore } from './store';
-import { APP_ROUTES, getActivityEntryPath, getSidebarSectionFromPath } from './config/routes';
+import { APP_ROUTES, getActivityEntryPath, getRouteConfig, getSidebarSectionFromPath } from './config/routes';
 import { Sidebar } from './components/Sidebar';
 import { CharactersWorkspace } from './components/CharactersWorkspace';
 import { TimelineWorkspace } from './components/TimelineWorkspace';
@@ -42,6 +42,7 @@ import type { CreateProjectInput } from './models/project';
 import { cn } from './utils';
 import { PaneResizeHandle } from './components/PaneResizeHandle';
 import { ContextMenu } from './components/ContextMenu';
+import { AdvancedSettingsModal } from './components/AdvancedSettingsModal';
 
 type CommandOption = {
   label: string;
@@ -80,9 +81,9 @@ const CommandPalette = () => {
         : entry.type === 'candidate'
         ? '/characters/candidates'
         : entry.type === 'timeline_event'
-        ? `/timeline/events?event=${entry.id}`
+        ? `/timeline/timeline?event=${entry.id}`
         : entry.type === 'world_item'
-        ? '/world/lore'
+        ? '/world/entries'
         : entry.type === 'scene'
         ? '/writing/scenes'
         : entry.type === 'script'
@@ -675,9 +676,12 @@ const AppContent = () => {
     density,
     editorWidth,
     motionLevel,
+    appSettings,
+    loadAppSettings,
   } = useUIStore();
 
   const currentActivityId = APP_ROUTES.find((route) => location.pathname.startsWith(route.path))?.id || 'workbench';
+  const shouldShowSidebar = getRouteConfig(currentActivityId).sidebarSections.length > 1 && !isSidebarCollapsed;
 
   useEffect(() => {
     setActivity(currentActivityId);
@@ -690,8 +694,9 @@ const AppContent = () => {
       return;
     }
     initializedRef.current = true;
+    void loadAppSettings();
     void openProject();
-  }, [openProject]);
+  }, [loadAppSettings, openProject]);
 
   useEffect(() => {
     setProjectLocale(locale);
@@ -785,14 +790,19 @@ const AppContent = () => {
 
   return (
     <div
-      className={cn('flex h-screen flex-col overflow-hidden bg-bg text-text', density === 'compact' && 'density-compact text-[13px]', motionLevel === 'reduced' && 'motion-reduced')}
+      className={cn(
+        'flex h-screen flex-col overflow-hidden bg-bg text-text',
+        density === 'compact' && 'density-compact text-[13px]',
+        motionLevel === 'reduced' && 'motion-reduced',
+        appSettings.theme === 'light' ? 'theme-light' : 'theme-dark',
+      )}
       style={{
         ['--sidebar-width' as any]: `${sidebarWidth}px`,
         ['--agent-dock-width' as any]: `${agentDockWidth}px`,
       }}
     >
       <CommandPalette />
-      <SettingsModal />
+      <AdvancedSettingsModal />
       <ContextMenu />
       <DetailModal />
       {projectDialog && (
@@ -830,10 +840,10 @@ const AppContent = () => {
           </div>
         </nav>
 
-        <div style={{ width: isSidebarCollapsed ? 0 : sidebarWidth }} className="transition-[width] duration-200 overflow-hidden">
+        <div style={{ width: shouldShowSidebar ? sidebarWidth : 0 }} className="transition-[width] duration-200 overflow-hidden">
           <Sidebar />
         </div>
-        {!isSidebarCollapsed && <PaneResizeHandle panel="sidebar" direction="right" testId="sidebar-resizer" />}
+        {shouldShowSidebar && <PaneResizeHandle panel="sidebar" direction="right" testId="sidebar-resizer" />}
 
         <main className="flex-1 overflow-hidden bg-bg" data-testid="workspace">
           <Routes>
@@ -847,18 +857,29 @@ const AppContent = () => {
             <Route path="/workbench/prompts" element={<WorkbenchWorkspace />} />
             <Route path="/workbench/*" element={<WorkbenchWorkspace />} />
             <Route path="/writing/*" element={<WritingWorkspace />} />
-            <Route path="/characters" element={<Navigate to="/characters/list" replace />} />
-            <Route path="/characters/list" element={<CharactersWorkspace />} />
+            <Route path="/characters" element={<Navigate to="/characters/overview" replace />} />
+            <Route path="/characters/list" element={<Navigate to="/characters/overview" replace />} />
+            <Route path="/characters/overview" element={<CharactersWorkspace />} />
             <Route path="/characters/candidates" element={<CharactersWorkspace />} />
-            <Route path="/characters/relationships" element={<CharactersWorkspace />} />
+            <Route path="/characters/relationships" element={<Navigate to="/characters/relationship-graph" replace />} />
+            <Route path="/characters/relationship-graph" element={<CharactersWorkspace />} />
             <Route path="/characters/tags" element={<CharactersWorkspace />} />
             <Route path="/characters/profile/:characterId" element={<CharactersWorkspace />} />
-            <Route path="/characters/*" element={<Navigate to="/characters/list" replace />} />
+            <Route path="/characters/*" element={<Navigate to="/characters/overview" replace />} />
+            <Route path="/timeline" element={<Navigate to="/timeline/timeline" replace />} />
+            <Route path="/timeline/events" element={<Navigate to="/timeline/timeline" replace />} />
             <Route path="/timeline/*" element={<TimelineWorkspace />} />
             <Route path="/graph/*" element={<GraphWorkspace />} />
+            <Route path="/world" element={<Navigate to="/world/entries" replace />} />
+            <Route path="/world/maps" element={<Navigate to="/world/map" replace />} />
+            <Route path="/world/lore" element={<Navigate to="/world/entries" replace />} />
+            <Route path="/world/organizations" element={<Navigate to="/world/entries" replace />} />
             <Route path="/world/*" element={<WorldWorkspace />} />
+            <Route path="/simulation" element={<Navigate to="/simulation/labs" replace />} />
+            <Route path="/simulation/lab" element={<Navigate to="/simulation/labs" replace />} />
             <Route path="/simulation/*" element={<SimulationWorkspace />} />
             <Route path="/beta-reader/*" element={<BetaReaderWorkspace />} />
+            <Route path="/consistency" element={<Navigate to="/consistency/overview" replace />} />
             <Route path="/consistency/*" element={<ConsistencyWorkspace />} />
             <Route path="/agents/*" element={<AgentWorkspace />} />
             <Route path="/publish/*" element={<PublishWorkspace />} />
@@ -881,7 +902,7 @@ const AppContent = () => {
           </div>
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-2"><span className="opacity-60">{t('shell.selection')}</span><span>{selectedLabel}</span></div>
-            <div className="flex items-center gap-2"><span className="opacity-60">{t('shell.workbench')}</span><span>{proposals.length} pending / {issues.length} issues</span></div>
+            <div className="flex items-center gap-2"><span className="opacity-60">{t('shell.workbench')}</span><span>{proposals.length} pending / {issues.filter((issue) => issue.status === 'open' && issue.visibility !== 'hidden').length} issues</span></div>
           </div>
         </div>
       </footer>

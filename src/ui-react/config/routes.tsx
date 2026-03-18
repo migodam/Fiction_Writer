@@ -60,9 +60,9 @@ export const APP_ROUTES: RouteConfig[] = [
     icon: <Users size={20} />,
     testId: 'activity-btn-characters',
     sidebarSections: [
-      { id: 'list', label: 'Character List' },
+      { id: 'overview', label: 'Overview' },
       { id: 'candidates', label: 'Candidate Queue' },
-      { id: 'relationships', label: 'Relationships' },
+      { id: 'relationship-graph', label: 'Relationship Graph' },
       { id: 'tags', label: 'Tags' },
     ],
   },
@@ -73,7 +73,7 @@ export const APP_ROUTES: RouteConfig[] = [
     icon: <Clock size={20} />,
     testId: 'activity-btn-timeline',
     sidebarSections: [
-      { id: 'overview', label: 'Overview' },
+      { id: 'timeline', label: 'Timeline' },
     ],
   },
   {
@@ -94,9 +94,8 @@ export const APP_ROUTES: RouteConfig[] = [
     testId: 'activity-btn-world',
     sidebarSections: [
       { id: 'entries', label: 'Entries' },
-      { id: 'maps', label: 'Maps' },
-      { id: 'organizations', label: 'Organizations' },
-      { id: 'lore', label: 'Lore' },
+      { id: 'map', label: 'Map' },
+      { id: 'settings', label: 'Settings' },
     ],
   },
   {
@@ -106,7 +105,8 @@ export const APP_ROUTES: RouteConfig[] = [
     icon: <PlayCircle size={20} />,
     testId: 'activity-btn-simulation',
     sidebarSections: [
-      { id: 'lab', label: 'Lab' },
+      { id: 'labs', label: 'Labs' },
+      { id: 'reviewers', label: 'Reviewers' },
     ],
   },
   {
@@ -126,7 +126,7 @@ export const APP_ROUTES: RouteConfig[] = [
     icon: <CheckCircle size={20} />,
     testId: 'activity-btn-consistency',
     sidebarSections: [
-      { id: 'issues', label: 'Issues' },
+      { id: 'overview', label: 'Overview' },
     ],
   },
   {

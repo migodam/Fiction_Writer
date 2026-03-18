@@ -1,621 +1,303 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { BookOpen, Box, ChevronLeft, ChevronRight, Clock, MoreVertical, PanelLeft, PanelRight, Plus, Search, Sparkles, Type, Users, Wand2, Zap } from 'lucide-react';
+import { useLocation, useSearchParams } from 'react-router-dom';
+import { BookOpen, ChevronLeft, ChevronRight, PanelLeft, PanelRight, Plus, Search, Sparkles } from 'lucide-react';
 import { useProjectStore, useUIStore } from '../store';
-import { useI18n } from '../i18n';
 import { PaneResizeHandle } from './PaneResizeHandle';
 import { cn } from '../utils';
 
+const now = () => new Date().toISOString();
+
 export const WritingWorkspace = () => {
-  const { chapters, scenes, characters, timelineEvents, worldItems, scripts, storyboards, selectedEntity, setSelectedEntity, updateScene, updateScript, addChapter, updateChapter, addScene, syncProjectUiState } = useProjectStore();
-  const {
-    sidebarSection,
-    setLastActionStatus,
-    writingOutlineWidth,
-    writingContextWidth,
-    isWritingOutlineCollapsed,
-    isWritingContextCollapsed,
-    toggleWritingPane,
-    editorWidth,
-    openContextMenu,
-  } = useUIStore();
-  const { t } = useI18n();
-  const [searchParams] = useSearchParams();
-  const requestedScene = searchParams.get('scene');
-  const requestedChapter = searchParams.get('chapter');
-  const activeSceneId = selectedEntity.type === 'scene' ? selectedEntity.id : requestedScene || scenes[0]?.id;
-  const activeScene = scenes.find((scene) => scene.id === activeSceneId) || scenes[0] || null;
-  const activeChapterId = selectedEntity.type === 'chapter' ? selectedEntity.id : requestedChapter || activeScene?.chapterId || chapters[0]?.id || null;
-  const activeChapter = chapters.find((chapter) => chapter.id === activeChapterId) || chapters[0] || null;
-  const linkedItems = worldItems.filter((item) => activeScene?.linkedWorldItemIds.includes(item.id));
-  const linkedCharacters = characters.filter((character) => activeScene?.linkedCharacterIds.includes(character.id));
-  const linkedEvents = timelineEvents.filter((event) => activeScene?.linkedEventIds.includes(event.id));
-  const contextCharacters = useMemo(
-    () => mergeRecent(linkedCharacters, characters.slice().reverse(), 8),
-    [characters, linkedCharacters],
-  );
-  const contextEvents = useMemo(
-    () => mergeRecent(linkedEvents, timelineEvents.slice().reverse(), 8),
-    [linkedEvents, timelineEvents],
-  );
-  const contextWorldItems = useMemo(
-    () => mergeRecent(linkedItems, worldItems.slice().reverse(), 8),
-    [linkedItems, worldItems],
-  );
-  const recentScenes = useMemo(() => scenes.slice().sort((a, b) => b.orderIndex - a.orderIndex).slice(0, 5), [scenes]);
+  const ui = useUIStore();
+  const selectedEntity = useProjectStore((state) => state.selectedEntity);
+  const setSelectedEntity = useProjectStore((state) => state.setSelectedEntity);
+  const syncProjectUiState = useProjectStore((state) => state.syncProjectUiState);
+  const location = useLocation();
+  const [params] = useSearchParams();
   const [sceneQuery, setSceneQuery] = useState('');
-  const [localContent, setLocalContent] = useState(activeScene?.content || '');
-  const [localTitle, setLocalTitle] = useState(activeScene?.title || '');
-  const [localChapterTitle, setLocalChapterTitle] = useState(activeChapter?.title || '');
-  const [localChapterSummary, setLocalChapterSummary] = useState(activeChapter?.summary || '');
-  const [localChapterGoal, setLocalChapterGoal] = useState(activeChapter?.goal || '');
-  const [localChapterNotes, setLocalChapterNotes] = useState(activeChapter?.notes || '');
-  const activeScriptId = selectedEntity.type === 'script' ? selectedEntity.id : scripts[0]?.id || null;
-  const activeScript = scripts.find((script) => script.id === activeScriptId) || scripts[0] || null;
-  const activeStoryboardId = selectedEntity.type === 'storyboard' ? selectedEntity.id : storyboards[0]?.id || null;
-  const activeStoryboard = storyboards.find((storyboard) => storyboard.id === activeStoryboardId) || storyboards[0] || null;
   const [scriptQuery, setScriptQuery] = useState('');
-  const [localScriptContent, setLocalScriptContent] = useState(activeScript?.content || '');
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const routeSection = location.pathname.includes('/chapters')
+    ? 'chapters'
+    : location.pathname.includes('/scripts')
+    ? 'scripts'
+    : location.pathname.includes('/storyboards')
+    ? 'storyboards'
+    : 'scenes';
 
   useEffect(() => {
-    if (requestedScene) setSelectedEntity('scene', requestedScene);
-  }, [requestedScene, setSelectedEntity]);
-
-  useEffect(() => {
-    if (!activeScene) return;
-    setLocalContent(activeScene.content);
-    setLocalTitle(activeScene.title);
-  }, [activeScene?.id]);
-
-  useEffect(() => {
-    if (!activeChapter) return;
-    setLocalChapterTitle(activeChapter.title);
-    setLocalChapterSummary(activeChapter.summary);
-    setLocalChapterGoal(activeChapter.goal);
-    setLocalChapterNotes(activeChapter.notes);
-  }, [activeChapter?.id]);
-
-  useEffect(() => {
-    if (!activeScript) return;
-    setLocalScriptContent(activeScript.content);
-  }, [activeScript?.id]);
+    const sceneId = params.get('scene');
+    const chapterId = params.get('chapter');
+    if (sceneId && selectedEntity.id !== sceneId) setSelectedEntity('scene', sceneId);
+    else if (chapterId && selectedEntity.id !== chapterId) setSelectedEntity('chapter', chapterId);
+  }, [params, selectedEntity.id, setSelectedEntity]);
 
   useEffect(() => {
     syncProjectUiState();
-  }, [writingOutlineWidth, writingContextWidth, isWritingOutlineCollapsed, isWritingContextCollapsed, syncProjectUiState]);
+  }, [syncProjectUiState, ui.writingOutlineWidth, ui.writingContextWidth, ui.isWritingOutlineCollapsed, ui.isWritingContextCollapsed]);
 
-  const persistScene = (nextScene: typeof activeScene) => {
-    if (!nextScene) return;
-    updateScene(nextScene);
-    setLastActionStatus('Saved');
-  };
+  if (routeSection === 'chapters') return <ChapterEditor />;
+  if (routeSection === 'scripts') return <ScriptEditor query={scriptQuery} setQuery={setScriptQuery} />;
+  if (routeSection === 'storyboards') return <StoryboardEditor />;
+  return <SceneEditor query={sceneQuery} setQuery={setSceneQuery} />;
+};
 
-  const persistChapter = () => {
-    if (!activeChapter) return;
-    updateChapter({
-      ...activeChapter,
-      title: localChapterTitle,
-      summary: localChapterSummary,
-      goal: localChapterGoal,
-      notes: localChapterNotes,
-    });
-    setLastActionStatus('Saved');
-  };
+const ChapterEditor = () => {
+  const { chapters, scenes, selectedEntity, addChapter, updateChapter, addScene, setSelectedEntity } = useProjectStore();
+  const { setLastActionStatus } = useUIStore();
+  const activeId = selectedEntity.type === 'chapter' ? selectedEntity.id : chapters[0]?.id || null;
+  const chapter = chapters.find((entry) => entry.id === activeId) || chapters[0] || null;
+  const [draft, setDraft] = useState(chapter);
 
-  const filteredChapters = chapters.map((chapter) => ({
-    ...chapter,
-    visibleScenes: scenes
-      .filter((scene) => scene.chapterId === chapter.id)
-      .filter((scene) => `${scene.title} ${scene.summary}`.toLowerCase().includes(sceneQuery.toLowerCase())),
-  })).filter((chapter) => chapter.visibleScenes.length || !sceneQuery);
+  useEffect(() => setDraft(chapter), [chapter]);
 
-  if (sidebarSection === 'chapters') {
-    return (
-      <div className="flex h-full overflow-hidden bg-bg">
-        <aside style={{ width: writingOutlineWidth }} className="flex h-full flex-col border-r border-border bg-bg-elev-1 shadow-1" data-testid="writing-chapters-sidebar">
-          <div className="border-b border-border bg-bg-elev-2 p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <div>
-                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">Chapters</div>
-                <div className="text-sm font-black text-text">Structure Editor</div>
-              </div>
-              <button
-                type="button"
-                className="rounded-xl border border-border p-2 text-brand hover:border-brand"
-                data-testid="add-chapter-btn"
-                onClick={() => {
-                  const nextChapterId = `chap_${Date.now()}`;
-                  addChapter({
-                    id: nextChapterId,
-                    title: `Chapter ${chapters.length + 1}`,
-                    summary: '',
-                    goal: '',
-                    notes: '',
-                    sceneIds: [],
-                    orderIndex: chapters.length,
-                    status: 'draft',
-                  });
-                  setSelectedEntity('chapter', nextChapterId);
-                }}
-              >
-                <Plus size={16} />
-              </button>
-            </div>
-          </div>
-          <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2">
-            {chapters.map((chapter) => (
-              <button
-                key={chapter.id}
-                type="button"
-                className={cn('w-full rounded-2xl border px-4 py-3 text-left', activeChapter?.id === chapter.id ? 'border-brand bg-selected' : 'border-border bg-bg hover:border-brand')}
-                onClick={() => setSelectedEntity('chapter', chapter.id)}
-                data-testid={`chapter-item-${chapter.id}`}
-              >
-                <div className="text-sm font-black text-text">{chapter.title}</div>
-                <div className="mt-2 text-xs text-text-2">{chapter.summary || 'No summary yet.'}</div>
-              </button>
-            ))}
-          </div>
-        </aside>
-        <section className="flex min-w-0 flex-1 flex-col bg-bg">
-          {activeChapter ? (
-            <div className="min-h-0 flex-1 overflow-y-auto custom-scrollbar px-8 py-12" data-testid="chapter-editor">
-              <div className="mx-auto max-w-5xl rounded-[32px] border border-border/70 bg-card px-10 py-12 shadow-2">
-                <div className="mb-8 flex items-center justify-between">
-                  <div>
-                    <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">Chapter Detail</div>
-                    <div className="text-sm font-black text-text">Manual chapter editing is fully enabled.</div>
-                  </div>
-                  <button type="button" className="rounded-xl bg-brand px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-white" onClick={persistChapter} data-testid="save-chapter-btn">
-                    Save Chapter
-                  </button>
-                </div>
-                <input value={localChapterTitle} onChange={(event) => setLocalChapterTitle(event.target.value)} className="mb-6 w-full bg-transparent text-5xl font-black tracking-tight outline-none" placeholder="Chapter title" data-testid="chapter-title-input" />
-                <textarea value={localChapterSummary} onChange={(event) => setLocalChapterSummary(event.target.value)} className="mb-6 h-28 w-full rounded-3xl border border-border bg-bg p-5 text-sm leading-relaxed text-text-2 outline-none" placeholder="Chapter summary" data-testid="chapter-summary-input" />
-                <div className="grid gap-6 lg:grid-cols-2">
-                  <textarea value={localChapterGoal} onChange={(event) => setLocalChapterGoal(event.target.value)} className="h-36 w-full rounded-3xl border border-border bg-bg p-5 text-sm leading-relaxed text-text-2 outline-none" placeholder="Chapter goal" data-testid="chapter-goal-input" />
-                  <textarea value={localChapterNotes} onChange={(event) => setLocalChapterNotes(event.target.value)} className="h-36 w-full rounded-3xl border border-border bg-bg p-5 text-sm leading-relaxed text-text-2 outline-none" placeholder="Chapter notes" data-testid="chapter-notes-input" />
-                </div>
-                <div className="mt-8 rounded-3xl border border-border bg-bg-elev-1 p-6">
-                  <div className="mb-4 flex items-center justify-between">
-                    <div className="text-[10px] font-black uppercase tracking-[0.25em] text-text-3">Scenes in Chapter</div>
-                    <button
-                      type="button"
-                      className="rounded-xl border border-border px-4 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-text-2 hover:border-brand"
-                      onClick={() => {
-                        const nextSceneId = `scene_${Date.now()}`;
-                        const chapterSceneCount = scenes.filter((scene) => scene.chapterId === activeChapter.id).length;
-                        addScene({
-                          id: nextSceneId,
-                          chapterId: activeChapter.id,
-                          title: `Scene ${chapterSceneCount + 1}`,
-                          summary: '',
-                          content: '',
-                          orderIndex: chapterSceneCount,
-                          povCharacterId: null,
-                          linkedCharacterIds: [],
-                          linkedEventIds: [],
-                          linkedWorldItemIds: [],
-                          status: 'draft',
-                        });
-                        updateChapter({ ...activeChapter, sceneIds: [...activeChapter.sceneIds, nextSceneId] });
-                        setSelectedEntity('scene', nextSceneId);
-                      }}
-                      data-testid="chapter-add-scene-btn"
-                    >
-                      <Plus size={12} className="mr-2 inline" />
-                      Add Scene
-                    </button>
-                  </div>
-                  <div className="space-y-3">
-                    {scenes.filter((scene) => scene.chapterId === activeChapter.id).map((scene) => (
-                      <button key={scene.id} type="button" className="flex w-full items-center justify-between rounded-2xl border border-border bg-bg px-4 py-3 text-left hover:border-brand" onClick={() => setSelectedEntity('scene', scene.id)}>
-                        <div>
-                          <div className="text-sm font-bold text-text">{scene.title}</div>
-                          <div className="mt-1 text-xs text-text-3">{scene.summary || 'No summary yet.'}</div>
-                        </div>
-                        <ChevronRight size={14} className="text-text-3" />
-                      </button>
-                    ))}
-                    {!scenes.some((scene) => scene.chapterId === activeChapter.id) && (
-                      <div className="rounded-2xl border border-dashed border-border bg-bg px-4 py-5 text-sm text-text-3">No scenes in this chapter yet.</div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-1 items-center justify-center text-text-3">No chapters yet.</div>
-          )}
-        </section>
-      </div>
-    );
-  }
-
-  if (sidebarSection === 'scripts') {
-    const filteredScripts = scripts.filter((script) => `${script.title} ${script.summary}`.toLowerCase().includes(scriptQuery.toLowerCase()));
-    return (
-      <div className="flex h-full overflow-hidden bg-bg">
-        <aside style={{ width: writingOutlineWidth }} className="flex h-full flex-col border-r border-border bg-bg-elev-1 shadow-1" data-testid="writing-scripts-sidebar">
-          <div className="border-b border-border bg-bg-elev-2 p-4">
-            <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">Script Registry</div>
-            <div className="mt-2 rounded-2xl border border-border bg-bg px-3 py-2">
-              <div className="flex items-center gap-2"><Search size={13} /><input value={scriptQuery} onChange={(event) => setScriptQuery(event.target.value)} className="w-full bg-transparent text-sm outline-none" placeholder="Search scripts..." /></div>
-            </div>
-          </div>
-          <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2">
-            {filteredScripts.map((script) => (
-              <button
-                key={script.id}
-                type="button"
-                className={cn('w-full rounded-2xl border px-4 py-3 text-left', activeScript?.id === script.id ? 'border-brand bg-selected' : 'border-border bg-bg hover:border-brand')}
-                onClick={() => setSelectedEntity('script', script.id)}
-                data-testid={`script-item-${script.id}`}
-              >
-                <div className="text-sm font-black text-text">{script.title}</div>
-                <div className="mt-2 text-xs text-text-2">{script.summary}</div>
-              </button>
-            ))}
-          </div>
-        </aside>
-        <section className="flex min-w-0 flex-1 flex-col bg-bg">
-          <div className="flex items-center justify-between border-b border-border bg-bg-elev-1 px-6 py-3">
-            <div>
-              <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">Script Draft</div>
-              <div className="text-sm font-black text-text">{activeScript?.title || 'No script selected'}</div>
-            </div>
-            <div className="rounded-full border border-border px-3 py-1 text-[10px] font-black uppercase tracking-widest text-text-2">{activeScript?.reviewState || 'idle'}</div>
-          </div>
-          {activeScript ? (
-            <div className="min-h-0 flex-1 overflow-y-auto custom-scrollbar px-8 py-12">
-              <div className="mx-auto max-w-5xl rounded-[32px] border border-border/70 bg-card px-10 py-12 shadow-2" data-testid="script-manuscript-panel">
-                <input
-                  value={activeScript.title}
-                  readOnly
-                  className="mb-6 w-full bg-transparent text-4xl font-black tracking-tight outline-none"
-                />
-                <div className="mb-6 grid gap-4 rounded-3xl border border-border bg-bg-elev-1 p-5 lg:grid-cols-3">
-                  <InfoRow label="Mode" value={activeScript.mode} icon={<Type size={14} />} />
-                  <InfoRow label="Episodes" value={String(activeScript.episodes.length)} icon={<BookOpen size={14} />} />
-                  <InfoRow label="Linked scenes" value={activeScript.sourceSceneIds.join(', ') || 'None'} icon={<Clock size={14} />} />
-                </div>
-                <div className="mb-6 rounded-3xl border border-border bg-bg-elev-1 p-5">
-                  <div className="mb-3 text-[10px] font-black uppercase tracking-[0.25em] text-text-3">Review Boundary</div>
-                  <div className="flex flex-wrap gap-2">
-                    <span className="rounded-full border border-border bg-bg px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">
-                      review: {activeScript.reviewState}
-                    </span>
-                    <span className="rounded-full border border-border bg-bg px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">
-                      version: {activeScript.version}
-                    </span>
-                    <span className="rounded-full border border-border bg-bg px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">
-                      draft: {activeScript.draftPath || 'in-memory'}
-                    </span>
-                  </div>
-                  <div className="mt-4 text-sm leading-relaxed text-text-2">
-                    This script remains canonical project content, but any AI-generated rewrite must still route through proposals and Workbench review before replacing reviewed text.
-                  </div>
-                </div>
-                <textarea
-                  data-testid="script-editor"
-                  className="min-h-[640px] w-full resize-none bg-transparent font-mono text-base leading-8 text-text-2 outline-none"
-                  value={localScriptContent}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    setLocalScriptContent(value);
-                    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-                    saveTimeoutRef.current = setTimeout(() => {
-                      if (!activeScript) return;
-                      updateScript({ ...activeScript, content: value, updatedAt: new Date().toISOString() });
-                      setLastActionStatus('Saved');
-                    }, 1000);
-                  }}
-                />
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-1 items-center justify-center text-text-3">No scripts yet.</div>
-          )}
-        </section>
-      </div>
-    );
-  }
-
-  if (sidebarSection === 'storyboards') {
-    return (
-      <div className="flex h-full overflow-hidden bg-bg">
-        <aside style={{ width: writingOutlineWidth }} className="flex h-full flex-col border-r border-border bg-bg-elev-1 shadow-1 p-3 gap-2" data-testid="writing-storyboards-sidebar">
-          {storyboards.map((storyboard) => (
-            <button
-              key={storyboard.id}
-              type="button"
-              className={cn('w-full rounded-2xl border px-4 py-3 text-left', activeStoryboard?.id === storyboard.id ? 'border-brand bg-selected' : 'border-border bg-bg hover:border-brand')}
-              onClick={() => setSelectedEntity('storyboard', storyboard.id)}
-              data-testid={`storyboard-item-${storyboard.id}`}
-            >
-              <div className="text-sm font-black text-text">{storyboard.title}</div>
-              <div className="mt-2 text-xs text-text-2">{storyboard.visualStyleNotes}</div>
-            </button>
-          ))}
-        </aside>
-        <section className="flex min-w-0 flex-1 flex-col bg-bg">
-          <div className="flex items-center justify-between border-b border-border bg-bg-elev-1 px-6 py-3">
-            <div>
-              <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">Storyboard Preview</div>
-              <div className="text-sm font-black text-text">{activeStoryboard?.title || 'No storyboard selected'}</div>
-            </div>
-            <div className="rounded-full border border-border px-3 py-1 text-[10px] font-black uppercase tracking-widest text-text-2">{activeStoryboard?.status || 'idle'}</div>
-          </div>
-          {activeStoryboard ? (
-            <div className="min-h-0 flex-1 overflow-y-auto custom-scrollbar px-8 py-10" data-testid="storyboard-panel">
-            <div className="grid gap-4">
-              {activeStoryboard.shots.map((shot) => (
-                <div key={shot.id} className="rounded-2xl border border-border bg-card p-5 shadow-1">
-                  <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{shot.id}</div>
-                  <h3 className="mt-2 text-lg font-black text-text">{shot.title}</h3>
-                  <p className="mt-2 text-sm text-text-2">{shot.summary}</p>
-                  <div className="mt-4 rounded-xl border border-border bg-bg-elev-1 p-4 text-sm text-text-2">{shot.visualPrompt}</div>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <span className="rounded-full border border-border bg-bg px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">
-                      characters: {shot.linkedCharacterIds.join(', ') || 'none'}
-                    </span>
-                    <span className="rounded-full border border-border bg-bg px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">
-                      world: {shot.linkedWorldItemIds.join(', ') || 'none'}
-                    </span>
-                    <span className="rounded-full border border-border bg-bg px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">
-                      duration: {shot.durationSeconds || 0}s
-                    </span>
-                  </div>
-                </div>
-              ))}
-              <div className="rounded-2xl border border-border bg-card p-5 shadow-1">
-                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-text-3">Prompt package</div>
-                <div className="mt-3 text-sm text-text-2">{activeStoryboard.promptPackagePath || 'Pending package generation'}</div>
-                <div className="mt-3 text-sm leading-relaxed text-text-2">
-                  Storyboard output is reviewable structured input for downstream video orchestration. Provider execution remains adapter-driven and does not rewrite storyboard canon directly.
-                </div>
-              </div>
-            </div>
-          </div>
-          ) : (
-            <div className="flex flex-1 items-center justify-center text-text-3">No storyboards yet.</div>
-          )}
-        </section>
-      </div>
-    );
-  }
+  const groups = useMemo(() => {
+    const buckets = [];
+    for (let i = 0; i < chapters.length; i += 100) {
+      buckets.push({ id: `bucket_${i}`, label: `Chapter ${i + 1}-${Math.min(i + 100, chapters.length)}`, items: chapters.slice(i, i + 100) });
+    }
+    return buckets;
+  }, [chapters]);
 
   return (
     <div className="flex h-full overflow-hidden bg-bg">
-      {!isWritingOutlineCollapsed && (
-        <>
-          <aside style={{ width: writingOutlineWidth }} className="flex h-full flex-col border-r border-border bg-bg-elev-1 shadow-1" data-testid="writing-sidebar">
-            <div className="border-b border-border bg-bg-elev-2 p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <div>
-                  <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('writing.manuscript')}</div>
-                  <div className="text-sm font-black text-text">Outline / Selection</div>
-                </div>
-                <button
-                  type="button"
-                  className="rounded-xl border border-border p-2 text-brand hover:border-brand"
-                  onClick={() => {
-                    const chapterId = activeChapter?.id || chapters[0]?.id;
-                    if (!chapterId) return;
-                    const nextSceneId = `scene_${Date.now()}`;
-                    const chapterSceneCount = scenes.filter((scene) => scene.chapterId === chapterId).length;
-                    addScene({
-                      id: nextSceneId,
-                      chapterId,
-                      title: `Scene ${chapterSceneCount + 1}`,
-                      summary: '',
-                      content: '',
-                      orderIndex: chapterSceneCount,
-                      povCharacterId: null,
-                      linkedCharacterIds: [],
-                      linkedEventIds: [],
-                      linkedWorldItemIds: [],
-                      status: 'draft',
-                    });
-                    const chapter = chapters.find((entry) => entry.id === chapterId);
-                    if (chapter) updateChapter({ ...chapter, sceneIds: [...chapter.sceneIds, nextSceneId] });
-                    setSelectedEntity('scene', nextSceneId);
-                  }}
-                  data-testid="add-scene-btn"
-                >
-                  <Plus size={15} />
-                </button>
-                <button type="button" className="rounded-xl border border-border p-2 text-text-2 hover:border-brand" onClick={() => toggleWritingPane('outline', false)} data-testid="writing-outline-toggle">
-                  <PanelLeft size={15} />
-                </button>
-              </div>
-              <div className="rounded-2xl border border-border bg-bg px-3 py-2">
-                <div className="flex items-center gap-2"><Search size={13} /><input value={sceneQuery} onChange={(event) => setSceneQuery(event.target.value)} className="w-full bg-transparent text-sm outline-none" placeholder="Search scenes..." /></div>
-              </div>
+      <aside className="w-80 border-r border-border bg-bg-elev-1" data-testid="writing-chapters-sidebar">
+        <div className="border-b border-border bg-bg-elev-2 p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <div>
+              <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">Chapters</div>
+              <div className="text-sm font-black text-text">Grouped for long projects</div>
             </div>
-            <div className="flex-1 overflow-y-auto custom-scrollbar">
-              <div className="border-b border-divider p-4">
-                <div className="mb-3 text-[10px] font-black uppercase tracking-[0.25em] text-text-3">Recent</div>
-                <div className="space-y-2">
-                  {recentScenes.map((scene) => (
-                    <button key={scene.id} type="button" className="w-full rounded-2xl border border-border bg-bg px-3 py-2 text-left text-sm text-text-2 hover:border-brand" onClick={() => setSelectedEntity('scene', scene.id)}>
-                      {scene.title}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {filteredChapters.map((chapter) => (
-                <div key={chapter.id} className="border-b border-divider">
-                  <div className="flex items-center gap-3 px-4 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-text-3">
-                    <BookOpen size={13} className="text-brand-2" />
-                    <span>{chapter.title}</span>
-                  </div>
-                  <div className="space-y-1 pb-3">
-                    {chapter.visibleScenes.map((scene) => (
-                      <button
-                        type="button"
-                        key={scene.id}
-                        data-testid={`scene-item-${scene.id}`}
-                        className={cn('group flex w-full items-center justify-between px-6 py-3 text-left transition-colors', activeScene?.id === scene.id ? 'bg-active text-text' : 'text-text-2 hover:bg-hover')}
-                        onClick={() => setSelectedEntity('scene', scene.id)}
-                        onContextMenu={(event) => {
-                          event.preventDefault();
-                          openContextMenu({
-                            x: event.clientX,
-                            y: event.clientY,
-                            items: [
-                              { id: 'scene-open', label: 'Open Scene', action: () => setSelectedEntity('scene', scene.id) },
-                              { id: 'scene-context', label: 'Focus Narrative Context', action: () => toggleWritingPane('context', true) },
-                            ],
-                          });
-                        }}
-                      >
-                        <span className="text-[11px] font-medium">{scene.title}</span>
-                        <MoreVertical size={12} className="opacity-50" />
-                      </button>
-                    ))}
-                  </div>
-                </div>
+            <button type="button" className="rounded-xl border border-border p-2 text-brand hover:border-brand" data-testid="add-chapter-btn" onClick={() => {
+              const id = `chap_${Date.now()}`;
+              addChapter({ id, title: `Chapter ${chapters.length + 1}`, summary: '', goal: '', notes: '', sceneIds: [], orderIndex: chapters.length, status: 'draft' });
+              setSelectedEntity('chapter', id);
+              setLastActionStatus('Chapter created');
+            }}>
+              <Plus size={16} />
+            </button>
+          </div>
+        </div>
+        <div className="h-full overflow-y-auto custom-scrollbar p-3">
+          {groups.map((group: any) => (
+            <div key={group.id} className="mb-4 rounded-2xl border border-border bg-card">
+              <div className="border-b border-divider px-4 py-3 text-[10px] font-black uppercase tracking-[0.2em] text-text-3">{group.label}</div>
+              {group.items.map((item: any) => (
+                <button key={item.id} type="button" data-testid={`chapter-item-${item.id}`} className={cn('block w-full border-b border-divider px-4 py-3 text-left last:border-b-0', item.id === chapter?.id ? 'bg-selected text-text' : 'text-text-2 hover:bg-hover')} onClick={() => setSelectedEntity('chapter', item.id)}>
+                  <div className="text-sm font-black">{item.title}</div>
+                  <div className="mt-1 line-clamp-1 text-xs text-text-3">{item.summary || 'No summary yet.'}</div>
+                </button>
               ))}
             </div>
-          </aside>
-          <PaneResizeHandle panel="writingOutline" direction="right" testId="writing-outline-resizer" />
-        </>
-      )}
+          ))}
+        </div>
+      </aside>
+      <main className="flex-1 overflow-y-auto custom-scrollbar px-8 py-10">
+        {draft ? (
+          <div className="mx-auto max-w-5xl rounded-[32px] border border-border bg-card p-8 shadow-1" data-testid="chapter-editor">
+            <div className="mb-8 flex items-center justify-between">
+              <div>
+                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">Chapter Detail</div>
+                <div className="text-sm font-black text-text">Manual create and edit is enabled.</div>
+              </div>
+              <button type="button" className="rounded-xl bg-brand px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-white" data-testid="save-chapter-btn" onClick={() => { updateChapter(draft); setLastActionStatus('Chapter saved'); }}>Save Chapter</button>
+            </div>
+            <input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} className="mb-4 w-full bg-transparent text-5xl font-black tracking-tight outline-none" data-testid="chapter-title-input" />
+            <textarea value={draft.summary} onChange={(e) => setDraft({ ...draft, summary: e.target.value })} className="mb-4 h-24 w-full rounded-3xl border border-border bg-bg p-5 text-sm text-text-2 outline-none" data-testid="chapter-summary-input" />
+            <div className="grid gap-4 lg:grid-cols-2">
+              <textarea value={draft.goal} onChange={(e) => setDraft({ ...draft, goal: e.target.value })} className="h-32 rounded-3xl border border-border bg-bg p-5 text-sm text-text-2 outline-none" data-testid="chapter-goal-input" />
+              <textarea value={draft.notes} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} className="h-32 rounded-3xl border border-border bg-bg p-5 text-sm text-text-2 outline-none" data-testid="chapter-notes-input" />
+            </div>
+            <div className="mt-8 rounded-3xl border border-border bg-bg-elev-1 p-6">
+              <div className="mb-4 flex items-center justify-between">
+                <div className="text-[10px] font-black uppercase tracking-[0.2em] text-text-3">Scenes in chapter</div>
+                <button type="button" className="rounded-xl border border-border px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-text-2 hover:border-brand" data-testid="chapter-add-scene-btn" onClick={() => {
+                  const id = `scene_${Date.now()}`;
+                  addScene({ id, chapterId: draft.id, title: `Scene ${draft.sceneIds.length + 1}`, summary: '', content: '', orderIndex: draft.sceneIds.length, povCharacterId: null, linkedCharacterIds: [], linkedEventIds: [], linkedWorldItemIds: [], status: 'draft' });
+                  const next = { ...draft, sceneIds: [...draft.sceneIds, id] };
+                  updateChapter(next);
+                  setDraft(next);
+                  setSelectedEntity('scene', id);
+                  setLastActionStatus('Scene created');
+                }}>
+                  <Plus size={12} className="mr-2 inline" />Add Scene
+                </button>
+              </div>
+              <div className="space-y-3">
+                {scenes.filter((entry) => entry.chapterId === draft.id).sort((a, b) => a.orderIndex - b.orderIndex).map((scene) => (
+                  <button key={scene.id} type="button" className="flex w-full items-center justify-between rounded-2xl border border-border bg-bg px-4 py-3 text-left hover:border-brand" onClick={() => setSelectedEntity('scene', scene.id)}>
+                    <div>
+                      <div className="text-sm font-bold text-text">{scene.title}</div>
+                      <div className="mt-1 text-xs text-text-3">{scene.summary || 'No summary yet.'}</div>
+                    </div>
+                    <ChevronRight size={14} className="text-text-3" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : <Empty title="No chapters yet" body="Create the first chapter to start building the structure." />}
+      </main>
+    </div>
+  );
+};
+
+const SceneEditor = ({ query, setQuery }: { query: string; setQuery: (value: string) => void }) => {
+  const ui = useUIStore();
+  const setLastActionStatus = useUIStore((state) => state.setLastActionStatus);
+  const store = useProjectStore();
+  const { chapters, scenes, characters, timelineEvents, worldItems, selectedEntity, setSelectedEntity, addChapter, addScene, updateScene, updateChapter } = store;
+  const activeScene = scenes.find((entry) => entry.id === (selectedEntity.type === 'scene' ? selectedEntity.id : scenes[0]?.id)) || scenes[0] || null;
+  const activeChapter = chapters.find((entry) => entry.id === activeScene?.chapterId) || chapters[0] || null;
+  const [title, setTitle] = useState(activeScene?.title || '');
+  const [content, setContent] = useState(activeScene?.content || '');
+  const saveRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    if (activeScene) return;
+    const chapterId = chapters[0]?.id || `chap_${Date.now()}`;
+    if (!chapters.length) {
+      addChapter({ id: chapterId, title: 'Chapter 1', summary: '', goal: '', notes: '', sceneIds: [], orderIndex: 0, status: 'draft' });
+    }
+    const sceneId = `scene_${Date.now()}`;
+    addScene({ id: sceneId, chapterId, title: 'Scene 1', summary: '', content: '', orderIndex: 0, povCharacterId: null, linkedCharacterIds: [], linkedEventIds: [], linkedWorldItemIds: [], status: 'draft' });
+    const bootstrapChapter = chapters.find((entry) => entry.id === chapterId);
+    if (bootstrapChapter) {
+      updateChapter({ ...bootstrapChapter, sceneIds: [...bootstrapChapter.sceneIds, sceneId] });
+    }
+    setSelectedEntity('scene', sceneId);
+    setLastActionStatus('Scene created');
+  }, [activeScene, addChapter, addScene, chapters, setLastActionStatus, setSelectedEntity, updateChapter]);
+
+  useEffect(() => {
+    setTitle(activeScene?.title || '');
+    setContent(activeScene?.content || '');
+  }, [activeScene?.id]);
+
+  const groups = chapters.map((chapter) => ({
+    chapter,
+    scenes: scenes.filter((scene) => scene.chapterId === chapter.id && `${scene.title} ${scene.summary} ${scene.content}`.toLowerCase().includes(query.toLowerCase())).sort((a, b) => a.orderIndex - b.orderIndex),
+  })).filter((group) => group.scenes.length);
+
+  const linkedCharacters = characters.filter((entry) => activeScene?.linkedCharacterIds.includes(entry.id));
+  const linkedEvents = timelineEvents.filter((entry) => activeScene?.linkedEventIds.includes(entry.id));
+  const linkedItems = worldItems.filter((entry) => activeScene?.linkedWorldItemIds.includes(entry.id));
+
+  return (
+    <div className="flex h-full overflow-hidden bg-bg">
+      {!ui.isWritingOutlineCollapsed && <>
+        <aside style={{ width: ui.writingOutlineWidth }} className="flex h-full flex-col border-r border-border bg-bg-elev-1" data-testid="writing-sidebar">
+          <div className="border-b border-border bg-bg-elev-2 p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <div><div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">Scenes</div><div className="text-sm font-black text-text">Scalable outline</div></div>
+              <div className="flex items-center gap-2">
+                <button type="button" className="rounded-xl border border-border p-2 text-brand hover:border-brand" data-testid="add-scene-btn" onClick={() => {
+                  const chapterId = activeChapter?.id || chapters[0]?.id;
+                  if (!chapterId) return;
+                  const id = `scene_${Date.now()}`;
+                  const count = scenes.filter((scene) => scene.chapterId === chapterId).length;
+                  addScene({ id, chapterId, title: `Scene ${count + 1}`, summary: '', content: '', orderIndex: count, povCharacterId: null, linkedCharacterIds: [], linkedEventIds: [], linkedWorldItemIds: [], status: 'draft' });
+                  const chapter = chapters.find((entry) => entry.id === chapterId);
+                  if (chapter) updateChapter({ ...chapter, sceneIds: [...chapter.sceneIds, id] });
+                  setSelectedEntity('scene', id);
+                  setLastActionStatus('Scene created');
+                }}><Plus size={15} /></button>
+                <button type="button" className="rounded-xl border border-border p-2 text-text-2 hover:border-brand" data-testid="writing-outline-toggle" onClick={() => ui.toggleWritingPane('outline', false)}><PanelLeft size={15} /></button>
+              </div>
+            </div>
+            <div className="rounded-2xl border border-border bg-bg px-3 py-2"><div className="flex items-center gap-2"><Search size={13} /><input value={query} onChange={(e) => setQuery(e.target.value)} className="w-full bg-transparent text-sm outline-none" placeholder="Search scenes across the whole manuscript" /></div></div>
+          </div>
+          <div className="flex-1 overflow-y-auto custom-scrollbar">
+            {groups.map((group) => (
+              <div key={group.chapter.id} className="border-b border-divider">
+                <div className="flex items-center gap-2 px-4 py-3 text-[10px] font-black uppercase tracking-[0.2em] text-text-3"><BookOpen size={12} className="text-brand-2" />{group.chapter.title}</div>
+                {group.scenes.map((scene) => (
+                  <button key={scene.id} type="button" data-testid={`scene-item-${scene.id}`} className={cn('flex w-full items-center justify-between px-6 py-3 text-left', scene.id === activeScene?.id ? 'bg-active text-text' : 'text-text-2 hover:bg-hover')} onClick={() => setSelectedEntity('scene', scene.id)}>
+                    <span className="truncate text-[11px] font-medium">{scene.title}</span>
+                    <ChevronRight size={12} className="opacity-50" />
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+        </aside>
+        <PaneResizeHandle panel="writingOutline" direction="right" testId="writing-outline-resizer" />
+      </>}
 
       <section className="flex min-w-0 flex-1 flex-col bg-bg">
         <div className="flex items-center justify-between border-b border-border bg-bg-elev-1 px-6 py-3">
           <div className="flex items-center gap-3">
-            <button type="button" className="rounded-xl border border-border p-2 text-text-2 hover:border-brand" onClick={() => toggleWritingPane('outline', isWritingOutlineCollapsed)} data-testid="writing-outline-reopen">
-              {isWritingOutlineCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
-            </button>
-            <div>
-              <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('writing.draftMode')}</div>
-              <div className="text-sm font-black text-text">{activeScene?.title || t('writing.idle')}</div>
-            </div>
+            <button type="button" className="rounded-xl border border-border p-2 text-text-2 hover:border-brand" data-testid="writing-outline-reopen" onClick={() => ui.toggleWritingPane('outline', ui.isWritingOutlineCollapsed)}>{ui.isWritingOutlineCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}</button>
+            <div><div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">Scene Draft</div><div className="text-sm font-black text-text">{activeScene?.title || 'No scene selected'}</div></div>
           </div>
-          <button type="button" className="rounded-xl border border-border p-2 text-text-2 hover:border-brand" onClick={() => toggleWritingPane('context', isWritingContextCollapsed)} data-testid="writing-context-toggle">
-            {isWritingContextCollapsed ? <PanelRight size={15} /> : <PanelLeft size={15} />}
-          </button>
+          <button type="button" className="rounded-xl border border-border p-2 text-text-2 hover:border-brand" data-testid="writing-context-toggle" onClick={() => ui.toggleWritingPane('context', ui.isWritingContextCollapsed)}>{ui.isWritingContextCollapsed ? <PanelRight size={15} /> : <PanelLeft size={15} />}</button>
         </div>
         {activeScene ? (
-          <div className="min-h-0 flex-1 overflow-y-auto custom-scrollbar px-8 py-12">
-            <div className={cn('mx-auto rounded-[32px] border border-border/70 bg-card px-10 py-12 shadow-2', editorWidth === 'wide' ? 'max-w-[1200px]' : 'max-w-4xl')} data-testid="writing-manuscript-panel">
-              <div className="mb-4 flex items-center gap-3 opacity-40"><Type size={12} className="text-brand" /><span className="text-[9px] font-black uppercase tracking-[0.4em]">{t('writing.draftMode')}</span></div>
-              <input value={localTitle} onChange={(event) => {
-                setLocalTitle(event.target.value);
-                activeScene && updateScene({ ...activeScene, title: event.target.value });
-              }} className="mb-10 w-full bg-transparent text-5xl font-black tracking-tight outline-none" placeholder={t('writing.sceneTitle')} />
-              <div className="mb-8 grid gap-4 rounded-3xl border border-border bg-bg-elev-1 p-5 lg:grid-cols-3">
-                <InfoRow label={t('writing.pov')} value={characters.find((character) => character.id === activeScene.povCharacterId)?.name || 'Unassigned'} icon={<Users size={14} />} />
-                <InfoRow label={t('writing.events')} value={linkedEvents.map((event) => event.title).join(', ') || 'None'} icon={<Clock size={14} />} />
-                <InfoRow label={t('writing.world')} value={linkedItems.map((item) => item.name).join(', ') || 'None'} icon={<Box size={14} />} />
+          <div className="min-h-0 flex-1 overflow-y-auto custom-scrollbar px-8 py-10">
+            <div className={cn('mx-auto rounded-[32px] border border-border bg-card px-10 py-10 shadow-1', ui.editorWidth === 'wide' ? 'max-w-[1200px]' : 'max-w-4xl')} data-testid="writing-manuscript-panel">
+              <input value={title} onChange={(e) => { setTitle(e.target.value); updateScene({ ...activeScene, title: e.target.value }); }} className="mb-8 w-full bg-transparent text-5xl font-black tracking-tight outline-none" placeholder="Scene title" />
+              <div className="mb-6 grid gap-4 rounded-3xl border border-border bg-bg-elev-1 p-5 lg:grid-cols-3">
+                <SmallInfo label="POV" value={characters.find((entry) => entry.id === activeScene.povCharacterId)?.name || 'Unassigned'} />
+                <SmallInfo label="Events" value={linkedEvents.map((entry) => entry.title).join(', ') || 'None'} />
+                <SmallInfo label="World" value={linkedItems.map((entry) => entry.name).join(', ') || 'None'} />
               </div>
-              <textarea
-                data-testid="writing-editor"
-                className="min-h-[640px] w-full resize-none bg-transparent font-serif text-xl leading-[2] text-text-2 outline-none"
-                placeholder="The first sentence is always the hardest..."
-                value={localContent}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setLocalContent(value);
-                  if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-                  saveTimeoutRef.current = setTimeout(() => activeScene && persistScene({ ...activeScene, content: value }), 1000);
-                }}
-              />
+              <textarea data-testid="writing-editor" className="min-h-[640px] w-full resize-none bg-transparent font-serif text-xl leading-[1.95] text-text-2 outline-none" value={content} onChange={(e) => { const value = e.target.value; setContent(value); if (saveRef.current) clearTimeout(saveRef.current); saveRef.current = setTimeout(() => { updateScene({ ...activeScene, content: value }); setLastActionStatus('Saved'); }, 700); }} placeholder="Write the scene content here..." />
             </div>
           </div>
-        ) : (
-          <div className="flex flex-1 items-center justify-center text-text-3" data-testid="writing-idle"><Sparkles size={120} className="opacity-10" /></div>
-        )}
+        ) : <Empty title="Workspace idle" body="Select or create a scene to start writing." />}
       </section>
 
-      {!isWritingContextCollapsed && (
-        <>
-          <PaneResizeHandle panel="writingContext" direction="left" testId="writing-context-resizer" />
-          <aside style={{ width: writingContextWidth }} className="flex h-full flex-col border-l border-border bg-bg-elev-1 shadow-2" data-testid="context-panel">
-            <div className="border-b border-border bg-bg-elev-2 p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <div>
-                  <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('writing.context')}</div>
-                  <div className="text-sm font-black text-text">Narrative Context</div>
-                </div>
-                <button type="button" className="rounded-xl border border-border p-2 text-text-2 hover:border-brand" onClick={() => toggleWritingPane('context', false)} data-testid="writing-context-collapse">
-                  <PanelRight size={15} />
-                </button>
-              </div>
-            </div>
-            <div className="flex-1 overflow-y-auto custom-scrollbar">
-              <ContextSection title={t('writing.personas')} count={contextCharacters.length}>
-                {contextCharacters.map((character) => (
-                  <button key={character.id} type="button" data-testid="context-insert-character" className="flex w-full items-center justify-between rounded-2xl border border-transparent px-3 py-3 text-left text-sm text-text-2 hover:border-brand/30 hover:bg-selected" onClick={() => setSelectedEntity('character', character.id)}>
-                    <span>{character.name}</span>
-                    <Plus size={12} className="text-brand" />
-                  </button>
-                ))}
-              </ContextSection>
-              <ContextSection title={t('writing.chronology')} count={contextEvents.length}>
-                {contextEvents.map((event) => (
-                  <button key={event.id} type="button" data-testid="context-insert-event" className="w-full rounded-2xl border border-border bg-bg px-3 py-3 text-left hover:border-brand" onClick={() => setSelectedEntity('timeline_event', event.id)}>
-                    <div className="text-sm font-bold text-text">{event.title}</div>
-                    <div className="mt-1 text-[10px] uppercase tracking-[0.2em] text-text-3">{event.time || 'Timeline'}</div>
-                  </button>
-                ))}
-              </ContextSection>
-              <ContextSection title={t('writing.world')} count={contextWorldItems.length}>
-                {contextWorldItems.map((item) => (
-                  <button key={item.id} type="button" data-testid="context-insert-world-item" className="flex w-full items-center justify-between rounded-2xl border border-transparent px-3 py-3 text-left text-sm text-text-2 hover:border-brand/30 hover:bg-selected" onClick={() => setSelectedEntity('world_item', item.id)}>
-                    <span>{item.name}</span>
-                    <Plus size={12} className="text-brand" />
-                  </button>
-                ))}
-              </ContextSection>
-              <ContextSection title="Linked scenes" count={activeScene ? scenes.filter((scene) => scene.chapterId === activeScene.chapterId).length : 0}>
-                {scenes.filter((scene) => scene.chapterId === activeScene?.chapterId).map((scene) => (
-                  <button key={scene.id} type="button" className="w-full rounded-2xl border border-border bg-bg px-3 py-3 text-left hover:border-brand" onClick={() => setSelectedEntity('scene', scene.id)}>
-                    <div className="text-sm font-bold text-text">{scene.title}</div>
-                    <div className="mt-1 text-xs text-text-3">{scene.summary}</div>
-                  </button>
-                ))}
-              </ContextSection>
-            </div>
-            <div className="border-t border-border bg-bg-elev-2 p-4">
-              <div className="mb-3 text-[9px] font-black uppercase tracking-[0.3em] text-text-3">Neural Synthesis</div>
-              <div className="grid grid-cols-2 gap-3">
-                <button className="rounded-2xl border border-border bg-bg py-3 text-[9px] font-black uppercase tracking-[0.25em] text-text-2 hover:border-brand" data-testid="editor-generate-scene-btn"><Zap size={14} className="mx-auto mb-2 text-brand" />{t('writing.generate')}</button>
-                <button className="rounded-2xl border border-border bg-bg py-3 text-[9px] font-black uppercase tracking-[0.25em] text-text-2 hover:border-brand" data-testid="editor-rewrite-btn"><Wand2 size={14} className="mx-auto mb-2 text-brand" />{t('writing.rewrite')}</button>
-              </div>
-            </div>
-          </aside>
-        </>
-      )}
+      {!ui.isWritingContextCollapsed && <>
+        <PaneResizeHandle panel="writingContext" direction="left" testId="writing-context-resizer" />
+        <aside style={{ width: ui.writingContextWidth }} className="flex h-full flex-col border-l border-border bg-bg-elev-1" data-testid="context-panel">
+          <div className="border-b border-border bg-bg-elev-2 p-4"><div className="mb-3 flex items-center justify-between"><div><div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">Context</div><div className="text-sm font-black text-text">Local references</div></div><button type="button" className="rounded-xl border border-border p-2 text-text-2 hover:border-brand" data-testid="writing-context-collapse" onClick={() => ui.toggleWritingPane('context', false)}><PanelRight size={15} /></button></div></div>
+          <div className="flex-1 overflow-y-auto custom-scrollbar p-5 space-y-4">
+            <SideBlock title="Characters" items={linkedCharacters.map((entry) => entry.name)} />
+            <SideBlock title="Timeline" items={linkedEvents.map((entry) => entry.title)} />
+            <SideBlock title="World" items={linkedItems.map((entry) => entry.name)} />
+          </div>
+        </aside>
+      </>}
     </div>
   );
 };
 
-const ContextSection = ({ title, count, children }: { title: string; count: number; children: React.ReactNode }) => (
-  <div className="border-b border-divider p-5">
-    <div className="mb-4 flex items-center justify-between">
-      <h4 className="text-[10px] font-black uppercase tracking-[0.25em] text-text-3">{title}</h4>
-      <span className="rounded-full border border-border bg-bg px-2 py-0.5 text-[9px] text-text-3">{count}</span>
-    </div>
-    <div className="space-y-2">{children}</div>
-  </div>
-);
+const ScriptEditor = ({ query, setQuery }: { query: string; setQuery: (value: string) => void }) => {
+  const { scripts, scenes, storyboards, characters, selectedEntity, setSelectedEntity, addScript, updateScript } = useProjectStore();
+  const { setLastActionStatus } = useUIStore();
+  const filtered = scripts.filter((script) => `${script.title} ${script.summary}`.toLowerCase().includes(query.toLowerCase()));
+  const active = scripts.find((entry) => entry.id === (selectedEntity.type === 'script' ? selectedEntity.id : filtered[0]?.id || scripts[0]?.id)) || null;
+  const [draft, setDraft] = useState(active);
+  useEffect(() => setDraft(active), [active]);
 
-const InfoRow = ({ label, value, icon }: { label: string; value: string; icon: React.ReactNode }) => (
-  <div>
-    <div className="mb-2 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.25em] text-text-3">{icon}<span>{label}</span></div>
-    <div className="text-sm text-text-2">{value}</div>
-  </div>
-);
-
-const mergeRecent = <T extends { id: string }>(primary: T[], secondary: T[], limit: number) => {
-  const seen = new Set<string>();
-  return [...primary, ...secondary].filter((entry) => {
-    if (seen.has(entry.id)) return false;
-    seen.add(entry.id);
-    return true;
-  }).slice(0, limit);
+  return <div className="flex h-full overflow-hidden bg-bg">
+    <aside className="w-80 border-r border-border bg-bg-elev-1" data-testid="writing-scripts-sidebar">
+      <div className="border-b border-border bg-bg-elev-2 p-4">
+        <div className="mb-3 flex items-center justify-between"><div><div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">Scripts</div><div className="text-sm font-black text-text">Screenplay workspace</div></div><button type="button" className="rounded-xl border border-border p-2 text-brand hover:border-brand" data-testid="add-script-btn" onClick={() => { const id = `script_${Date.now()}`; addScript({ id, title: `Script ${scripts.length + 1}`, mode: 'adaptation', summary: '', sourceSceneIds: [], sourceChapterIds: [], linkedCharacterIds: [], linkedWorldItemIds: [], status: 'draft', reviewState: 'pending', version: 1, draftPath: null, content: '', episodes: [], createdAt: now(), updatedAt: now() }); setSelectedEntity('script', id); setLastActionStatus('Script created'); }}><Plus size={16} /></button></div>
+        <div className="rounded-2xl border border-border bg-bg px-3 py-2"><div className="flex items-center gap-2"><Search size={13} /><input value={query} onChange={(e) => setQuery(e.target.value)} className="w-full bg-transparent text-sm outline-none" placeholder="Search scripts" /></div></div>
+      </div>
+      <div className="h-full overflow-y-auto custom-scrollbar p-3">{filtered.map((script) => <button key={script.id} type="button" data-testid={`script-item-${script.id}`} className={cn('mb-2 w-full rounded-2xl border px-4 py-3 text-left', active?.id === script.id ? 'border-brand bg-selected' : 'border-border bg-card hover:border-brand')} onClick={() => setSelectedEntity('script', script.id)}><div className="text-sm font-black text-text">{script.title}</div><div className="mt-1 line-clamp-2 text-xs text-text-3">{script.summary || 'No summary yet.'}</div></button>)}</div>
+    </aside>
+    <main className="flex-1 overflow-y-auto custom-scrollbar px-8 py-10">{draft ? <div className="mx-auto max-w-5xl rounded-[32px] border border-border bg-card p-8 shadow-1"><div className="mb-8 flex items-center justify-between"><div><div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">Script Draft</div><div className="text-sm font-black text-text">Editable canonical script</div></div><button type="button" className="rounded-xl bg-brand px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-white" onClick={() => { updateScript({ ...draft, updatedAt: now() }); setLastActionStatus('Script saved'); }}>Save Script</button></div><input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} className="mb-4 w-full bg-transparent text-5xl font-black tracking-tight outline-none" /><textarea value={draft.summary} onChange={(e) => setDraft({ ...draft, summary: e.target.value })} className="mb-4 h-24 w-full rounded-3xl border border-border bg-bg p-5 text-sm text-text-2 outline-none" placeholder="Script summary" /><div className="mb-6 grid gap-4 rounded-3xl border border-border bg-bg-elev-1 p-5 lg:grid-cols-4"><SmallInfo label="Mode" value={draft.mode} /><SmallInfo label="Episodes" value={String(draft.episodes.length)} /><SmallInfo label="Source scenes" value={draft.sourceSceneIds.length ? draft.sourceSceneIds.map((id) => scenes.find((scene) => scene.id === id)?.title || id).join(', ') : 'None'} /><SmallInfo label="Storyboards" value={String(storyboards.filter((entry) => entry.scriptId === draft.id).length)} /></div><div className="mb-4 flex flex-wrap gap-2">{(draft.linkedCharacterIds.length ? draft.linkedCharacterIds : characters.slice(0, 3).map((entry) => entry.id)).map((id) => <span key={id} className="rounded-full border border-border bg-bg px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{characters.find((entry) => entry.id === id)?.name || id}</span>)}</div><textarea data-testid="script-editor" className="min-h-[640px] w-full resize-none rounded-3xl border border-border bg-bg p-6 font-mono text-sm leading-7 text-text-2 outline-none" value={draft.content} onChange={(e) => setDraft({ ...draft, content: e.target.value })} placeholder="Write screenplay or fountain draft here..." /></div> : <Empty title="No scripts yet" body="Create a script to start the adaptation or screenplay workflow." />}</main>
+  </div>;
 };
+
+const StoryboardEditor = () => {
+  const { storyboards, scripts, characters, worldItems, selectedEntity, setSelectedEntity, addStoryboard, updateStoryboard } = useProjectStore();
+  const { setLastActionStatus } = useUIStore();
+  const active = storyboards.find((entry) => entry.id === (selectedEntity.type === 'storyboard' ? selectedEntity.id : storyboards[0]?.id)) || null;
+  const [draft, setDraft] = useState(active);
+  useEffect(() => setDraft(active), [active]);
+
+  return <div className="flex h-full overflow-hidden bg-bg">
+    <aside className="w-80 border-r border-border bg-bg-elev-1" data-testid="writing-storyboards-sidebar">
+      <div className="border-b border-border bg-bg-elev-2 p-4"><div className="mb-3 flex items-center justify-between"><div><div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">Storyboards</div><div className="text-sm font-black text-text">Shot planning surface</div></div><button type="button" className="rounded-xl border border-border p-2 text-brand hover:border-brand" onClick={() => { const id = `storyboard_${Date.now()}`; const linked = scripts[0]; addStoryboard({ id, scriptId: linked?.id || '', episodeId: linked?.episodes[0]?.id || `episode_${Date.now()}`, title: `Storyboard ${storyboards.length + 1}`, shots: [{ id: `shot_${Date.now()}`, title: 'Opening shot', summary: '', visualPrompt: '', linkedCharacterIds: [], linkedWorldItemIds: [], durationSeconds: 5 }], visualStyleNotes: '', assetRefs: [], promptPackagePath: null, status: 'draft', createdAt: now(), updatedAt: now() }); setSelectedEntity('storyboard', id); setLastActionStatus('Storyboard created'); }}><Plus size={16} /></button></div></div>
+      <div className="h-full overflow-y-auto custom-scrollbar p-3">{storyboards.map((storyboard) => <button key={storyboard.id} type="button" data-testid={`storyboard-item-${storyboard.id}`} className={cn('mb-2 w-full rounded-2xl border px-4 py-3 text-left', draft?.id === storyboard.id ? 'border-brand bg-selected' : 'border-border bg-card hover:border-brand')} onClick={() => setSelectedEntity('storyboard', storyboard.id)}><div className="text-sm font-black text-text">{storyboard.title}</div><div className="mt-1 line-clamp-2 text-xs text-text-3">{storyboard.visualStyleNotes || 'No style notes yet.'}</div></button>)}</div>
+    </aside>
+    <main className="flex-1 overflow-y-auto custom-scrollbar px-8 py-10">{draft ? <div className="mx-auto max-w-6xl rounded-[32px] border border-border bg-card p-8 shadow-1" data-testid="storyboard-panel"><div className="mb-8 flex items-center justify-between"><div><div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">Storyboard</div><div className="text-sm font-black text-text">Editable shot plan</div></div><button type="button" className="rounded-xl bg-brand px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-white" onClick={() => { updateStoryboard({ ...draft, updatedAt: now() }); setLastActionStatus('Storyboard saved'); }}>Save Storyboard</button></div><input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} className="mb-4 w-full bg-transparent text-5xl font-black tracking-tight outline-none" /><textarea value={draft.visualStyleNotes} onChange={(e) => setDraft({ ...draft, visualStyleNotes: e.target.value })} className="mb-4 h-24 w-full rounded-3xl border border-border bg-bg p-5 text-sm text-text-2 outline-none" placeholder="Visual style notes" /><select value={draft.scriptId} onChange={(e) => setDraft({ ...draft, scriptId: e.target.value })} className="mb-6 w-full rounded-2xl border border-border bg-bg px-4 py-3 outline-none">{scripts.map((script) => <option key={script.id} value={script.id}>{script.title}</option>)}</select><div className="space-y-4">{draft.shots.map((shot, index) => <div key={shot.id} className="rounded-3xl border border-border bg-bg-elev-1 p-5"><div className="mb-4 flex items-center justify-between"><div className="text-[10px] font-black uppercase tracking-[0.18em] text-brand-2">Shot {index + 1}</div><button type="button" className="rounded-xl border border-border px-3 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-text-2 hover:border-brand" onClick={() => setDraft({ ...draft, shots: draft.shots.filter((entry) => entry.id !== shot.id) })}>Remove</button></div><input value={shot.title} onChange={(e) => setDraft(updateShot(draft, shot.id, { title: e.target.value }))} className="mb-3 w-full rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder="Shot title" /><textarea value={shot.summary} onChange={(e) => setDraft(updateShot(draft, shot.id, { summary: e.target.value }))} className="mb-3 h-24 w-full rounded-3xl border border-border bg-bg p-4 text-sm text-text-2 outline-none" placeholder="Shot summary" /><textarea value={shot.visualPrompt} onChange={(e) => setDraft(updateShot(draft, shot.id, { visualPrompt: e.target.value }))} className="h-24 w-full rounded-3xl border border-border bg-bg p-4 text-sm text-text-2 outline-none" placeholder="Visual prompt" /><div className="mt-3 flex flex-wrap gap-2">{shot.linkedCharacterIds.map((id) => <span key={id} className="rounded-full border border-border bg-bg px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{characters.find((entry) => entry.id === id)?.name || id}</span>)}{shot.linkedWorldItemIds.map((id) => <span key={id} className="rounded-full border border-border bg-bg px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{worldItems.find((entry) => entry.id === id)?.name || id}</span>)}</div></div>)}</div><button type="button" className="mt-5 rounded-xl border border-border px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-text-2 hover:border-brand" onClick={() => setDraft({ ...draft, shots: [...draft.shots, { id: `shot_${Date.now()}`, title: `Shot ${draft.shots.length + 1}`, summary: '', visualPrompt: '', linkedCharacterIds: [], linkedWorldItemIds: [], durationSeconds: 5 }] })}><Plus size={12} className="mr-2 inline" />Add Shot</button></div> : <Empty title="No storyboards yet" body="Create a storyboard to structure shots for export and video orchestration." />}</main>
+  </div>;
+};
+
+const SmallInfo = ({ label, value }: { label: string; value: string }) => <div><div className="mb-2 text-[10px] font-black uppercase tracking-[0.2em] text-text-3">{label}</div><div className="text-sm text-text-2">{value}</div></div>;
+const SideBlock = ({ title, items }: { title: string; items: string[] }) => <div className="rounded-2xl border border-border bg-bg p-4"><div className="mb-3 text-[10px] font-black uppercase tracking-[0.2em] text-text-3">{title}</div><div className="space-y-2">{items.length ? items.map((item) => <div key={item} className="rounded-xl border border-border bg-bg-elev-1 px-3 py-2 text-sm text-text-2">{item}</div>) : <div className="text-sm text-text-3">None</div>}</div></div>;
+const Empty = ({ title, body }: { title: string; body: string }) => <div className="flex min-h-[460px] flex-col items-center justify-center text-center text-text-3"><Sparkles size={96} className="mb-6 opacity-10" /><div className="text-lg font-black text-text">{title}</div><div className="mt-3 max-w-lg text-sm leading-relaxed text-text-2">{body}</div></div>;
+const updateShot = (storyboard: any, shotId: string, partial: Record<string, unknown>) => ({ ...storyboard, shots: storyboard.shots.map((shot: any) => shot.id === shotId ? { ...shot, ...partial } : shot) });

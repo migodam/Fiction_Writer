@@ -24,5 +24,9 @@
   "tags": [
     "artifact"
   ],
-  "sharedBranchIds": []
+  "sharedBranchIds": [],
+  "importance": "medium",
+  "colorToken": "",
+  "layoutLock": false,
+  "modalStateHints": []
 }

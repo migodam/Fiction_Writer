@@ -25,5 +25,9 @@
   "tags": [
     "climax"
   ],
-  "sharedBranchIds": []
+  "sharedBranchIds": [],
+  "importance": "medium",
+  "colorToken": "",
+  "layoutLock": false,
+  "modalStateHints": []
 }

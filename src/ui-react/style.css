@@ -111,6 +111,25 @@
     scroll-behavior: auto !important;
   }
 
+  .theme-light {
+    --bg: #f4efe6;
+    --bg-elev-1: #fbf7f1;
+    --bg-elev-2: #ffffff;
+    --panel: #fbf7f1;
+    --card: #fffdf9;
+    --card-2: #fff8ef;
+    --border: rgba(44, 35, 20, 0.12);
+    --border-2: rgba(44, 35, 20, 0.18);
+    --divider: rgba(44, 35, 20, 0.08);
+    --text: rgba(31, 23, 14, 0.94);
+    --text-2: rgba(31, 23, 14, 0.74);
+    --text-3: rgba(31, 23, 14, 0.52);
+    --text-invert: #fffdf9;
+    --hover: rgba(31, 23, 14, 0.04);
+    --active: rgba(201, 131, 40, 0.12);
+    --selected: rgba(201, 131, 40, 0.18);
+  }
+
   *:focus-visible {
     outline: none;
     box-shadow: 0 0 0 3px var(--focus);

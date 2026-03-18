@@ -33,5 +33,9 @@
   ],
   "statusFlags": {
     "alive": true
-  }
+  },
+  "importance": "ungrouped",
+  "groupKey": "ungrouped",
+  "relationshipIds": [],
+  "povInsights": null
 }

@@ -38,5 +38,9 @@
   "statusFlags": {
     "protagonist": true,
     "alive": true
-  }
+  },
+  "importance": "ungrouped",
+  "groupKey": "ungrouped",
+  "relationshipIds": [],
+  "povInsights": null
 }

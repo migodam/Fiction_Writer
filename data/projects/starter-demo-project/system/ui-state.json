@@ -13,7 +13,8 @@
   "view": {
     "activeGraphBoardId": "board_main",
     "activeTimelineBranchId": "branch_main",
-    "lastOpenedSceneId": "scene_arrival"
+    "lastOpenedSceneId": "scene_arrival",
+    "importSessionId": null
   },
   "density": "comfortable",
   "editorWidth": "focused",

@@ -3,6 +3,11 @@ export interface PickDirectoryResult {
   path: string | null;
 }
 
+export interface ProviderConnectionResult {
+  ok: boolean;
+  message: string;
+}
+
 const getIpcRenderer = () => {
   const scope = globalThis as typeof globalThis & { require?: NodeRequire };
   const loader = scope.require;
@@ -32,5 +37,29 @@ export const electronApi = {
 
     const result = (await ipcRenderer.invoke('dialog:pick-directory', { mode })) as PickDirectoryResult;
     return result;
+  },
+
+  async loadAppSettings<T = Record<string, unknown> | null>(): Promise<T | null> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) {
+      return null;
+    }
+    return (await ipcRenderer.invoke('settings:load-app')) as T | null;
+  },
+
+  async saveAppSettings<T = Record<string, unknown>>(payload: Partial<T>): Promise<T | null> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) {
+      return null;
+    }
+    return (await ipcRenderer.invoke('settings:save-app', payload)) as T | null;
+  },
+
+  async testProviderConnection(payload: Record<string, unknown>): Promise<ProviderConnectionResult> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) {
+      return { ok: false, message: 'ipc_unavailable' };
+    }
+    return (await ipcRenderer.invoke('settings:test-provider', payload)) as ProviderConnectionResult;
   },
 };

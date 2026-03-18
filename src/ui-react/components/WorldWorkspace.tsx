@@ -1,285 +1,209 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Book, ChevronDown, ChevronRight, ExternalLink, Globe, Layers, Map as MapIcon, Pencil, Plus, Trash2 } from 'lucide-react';
+import { ExternalLink, Globe, Map as MapIcon, Plus, Trash2 } from 'lucide-react';
 import { useProjectStore, useUIStore } from '../store';
-import { useI18n } from '../i18n';
 import { cn } from '../utils';
+import { useI18n } from '../i18n';
 
 export const WorldWorkspace = () => {
+  const navigate = useNavigate();
+  const { sidebarSection } = useUIStore();
+  const { locale } = useI18n();
+  const zh = locale === 'zh-CN';
   const {
     worldContainers,
     worldItems,
+    worldSettings,
+    worldMaps,
     timelineEvents,
     scenes,
-    selectedEntity,
-    setSelectedEntity,
     addWorldContainer,
-    updateWorldContainer,
     addWorldItem,
     updateWorldItem,
+    updateWorldSettings,
+    createWorldMap,
+    updateWorldMap,
   } = useProjectStore();
-  const { setLastActionStatus, sidebarSection, openContextMenu } = useUIStore();
-  const navigate = useNavigate();
-  const { t } = useI18n();
+  const [activeContainerId, setActiveContainerId] = useState(worldContainers[0]?.id || null);
+  const [activeItemId, setActiveItemId] = useState(worldItems[0]?.id || null);
+  const [activeMapId, setActiveMapId] = useState(worldMaps[0]?.id || null);
 
-  const [activeContainerId, setActiveContainerId] = useState<string | null>(worldContainers[0]?.id || null);
-  const [editItem, setEditItem] = useState<typeof worldItems[number] | null>(null);
-  const [renamingContainerId, setRenamingContainerId] = useState<string | null>(null);
+  const activeContainer = worldContainers.find((container) => container.id === activeContainerId) || worldContainers[0] || null;
+  const activeItem = worldItems.find((item) => item.id === activeItemId) || null;
+  const activeMap = worldMaps.find((map) => map.id === activeMapId) || worldMaps[0] || null;
+  const containerItems = useMemo(() => worldItems.filter((item) => item.containerId === activeContainer?.id), [worldItems, activeContainer]);
+  const activeMapMarkers = useMemo(() => {
+    if (!activeMap) return [];
+    return worldItems.flatMap((item) => item.mapMarkers).filter((marker) => activeMap.markerIds.includes(marker.id));
+  }, [activeMap, worldItems]);
 
-  useEffect(() => {
-    const preferred =
-      sidebarSection === 'maps'
-        ? 'cont_world_map'
-        : sidebarSection === 'organizations'
-        ? 'cont_orgs'
-        : sidebarSection === 'lore'
-        ? 'cont_lore'
-        : 'cont_locations';
-    if (worldContainers.some((entry) => entry.id === preferred)) setActiveContainerId(preferred);
-  }, [sidebarSection, worldContainers]);
+  if (sidebarSection === 'settings') {
+    return (
+      <div className="h-full overflow-y-auto custom-scrollbar bg-bg p-10">
+        <div className="mx-auto max-w-5xl rounded-[32px] border border-border bg-card p-8">
+          <div className="mb-8">
+            <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{zh ? '世界设置' : 'World Settings'}</div>
+            <div className="mt-2 text-3xl font-black text-text">{zh ? '作品基础设定' : 'Project Foundations'}</div>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field label={zh ? '作品类型' : 'Project Type'} value={worldSettings.projectType} onChange={(value) => updateWorldSettings({ ...worldSettings, projectType: value })} />
+            <Field label={zh ? '叙事节奏' : 'Narrative Pacing'} value={worldSettings.narrativePacing} onChange={(value) => updateWorldSettings({ ...worldSettings, narrativePacing: value })} />
+            <Field label={zh ? '语言风格' : 'Language Style'} value={worldSettings.languageStyle} onChange={(value) => updateWorldSettings({ ...worldSettings, languageStyle: value })} />
+            <Field label={zh ? '叙事视角' : 'Narrative Perspective'} value={worldSettings.narrativePerspective} onChange={(value) => updateWorldSettings({ ...worldSettings, narrativePerspective: value })} />
+            <Field label={zh ? '篇幅策略' : 'Length Strategy'} value={worldSettings.lengthStrategy} onChange={(value) => updateWorldSettings({ ...worldSettings, lengthStrategy: value })} />
+          </div>
+          <div className="mt-6">
+            <div className="mb-2 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{zh ? '世界规则摘要' : 'World Rules Summary'}</div>
+            <textarea value={worldSettings.worldRulesSummary} onChange={(event) => updateWorldSettings({ ...worldSettings, worldRulesSummary: event.target.value })} className="h-52 w-full rounded-3xl border border-border bg-bg p-5 text-sm leading-relaxed text-text-2 outline-none" />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
-  const activeContainer = worldContainers.find((container) => container.id === activeContainerId) || null;
-  const containerItems = useMemo(() => worldItems.filter((item) => item.containerId === activeContainerId), [worldItems, activeContainerId]);
-  const mapItem = worldItems.find((item) => item.containerId === 'cont_world_map');
-
-  useEffect(() => {
-    if (selectedEntity.type !== 'world_item' || !selectedEntity.id) return setEditItem(null);
-    if (selectedEntity.id.startsWith('new_')) {
-      setEditItem({
-        id: `item_${Date.now()}`,
-        containerId: activeContainerId || 'cont_locations',
-        type: activeContainerId === 'cont_locations' ? 'location' : activeContainer?.type || 'note',
-        name: '',
-        description: '',
-        attributes: [],
-        linkedCharacterIds: [],
-        linkedEventIds: [],
-        linkedSceneIds: [],
-        mapMarkers: [],
-        assetPath: null,
-        tagIds: [],
-      });
-      return;
-    }
-    const item = worldItems.find((entry) => entry.id === selectedEntity.id);
-    if (item) setEditItem({ ...item });
-  }, [activeContainer, activeContainerId, selectedEntity, worldItems]);
-
-  const openLocationTimeline = (locationId: string) => navigate(`/timeline/events?location=${locationId}`);
-
-  const reverseReferences = useMemo(() => {
-    if (!editItem) return { scenes: [], events: [] };
-    return {
-      scenes: scenes.filter((scene) => scene.linkedWorldItemIds.includes(editItem.id)),
-      events: timelineEvents.filter((event) => event.linkedWorldItemIds.includes(editItem.id) || event.locationIds.includes(editItem.id)),
-    };
-  }, [editItem, scenes, timelineEvents]);
-
-  const sortedContainers = worldContainers.slice().sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+  if (sidebarSection === 'map') {
+    return (
+      <div className="flex h-full overflow-hidden bg-bg">
+        <aside className="w-72 border-r border-border bg-bg-elev-1">
+          <div className="border-b border-border bg-bg-elev-2 p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{zh ? '地图' : 'Maps'}</div>
+                <div className="text-sm font-black text-text">{zh ? '多地图管理' : 'Multiple Maps'}</div>
+              </div>
+              <button type="button" className="rounded-xl border border-border p-2 text-brand hover:border-brand" onClick={() => createWorldMap({ id: `map_${Date.now()}`, title: zh ? '新地图' : 'New Map', description: '', assetPath: activeMap?.assetPath || null, markerIds: [], sortOrder: worldMaps.length })}>
+                <Plus size={16} />
+              </button>
+            </div>
+          </div>
+          <div className="h-full overflow-y-auto custom-scrollbar p-2">
+            {worldMaps.map((map) => (
+              <button key={map.id} type="button" className={cn('mb-2 w-full rounded-2xl border px-4 py-4 text-left', activeMapId === map.id ? 'border-brand bg-selected' : 'border-border bg-card')} onClick={() => setActiveMapId(map.id)}>
+                <div className="text-sm font-black text-text">{map.title}</div>
+                <div className="mt-2 text-xs text-text-2">{map.description || (zh ? '暂无说明' : 'No description')}</div>
+              </button>
+            ))}
+          </div>
+        </aside>
+        <main className="flex-1 overflow-y-auto custom-scrollbar p-10">
+          {activeMap ? (
+            <div className="mx-auto max-w-6xl">
+              <div className="mb-8 flex items-center justify-between">
+                <div>
+                  <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{zh ? '当前地图' : 'Current Map'}</div>
+                  <div className="mt-2 text-3xl font-black text-text">{activeMap.title}</div>
+                </div>
+                <MapIcon size={24} className="text-brand" />
+              </div>
+              <div className="rounded-3xl border border-border bg-card p-4">
+                <div className="relative overflow-hidden rounded-2xl border border-border bg-bg">
+                  {activeMap.assetPath ? (
+                    <img src={activeMap.assetPath} alt={activeMap.title} className="h-[560px] w-full object-cover" data-testid="world-map-image" />
+                  ) : (
+                    <div className="flex h-[560px] items-center justify-center text-text-3">{zh ? '暂无地图资源' : 'No map asset'}</div>
+                  )}
+                  {activeMapMarkers.map((marker) => (
+                    <button key={marker.id} type="button" className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/20 bg-brand px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-white shadow-2" style={{ left: `${marker.x * 100}%`, top: `${marker.y * 100}%` }} onClick={() => marker.linkedEntityId && navigate(`/timeline/timeline?location=${marker.linkedEntityId}`)}>
+                      {marker.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  <input value={activeMap.title} onChange={(event) => updateWorldMap({ ...activeMap, title: event.target.value })} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none" />
+                  <input value={activeMap.description} onChange={(event) => updateWorldMap({ ...activeMap, description: event.target.value })} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={zh ? '地图说明' : 'Map description'} />
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full overflow-hidden bg-bg">
-      <aside className="w-72 border-r border-border bg-bg-elev-1" data-testid="world-container-list">
+      <aside className="w-72 border-r border-border bg-bg-elev-1">
         <div className="border-b border-border bg-bg-elev-2 p-4">
           <div className="mb-3 flex items-center justify-between">
             <div>
-              <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('world.containers')}</div>
-              <div className="text-sm font-black text-text">World Structure</div>
+              <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{zh ? '世界条目' : 'World Entries'}</div>
+              <div className="text-sm font-black text-text">{zh ? '容器与设定' : 'Containers and Entries'}</div>
             </div>
-            <button type="button" data-testid="create-container-btn" className="rounded-xl border border-border p-2 text-brand hover:border-brand" onClick={() => {
-              const id = `cont_${Date.now()}`;
-              addWorldContainer({ id, name: 'New Container', type: 'notebook', sortOrder: sortedContainers.length, isCollapsed: false });
-              setActiveContainerId(id);
-              setRenamingContainerId(id);
-            }}>
+            <button type="button" className="rounded-xl border border-border p-2 text-brand hover:border-brand" onClick={() => addWorldContainer({ id: `cont_${Date.now()}`, name: zh ? '新容器' : 'New Container', type: 'notebook', sortOrder: worldContainers.length, isCollapsed: false })}>
               <Plus size={16} />
             </button>
           </div>
         </div>
         <div className="h-full overflow-y-auto custom-scrollbar p-2">
-          {sortedContainers.map((container) => (
-            <div
-              key={container.id}
-              data-testid={`world-container-${container.id}`}
-              className={cn('mb-2 rounded-2xl border transition-colors', activeContainerId === container.id ? 'border-brand bg-active' : 'border-transparent hover:bg-hover')}
-              onContextMenu={(event) => {
-                event.preventDefault();
-                openContextMenu({
-                  x: event.clientX,
-                  y: event.clientY,
-                  items: [
-                    { id: 'rename-container', label: 'Rename Container', action: () => setRenamingContainerId(container.id) },
-                    { id: 'toggle-collapse', label: container.isCollapsed ? 'Expand Container' : 'Collapse Container', action: () => updateWorldContainer({ ...container, isCollapsed: !container.isCollapsed }) },
-                  ],
-                });
-              }}
-            >
-              <div className="flex items-center gap-2 px-3 py-3">
-                <button type="button" className="rounded p-1 text-text-3 hover:text-text" onClick={() => updateWorldContainer({ ...container, isCollapsed: !container.isCollapsed })}>
-                  {container.isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
-                </button>
-                <button type="button" className="flex min-w-0 flex-1 items-center gap-3 text-left" onClick={() => setActiveContainerId(container.id)}>
-                  {container.type === 'map' ? <MapIcon size={14} className="text-brand-2" /> : container.type === 'graph' ? <Layers size={14} className="text-brand-2" /> : <Book size={14} className="text-brand-2" />}
-                  {renamingContainerId === container.id ? (
-                    <>
-                      <span className="sr-only">{container.name}</span>
-                      <input autoFocus value={container.name} onChange={(event) => updateWorldContainer({ ...container, name: event.target.value })} onBlur={() => setRenamingContainerId(null)} className="min-w-0 flex-1 bg-transparent text-sm font-bold text-text outline-none" />
-                    </>
-                  ) : (
-                    <span className="truncate text-sm font-bold text-text">{container.name}</span>
-                  )}
-                </button>
-                <button type="button" className="rounded p-1 text-text-3 hover:text-text" onClick={() => setRenamingContainerId(container.id)}>
-                  <Pencil size={12} />
-                </button>
-              </div>
-            </div>
+          {worldContainers.map((container) => (
+            <button key={container.id} type="button" className={cn('mb-2 w-full rounded-2xl border px-4 py-4 text-left', activeContainerId === container.id ? 'border-brand bg-selected' : 'border-border bg-card')} onClick={() => setActiveContainerId(container.id)}>
+              <div className="text-sm font-black text-text">{container.name}</div>
+              <div className="mt-2 text-xs text-text-2">{container.type}</div>
+            </button>
           ))}
         </div>
       </aside>
 
-      <aside className="w-80 border-r border-border bg-bg shadow-xl" data-testid="world-item-list">
+      <aside className="w-80 border-r border-border bg-bg shadow-xl">
         <div className="border-b border-border bg-bg-elev-1 p-4">
           <div className="mb-3 flex items-center justify-between">
             <div>
               <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{activeContainer?.type}</div>
               <div className="text-sm font-black text-text">{activeContainer?.name}</div>
             </div>
-            {activeContainerId !== 'cont_world_map' && (
-              <button type="button" data-testid="add-world-item-btn" className="rounded-xl border border-border p-2 text-brand hover:border-brand" onClick={() => setSelectedEntity('world_item', `new_${Date.now()}`)}>
-                <Plus size={16} />
-              </button>
-            )}
+            <button type="button" className="rounded-xl border border-border p-2 text-brand hover:border-brand" onClick={() => {
+              if (!activeContainer) return;
+              const itemId = `item_${Date.now()}`;
+              addWorldItem({ id: itemId, containerId: activeContainer.id, type: activeContainer.id.includes('location') ? 'location' : 'note', name: zh ? '新条目' : 'New Entry', description: '', attributes: [], linkedCharacterIds: [], linkedEventIds: [], linkedSceneIds: [], mapMarkers: [], assetPath: null, tagIds: [] });
+              setActiveItemId(itemId);
+            }}>
+              <Plus size={16} />
+            </button>
           </div>
         </div>
         <div className="h-full overflow-y-auto custom-scrollbar">
           {containerItems.map((item) => (
-            <button
-              type="button"
-              key={item.id}
-              data-testid={`world-item-${item.id}`}
-              className={cn('w-full border-b border-divider px-4 py-4 text-left transition-colors', selectedEntity.id === item.id ? 'bg-selected' : 'hover:bg-hover')}
-              onClick={() => setSelectedEntity('world_item', item.id)}
-              onContextMenu={(event) => {
-                event.preventDefault();
-                openContextMenu({
-                  x: event.clientX,
-                  y: event.clientY,
-                  items: [
-                    { id: 'rename-item', label: 'Rename Item', action: () => setSelectedEntity('world_item', item.id) },
-                    ...(item.type === 'location' ? [{ id: 'location-timeline', label: 'Open Timeline', action: () => openLocationTimeline(item.id) }] : []),
-                  ],
-                });
-              }}
-            >
-              <div className="flex items-center justify-between">
-                <div className="pr-3">
-                  <div className="text-sm font-black text-text">{item.name}</div>
-                  <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-text-3">{item.description}</div>
-                </div>
-                <ChevronRight size={14} />
-              </div>
+            <button key={item.id} type="button" className={cn('w-full border-b border-divider px-4 py-4 text-left transition-colors', activeItemId === item.id ? 'bg-selected' : 'hover:bg-hover')} onClick={() => setActiveItemId(item.id)}>
+              <div className="text-sm font-black text-text">{item.name}</div>
+              <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-text-3">{item.description}</div>
             </button>
           ))}
         </div>
       </aside>
 
-      <main className="flex-1 overflow-hidden bg-bg-elev-1" data-testid="world-detail-panel">
-        {activeContainerId === 'cont_world_map' ? (
-          <div className="h-full overflow-y-auto custom-scrollbar p-10">
-            <div className="mb-4 text-[10px] font-black uppercase tracking-[0.3em] text-text-3">{t('world.mapTitle')}</div>
-            <div className="rounded-3xl border border-border bg-card p-4 shadow-1">
-              {mapItem && (
-                <div className="relative overflow-hidden rounded-2xl border border-border bg-bg">
-                  <img src={mapItem.assetPath || ''} alt="World Map" className="h-[560px] w-full object-cover" data-testid="world-map-image" />
-                  {mapItem.mapMarkers.map((marker) => (
-                    <button key={marker.id} type="button" className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/20 bg-brand px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-white shadow-2" style={{ left: `${marker.x * 100}%`, top: `${marker.y * 100}%` }} onClick={() => marker.linkedEntityId && openLocationTimeline(marker.linkedEntityId)} data-testid="world-map-marker">
-                      {marker.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-              <div className="mt-4 text-sm text-text-2">{t('world.mapLegend')}</div>
+      <main className="flex-1 overflow-y-auto custom-scrollbar p-10">
+        {activeItem ? (
+          <div className="mx-auto max-w-5xl space-y-8">
+            <div>
+              <div className="mb-2 text-[10px] font-black uppercase tracking-[0.3em] text-text-3">{zh ? '条目名称' : 'Entry Name'}</div>
+              <input value={activeItem.name} onChange={(event) => updateWorldItem({ ...activeItem, name: event.target.value })} className="w-full bg-transparent text-5xl font-black tracking-tight outline-none" />
             </div>
-          </div>
-        ) : editItem ? (
-          <div className="h-full overflow-y-auto custom-scrollbar p-10">
-            <div className="mx-auto max-w-4xl space-y-8">
-              <div>
-                <div className="mb-2 text-[10px] font-black uppercase tracking-[0.3em] text-text-3">{t('world.itemIdentity')}</div>
-                <input data-testid="world-item-name-input" value={editItem.name} onChange={(event) => setEditItem({ ...editItem, name: event.target.value })} className="w-full bg-transparent text-5xl font-black tracking-tight outline-none" placeholder="Object or Concept Name" />
-              </div>
-              <div>
-                <div className="mb-2 text-[10px] font-black uppercase tracking-[0.3em] text-text-3">{t('world.description')}</div>
-                <textarea data-testid="world-item-description-input" value={editItem.description} onChange={(event) => setEditItem({ ...editItem, description: event.target.value })} className="h-40 w-full rounded-3xl border border-border bg-bg p-5 font-serif text-sm leading-relaxed text-text-2 outline-none" />
-              </div>
-              <div className="rounded-3xl border border-border bg-card p-6">
-                <div className="mb-4 flex items-center justify-between">
-                  <div className="text-[10px] font-black uppercase tracking-[0.3em] text-text-3">{t('world.attributes')}</div>
-                  <button type="button" data-testid="dynamic-field-add-row" className="rounded-xl border border-border px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-text-2 hover:border-brand" onClick={() => setEditItem({ ...editItem, attributes: [...editItem.attributes, { key: '', value: '' }] })}>
-                    {t('world.addRow')}
-                  </button>
-                </div>
-                <div className="space-y-3">
-                  {editItem.attributes.map((attribute, index) => (
-                    <div key={`${attribute.key}-${index}`} className="flex gap-3">
-                      <input data-testid="dynamic-field-key-input" value={attribute.key} onChange={(event) => {
-                        const next = [...editItem.attributes];
-                        next[index] = { ...next[index], key: event.target.value };
-                        setEditItem({ ...editItem, attributes: next });
-                      }} className="flex-1 rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder="Attribute" />
-                      <input data-testid="dynamic-field-value-input" value={attribute.value} onChange={(event) => {
-                        const next = [...editItem.attributes];
-                        next[index] = { ...next[index], value: event.target.value };
-                        setEditItem({ ...editItem, attributes: next });
-                      }} className="flex-[1.4] rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder="Value" />
-                      <button type="button" className="rounded-2xl border border-red/40 px-3 text-red" onClick={() => setEditItem({ ...editItem, attributes: editItem.attributes.filter((_, attrIndex) => attrIndex !== index) })}>
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <div className="grid gap-6 lg:grid-cols-2">
-                <div className="rounded-3xl border border-border bg-card p-6">
-                  <div className="mb-4 text-[10px] font-black uppercase tracking-[0.3em] text-text-3">Linked Timeline</div>
-                  <div className="space-y-3">
-                    {reverseReferences.events.map((event) => (
-                      <button key={event.id} type="button" className="flex w-full items-center justify-between rounded-2xl border border-border bg-bg px-4 py-3 text-left hover:border-brand" onClick={() => navigate(`/timeline/events?event=${event.id}`)}>
-                        <span className="text-sm font-bold text-text">{event.title}</span>
-                        <ExternalLink size={14} />
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="rounded-3xl border border-border bg-card p-6">
-                  <div className="mb-4 text-[10px] font-black uppercase tracking-[0.3em] text-text-3">Linked Scenes</div>
-                  <div className="space-y-3">
-                    {reverseReferences.scenes.map((scene) => (
-                      <button key={scene.id} type="button" className="flex w-full items-center justify-between rounded-2xl border border-border bg-bg px-4 py-3 text-left hover:border-brand" onClick={() => navigate(`/writing/scenes?scene=${scene.id}`)}>
-                        <span className="text-sm font-bold text-text">{scene.title}</span>
-                        <ExternalLink size={14} />
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-              <div className="flex justify-between gap-4 border-t border-divider pt-8">
-                {editItem.type === 'location' ? (
-                  <button type="button" data-testid="open-world-timeline-btn" className="rounded-xl border border-border px-5 py-3 text-sm text-text-2 hover:border-brand" onClick={() => openLocationTimeline(editItem.id)}>
-                    <ExternalLink size={14} className="mr-2 inline" />{t('world.openTimeline')}
-                  </button>
-                ) : <div />}
-                <button type="button" data-testid="inspector-save" className="rounded-xl bg-brand px-8 py-3 text-sm font-black text-white" onClick={() => {
-                  if (!editItem.name.trim()) return;
-                  if (worldItems.some((item) => item.id === editItem.id)) updateWorldItem(editItem);
-                  else addWorldItem(editItem);
-                  setSelectedEntity('world_item', editItem.id);
-                  setLastActionStatus(t('shell.saved'));
-                }}>
-                  Save Item
+            <div>
+              <div className="mb-2 text-[10px] font-black uppercase tracking-[0.3em] text-text-3">{zh ? '描述' : 'Description'}</div>
+              <textarea value={activeItem.description} onChange={(event) => updateWorldItem({ ...activeItem, description: event.target.value })} className="h-40 w-full rounded-3xl border border-border bg-bg p-5 font-serif text-sm leading-relaxed text-text-2 outline-none" />
+            </div>
+            <div className="rounded-3xl border border-border bg-card p-6">
+              <div className="mb-4 flex items-center justify-between">
+                <div className="text-[10px] font-black uppercase tracking-[0.3em] text-text-3">{zh ? '扩展属性' : 'Attributes'}</div>
+                <button type="button" className="rounded-xl border border-border px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-text-2 hover:border-brand" onClick={() => updateWorldItem({ ...activeItem, attributes: [...activeItem.attributes, { key: '', value: '' }] })}>
+                  {zh ? '新增一行' : 'Add Row'}
                 </button>
               </div>
+              <div className="space-y-3">
+                {activeItem.attributes.map((attribute, index) => (
+                  <div key={`${attribute.key}-${index}`} className="flex gap-3">
+                    <input value={attribute.key} onChange={(event) => updateWorldItem({ ...activeItem, attributes: activeItem.attributes.map((entry, entryIndex) => entryIndex === index ? { ...entry, key: event.target.value } : entry) })} className="flex-1 rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={zh ? '属性' : 'Attribute'} />
+                    <input value={attribute.value} onChange={(event) => updateWorldItem({ ...activeItem, attributes: activeItem.attributes.map((entry, entryIndex) => entryIndex === index ? { ...entry, value: event.target.value } : entry) })} className="flex-[1.4] rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={zh ? '值' : 'Value'} />
+                    <button type="button" className="rounded-2xl border border-red/40 px-3 text-red" onClick={() => updateWorldItem({ ...activeItem, attributes: activeItem.attributes.filter((_, entryIndex) => entryIndex !== index) })}>
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="grid gap-6 lg:grid-cols-2">
+              <LinkPanel title={zh ? '关联时间线' : 'Linked Timeline'} items={timelineEvents.filter((event) => event.linkedWorldItemIds.includes(activeItem.id) || event.locationIds.includes(activeItem.id)).map((event) => ({ id: event.id, label: event.title, onClick: () => navigate(`/timeline/timeline?event=${event.id}`) }))} />
+              <LinkPanel title={zh ? '关联场景' : 'Linked Scenes'} items={scenes.filter((scene) => scene.linkedWorldItemIds.includes(activeItem.id)).map((scene) => ({ id: scene.id, label: scene.title, onClick: () => navigate(`/writing/scenes?scene=${scene.id}`) }))} />
             </div>
           </div>
         ) : (
@@ -289,3 +213,24 @@ export const WorldWorkspace = () => {
     </div>
   );
 };
+
+const Field = ({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) => (
+  <label className="block">
+    <div className="mb-2 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{label}</div>
+    <input value={value} onChange={(event) => onChange(event.target.value)} className="w-full rounded-2xl border border-border bg-bg px-4 py-3 outline-none" />
+  </label>
+);
+
+const LinkPanel = ({ title, items }: { title: string; items: { id: string; label: string; onClick: () => void }[] }) => (
+  <div className="rounded-3xl border border-border bg-card p-6">
+    <div className="mb-4 text-[10px] font-black uppercase tracking-[0.3em] text-text-3">{title}</div>
+    <div className="space-y-3">
+      {items.map((item) => (
+        <button key={item.id} type="button" className="flex w-full items-center justify-between rounded-2xl border border-border bg-bg px-4 py-3 text-left hover:border-brand" onClick={item.onClick}>
+          <span className="text-sm font-bold text-text">{item.label}</span>
+          <ExternalLink size={14} />
+        </button>
+      ))}
+    </div>
+  </div>
+);

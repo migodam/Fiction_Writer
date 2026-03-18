@@ -1,156 +1,206 @@
 import React, { useState } from 'react';
+import { PlayCircle, Plus, Sparkles } from 'lucide-react';
 import { useProjectStore, useUIStore } from '../store';
 import { useI18n } from '../i18n';
-import { 
-    PlayCircle, Sparkles, ChevronRight, Zap, 
-    History, Plus, Trash2, Save, Terminal,
-    Activity, Brain, Microscope, FastForward
-} from 'lucide-react';
+import { cn } from '../utils';
+
+const ENGINE_PRESETS = [
+  { type: 'scenario', en: 'Scenario Engine', zh: '情景引擎' },
+  { type: 'character', en: 'Character Engine', zh: '角色引擎' },
+  { type: 'author', en: 'Author Engine', zh: '作者引擎' },
+  { type: 'reader', en: 'Reader Engine', zh: '读者引擎' },
+  { type: 'logic', en: 'Logic Engine', zh: '逻辑引擎' },
+  { type: 'custom', en: 'Custom Engine', zh: '自定义引擎' },
+] as const;
 
 export const SimulationWorkspace = () => {
-  const { characters, timelineEvents } = useProjectStore();
-  const { setLastActionStatus } = useUIStore();
-  const { t } = useI18n();
-  
-  const [activeScenario, setActiveScenario] = useState<string | null>(null);
-  const [isRunning, setIsRunning] = useState(false);
+  const { sidebarSection } = useUIStore();
+  const { locale } = useI18n();
+  const zh = locale === 'zh-CN';
+  const {
+    simulationEngines,
+    simulationLabs,
+    simulationReviewers,
+    simulationRuns,
+    createSimulationLab,
+    updateSimulationLab,
+    createSimulationReviewer,
+    updateSimulationReviewer,
+    addSimulationEngine,
+    updateSimulationEngine,
+    runSimulationLab,
+    runSimulationReviewer,
+    runSimulationEngine,
+  } = useProjectStore();
+  const [activeId, setActiveId] = useState(simulationLabs[0]?.id || simulationReviewers[0]?.id || null);
 
-  const scenarios = [
-    { id: 'scen_1', name: 'Betrayal at Dawn', description: 'What if Alice betrays Bob before the meeting?' },
-    { id: 'scen_2', name: 'Lost Artifact', description: 'What if the ancient relic is destroyed in Chapter 2?' },
-  ];
+  const isReviewerMode = sidebarSection === 'reviewers';
+  const collections = isReviewerMode ? simulationReviewers : simulationLabs;
+  const active = collections.find((entry) => entry.id === activeId) || collections[0] || null;
+  const engineList = simulationEngines.filter((engine) => active?.engineIds.includes(engine.id));
+  const relatedRuns = simulationRuns.filter((run) => run.entityId === active?.id);
 
-  const handleRunSimulation = () => {
-    setIsRunning(true);
-    setTimeout(() => {
-        setIsRunning(false);
-        setLastActionStatus('Simulation complete');
-    }, 2000);
+  const createContainer = () => {
+    const id = `${isReviewerMode ? 'reviewer' : 'lab'}_${Date.now()}`;
+    const base = {
+      id,
+      name: `${isReviewerMode ? (zh ? '新 Reviewer' : 'New Reviewer') : (zh ? '新 Lab' : 'New Lab')} ${collections.length + 1}`,
+      description: '',
+      engineIds: [],
+    };
+    if (isReviewerMode) {
+      createSimulationReviewer({ ...base, scoringNotes: '' });
+    } else {
+      createSimulationLab({ ...base, summary: '' });
+    }
+    setActiveId(id);
+  };
+
+  const addPresetEngine = (type: typeof ENGINE_PRESETS[number]['type']) => {
+    if (!active) return;
+    const preset = ENGINE_PRESETS.find((entry) => entry.type === type)!;
+    const id = `sim_engine_${Date.now()}`;
+    addSimulationEngine({
+      id,
+      name: zh ? preset.zh : preset.en,
+      type,
+      summary: zh ? '占位结果容器，等待后续真实执行器接入。' : 'Placeholder result container for future executors.',
+      promptOverride: '',
+      enabled: true,
+      inputNotes: '',
+      targetCharacterId: null,
+    });
+    if (isReviewerMode) {
+      updateSimulationReviewer({ ...(active as any), engineIds: [...active.engineIds, id] });
+    } else {
+      updateSimulationLab({ ...(active as any), engineIds: [...active.engineIds, id] });
+    }
   };
 
   return (
     <div className="flex h-full overflow-hidden bg-bg">
-      {/* Left: Scenarios List */}
-      <div className="w-72 border-r border-border flex flex-col bg-bg-elev-1 shadow-1" data-testid="simulation-scenario-list">
-        <div className="p-4 border-b border-border flex items-center justify-between bg-bg-elev-2">
-            <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-text-3">{t('simulation.scenarios')}</h3>
-            <button 
-                className="p-1 hover:bg-hover rounded-lg text-brand transition-colors"
-                title="New Scenario"
-            >
-                <Plus size={16} />
+      <aside className="w-80 border-r border-border bg-bg-elev-1">
+        <div className="border-b border-border bg-bg-elev-2 p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <div>
+              <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{isReviewerMode ? (zh ? 'Reviewers' : 'Reviewers') : (zh ? 'Labs' : 'Labs')}</div>
+              <div className="text-sm font-black text-text">{isReviewerMode ? (zh ? '检查与评分容器' : 'Review containers') : (zh ? '剧情推演容器' : 'Simulation containers')}</div>
+            </div>
+            <button type="button" className="rounded-xl border border-border p-2 text-brand hover:border-brand" onClick={createContainer}>
+              <Plus size={16} />
             </button>
+          </div>
         </div>
-        <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1">
-            {scenarios.map(scen => (
-                <div 
-                    key={scen.id}
-                    className={`px-4 py-3 rounded-xl cursor-pointer transition-all group relative ${
-                        activeScenario === scen.id ? 'bg-active text-text shadow-sm' : 'text-text-3 hover:bg-hover'
-                    }`}
-                    onClick={() => setActiveScenario(scen.id)}
-                >
-                    <div className="flex items-center gap-3 mb-1">
-                        <PlayCircle size={14} className={activeScenario === scen.id ? 'text-brand' : 'opacity-40'} />
-                        <span className="text-[11px] font-black uppercase tracking-widest truncate">{scen.name}</span>
-                    </div>
-                    <p className="text-[10px] opacity-60 line-clamp-1 ml-6 font-medium">{scen.description}</p>
-                </div>
-            ))}
+        <div className="h-full overflow-y-auto custom-scrollbar p-2">
+          {collections.map((entry) => (
+            <button key={entry.id} type="button" className={cn('mb-2 w-full rounded-2xl border px-4 py-4 text-left', active?.id === entry.id ? 'border-brand bg-selected' : 'border-border bg-card')} onClick={() => setActiveId(entry.id)}>
+              <div className="text-sm font-black text-text">{entry.name}</div>
+              <div className="mt-2 text-xs text-text-2">{entry.description || (isReviewerMode ? (zh ? '暂无说明' : 'No description') : (zh ? '暂无摘要' : 'No summary'))}</div>
+            </button>
+          ))}
         </div>
-      </div>
+      </aside>
 
-      {/* Main Simulation View */}
-      <div className="flex-1 flex flex-col bg-bg overflow-y-auto custom-scrollbar p-12">
-        {activeScenario ? (
-            <div className="max-w-4xl mx-auto w-full animate-in fade-in duration-500">
-                <div className="flex items-center justify-between mb-12">
-                    <div className="flex items-center gap-4">
-                        <div className="w-14 h-14 rounded-2xl bg-brand/10 border border-brand/20 flex items-center justify-center text-brand shadow-inner">
-                            <Brain size={28} />
-                        </div>
-                        <div>
-                            <h2 className="text-2xl font-black text-text uppercase tracking-tight">{t('simulation.title')}</h2>
-                            <p className="text-[10px] font-bold text-text-3 uppercase tracking-[0.3em] mt-1">{t('simulation.subtitle')}</p>
-                        </div>
-                    </div>
-                    <button 
-                        data-testid="run-simulation-btn"
-                        className={`px-8 py-3 bg-brand hover:bg-brand-2 text-white font-black rounded-xl text-[11px] uppercase tracking-widest shadow-2 active:scale-95 transition-all flex items-center gap-2.5 ring-1 ring-white/10 ${isRunning ? 'opacity-50 pointer-events-none' : ''}`}
-                        onClick={handleRunSimulation}
-                    >
-                        {isRunning ? <FastForward size={16} className="animate-spin" /> : <Zap size={16} />}
-                        {isRunning ? 'Synthesizing...' : t('simulation.execute')}
+      <main className="flex-1 overflow-y-auto custom-scrollbar p-10">
+        {active ? (
+          <div className="mx-auto max-w-6xl space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{isReviewerMode ? (zh ? 'Reviewer 总览' : 'Reviewer Overview') : (zh ? 'Lab 总览' : 'Lab Overview')}</div>
+                <div className="mt-2 text-3xl font-black text-text">{active.name}</div>
+              </div>
+              <button type="button" className="rounded-xl bg-brand px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-white" onClick={() => isReviewerMode ? runSimulationReviewer(active.id) : runSimulationLab(active.id)}>
+                <PlayCircle size={14} className="mr-2 inline" />
+                {isReviewerMode ? (zh ? '运行当前 Reviewer' : 'Run Reviewer') : (zh ? '运行当前 Lab' : 'Run Lab')}
+              </button>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
+              <Stat label={zh ? '引擎数量' : 'Engines'} value={String(active.engineIds.length)} />
+              <Stat label={zh ? '运行记录' : 'Runs'} value={String(relatedRuns.length)} />
+              <Stat label={zh ? '类型' : 'Mode'} value={isReviewerMode ? (zh ? '检查/评分' : 'Review') : (zh ? '预测/推演' : 'Projection')} />
+            </div>
+
+            <div className="rounded-3xl border border-border bg-card p-6">
+              <div className="mb-4 flex items-center justify-between">
+                <div className="text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{zh ? '基础信息' : 'Basics'}</div>
+              </div>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <input value={active.name} onChange={(event) => isReviewerMode ? updateSimulationReviewer({ ...(active as any), name: event.target.value }) : updateSimulationLab({ ...(active as any), name: event.target.value })} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none" />
+                <textarea value={active.description} onChange={(event) => isReviewerMode ? updateSimulationReviewer({ ...(active as any), description: event.target.value }) : updateSimulationLab({ ...(active as any), description: event.target.value })} className="h-28 rounded-2xl border border-border bg-bg px-4 py-3 outline-none" />
+              </div>
+            </div>
+
+            <div className="rounded-3xl border border-border bg-card p-6">
+              <div className="mb-4 flex items-center justify-between">
+                <div className="text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{zh ? '引擎' : 'Engines'}</div>
+                <div className="flex flex-wrap gap-2">
+                  {ENGINE_PRESETS.map((preset) => (
+                    <button key={preset.type} type="button" className="rounded-full border border-border px-3 py-2 text-[10px] font-black uppercase tracking-[0.16em] text-text-2 hover:border-brand" onClick={() => addPresetEngine(preset.type)}>
+                      <Plus size={10} className="mr-1 inline" />
+                      {zh ? preset.zh : preset.en}
                     </button>
+                  ))}
                 </div>
-
-                {/* Configuration Grid */}
-                <div className="grid grid-cols-2 gap-8 mb-12">
-                    <div className="p-6 bg-bg-elev-1 border border-border rounded-2xl shadow-1">
-                        <h4 className="text-[10px] font-black text-text-3 uppercase tracking-[0.2em] mb-6 flex items-center gap-2">
-                            <Microscope size={12} className="text-brand" /> {t('simulation.variables')}
-                        </h4>
-                        <div className="space-y-4">
-                            <VariableRow label="Character Agency" value="High" />
-                            <VariableRow label="Plot Determinism" value="Low" />
-                            <VariableRow label="Chaos Factor" value="0.42" />
-                        </div>
-                    </div>
-                    <div className="p-6 bg-bg-elev-1 border border-border rounded-2xl shadow-1">
-                        <h4 className="text-[10px] font-black text-text-3 uppercase tracking-[0.2em] mb-6 flex items-center gap-2">
-                            <History size={12} className="text-amber" /> {t('simulation.anchors')}
-                        </h4>
-                        <div className="space-y-4">
-                            <VariableRow label="Timeline Start" value="Event A" />
-                            <VariableRow label="Locked Facts" value="3 Detected" />
-                            <VariableRow label="Simulation Depth" value="Short" />
-                        </div>
-                    </div>
-                </div>
-
-                {/* Simulation Output Area */}
-                <div className="bg-bg-elev-2 border border-border rounded-3xl p-1 overflow-hidden shadow-2">
-                    <div className="h-10 border-b border-border bg-bg-elev-1 flex items-center px-6 justify-between">
-                        <div className="flex items-center gap-2">
-                            <Terminal size={12} className="text-text-3" />
-                            <span className="text-[9px] font-black uppercase tracking-[0.3em] text-text-3">{t('simulation.console')}</span>
-                        </div>
-                        <div className="flex gap-1.5">
-                            <div className="w-2 h-2 rounded-full bg-red/20"></div>
-                            <div className="w-2 h-2 rounded-full bg-amber/20"></div>
-                            <div className="w-2 h-2 rounded-full bg-green/20"></div>
-                        </div>
-                    </div>
-                    <div className="p-8 min-h-[400px] bg-bg font-mono text-[11px] text-text-2 space-y-4 leading-relaxed custom-scrollbar">
-                        {isRunning ? (
-                            <div className="space-y-2 animate-pulse">
-                                <p className="text-brand">[SYSTEM] Initializing narrative shards...</p>
-                                <p>[SYSTEM] Resolving character motivations for Alice...</p>
-                                <p>[SYSTEM] Calculating world model impact...</p>
-                            </div>
-                        ) : (
-                            <div className="space-y-2">
-                                <p className="text-text-3 opacity-40 italic font-sans py-20 text-center uppercase tracking-widest text-[9px]">{t('simulation.awaiting')}</p>
-                            </div>
-                        )}
-                    </div>
-                </div>
+              </div>
+              <div className="space-y-4">
+                {engineList.map((engine) => (
+                  <EngineCard key={engine.id} engine={engine} onChange={updateSimulationEngine} onRun={() => runSimulationEngine(engine.id, { entityId: active.id, entityType: isReviewerMode ? 'reviewer' : 'lab' })} zh={zh} />
+                ))}
+                {!engineList.length && <div className="rounded-2xl border border-dashed border-border bg-bg p-6 text-sm text-text-3">{zh ? '还没有引擎，先添加一个预设。' : 'No engines yet. Add a preset first.'}</div>}
+              </div>
             </div>
+
+            <div className="rounded-3xl border border-border bg-card p-6">
+              <div className="mb-4 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{zh ? '最近运行结果' : 'Recent Runs'}</div>
+              <div className="space-y-3">
+                {relatedRuns.map((run) => (
+                  <div key={run.id} className="rounded-2xl border border-border bg-bg p-4">
+                    <div className="text-sm font-black text-text">{run.engineId || run.entityId}</div>
+                    <div className="mt-1 text-[10px] uppercase tracking-[0.18em] text-text-3">{run.status} / {run.createdAt}</div>
+                    <div className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-text-2">{run.output}</div>
+                  </div>
+                ))}
+                {!relatedRuns.length && <div className="rounded-2xl border border-dashed border-border bg-bg p-6 text-sm text-text-3">{zh ? '暂无运行记录。' : 'No runs yet.'}</div>}
+              </div>
+            </div>
+          </div>
         ) : (
-            <div className="h-full flex flex-col items-center justify-center text-text-3 select-none">
-                <Activity size={120} className="opacity-5 mb-8" />
-                <p className="text-[11px] font-black uppercase tracking-[0.5em] opacity-40">Narrative Laboratory</p>
-                <p className="text-[9px] mt-4 opacity-20 uppercase tracking-widest font-medium">{t('simulation.awaitingBody')}</p>
+          <div className="flex h-full items-center justify-center text-text-3">
+            <div className="text-center">
+              <Sparkles size={96} className="mx-auto mb-6 opacity-10" />
+              <div className="text-lg font-black text-text">{isReviewerMode ? (zh ? '先创建一个 Reviewer' : 'Create a reviewer first') : (zh ? '先创建一个 Lab' : 'Create a lab first')}</div>
             </div>
+          </div>
         )}
-      </div>
+      </main>
     </div>
   );
 };
 
-const VariableRow = ({ label, value }: { label: string, value: string }) => (
-    <div className="flex items-center justify-between py-2 border-b border-divider last:border-0">
-        <span className="text-[10px] font-bold text-text-2">{label}</span>
-        <span className="text-[10px] font-black text-brand uppercase tracking-tighter bg-brand/5 px-2 py-0.5 rounded border border-brand/10">{value}</span>
+const EngineCard = ({ engine, onChange, onRun, zh }: any) => (
+  <div className="rounded-3xl border border-border bg-bg-elev-1 p-5">
+    <div className="mb-4 flex items-center justify-between">
+      <div>
+        <div className="text-sm font-black text-text">{engine.name}</div>
+        <div className="mt-1 text-[10px] uppercase tracking-[0.18em] text-text-3">{engine.type}</div>
+      </div>
+      <button type="button" className="rounded-xl bg-brand px-4 py-2 text-[10px] font-black uppercase tracking-[0.16em] text-white" onClick={onRun}>
+        {zh ? '单独运行' : 'Run'}
+      </button>
     </div>
+    <div className="grid gap-4 lg:grid-cols-2">
+      <input value={engine.name} onChange={(event) => onChange({ ...engine, name: event.target.value })} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none" />
+      <input value={engine.summary} onChange={(event) => onChange({ ...engine, summary: event.target.value })} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={zh ? '用途摘要' : 'Summary'} />
+    </div>
+    <textarea value={engine.promptOverride || ''} onChange={(event) => onChange({ ...engine, promptOverride: event.target.value })} className="mt-4 h-28 w-full rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={zh ? 'Prompt 覆盖' : 'Prompt override'} />
+    <textarea value={engine.inputNotes || ''} onChange={(event) => onChange({ ...engine, inputNotes: event.target.value })} className="mt-4 h-24 w-full rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={zh ? '输入备注' : 'Input notes'} />
+  </div>
+);
+
+const Stat = ({ label, value }: { label: string; value: string }) => (
+  <div className="rounded-2xl border border-border bg-card p-4 shadow-1">
+    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{label}</div>
+    <div className="mt-2 text-2xl font-black text-text">{value}</div>
+  </div>
 );
