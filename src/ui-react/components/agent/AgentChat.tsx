@@ -171,6 +171,7 @@ export const AgentChat: React.FC = () => {
             type="button"
             onClick={sendMessage}
             disabled={!input.trim()}
+            title={zh ? '发送' : 'Send'}
             className="rounded-xl bg-brand p-2.5 text-white disabled:opacity-40"
             data-testid="agent-chat-send"
           >
