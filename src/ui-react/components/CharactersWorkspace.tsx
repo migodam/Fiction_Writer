@@ -1,10 +1,11 @@
 import React, { useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Check, Clock3, Link2, Plus, Search, Tag, Trash2, UserPlus } from 'lucide-react';
+import { Check, Clock3, Link2, Plus, Search, Tag, Trash2 } from 'lucide-react';
 import { useProjectStore, useUIStore } from '../store';
 import { RadarChart } from './RadarChart';
 import { cn } from '../utils';
 import { useI18n } from '../i18n';
+import { CharacterRelationshipFlow } from './graph';
 
 const GROUPS = ['core', 'major', 'supporting', 'minor', 'ungrouped'] as const;
 
@@ -153,7 +154,7 @@ export const CharactersWorkspace = () => {
         </div>
       </aside>
 
-      <main className="flex-1 overflow-y-auto custom-scrollbar p-8">
+      <main className={route === 'relationship-graph' ? 'flex flex-1 flex-col overflow-hidden' : 'flex-1 overflow-y-auto custom-scrollbar p-8'}>
         {route === 'relationship-graph' ? (
           <RelationshipGraphPanel />
         ) : route === 'tags' ? (
@@ -400,73 +401,15 @@ const CharacterDetail = ({ character, tab }: any) => {
   );
 };
 
-const RelationshipGraphPanel = () => {
-  const { characters, relationships, addCharacter, addRelationship, updateRelationship, deleteRelationship } = useProjectStore();
-  const { locale } = useI18n();
-  const zh = locale === 'zh-CN';
-  const [draft, setDraft] = useState({ sourceId: characters[0]?.id || '', targetId: characters[1]?.id || '', type: '', description: '' });
-  const grouped = GROUPS.map((group) => ({ group, items: characters.filter((character) => (character.importance || 'ungrouped') === group) })).filter((group) => group.items.length);
-
+const RelationshipGraphPanel: React.FC = () => {
   return (
-    <div className="mx-auto max-w-7xl">
-      <div className="mb-8 flex items-center justify-between">
-        <div>
-          <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{zh ? '全局关系图' : 'Relationship Graph'}</div>
-          <div className="mt-2 text-3xl font-black text-text">{zh ? '人物关系总览' : 'Character Relationship Overview'}</div>
-        </div>
-        <button type="button" className="rounded-xl bg-brand px-4 py-3 text-sm font-black text-white" onClick={() => addCharacter({ id: `char_${Date.now()}`, name: zh ? '新人物' : 'New Character', summary: '', background: '', aliases: [], birthdayText: '', portraitAssetId: null, traits: '', goals: '', fears: '', secrets: '', speechStyle: '', arc: '', tagIds: [], organizationIds: [], linkedSceneIds: [], linkedEventIds: [], linkedWorldItemIds: [], importance: 'supporting', groupKey: 'supporting', relationshipIds: [], povInsights: null, statusFlags: { alive: true } })}>
-          <UserPlus size={14} className="mr-2 inline" />
-          {zh ? '新建人物' : 'Create Character'}
-        </button>
+    <div className="flex h-full flex-col">
+      <div className="border-b border-border bg-bg-elev-2 px-6 py-4">
+        <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">Relationship Graph</div>
+        <div className="text-sm font-black text-text">Interactive character network</div>
       </div>
-      <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-        <div className="rounded-3xl border border-border bg-card p-6">
-          <div className="grid gap-4 md:grid-cols-5">
-            {grouped.map((group) => (
-              <div key={group.group} className="rounded-2xl border border-border bg-bg-elev-1 p-4">
-                <div className="mb-3 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{group.group}</div>
-                <div className="space-y-3">
-                  {group.items.map((character) => <div key={character.id} className="rounded-2xl border border-border bg-bg px-3 py-3 text-sm font-black text-text">{character.name}</div>)}
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="mt-6 space-y-3">
-            {relationships.map((relationship) => {
-              const source = characters.find((entry) => entry.id === relationship.sourceId);
-              const target = characters.find((entry) => entry.id === relationship.targetId);
-              return (
-                <div key={relationship.id} className="rounded-2xl border border-border bg-bg p-4">
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <div className="text-sm font-black text-text">{source?.name} → {target?.name}</div>
-                      <div className="mt-1 text-xs text-text-3">{relationship.type}</div>
-                    </div>
-                    <div className="flex gap-2">
-                      <button type="button" className="rounded border border-border px-2 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-text-2" onClick={() => updateRelationship({ ...relationship, status: relationship.status === 'active' ? 'strained' : 'active' })}>{relationship.status}</button>
-                      <button type="button" className="rounded border border-red/40 p-1 text-red" onClick={() => deleteRelationship(relationship.id)}><Trash2 size={12} /></button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-        <div className="rounded-3xl border border-border bg-card p-6">
-          <div className="mb-4 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{zh ? '新建关系' : 'Create Relationship'}</div>
-          <div className="grid gap-3">
-            <select value={draft.sourceId} onChange={(event) => setDraft((current) => ({ ...current, sourceId: event.target.value }))} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none">{characters.map((character) => <option key={character.id} value={character.id}>{character.name}</option>)}</select>
-            <select value={draft.targetId} onChange={(event) => setDraft((current) => ({ ...current, targetId: event.target.value }))} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none">{characters.map((character) => <option key={character.id} value={character.id}>{character.name}</option>)}</select>
-            <input value={draft.type} onChange={(event) => setDraft((current) => ({ ...current, type: event.target.value }))} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={zh ? '关系类型' : 'Relationship type'} />
-            <textarea value={draft.description} onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} className="h-28 rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={zh ? '关系说明' : 'Description'} />
-            <button type="button" className="rounded-xl bg-brand px-4 py-3 text-sm font-black text-white" onClick={() => {
-              if (!draft.sourceId || !draft.targetId || !draft.type.trim()) return;
-              addRelationship({ id: `rel_${Date.now()}`, sourceId: draft.sourceId, targetId: draft.targetId, type: draft.type.trim(), description: draft.description, category: 'general', directionality: 'bidirectional', status: 'active', sourceNotes: '' });
-            }}>
-              {zh ? '添加关系' : 'Add Relationship'}
-            </button>
-          </div>
-        </div>
+      <div className="flex-1 overflow-hidden">
+        <CharacterRelationshipFlow />
       </div>
     </div>
   );
