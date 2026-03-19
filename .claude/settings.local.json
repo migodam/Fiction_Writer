@@ -1,3 +1,12 @@
 {
+  "permissions": {
+    "allow": [
+      "Read(//d/NUS/Computing/Projects/Fiction_Writer/$USERPROFILE/.config/superpowers/worktrees/Fiction_Writer/**)",
+      "Bash(npm run:*)",
+      "Bash(npm install:*)",
+      "Bash(rm -rf node_modules)",
+      "Bash(grep -l \"CharacterRelationshipFlow\\\\|GraphBoardFlow\\\\|@xyflow/react\" src/ui-react/components/graph/*.tsx src/ui-react/components/CharactersWorkspace.tsx src/ui-react/components/GraphWorkspace.tsx)"
+    ]
+  },
   "outputStyle": "default"
 }
