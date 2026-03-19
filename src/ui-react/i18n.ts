@@ -315,7 +315,15 @@ const messages: Record<Locale, Messages> = {
     'writing.storyboard.visualPrompt': 'Visual prompt',
     'writing.storyboard.addShot': 'Add Shot',
     'writing.empty.noStoryboards': 'No storyboards yet',
-    'writing.empty.noStoryboardsBody': 'Create a storyboard to structure shots for export and video orchestration.'
+    'writing.empty.noStoryboardsBody': 'Create a storyboard to structure shots for export and video orchestration.',
+    'agent.chat.placeholder': 'Tell me what you want to do...',
+    'agent.chat.send': 'Send',
+    'agent.chat.mode.writing': 'Writing',
+    'agent.chat.mode.consistency': 'Consistency',
+    'agent.chat.mode.simulation': 'Simulation',
+    'agent.chat.mode.retrieval': 'Retrieval',
+    'agent.chat.mode.general': 'General',
+    'agent.runs.title': 'Recent Tasks'
   },
   'zh-CN': {
     'app.title': '叙事 IDE',
@@ -627,7 +635,15 @@ const messages: Record<Locale, Messages> = {
     'writing.storyboard.visualPrompt': '视觉提示词',
     'writing.storyboard.addShot': '添加镜头',
     'writing.empty.noStoryboards': '暂无故事板',
-    'writing.empty.noStoryboardsBody': '创建故事板以整理镜头用于导出和视频编排'
+    'writing.empty.noStoryboardsBody': '创建故事板以整理镜头用于导出和视频编排',
+    'agent.chat.placeholder': '告诉我你想做什么...',
+    'agent.chat.send': '发送',
+    'agent.chat.mode.writing': '写作',
+    'agent.chat.mode.consistency': '一致性',
+    'agent.chat.mode.simulation': '推演',
+    'agent.chat.mode.retrieval': '检索',
+    'agent.chat.mode.general': '通用',
+    'agent.runs.title': '最近任务'
   }
 };
 
