@@ -147,6 +147,25 @@
   }
 }
 
+/* TipTap placeholder */
+.tiptap p.is-editor-empty:first-child::before {
+  color: var(--text-3, #94a3b8);
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+/* TipTap prose-like headings */
+.tiptap h1 { font-size: 2rem; font-weight: 900; margin-bottom: 0.5em; }
+.tiptap h2 { font-size: 1.5rem; font-weight: 800; margin-bottom: 0.4em; }
+.tiptap h3 { font-size: 1.25rem; font-weight: 700; margin-bottom: 0.3em; }
+.tiptap ul, .tiptap ol { padding-left: 1.5rem; margin-bottom: 0.75em; }
+.tiptap ul { list-style-type: disc; }
+.tiptap ol { list-style-type: decimal; }
+.tiptap hr { border-color: var(--border, #e2e8f0); margin: 1.5em 0; }
+.tiptap p { margin-bottom: 0.75em; }
+
 @layer components {
 
   /* ===== Layout containers ===== */

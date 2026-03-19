@@ -5,8 +5,31 @@ import { useProjectStore, useUIStore } from '../store';
 import { PaneResizeHandle } from './PaneResizeHandle';
 import { cn } from '../utils';
 import { useI18n } from '../i18n';
+import { NarrativeEditor } from './editor';
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import type { Scene } from '../models/project';
 
 const now = () => new Date().toISOString();
+
+const SortableSceneItem = ({ scene, isActive, onClick }: { scene: Scene; isActive: boolean; onClick: () => void }) => {
+  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: scene.id });
+  const style = { transform: CSS.Transform.toString(transform), transition };
+  return (
+    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
+      <button
+        type="button"
+        data-testid={`scene-item-${scene.id}`}
+        className={cn('flex w-full items-center justify-between px-6 py-3 text-left', isActive ? 'bg-active text-text' : 'text-text-2 hover:bg-hover')}
+        onClick={onClick}
+      >
+        <span className="truncate text-[11px] font-medium">{scene.title}</span>
+        <ChevronRight size={12} className="opacity-50" />
+      </button>
+    </div>
+  );
+};
 
 export const WritingWorkspace = () => {
   const ui = useUIStore();
@@ -185,6 +208,23 @@ const SceneEditor = ({ query, setQuery }: { query: string; setQuery: (value: str
   const linkedEvents = timelineEvents.filter((entry) => activeScene?.linkedEventIds.includes(entry.id));
   const linkedItems = worldItems.filter((entry) => activeScene?.linkedWorldItemIds.includes(entry.id));
 
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const chapterId = activeChapter?.id;
+    if (!chapterId) return;
+    const chapterScenes = scenes.filter((s) => s.chapterId === chapterId).sort((a, b) => a.orderIndex - b.orderIndex);
+    const oldIndex = chapterScenes.findIndex((s) => s.id === active.id);
+    const newIndex = chapterScenes.findIndex((s) => s.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    const reordered = [...chapterScenes];
+    const [moved] = reordered.splice(oldIndex, 1);
+    reordered.splice(newIndex, 0, moved);
+    reordered.forEach((scene, index) => updateScene({ ...scene, orderIndex: index }));
+  };
+
   return (
     <div className="flex h-full overflow-hidden bg-bg">
       {!ui.isWritingOutlineCollapsed && <>
@@ -212,13 +252,21 @@ const SceneEditor = ({ query, setQuery }: { query: string; setQuery: (value: str
           <div className="flex-1 overflow-y-auto custom-scrollbar">
             {groups.map((group) => (
               <div key={group.chapter.id} className="border-b border-divider">
-                <div className="flex items-center gap-2 px-4 py-3 text-[10px] font-black uppercase tracking-[0.2em] text-text-3"><BookOpen size={12} className="text-brand-2" />{group.chapter.title}</div>
-                {group.scenes.map((scene) => (
-                  <button key={scene.id} type="button" data-testid={`scene-item-${scene.id}`} className={cn('flex w-full items-center justify-between px-6 py-3 text-left', scene.id === activeScene?.id ? 'bg-active text-text' : 'text-text-2 hover:bg-hover')} onClick={() => setSelectedEntity('scene', scene.id)}>
-                    <span className="truncate text-[11px] font-medium">{scene.title}</span>
-                    <ChevronRight size={12} className="opacity-50" />
-                  </button>
-                ))}
+                <div className="flex items-center gap-2 px-4 py-3 text-[10px] font-black uppercase tracking-[0.2em] text-text-3">
+                  <BookOpen size={12} className="text-brand-2" />{group.chapter.title}
+                </div>
+                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                  <SortableContext items={group.scenes.map((s) => s.id)} strategy={verticalListSortingStrategy}>
+                    {group.scenes.map((scene) => (
+                      <SortableSceneItem
+                        key={scene.id}
+                        scene={scene}
+                        isActive={scene.id === activeScene?.id}
+                        onClick={() => setSelectedEntity('scene', scene.id)}
+                      />
+                    ))}
+                  </SortableContext>
+                </DndContext>
               </div>
             ))}
           </div>
@@ -243,7 +291,19 @@ const SceneEditor = ({ query, setQuery }: { query: string; setQuery: (value: str
                 <SmallInfo label={t('writing.scene.events')} value={linkedEvents.map((entry) => entry.title).join(', ') || t('writing.none')} />
                 <SmallInfo label={t('writing.scene.world')} value={linkedItems.map((entry) => entry.name).join(', ') || t('writing.none')} />
               </div>
-              <textarea data-testid="writing-editor" className="min-h-[640px] w-full resize-none bg-transparent font-serif text-xl leading-[1.95] text-text-2 outline-none" value={content} onChange={(e) => { const value = e.target.value; setContent(value); if (saveRef.current) clearTimeout(saveRef.current); saveRef.current = setTimeout(() => { updateScene({ ...activeScene, content: value }); setLastActionStatus('Saved'); }, 700); }} placeholder={t('writing.scene.placeholder')} />
+              <NarrativeEditor
+                content={content}
+                onUpdate={(html) => {
+                  setContent(html);
+                  if (saveRef.current) clearTimeout(saveRef.current);
+                  saveRef.current = setTimeout(() => {
+                    updateScene({ ...activeScene, content: html });
+                    setLastActionStatus(t('common.saved'));
+                  }, 700);
+                }}
+                placeholder={t('writing.scene.placeholder')}
+                testId="writing-editor"
+              />
             </div>
           </div>
         ) : <Empty title={t('writing.empty.idle')} body={t('writing.empty.idleBody')} />}
@@ -281,7 +341,13 @@ const ScriptEditor = ({ query, setQuery }: { query: string; setQuery: (value: st
       </div>
       <div className="h-full overflow-y-auto custom-scrollbar p-3">{filtered.map((script) => <button key={script.id} type="button" data-testid={`script-item-${script.id}`} className={cn('mb-2 w-full rounded-2xl border px-4 py-3 text-left', active?.id === script.id ? 'border-brand bg-selected' : 'border-border bg-card hover:border-brand')} onClick={() => setSelectedEntity('script', script.id)}><div className="text-sm font-black text-text">{script.title}</div><div className="mt-1 line-clamp-2 text-xs text-text-3">{script.summary || t('writing.noSummary')}</div></button>)}</div>
     </aside>
-    <main className="flex-1 overflow-y-auto custom-scrollbar px-8 py-10">{draft ? <div className="mx-auto max-w-5xl rounded-[32px] border border-border bg-card p-8 shadow-1"><div className="mb-8 flex items-center justify-between"><div><div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('writing.script.draft')}</div><div className="text-sm font-black text-text">{t('writing.script.subtitle')}</div></div><button type="button" className="rounded-xl bg-brand px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-white" onClick={() => { updateScript({ ...draft, updatedAt: now() }); setLastActionStatus('Script saved'); }}>{t('writing.script.saveBtn')}</button></div><input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} className="mb-4 w-full bg-transparent text-5xl font-black tracking-tight outline-none" /><textarea value={draft.summary} onChange={(e) => setDraft({ ...draft, summary: e.target.value })} className="mb-4 h-24 w-full rounded-3xl border border-border bg-bg p-5 text-sm text-text-2 outline-none" placeholder={t('writing.script.summaryPlaceholder')} /><div className="mb-6 grid gap-4 rounded-3xl border border-border bg-bg-elev-1 p-5 lg:grid-cols-4"><SmallInfo label={t('writing.script.mode')} value={draft.mode} /><SmallInfo label={t('writing.script.episodes')} value={String(draft.episodes.length)} /><SmallInfo label={t('writing.script.sourceScenes')} value={draft.sourceSceneIds.length ? draft.sourceSceneIds.map((id) => scenes.find((scene) => scene.id === id)?.title || id).join(', ') : t('writing.none')} /><SmallInfo label={t('writing.script.storyboards')} value={String(storyboards.filter((entry) => entry.scriptId === draft.id).length)} /></div><div className="mb-4 flex flex-wrap gap-2">{(draft.linkedCharacterIds.length ? draft.linkedCharacterIds : characters.slice(0, 3).map((entry) => entry.id)).map((id) => <span key={id} className="rounded-full border border-border bg-bg px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{characters.find((entry) => entry.id === id)?.name || id}</span>)}</div><textarea data-testid="script-editor" className="min-h-[640px] w-full resize-none rounded-3xl border border-border bg-bg p-6 font-mono text-sm leading-7 text-text-2 outline-none" value={draft.content} onChange={(e) => setDraft({ ...draft, content: e.target.value })} placeholder={t('writing.script.placeholder')} /></div> : <Empty title={t('writing.empty.noScripts')} body={t('writing.empty.noScriptsBody')} />}</main>
+    <main className="flex-1 overflow-y-auto custom-scrollbar px-8 py-10">{draft ? <div className="mx-auto max-w-5xl rounded-[32px] border border-border bg-card p-8 shadow-1"><div className="mb-8 flex items-center justify-between"><div><div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('writing.script.draft')}</div><div className="text-sm font-black text-text">{t('writing.script.subtitle')}</div></div><button type="button" className="rounded-xl bg-brand px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-white" onClick={() => { updateScript({ ...draft, updatedAt: now() }); setLastActionStatus('Script saved'); }}>{t('writing.script.saveBtn')}</button></div><input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} className="mb-4 w-full bg-transparent text-5xl font-black tracking-tight outline-none" /><textarea value={draft.summary} onChange={(e) => setDraft({ ...draft, summary: e.target.value })} className="mb-4 h-24 w-full rounded-3xl border border-border bg-bg p-5 text-sm text-text-2 outline-none" placeholder={t('writing.script.summaryPlaceholder')} /><div className="mb-6 grid gap-4 rounded-3xl border border-border bg-bg-elev-1 p-5 lg:grid-cols-4"><SmallInfo label={t('writing.script.mode')} value={draft.mode} /><SmallInfo label={t('writing.script.episodes')} value={String(draft.episodes.length)} /><SmallInfo label={t('writing.script.sourceScenes')} value={draft.sourceSceneIds.length ? draft.sourceSceneIds.map((id) => scenes.find((scene) => scene.id === id)?.title || id).join(', ') : t('writing.none')} /><SmallInfo label={t('writing.script.storyboards')} value={String(storyboards.filter((entry) => entry.scriptId === draft.id).length)} /></div><div className="mb-4 flex flex-wrap gap-2">{(draft.linkedCharacterIds.length ? draft.linkedCharacterIds : characters.slice(0, 3).map((entry) => entry.id)).map((id) => <span key={id} className="rounded-full border border-border bg-bg px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{characters.find((entry) => entry.id === id)?.name || id}</span>)}</div><NarrativeEditor
+              content={draft.content}
+              onUpdate={(html) => setDraft({ ...draft, content: html })}
+              placeholder={t('writing.script.placeholder')}
+              mono={true}
+              testId="script-editor"
+            /></div> : <Empty title={t('writing.empty.noScripts')} body={t('writing.empty.noScriptsBody')} />}</main>
   </div>;
 };
 
