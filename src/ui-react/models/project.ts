@@ -26,7 +26,8 @@ export type EntityKind =
   | 'script'
   | 'storyboard'
   | 'video_package'
-  | 'metadata_file';
+  | 'metadata_file'
+  | 'todo_item';
 
 export type SaveStatus = 'Idle' | 'Unsaved changes' | 'Saving' | 'Saved' | 'Error';
 export type StorageMode = 'memory' | 'nodefs';
@@ -356,6 +357,22 @@ export interface ConsistencyIssue {
   resolvedByProposalId?: string | null;
   resolvedByRunId?: string | null;
   visibility?: 'default' | 'history' | 'hidden';
+}
+
+export type TodoStatus = 'pending' | 'done' | 'dismissed';
+export type TodoPriority = 'low' | 'medium' | 'high';
+
+export interface TodoItem {
+  id: string;
+  title: string;
+  description: string;
+  type: 'manual';
+  status: TodoStatus;
+  priority: TodoPriority;
+  relatedEntityType: EntityKind | null;
+  relatedEntityId: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ExportArtifact {
@@ -865,6 +882,7 @@ export interface NarrativeProject {
   proposalHistory: Proposal[];
   issues: ConsistencyIssue[];
   exports: ExportArtifact[];
+  todos: TodoItem[];
   unreadUpdates: UnreadUpdateState;
   archivedIds: string[];
   metadataFiles: MetadataFile[];

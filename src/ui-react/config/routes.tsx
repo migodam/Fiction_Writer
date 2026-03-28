@@ -39,6 +39,7 @@ export const APP_ROUTES: RouteConfig[] = [
       { id: 'imports', label: 'Imports' },
       { id: 'runs', label: 'Runs' },
       { id: 'prompts', label: 'Prompts' },
+      { id: 'tasks', label: 'Tasks' },
     ],
   },
   {

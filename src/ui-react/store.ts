@@ -39,6 +39,7 @@ import type {
   TaskRunLogRef,
   TimelineBranch,
   TimelineEvent,
+  TodoItem,
   VideoGenerationPackage,
   WorldMapDocument,
   WorldSettings,
@@ -227,6 +228,10 @@ interface ProjectState {
   loadMetadata: (projectRoot: string) => void;
   importMetadataFile: (projectRoot: string, filePath: string, meta: Pick<MetadataFile, 'type' | 'tags' | 'description'>) => void;
   deleteMetadataFile: (projectRoot: string, fileId: string) => void;
+  todos: TodoItem[];
+  createTodo: (item: Omit<TodoItem, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  updateTodo: (id: string, patch: Partial<Pick<TodoItem, 'title' | 'description' | 'status' | 'priority' | 'relatedEntityType' | 'relatedEntityId'>>) => void;
+  deleteTodo: (id: string) => void;
 }
 
 const now = () => new Date().toISOString();
@@ -279,6 +284,7 @@ const deriveState = (project: NarrativeProject) => ({
   archivedIds: project.archivedIds,
   unreadUpdates: project.unreadUpdates,
   metadataFiles: project.metadataFiles || [],
+  todos: project.todos ?? [],
   currentProject: project,
 });
 
@@ -331,6 +337,7 @@ const cloneProject = (state: ProjectState, locale?: Locale): NarrativeProject =>
   unreadUpdates: state.unreadUpdates,
   archivedIds: state.archivedIds,
   metadataFiles: state.metadataFiles,
+  todos: state.todos,
   uiState: {
     panes: {
       sidebarWidth: useUIStore.getState().sidebarWidth,
@@ -777,6 +784,31 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     metadataService.deleteFile(projectRoot, fileId);
     set((state) => ({ metadataFiles: state.metadataFiles.filter((f) => f.id !== fileId) }));
   },
+  todos: [],
+  createTodo: (item) =>
+    set((state) =>
+      withDirtyState({
+        todos: [
+          ...state.todos,
+          {
+            ...item,
+            id: `todo_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+      })
+    ),
+  updateTodo: (id, patch) =>
+    set((state) =>
+      withDirtyState({
+        todos: state.todos.map((t) =>
+          t.id === id ? { ...t, ...patch, updatedAt: new Date().toISOString() } : t
+        ),
+      })
+    ),
+  deleteTodo: (id) =>
+    set((state) => withDirtyState({ todos: state.todos.filter((t) => t.id !== id) })),
   searchEntities: (query) => {
     if (!query) return [];
     const loweredQuery = query.toLowerCase();

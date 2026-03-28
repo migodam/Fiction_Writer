@@ -1,8 +1,8 @@
-import React, { useMemo, useRef, useState } from 'react';
-import { CheckCircle2, FileUp, History, Inbox, PlayCircle, ShieldAlert, Sparkles, UploadCloud, XCircle } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { CheckCircle2, FileUp, Inbox, ShieldAlert, Sparkles, UploadCloud, XCircle } from 'lucide-react';
 import { useProjectStore, useUIStore } from '../store';
 import { useI18n } from '../i18n';
-import type { Chapter, ImportJob, Proposal, Scene } from '../models/project';
+import type { Chapter, ImportJob, Proposal, Scene, TodoItem, TodoPriority, TodoStatus } from '../models/project';
 
 export const WorkbenchWorkspace = () => {
   const { sidebarSection, setLastActionStatus } = useUIStore();
@@ -14,6 +14,7 @@ export const WorkbenchWorkspace = () => {
     taskRuns,
     taskArtifacts,
     promptTemplates,
+    todos,
     resolveProposal,
     addImportJob,
     updateImportJob,
@@ -21,6 +22,9 @@ export const WorkbenchWorkspace = () => {
     updateChapter,
     addScene,
     addProposal,
+    createTodo,
+    updateTodo,
+    deleteTodo,
     setSelectedEntity,
   } = useProjectStore();
   const { locale } = useI18n();
@@ -252,6 +256,18 @@ export const WorkbenchWorkspace = () => {
           </div>
         )}
 
+        {sidebarSection === 'tasks' && (
+          <TasksPanel
+            todos={todos}
+            proposals={proposals}
+            createTodo={createTodo}
+            updateTodo={updateTodo}
+            deleteTodo={deleteTodo}
+            resolveProposal={resolveProposal}
+            zh={zh}
+          />
+        )}
+
         {sidebarSection === 'prompts' && (
           <div className="space-y-4">
             {promptTemplates.map((template) => (
@@ -285,6 +301,223 @@ export const WorkbenchWorkspace = () => {
           onConfirm={confirmImport}
           zh={zh}
         />
+      )}
+    </div>
+  );
+};
+
+const TasksPanel = ({
+  todos,
+  proposals,
+  createTodo,
+  updateTodo,
+  deleteTodo,
+  resolveProposal,
+  zh,
+}: {
+  todos: TodoItem[];
+  proposals: Proposal[];
+  createTodo: (item: Omit<TodoItem, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  updateTodo: (id: string, patch: Partial<Pick<TodoItem, 'title' | 'description' | 'status' | 'priority' | 'relatedEntityType' | 'relatedEntityId'>>) => void;
+  deleteTodo: (id: string) => void;
+  resolveProposal: (proposalId: string, status: Proposal['status']) => void;
+  zh: boolean;
+}) => {
+  const [activeTab, setActiveTab] = useState<'my-tasks' | 'agent-proposals'>('my-tasks');
+  const [newTitle, setNewTitle] = useState('');
+  const [newPriority, setNewPriority] = useState<TodoPriority>('medium');
+  const [statusFilter, setStatusFilter] = useState<TodoStatus | 'all'>('all');
+
+  const pendingProposals = proposals.filter((p) => p.status === 'pending');
+  const filteredTodos = statusFilter === 'all' ? todos : todos.filter((t) => t.status === statusFilter);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTitle.trim()) return;
+    createTodo({
+      title: newTitle.trim(),
+      description: '',
+      type: 'manual',
+      status: 'pending',
+      priority: newPriority,
+      relatedEntityType: null,
+      relatedEntityId: null,
+    });
+    setNewTitle('');
+    setNewPriority('medium');
+  };
+
+  const priorityBadgeClass = (priority: TodoPriority) => {
+    if (priority === 'high') return 'rounded-full border border-red/30 bg-red/10 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-red';
+    if (priority === 'medium') return 'rounded-full border border-brand/30 bg-brand/10 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-brand';
+    return 'rounded-full border border-border bg-bg-elev-1 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-text-3';
+  };
+
+  const priorityLabel = (priority: TodoPriority) => {
+    if (zh) return priority === 'high' ? '高' : priority === 'medium' ? '中' : '低';
+    return priority === 'high' ? 'High' : priority === 'medium' ? 'Medium' : 'Low';
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Tab bar */}
+      <div className="flex gap-2">
+        <button
+          type="button"
+          className={`rounded-lg px-4 py-2 text-[11px] font-black uppercase tracking-widest ${activeTab === 'my-tasks' ? 'bg-brand text-white' : 'border border-border text-text-2 hover:bg-hover'}`}
+          onClick={() => setActiveTab('my-tasks')}
+        >
+          {zh ? '我的任务' : 'My Tasks'}
+        </button>
+        <button
+          type="button"
+          className={`rounded-lg px-4 py-2 text-[11px] font-black uppercase tracking-widest ${activeTab === 'agent-proposals' ? 'bg-brand text-white' : 'border border-border text-text-2 hover:bg-hover'}`}
+          onClick={() => setActiveTab('agent-proposals')}
+        >
+          {zh ? 'AI 提案' : 'Agent Proposals'}
+          {pendingProposals.length > 0 && (
+            <span className="ml-2 rounded-full bg-amber/20 px-1.5 text-[10px] text-amber">{pendingProposals.length}</span>
+          )}
+        </button>
+      </div>
+
+      {activeTab === 'my-tasks' && (
+        <div className="space-y-4">
+          {/* Create form */}
+          <form onSubmit={handleSubmit} className="flex gap-2 rounded-2xl border border-border bg-card p-4">
+            <input
+              type="text"
+              data-testid="todo-create-title"
+              value={newTitle}
+              onChange={(e) => setNewTitle(e.target.value)}
+              placeholder={zh ? '任务标题...' : 'Task title...'}
+              className="flex-1 rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text placeholder-text-3 focus:outline-none focus:ring-1 focus:ring-brand"
+            />
+            <select
+              value={newPriority}
+              onChange={(e) => setNewPriority(e.target.value as TodoPriority)}
+              className="rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text focus:outline-none focus:ring-1 focus:ring-brand"
+            >
+              <option value="low">{zh ? '低' : 'Low'}</option>
+              <option value="medium">{zh ? '中' : 'Medium'}</option>
+              <option value="high">{zh ? '高' : 'High'}</option>
+            </select>
+            <button
+              type="submit"
+              data-testid="todo-create-submit"
+              disabled={!newTitle.trim()}
+              className="rounded-lg bg-brand px-4 py-2 text-[11px] font-black uppercase tracking-widest text-white disabled:opacity-40"
+            >
+              {zh ? '添加任务' : 'Add Task'}
+            </button>
+          </form>
+
+          {/* Filter bar */}
+          <div className="flex gap-2">
+            {(['all', 'pending', 'done'] as const).map((filter) => (
+              <button
+                key={filter}
+                type="button"
+                className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-widest ${statusFilter === filter ? 'bg-brand text-white' : 'border border-border text-text-3 hover:bg-hover'}`}
+                onClick={() => setStatusFilter(filter)}
+              >
+                {filter === 'all' ? (zh ? '全部' : 'All') : filter === 'pending' ? (zh ? '待处理' : 'Pending') : (zh ? '已完成' : 'Done')}
+              </button>
+            ))}
+          </div>
+
+          {/* Todo list */}
+          <div className="space-y-2">
+            {filteredTodos.map((todo) => (
+              <div
+                key={todo.id}
+                data-testid={`todo-item-${todo.id}`}
+                className="flex items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3"
+              >
+                <input
+                  type="checkbox"
+                  data-testid={`todo-checkbox-${todo.id}`}
+                  checked={todo.status === 'done'}
+                  onChange={(e) => updateTodo(todo.id, { status: e.target.checked ? 'done' : 'pending' })}
+                  className="h-4 w-4 rounded accent-brand"
+                />
+                <span className={`flex-1 text-sm ${todo.status === 'done' ? 'line-through text-text-3' : 'text-text'}`}>
+                  {todo.title}
+                </span>
+                <span className={priorityBadgeClass(todo.priority)}>{priorityLabel(todo.priority)}</span>
+                <button
+                  type="button"
+                  data-testid={`todo-delete-${todo.id}`}
+                  onClick={() => deleteTodo(todo.id)}
+                  className="rounded px-2 py-1 text-sm text-text-3 hover:bg-hover hover:text-red"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+            {filteredTodos.length === 0 && (
+              <EmptyState
+                icon={<CheckCircle2 size={56} />}
+                title={zh ? '暂无任务。' : 'No tasks yet.'}
+                description={zh ? '使用上方表单创建你的第一个任务。' : 'Use the form above to create your first task.'}
+              />
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'agent-proposals' && (
+        <div className="space-y-4">
+          {pendingProposals.map((proposal) => (
+            <div
+              key={proposal.id}
+              data-testid={`proposal-item-${proposal.id}`}
+              className="rounded-2xl border border-border bg-card p-5 shadow-1"
+            >
+              <div className="mb-3 flex items-start justify-between gap-4">
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    {proposal.confidence !== undefined && (
+                      <span className="rounded-full border border-brand/30 bg-brand/10 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-brand">
+                        {zh ? '置信度' : 'Confidence'}: {Math.round((proposal.confidence <= 1 ? proposal.confidence * 100 : proposal.confidence))}%
+                      </span>
+                    )}
+                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-text-3">{proposal.source}</span>
+                  </div>
+                  <h2 className="mt-2 text-lg font-black text-text">{proposal.title}</h2>
+                  <p className="mt-1 text-sm text-text-2">{proposal.description}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  data-testid={`proposal-accept-${proposal.id}`}
+                  onClick={() => resolveProposal(proposal.id, 'accepted')}
+                  className="inline-flex items-center gap-2 rounded-lg bg-green px-4 py-2 text-[11px] font-black uppercase tracking-widest text-text-invert"
+                >
+                  <CheckCircle2 size={13} />
+                  {zh ? '接受' : 'Accept'}
+                </button>
+                <button
+                  type="button"
+                  data-testid={`proposal-dismiss-${proposal.id}`}
+                  onClick={() => resolveProposal(proposal.id, 'rejected')}
+                  className="inline-flex items-center gap-2 rounded-lg border border-red/40 px-4 py-2 text-[11px] font-black uppercase tracking-widest text-red"
+                >
+                  <XCircle size={13} />
+                  {zh ? '忽略' : 'Dismiss'}
+                </button>
+              </div>
+            </div>
+          ))}
+          {pendingProposals.length === 0 && (
+            <EmptyState
+              icon={<Inbox size={56} />}
+              title={zh ? '暂无待处理提案。' : 'No pending proposals.'}
+              description={zh ? '当 AI 代理生成提案时，它们将显示在这里。' : 'When agent proposals arrive, they will appear here.'}
+            />
+          )}
+        </div>
       )}
     </div>
   );

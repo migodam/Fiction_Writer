@@ -1765,6 +1765,7 @@ export const createStarterProject = (
     },
     archivedIds: [],
     metadataFiles: [],
+    todos: [],
     uiState: createDefaultUiState(),
   });
 
@@ -1885,5 +1886,6 @@ export const createBlankProject = (
     unreadUpdates: { activities: {}, sections: {}, entities: {} },
     archivedIds: [],
     metadataFiles: [],
+    todos: [],
     uiState: createDefaultUiState(),
   });
