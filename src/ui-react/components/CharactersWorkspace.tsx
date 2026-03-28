@@ -428,7 +428,7 @@ const TagsPanel = () => {
   }, [selectedTagId]);
 
   const filteredCharacters = useMemo(() => {
-    if (!tagSearch.trim()) return characters.slice(0, 20);
+    if (!tagSearch.trim()) return characters;
     return characters
       .filter((c) => c.name.toLowerCase().includes(tagSearch.toLowerCase()))
       .slice(0, 20);
