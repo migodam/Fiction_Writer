@@ -369,6 +369,8 @@ const messages: Record<Locale, Messages> = {
     'todo.status.pending': 'Pending',
     'todo.status.done': 'Done',
     'todo.confidence': 'Confidence',
+    'todo.emptyDescription': 'Use the form above to create your first task.',
+    'todo.proposalsEmptyDescription': 'When agent proposals arrive, they will appear here.',
   },
   'zh-CN': {
     'app.title': '叙事 IDE',
@@ -734,6 +736,8 @@ const messages: Record<Locale, Messages> = {
     'todo.status.pending': '待处理',
     'todo.status.done': '已完成',
     'todo.confidence': '置信度',
+    'todo.emptyDescription': '使用上方表单创建你的第一个任务。',
+    'todo.proposalsEmptyDescription': '当 AI 代理生成提案时，它们将显示在这里。',
   }
 };
 

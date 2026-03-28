@@ -264,7 +264,6 @@ export const WorkbenchWorkspace = () => {
             updateTodo={updateTodo}
             deleteTodo={deleteTodo}
             resolveProposal={resolveProposal}
-            zh={zh}
           />
         )}
 
@@ -313,7 +312,6 @@ const TasksPanel = ({
   updateTodo,
   deleteTodo,
   resolveProposal,
-  zh,
 }: {
   todos: TodoItem[];
   proposals: Proposal[];
@@ -321,15 +319,15 @@ const TasksPanel = ({
   updateTodo: (id: string, patch: Partial<Pick<TodoItem, 'title' | 'description' | 'status' | 'priority' | 'relatedEntityType' | 'relatedEntityId'>>) => void;
   deleteTodo: (id: string) => void;
   resolveProposal: (proposalId: string, status: Proposal['status']) => void;
-  zh: boolean;
 }) => {
+  const { t } = useI18n();
   const [activeTab, setActiveTab] = useState<'my-tasks' | 'agent-proposals'>('my-tasks');
   const [newTitle, setNewTitle] = useState('');
   const [newPriority, setNewPriority] = useState<TodoPriority>('medium');
   const [statusFilter, setStatusFilter] = useState<TodoStatus | 'all'>('all');
 
   const pendingProposals = proposals.filter((p) => p.status === 'pending');
-  const filteredTodos = statusFilter === 'all' ? todos : todos.filter((t) => t.status === statusFilter);
+  const filteredTodos = statusFilter === 'all' ? todos : todos.filter((todo) => todo.status === statusFilter);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -354,8 +352,9 @@ const TasksPanel = ({
   };
 
   const priorityLabel = (priority: TodoPriority) => {
-    if (zh) return priority === 'high' ? '高' : priority === 'medium' ? '中' : '低';
-    return priority === 'high' ? 'High' : priority === 'medium' ? 'Medium' : 'Low';
+    if (priority === 'high') return t('todo.priority.high');
+    if (priority === 'medium') return t('todo.priority.medium');
+    return t('todo.priority.low');
   };
 
   return (
@@ -364,17 +363,19 @@ const TasksPanel = ({
       <div className="flex gap-2">
         <button
           type="button"
+          data-testid="todo-tab-my-tasks"
           className={`rounded-lg px-4 py-2 text-[11px] font-black uppercase tracking-widest ${activeTab === 'my-tasks' ? 'bg-brand text-white' : 'border border-border text-text-2 hover:bg-hover'}`}
           onClick={() => setActiveTab('my-tasks')}
         >
-          {zh ? '我的任务' : 'My Tasks'}
+          {t('todo.myTasks')}
         </button>
         <button
           type="button"
+          data-testid="todo-tab-proposals"
           className={`rounded-lg px-4 py-2 text-[11px] font-black uppercase tracking-widest ${activeTab === 'agent-proposals' ? 'bg-brand text-white' : 'border border-border text-text-2 hover:bg-hover'}`}
           onClick={() => setActiveTab('agent-proposals')}
         >
-          {zh ? 'AI 提案' : 'Agent Proposals'}
+          {t('todo.agentProposals')}
           {pendingProposals.length > 0 && (
             <span className="ml-2 rounded-full bg-amber/20 px-1.5 text-[10px] text-amber">{pendingProposals.length}</span>
           )}
@@ -390,17 +391,18 @@ const TasksPanel = ({
               data-testid="todo-create-title"
               value={newTitle}
               onChange={(e) => setNewTitle(e.target.value)}
-              placeholder={zh ? '任务标题...' : 'Task title...'}
+              placeholder={t('todo.taskTitle')}
               className="flex-1 rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text placeholder-text-3 focus:outline-none focus:ring-1 focus:ring-brand"
             />
             <select
+              data-testid="todo-create-priority"
               value={newPriority}
               onChange={(e) => setNewPriority(e.target.value as TodoPriority)}
               className="rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text focus:outline-none focus:ring-1 focus:ring-brand"
             >
-              <option value="low">{zh ? '低' : 'Low'}</option>
-              <option value="medium">{zh ? '中' : 'Medium'}</option>
-              <option value="high">{zh ? '高' : 'High'}</option>
+              <option value="low">{t('todo.priority.low')}</option>
+              <option value="medium">{t('todo.priority.medium')}</option>
+              <option value="high">{t('todo.priority.high')}</option>
             </select>
             <button
               type="submit"
@@ -408,7 +410,7 @@ const TasksPanel = ({
               disabled={!newTitle.trim()}
               className="rounded-lg bg-brand px-4 py-2 text-[11px] font-black uppercase tracking-widest text-white disabled:opacity-40"
             >
-              {zh ? '添加任务' : 'Add Task'}
+              {t('todo.addTask')}
             </button>
           </form>
 
@@ -418,10 +420,11 @@ const TasksPanel = ({
               <button
                 key={filter}
                 type="button"
+                data-testid={`todo-filter-${filter}`}
                 className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-widest ${statusFilter === filter ? 'bg-brand text-white' : 'border border-border text-text-3 hover:bg-hover'}`}
                 onClick={() => setStatusFilter(filter)}
               >
-                {filter === 'all' ? (zh ? '全部' : 'All') : filter === 'pending' ? (zh ? '待处理' : 'Pending') : (zh ? '已完成' : 'Done')}
+                {t(`todo.status.${filter}`)}
               </button>
             ))}
           </div>
@@ -458,8 +461,8 @@ const TasksPanel = ({
             {filteredTodos.length === 0 && (
               <EmptyState
                 icon={<CheckCircle2 size={56} />}
-                title={zh ? '暂无任务。' : 'No tasks yet.'}
-                description={zh ? '使用上方表单创建你的第一个任务。' : 'Use the form above to create your first task.'}
+                title={t('todo.empty')}
+                description={t('todo.emptyDescription')}
               />
             )}
           </div>
@@ -479,7 +482,7 @@ const TasksPanel = ({
                   <div className="flex items-center gap-2">
                     {proposal.confidence !== undefined && (
                       <span className="rounded-full border border-brand/30 bg-brand/10 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-brand">
-                        {zh ? '置信度' : 'Confidence'}: {Math.round((proposal.confidence <= 1 ? proposal.confidence * 100 : proposal.confidence))}%
+                        {t('todo.confidence')}: {Math.round((proposal.confidence <= 1 ? proposal.confidence * 100 : proposal.confidence))}%
                       </span>
                     )}
                     <span className="text-[10px] font-black uppercase tracking-[0.2em] text-text-3">{proposal.source}</span>
@@ -496,7 +499,7 @@ const TasksPanel = ({
                   className="inline-flex items-center gap-2 rounded-lg bg-green px-4 py-2 text-[11px] font-black uppercase tracking-widest text-text-invert"
                 >
                   <CheckCircle2 size={13} />
-                  {zh ? '接受' : 'Accept'}
+                  {t('todo.accept')}
                 </button>
                 <button
                   type="button"
@@ -505,7 +508,7 @@ const TasksPanel = ({
                   className="inline-flex items-center gap-2 rounded-lg border border-red/40 px-4 py-2 text-[11px] font-black uppercase tracking-widest text-red"
                 >
                   <XCircle size={13} />
-                  {zh ? '忽略' : 'Dismiss'}
+                  {t('todo.dismiss')}
                 </button>
               </div>
             </div>
@@ -513,8 +516,8 @@ const TasksPanel = ({
           {pendingProposals.length === 0 && (
             <EmptyState
               icon={<Inbox size={56} />}
-              title={zh ? '暂无待处理提案。' : 'No pending proposals.'}
-              description={zh ? '当 AI 代理生成提案时，它们将显示在这里。' : 'When agent proposals arrive, they will appear here.'}
+              title={t('todo.proposalsEmpty')}
+              description={t('todo.proposalsEmptyDescription')}
             />
           )}
         </div>
