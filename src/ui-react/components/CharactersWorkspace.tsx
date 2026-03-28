@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Check, Clock3, Link2, Plus, Search, Tag, Trash2 } from 'lucide-react';
 import { useProjectStore, useUIStore } from '../store';
@@ -417,9 +417,22 @@ const RelationshipGraphPanel: React.FC = () => {
 
 const TagsPanel = () => {
   const { characters, characterTags, addCharacterTag, toggleCharacterTagMembership } = useProjectStore();
-  const { locale } = useI18n();
+  const { locale, t } = useI18n();
   const zh = locale === 'zh-CN';
   const [draft, setDraft] = useState({ name: '', color: '#f59e0b' });
+  const [selectedTagId, setSelectedTagId] = useState<string | null>(null);
+  const [tagSearch, setTagSearch] = useState('');
+
+  useEffect(() => {
+    setTagSearch('');
+  }, [selectedTagId]);
+
+  const filteredCharacters = useMemo(() => {
+    if (!tagSearch.trim()) return characters.slice(0, 20);
+    return characters
+      .filter((c) => c.name.toLowerCase().includes(tagSearch.toLowerCase()))
+      .slice(0, 20);
+  }, [characters, tagSearch]);
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -440,24 +453,46 @@ const TagsPanel = () => {
         </button>
       </div>
       <div className="grid gap-5 lg:grid-cols-2">
-        {characterTags.map((tagEntry) => (
-          <div key={tagEntry.id} className="rounded-3xl border border-border bg-card p-6 shadow-1">
-            <div className="mb-4 flex items-center gap-3">
-              <div className="h-3 w-3 rounded-full" style={{ background: tagEntry.color }} />
-              <div className="text-lg font-black text-text">{tagEntry.name}</div>
+        {characterTags.map((tagEntry) => {
+          const isSelected = selectedTagId === tagEntry.id;
+          return (
+            <div key={tagEntry.id} className="rounded-3xl border border-border bg-card p-6 shadow-1">
+              <button
+                type="button"
+                className="mb-4 flex w-full items-center gap-3 text-left"
+                onClick={() => setSelectedTagId(isSelected ? null : tagEntry.id)}
+              >
+                <div className="h-3 w-3 flex-shrink-0 rounded-full" style={{ background: tagEntry.color }} />
+                <div className="text-lg font-black text-text">{tagEntry.name}</div>
+                <span className="ml-auto rounded-full border border-border bg-bg px-2 py-0.5 text-[10px] font-black text-text-3">
+                  ({tagEntry.characterIds.length})
+                </span>
+              </button>
+              {isSelected && (
+                <div>
+                  <input
+                    type="text"
+                    data-testid="tag-character-search-input"
+                    value={tagSearch}
+                    onChange={(event) => setTagSearch(event.target.value)}
+                    placeholder={t('tags.searchCharacters')}
+                    className="mb-3 w-full rounded-xl border border-border bg-bg px-3 py-2 text-sm outline-none"
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    {filteredCharacters.map((character) => {
+                      const active = tagEntry.characterIds.includes(character.id);
+                      return (
+                        <button key={character.id} type="button" className={cn('rounded-full border px-3 py-2 text-xs font-bold transition-colors', active ? 'border-brand bg-brand/15 text-brand-2' : 'border-border text-text-2 hover:border-brand')} onClick={() => toggleCharacterTagMembership(tagEntry.id, character.id)}>
+                          {character.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
-            <div className="flex flex-wrap gap-2">
-              {characters.map((character) => {
-                const active = tagEntry.characterIds.includes(character.id);
-                return (
-                  <button key={character.id} type="button" className={cn('rounded-full border px-3 py-2 text-xs font-bold transition-colors', active ? 'border-brand bg-brand/15 text-brand-2' : 'border-border text-text-2 hover:border-brand')} onClick={() => toggleCharacterTagMembership(tagEntry.id, character.id)}>
-                    {character.name}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
