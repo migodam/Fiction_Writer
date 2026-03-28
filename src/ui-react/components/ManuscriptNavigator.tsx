@@ -85,6 +85,7 @@ export const ManuscriptNavigator = () => {
         {sortedChapters.length > 0 && (
           <button
             type="button"
+            data-testid="manuscript-collapse-all-btn"
             className="rounded-md border border-border px-2 py-1 text-[11px] text-text-2 hover:bg-hover"
             onClick={toggleCollapseAll}
           >
@@ -110,6 +111,7 @@ export const ManuscriptNavigator = () => {
                 {/* Chapter header */}
                 <button
                   type="button"
+                  data-testid={`manuscript-chapter-${chapter.id}`}
                   className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-hover"
                   onClick={() => toggleChapter(chapter.id)}
                 >
@@ -139,6 +141,7 @@ export const ManuscriptNavigator = () => {
                           <button
                             key={scene.id}
                             type="button"
+                            data-testid={`scene-item-${scene.id}`}
                             className={cn(
                               'flex w-full items-center justify-between px-10 py-2 text-left hover:bg-hover'
                             )}
@@ -157,7 +160,7 @@ export const ManuscriptNavigator = () => {
                                   statusClass
                                 )}
                               >
-                                {scene.status || 'draft'}
+                                {t(`scene.status.${scene.status || 'draft'}`)}
                               </span>
                             </div>
                             <span className="ml-2 shrink-0 text-[10px] text-text-2">
