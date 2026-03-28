@@ -182,24 +182,28 @@ export const GraphBoardFlow: React.FC<GraphBoardFlowProps> = ({ board }) => {
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
-  // Sync board changes (when board switches)
+  // Sync board changes (when board switches or nodes/edges updated externally)
   React.useEffect(() => {
     setNodes(toRFNodes(board.nodes));
     setEdges(toRFEdges(board.edges));
-  }, [board.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [board.id, board.nodes, board.edges]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persist node position changes back to store
   const handleNodesChange = useCallback((changes: NodeChange[]) => {
     onNodesChange(changes);
     changes.forEach((change) => {
       if (change.type === 'position' && change.position && !change.dragging) {
-        const storeNode = board.nodes.find((n) => n.id === change.id);
+        // Use fresh store state to avoid stale closure overwriting label edits
+        const currentBoards = useProjectStore.getState().graphBoards;
+        const currentBoard = currentBoards.find((b) => b.id === board.id);
+        if (!currentBoard) return;
+        const storeNode = currentBoard.nodes.find((n) => n.id === change.id);
         if (storeNode) {
           updateGraphNode(board.id, { ...storeNode, x: change.position.x, y: change.position.y });
         }
       }
     });
-  }, [board, updateGraphNode, onNodesChange]);
+  }, [board.id, updateGraphNode, onNodesChange]);
 
   const handleEdgesChange = useCallback((changes: EdgeChange[]) => {
     onEdgesChange(changes);
