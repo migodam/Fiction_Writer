@@ -6,6 +6,7 @@ import { PaneResizeHandle } from './PaneResizeHandle';
 import { cn } from '../utils';
 import { useI18n } from '../i18n';
 import { NarrativeEditor } from './editor';
+import { ManuscriptNavigator } from './ManuscriptNavigator';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -42,6 +43,8 @@ export const WritingWorkspace = () => {
   const [scriptQuery, setScriptQuery] = useState('');
   const routeSection = location.pathname.includes('/chapters')
     ? 'chapters'
+    : location.pathname.includes('/manuscript')
+    ? 'manuscript'
     : location.pathname.includes('/scripts')
     ? 'scripts'
     : location.pathname.includes('/storyboards')
@@ -60,6 +63,7 @@ export const WritingWorkspace = () => {
   }, [syncProjectUiState, ui.writingOutlineWidth, ui.writingContextWidth, ui.isWritingOutlineCollapsed, ui.isWritingContextCollapsed]);
 
   if (routeSection === 'chapters') return <ChapterEditor />;
+  if (routeSection === 'manuscript') return <ManuscriptNavigator />;
   if (routeSection === 'scripts') return <ScriptEditor query={scriptQuery} setQuery={setScriptQuery} />;
   if (routeSection === 'storyboards') return <StoryboardEditor />;
   return <SceneEditor query={sceneQuery} setQuery={setSceneQuery} />;

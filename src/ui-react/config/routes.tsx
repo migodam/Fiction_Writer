@@ -49,6 +49,7 @@ export const APP_ROUTES: RouteConfig[] = [
     sidebarSections: [
       { id: 'scenes', label: 'Scenes' },
       { id: 'chapters', label: 'Chapters' },
+      { id: 'manuscript', label: 'Manuscript' },
       { id: 'scripts', label: 'Scripts' },
       { id: 'storyboards', label: 'Storyboards' },
     ],
