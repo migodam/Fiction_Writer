@@ -74,3 +74,4 @@ logs/*.log
 *.weights
 *.bin
 *.gguf
+.worktrees/
