@@ -131,12 +131,7 @@ export const ManuscriptNavigator = () => {
                 {/* Scenes list */}
                 {!isCollapsed && (
                   <div className="pb-1">
-                    {chapterScenes.length === 0 ? (
-                      <div className="px-10 py-2 text-[11px] text-text-2 italic">
-                        0 {t('manuscript.scenes')}
-                      </div>
-                    ) : (
-                      chapterScenes.map((scene) => {
+                    {chapterScenes.map((scene) => {
                         const sceneWords = countWords(scene.content || '');
                         const statusClass =
                           statusColors[scene.status || 'draft'] || statusColors.draft;
@@ -171,7 +166,7 @@ export const ManuscriptNavigator = () => {
                           </button>
                         );
                       })
-                    )}
+                    }
                   </div>
                 )}
               </div>
