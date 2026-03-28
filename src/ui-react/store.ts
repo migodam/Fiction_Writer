@@ -489,6 +489,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     useUIStore.getState().hydrateFromProjectUiState(project.uiState);
     set({ ...deriveState(project), selectedEntity: { type: null, id: null }, saveStatus: 'Saved' });
     useUIStore.getState().setLocale(project.metadata.locale);
+    if (rootPath) get().loadMetadata(rootPath);
     setTimeout(() => get().saveStatus === 'Saved' && set({ saveStatus: 'Idle' }), 1200);
   },
   saveProject: async () => {
@@ -765,8 +766,12 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({ metadataFiles: files });
   },
   importMetadataFile: (projectRoot, filePath, meta) => {
-    const file = metadataService.importFile(projectRoot, filePath, meta);
-    set((state) => ({ metadataFiles: [...state.metadataFiles, file] }));
+    try {
+      const file = metadataService.importFile(projectRoot, filePath, meta);
+      set((state) => ({ metadataFiles: [...state.metadataFiles, file] }));
+    } catch (err) {
+      console.error('[metadataService] importFile failed:', err);
+    }
   },
   deleteMetadataFile: (projectRoot, fileId) => {
     metadataService.deleteFile(projectRoot, fileId);

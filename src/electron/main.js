@@ -69,7 +69,7 @@ ipcMain.handle('dialog:pick-files', async (_event, _payload) => {
   const result = await dialog.showOpenDialog({
     title: 'Import Reference Files',
     properties: ['openFile', 'multiSelections'],
-    filters: [{ name: 'Text Files', extensions: ['txt', 'md', 'pdf', 'docx'] }],
+    filters: [{ name: 'Text Files', extensions: ['txt', 'md'] }],
   });
   return { canceled: result.canceled, paths: result.canceled ? [] : result.filePaths };
 });

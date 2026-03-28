@@ -46,10 +46,14 @@ export const MetadataWorkspace: React.FC = () => {
   const selectedFile = metadataFiles.find((f) => f.id === selectedFileId) ?? null;
 
   const handleImport = async () => {
-    const paths = await electronApi.pickFiles();
-    if (!paths.length || !projectRoot) return;
-    for (const path of paths) {
-      importMetadataFile(projectRoot, path, { type: 'other', tags: [], description: '' });
+    try {
+      const paths = await electronApi.pickFiles();
+      if (!paths.length || !projectRoot) return;
+      for (const path of paths) {
+        importMetadataFile(projectRoot, path, { type: 'other', tags: [], description: '' });
+      }
+    } catch (err) {
+      console.error('[MetadataWorkspace] import failed:', err);
     }
   };
 
@@ -179,7 +183,7 @@ export const MetadataWorkspace: React.FC = () => {
                 {chunks.map((chunk) => (
                   <div key={chunk.id} className="rounded border border-border bg-surface p-3">
                     <div className="text-xs text-muted mb-1">
-                      Chunk {chunk.index + 1} &mdash; {chunk.tokenCount} tokens
+                      {t('metadata.chunkLabel')} {chunk.index + 1} &mdash; {chunk.tokenCount} {t('metadata.tokens')}
                     </div>
                     <pre className="text-xs text-fg whitespace-pre-wrap font-mono leading-relaxed">
                       {chunk.content}

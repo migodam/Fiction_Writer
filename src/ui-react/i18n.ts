@@ -351,6 +351,8 @@ const messages: Record<Locale, Messages> = {
     'metadata.status.error': 'Error',
     'metadata.chunkCount': 'chunks',
     'metadata.noChunks': 'Select a file to preview chunks.',
+    'metadata.chunkLabel': 'Chunk',
+    'metadata.tokens': 'tokens',
   },
   'zh-CN': {
     'app.title': '叙事 IDE',
@@ -698,6 +700,8 @@ const messages: Record<Locale, Messages> = {
     'metadata.status.error': '错误',
     'metadata.chunkCount': '块',
     'metadata.noChunks': '选择文件以预览分块。',
+    'metadata.chunkLabel': '块',
+    'metadata.tokens': '词元',
   }
 };
 

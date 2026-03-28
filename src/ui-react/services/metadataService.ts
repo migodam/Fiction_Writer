@@ -30,8 +30,19 @@ const writeJson = (fs: typeof import('fs'), filePath: string, payload: unknown):
 };
 
 const safeReadJson = <T>(fs: typeof import('fs'), filePath: string, fallback: T): T => {
-  return fs.existsSync(filePath) ? (JSON.parse(fs.readFileSync(filePath, 'utf8') as string) as T) : fallback;
+  if (!fs.existsSync(filePath)) return fallback;
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8') as string) as T;
+  } catch {
+    return fallback;
+  }
 };
+
+function safeFileDir(projectRoot: string, fileId: string): string | null {
+  // A valid nanoid/generated id contains only alphanumeric and _ - characters
+  if (!/^[a-zA-Z0-9_\-]+$/.test(fileId)) return null;
+  return `${projectRoot}/metadata/${fileId}`;
+}
 
 const metaDir = (root: string) => `${root}/metadata`;
 const fileDir = (root: string, id: string) => `${root}/metadata/${id}`;
@@ -120,7 +131,8 @@ export function importFile(
 export function deleteFile(projectRoot: string, fileId: string): void {
   const rt = getNodeRuntime();
   if (!rt) return;
-  const dir = fileDir(projectRoot, fileId);
+  const dir = safeFileDir(projectRoot, fileId);
+  if (!dir) return;
   if (rt.fs.existsSync(dir)) {
     rt.fs.rmSync(dir, { recursive: true });
   }
@@ -131,7 +143,9 @@ export function deleteFile(projectRoot: string, fileId: string): void {
 export function loadChunks(projectRoot: string, fileId: string): MetadataChunk[] {
   const rt = getNodeRuntime();
   if (!rt) return [];
-  return safeReadJson<MetadataChunk[]>(rt.fs, `${fileDir(projectRoot, fileId)}/chunks.json`, []);
+  const dir = safeFileDir(projectRoot, fileId);
+  if (!dir) return [];
+  return safeReadJson<MetadataChunk[]>(rt.fs, `${dir}/chunks.json`, []);
 }
 
 export type { MetadataFileType };
