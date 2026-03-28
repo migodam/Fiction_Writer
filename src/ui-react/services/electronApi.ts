@@ -55,6 +55,13 @@ export const electronApi = {
     return (await ipcRenderer.invoke('settings:save-app', payload)) as T | null;
   },
 
+  async pickFiles(): Promise<string[]> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return [];
+    const result = (await ipcRenderer.invoke('dialog:pick-files')) as { canceled: boolean; paths: string[] } | null;
+    return result?.paths ?? [];
+  },
+
   async testProviderConnection(payload: Record<string, unknown>): Promise<ProviderConnectionResult> {
     const ipcRenderer = getIpcRenderer();
     if (!ipcRenderer) {

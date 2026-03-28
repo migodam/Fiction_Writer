@@ -16,6 +16,7 @@ import type {
   GraphNode,
   ImportJob,
   Locale,
+  MetadataFile,
   NarrativeProject,
   PromptTemplate,
   Proposal,
@@ -48,6 +49,7 @@ import type {
 import { createStarterProject } from './mock/seedProject';
 import { projectService } from './services/projectService';
 import { appSettingsService, defaultAppSettings } from './services/appSettingsService';
+import * as metadataService from './services/metadataService';
 
 const UI_SETTINGS_KEY = 'narrative-ide-ui-settings';
 
@@ -221,6 +223,10 @@ interface ProjectState {
   clearUnreadEntity: (entityId: string) => void;
   clearUnreadActivity: (activityId: string) => void;
   searchEntities: (query: string) => SearchResult[];
+  metadataFiles: MetadataFile[];
+  loadMetadata: (projectRoot: string) => void;
+  importMetadataFile: (projectRoot: string, filePath: string, meta: Pick<MetadataFile, 'type' | 'tags' | 'description'>) => void;
+  deleteMetadataFile: (projectRoot: string, fileId: string) => void;
 }
 
 const now = () => new Date().toISOString();
@@ -272,6 +278,7 @@ const deriveState = (project: NarrativeProject) => ({
   exports: project.exports,
   archivedIds: project.archivedIds,
   unreadUpdates: project.unreadUpdates,
+  metadataFiles: project.metadataFiles || [],
   currentProject: project,
 });
 
@@ -323,6 +330,7 @@ const cloneProject = (state: ProjectState, locale?: Locale): NarrativeProject =>
   exports: state.exports,
   unreadUpdates: state.unreadUpdates,
   archivedIds: state.archivedIds,
+  metadataFiles: state.metadataFiles,
   uiState: {
     panes: {
       sidebarWidth: useUIStore.getState().sidebarWidth,
@@ -751,6 +759,19 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   })),
   clearUnreadEntity: (entityId) => set((state) => ({ unreadUpdates: { ...state.unreadUpdates, entities: { ...state.unreadUpdates.entities, [entityId]: false } } })),
   clearUnreadActivity: (activityId) => set((state) => ({ unreadUpdates: { ...state.unreadUpdates, activities: { ...state.unreadUpdates.activities, [activityId]: false } } })),
+  metadataFiles: [],
+  loadMetadata: (projectRoot) => {
+    const files = metadataService.loadMetadataIndex(projectRoot);
+    set({ metadataFiles: files });
+  },
+  importMetadataFile: (projectRoot, filePath, meta) => {
+    const file = metadataService.importFile(projectRoot, filePath, meta);
+    set((state) => ({ metadataFiles: [...state.metadataFiles, file] }));
+  },
+  deleteMetadataFile: (projectRoot, fileId) => {
+    metadataService.deleteFile(projectRoot, fileId);
+    set((state) => ({ metadataFiles: state.metadataFiles.filter((f) => f.id !== fileId) }));
+  },
   searchEntities: (query) => {
     if (!query) return [];
     const loweredQuery = query.toLowerCase();

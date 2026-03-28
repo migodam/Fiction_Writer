@@ -1764,6 +1764,7 @@ export const createStarterProject = (
       entities: { proposal_graph_public_fallout: true, issue_bridge_name: true },
     },
     archivedIds: [],
+    metadataFiles: [],
     uiState: createDefaultUiState(),
   });
 
@@ -1883,5 +1884,6 @@ export const createBlankProject = (
     exports: [],
     unreadUpdates: { activities: {}, sections: {}, entities: {} },
     archivedIds: [],
+    metadataFiles: [],
     uiState: createDefaultUiState(),
   });

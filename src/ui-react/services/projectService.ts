@@ -256,6 +256,7 @@ const migrateProject = (
     })),
     unreadUpdates: rawProject.unreadUpdates || fallbackProject.unreadUpdates,
     archivedIds: rawProject.archivedIds || [],
+    metadataFiles: rawProject.metadataFiles || [],
     uiState: normalizeUiState(rawProject.uiState, fallbackProject),
   };
 

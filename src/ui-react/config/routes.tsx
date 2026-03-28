@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   Layout,
+  Library,
   Users,
   Clock,
   Network,
@@ -160,7 +161,18 @@ export const APP_ROUTES: RouteConfig[] = [
     sidebarSections: [
       { id: 'overview', label: 'Overview' },
     ],
-  }
+  },
+  {
+    id: 'metadata',
+    path: '/metadata',
+    label: 'Reference Library',
+    icon: <Library size={20} />,
+    testId: 'activity-btn-metadata',
+    sidebarSections: [
+      { id: 'files', label: 'Files' },
+      { id: 'chunks', label: 'Chunks Preview' },
+    ],
+  },
 ];
 
 export const getRouteConfig = (id: string): RouteConfig => {

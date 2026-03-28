@@ -25,7 +25,8 @@ export type EntityKind =
   | 'rag_chunk'
   | 'script'
   | 'storyboard'
-  | 'video_package';
+  | 'video_package'
+  | 'metadata_file';
 
 export type SaveStatus = 'Idle' | 'Unsaved changes' | 'Saving' | 'Saved' | 'Error';
 export type StorageMode = 'memory' | 'nodefs';
@@ -545,6 +546,29 @@ export interface PromptTemplate {
   requiresWorkbenchReview: boolean;
 }
 
+export type MetadataFileType = 'novel' | 'article' | 'script' | 'essay' | 'draft' | 'other';
+export type MetadataFileStatus = 'processing' | 'ready' | 'error';
+
+export interface MetadataFile {
+  id: string;
+  filename: string;
+  originalExt: string;
+  type: MetadataFileType;
+  tags: string[];
+  description: string;
+  importedAt: string;
+  chunkCount: number;
+  status: MetadataFileStatus;
+}
+
+export interface MetadataChunk {
+  id: string;
+  fileId: string;
+  index: number;
+  content: string;
+  tokenCount: number;
+}
+
 export interface RagDocument {
   id: string;
   sourceType: 'chapter' | 'scene' | 'character' | 'world_item' | 'script' | 'storyboard' | 'import_source';
@@ -843,6 +867,7 @@ export interface NarrativeProject {
   exports: ExportArtifact[];
   unreadUpdates: UnreadUpdateState;
   archivedIds: string[];
+  metadataFiles: MetadataFile[];
   uiState: ProjectUIState;
 }
 

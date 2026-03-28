@@ -36,6 +36,7 @@ import { AgentDock } from './components/AgentDock';
 import { PublishWorkspace } from './components/PublishWorkspace';
 import { InsightsWorkspace } from './components/InsightsWorkspace';
 import { AgentWorkspace } from './components/AgentWorkspace';
+import { MetadataWorkspace } from './components/MetadataWorkspace';
 import { electronApi } from './services/electronApi';
 import { useI18n } from './i18n';
 import type { CreateProjectInput } from './models/project';
@@ -904,6 +905,7 @@ const AppContent = () => {
             <Route path="/agents/*" element={<AgentWorkspace />} />
             <Route path="/publish/*" element={<PublishWorkspace />} />
             <Route path="/insights/*" element={<InsightsWorkspace />} />
+            <Route path="/metadata/*" element={<MetadataWorkspace />} />
           </Routes>
         </main>
 

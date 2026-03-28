@@ -65,6 +65,15 @@ ipcMain.handle('dialog:pick-directory', async (_event, payload = { mode: 'open' 
 
 ipcMain.handle('settings:load-app', async () => loadAppSettings());
 ipcMain.handle('settings:save-app', async (_event, payload = {}) => saveAppSettings(payload));
+ipcMain.handle('dialog:pick-files', async (_event, _payload) => {
+  const result = await dialog.showOpenDialog({
+    title: 'Import Reference Files',
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'Text Files', extensions: ['txt', 'md', 'pdf', 'docx'] }],
+  });
+  return { canceled: result.canceled, paths: result.canceled ? [] : result.filePaths };
+});
+
 ipcMain.handle('settings:test-provider', async (_event, payload = {}) => ({
   ok: Boolean(payload?.endpoint && payload?.provider),
   message: payload?.endpoint && payload?.provider ? 'connected_placeholder' : 'missing_endpoint_or_provider',
