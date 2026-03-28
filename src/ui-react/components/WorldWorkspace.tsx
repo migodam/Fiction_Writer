@@ -24,10 +24,13 @@ export const WorldWorkspace = () => {
     updateWorldSettings,
     createWorldMap,
     updateWorldMap,
+    updateWorldContainer,
+    deleteWorldContainer,
   } = useProjectStore();
   const [activeContainerId, setActiveContainerId] = useState(worldContainers[0]?.id || null);
   const [activeItemId, setActiveItemId] = useState(worldItems[0]?.id || null);
   const [activeMapId, setActiveMapId] = useState(worldMaps[0]?.id || null);
+  const [renamingContainerId, setRenamingContainerId] = useState<string | null>(null);
 
   const activeContainer = worldContainers.find((container) => container.id === activeContainerId) || worldContainers[0] || null;
   const activeItem = worldItems.find((item) => item.id === activeItemId) || null;
@@ -137,8 +140,58 @@ export const WorldWorkspace = () => {
         </div>
         <div className="h-full overflow-y-auto custom-scrollbar p-2">
           {worldContainers.map((container) => (
-            <button key={container.id} type="button" className={cn('mb-2 w-full rounded-2xl border px-4 py-4 text-left', activeContainerId === container.id ? 'border-brand bg-selected' : 'border-border bg-card')} onClick={() => setActiveContainerId(container.id)}>
-              <div className="text-sm font-black text-text">{container.name}</div>
+            <button
+              key={container.id}
+              type="button"
+              className={cn('mb-2 w-full rounded-2xl border px-4 py-4 text-left', activeContainerId === container.id ? 'border-brand bg-selected' : 'border-border bg-card')}
+              onClick={() => setActiveContainerId(container.id)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                openContextMenu({
+                  x: e.clientX,
+                  y: e.clientY,
+                  items: [
+                    {
+                      id: 'rename',
+                      label: t('world.renameContainer'),
+                      action: () => setRenamingContainerId(container.id),
+                    },
+                    {
+                      id: 'delete',
+                      label: t('world.deleteContainer'),
+                      action: () => {
+                        deleteWorldContainer(container.id);
+                        if (activeContainerId === container.id) setActiveContainerId(null);
+                      },
+                      destructive: true,
+                    },
+                  ],
+                });
+              }}
+            >
+              {renamingContainerId === container.id ? (
+                <input
+                  data-testid="world-container-rename-input"
+                  autoFocus
+                  className="w-full bg-transparent text-sm font-black text-text outline-none border-b border-brand"
+                  defaultValue={container.name}
+                  onClick={(e) => e.stopPropagation()}
+                  onBlur={(e) => {
+                    updateWorldContainer({ ...container, name: e.target.value });
+                    setRenamingContainerId(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      updateWorldContainer({ ...container, name: e.currentTarget.value });
+                      setRenamingContainerId(null);
+                    } else if (e.key === 'Escape') {
+                      setRenamingContainerId(null);
+                    }
+                  }}
+                />
+              ) : (
+                <div className="text-sm font-black text-text">{container.name}</div>
+              )}
               <div className="mt-2 text-xs text-text-2">{container.type}</div>
             </button>
           ))}

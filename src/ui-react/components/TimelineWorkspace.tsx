@@ -38,6 +38,7 @@ export const TimelineWorkspace = () => {
   const [characterFilter, setCharacterFilter] = useState(searchParams.get('character') || '');
   const [locationFilter, setLocationFilter] = useState(searchParams.get('location') || '');
   const [eventModalId, setEventModalId] = useState<string | null>(null);
+  const [createModalOpen, setCreateModalOpen] = useState(false);
   const [dragEventId, setDragEventId] = useState<string | null>(null);
   const [dragPreview, setDragPreview] = useState<{ x: number; y: number } | null>(null);
   const [branchGeometryId, setBranchGeometryId] = useState<string | null>(null);
@@ -205,31 +206,7 @@ export const TimelineWorkspace = () => {
   };
 
   const addEventAfterSelection = () => {
-    const branchId = activeEvent?.branchId || activeBranch?.id || MAIN_BRANCH_ID;
-    const branchEvents = (branchEventsMap.get(branchId) || []).slice().sort((a, b) => a.orderIndex - b.orderIndex);
-    const slot = activeEvent ? branchEvents.findIndex((entry) => entry.id === activeEvent.id) + 1 : branchEvents.length;
-    const newEvent: TimelineEvent = {
-      id: `event_${Date.now()}`,
-      title: zh ? '新事件' : 'New Event',
-      summary: zh ? '填写事件概览。' : 'Describe the event.',
-      time: zh ? '待定' : 'TBD',
-      branchId,
-      orderIndex: slot,
-      locationIds: [],
-      participantCharacterIds: [],
-      linkedSceneIds: [],
-      linkedWorldItemIds: [],
-      tags: [],
-      sharedBranchIds: [],
-      importance: 'medium',
-      colorToken: 'sky',
-      layoutLock: false,
-      modalStateHints: [],
-    };
-    addTimelineEvent(newEvent);
-    moveTimelineEvent(newEvent.id, branchId, slot);
-    setActiveEventId(newEvent.id);
-    setEventModalId(newEvent.id);
+    setCreateModalOpen(true);
   };
 
   const addIndependentBranch = () => {
@@ -414,6 +391,17 @@ export const TimelineWorkspace = () => {
           zh={zh}
         />
       )}
+      {createModalOpen && (
+        <CreateEventModal
+          defaultBranchId={activeEvent?.branchId || activeBranch?.id || MAIN_BRANCH_ID}
+          defaultSlot={activeEvent ? (branchEventsMap.get(activeEvent.branchId) || []).slice().sort((a, b) => a.orderIndex - b.orderIndex).findIndex((entry) => entry.id === activeEvent.id) + 1 : (branchEventsMap.get(activeBranch?.id || MAIN_BRANCH_ID) || []).length}
+          addEvent={addTimelineEvent}
+          moveEvent={moveTimelineEvent}
+          onCreated={(id) => { setActiveEventId(id); setEventModalId(id); setLastActionStatus(zh ? '事件已创建' : 'Event created'); }}
+          close={() => setCreateModalOpen(false)}
+          zh={zh}
+        />
+      )}
     </div>
   );
 };
@@ -476,6 +464,110 @@ const EventModal = ({
               <button type="button" className="rounded-xl border border-border px-5 py-3 text-sm text-text-2" onClick={close}>{zh ? '取消' : 'Cancel'}</button>
               <button type="button" data-testid="inspector-save" className="rounded-xl bg-brand px-5 py-3 text-sm font-black text-white" onClick={() => { updateEvent(draft); onSaved(); close(); }}>
                 {zh ? '保存事件' : 'Save Event'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const CreateEventModal = ({
+  defaultBranchId,
+  defaultSlot,
+  addEvent,
+  moveEvent,
+  onCreated,
+  close,
+  zh,
+}: {
+  defaultBranchId: string;
+  defaultSlot: number;
+  addEvent: (event: TimelineEvent) => void;
+  moveEvent: (eventId: string, branchId: string, slot: number) => void;
+  onCreated: (id: string) => void;
+  close: () => void;
+  zh: boolean;
+}) => {
+  const [title, setTitle] = useState(zh ? '新事件' : 'New Event');
+  const [summary, setSummary] = useState('');
+  const [time, setTime] = useState(zh ? '待定' : 'TBD');
+  const [importance, setImportance] = useState<TimelineEvent['importance']>('medium');
+
+  const handleSave = () => {
+    const newEvent: TimelineEvent = {
+      id: `event_${Date.now()}`,
+      title,
+      summary,
+      time,
+      branchId: defaultBranchId,
+      orderIndex: defaultSlot,
+      locationIds: [],
+      participantCharacterIds: [],
+      linkedSceneIds: [],
+      linkedWorldItemIds: [],
+      tags: [],
+      sharedBranchIds: [],
+      importance,
+      colorToken: 'sky',
+      layoutLock: false,
+      modalStateHints: [],
+    };
+    addEvent(newEvent);
+    moveEvent(newEvent.id, defaultBranchId, defaultSlot);
+    onCreated(newEvent.id);
+    close();
+  };
+
+  return (
+    <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/60 p-6">
+      <div className="w-full max-w-lg overflow-hidden rounded-[32px] border border-border bg-bg-elev-1 shadow-2">
+        <div className="flex items-center justify-between border-b border-border bg-bg-elev-2 px-6 py-4">
+          <div>
+            <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{zh ? '新增事件' : 'New Event'}</div>
+            <div className="mt-1 text-lg font-black text-text">{zh ? '配置事件' : 'Configure Event'}</div>
+          </div>
+          <button type="button" className="rounded p-2 text-text-3 hover:bg-hover hover:text-text" onClick={close}>
+            <X size={16} />
+          </button>
+        </div>
+        <div className="p-6">
+          <div className="grid gap-4">
+            <input
+              data-testid="create-event-title-input"
+              className="rounded-2xl border border-border bg-bg px-4 py-3 text-lg font-black outline-none"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder={zh ? '事件标题' : 'Event title'}
+            />
+            <textarea
+              data-testid="create-event-summary-input"
+              className="h-28 rounded-3xl border border-border bg-bg px-4 py-4 text-sm leading-relaxed text-text-2 outline-none"
+              value={summary}
+              onChange={(e) => setSummary(e.target.value)}
+              placeholder={zh ? '填写事件概览...' : 'Describe the event...'}
+            />
+            <input
+              className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none"
+              value={time}
+              onChange={(e) => setTime(e.target.value)}
+              placeholder={zh ? '时间标签' : 'Time label'}
+            />
+            <select
+              className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none text-sm text-text"
+              value={importance}
+              onChange={(e) => setImportance(e.target.value as TimelineEvent['importance'])}
+            >
+              <option value="low">{zh ? '低' : 'Low'}</option>
+              <option value="medium">{zh ? '中' : 'Medium'}</option>
+              <option value="high">{zh ? '高' : 'High'}</option>
+              <option value="critical">{zh ? '关键' : 'Critical'}</option>
+            </select>
+            <div className="flex justify-end gap-3">
+              <button type="button" className="rounded-xl border border-border px-5 py-3 text-sm text-text-2" onClick={close}>{zh ? '取消' : 'Cancel'}</button>
+              <button type="button" data-testid="create-event-save-btn" className="rounded-xl bg-brand px-5 py-3 text-sm font-black text-white" onClick={handleSave}>
+                {zh ? '创建事件' : 'Create Event'}
               </button>
             </div>
           </div>

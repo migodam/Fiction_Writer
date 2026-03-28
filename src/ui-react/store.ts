@@ -195,7 +195,10 @@ interface ProjectState {
   setActiveGraphBoard: (boardId: string) => void;
   addGraphNode: (boardId: string, node: GraphNode) => void;
   updateGraphNode: (boardId: string, node: GraphNode) => void;
+  deleteGraphNode: (boardId: string, nodeId: string) => void;
   addGraphEdge: (boardId: string, edge: GraphBoard['edges'][number]) => void;
+  deleteGraphEdge: (boardId: string, edgeId: string) => void;
+  updateGraphEdge: (boardId: string, edge: Partial<GraphBoard['edges'][number]> & { id: string }) => void;
   setGraphBoardView: (boardId: string, view: GraphBoard['view']) => void;
   resolveProposal: (proposalId: string, status: Proposal['status']) => void;
   resolveIssue: (issueId: string, resolution: 'resolved' | 'ignored') => void;
@@ -650,6 +653,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   addGraphNode: (boardId, node) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, nodes: [...board.nodes, node], selectedNodeIds: [node.id] } : board) })),
   updateGraphNode: (boardId, node) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, nodes: board.nodes.map((entry) => entry.id === node.id ? node : entry) } : board) })),
   addGraphEdge: (boardId, edge) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, edges: [...board.edges, edge] } : board) })),
+  deleteGraphNode: (boardId, nodeId) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, nodes: board.nodes.filter((n) => n.id !== nodeId), edges: board.edges.filter((e) => e.sourceId !== nodeId && e.targetId !== nodeId), selectedNodeIds: board.selectedNodeIds.filter((id) => id !== nodeId) } : board) })),
+  deleteGraphEdge: (boardId, edgeId) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, edges: board.edges.filter((e) => e.id !== edgeId) } : board) })),
+  updateGraphEdge: (boardId, edge) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, edges: board.edges.map((e) => e.id === edge.id ? { ...e, ...edge } : e) } : board) })),
   setGraphBoardView: (boardId, view) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, view } : board) })),
   resolveProposal: (proposalId, status) => set((state) => withDirtyState(projectService.resolveProposal(cloneProject(state, useUIStore.getState().locale), proposalId, status))),
   resolveIssue: (issueId, resolution) => set((state) => withDirtyState({
