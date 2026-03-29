@@ -323,8 +323,7 @@ const TasksPanel = ({
 }) => {
   const { t } = useI18n();
   const navigate = useNavigate();
-  const { scenes, characters, chapters } = useProjectStore();
-  const { setSelectedEntity } = useProjectStore();
+  const { scenes, characters, chapters, setSelectedEntity } = useProjectStore();
   const [activeTab, setActiveTab] = useState<'story-gaps' | 'my-tasks' | 'agent-proposals'>('story-gaps');
   const [refreshCount, setRefreshCount] = useState<number>(0);
   const [newTitle, setNewTitle] = useState('');
@@ -360,8 +359,7 @@ const TasksPanel = ({
       }
     }
     return gaps;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scenes, characters, chapters, refreshCount]);
+  }, [scenes, characters, chapters, refreshCount, t]);
 
   const handleGoFix = (entityType: string, entityId: string) => {
     // Strip _arc suffix for arc gaps
@@ -449,7 +447,7 @@ const TasksPanel = ({
         <div className="space-y-3">
           {/* Refresh button */}
           <div className="flex items-center justify-between">
-            <span className="text-sm text-text-2">{storyGaps.length} {storyGaps.length === 1 ? 'gap' : 'gaps'}</span>
+            <span className="text-sm text-text-2">{t('backlog.gapCount').replace('{count}', String(storyGaps.length))}</span>
             <button
               type="button"
               data-testid="backlog-refresh-btn"
