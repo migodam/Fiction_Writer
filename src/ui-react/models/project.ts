@@ -360,6 +360,21 @@ export interface ConsistencyIssue {
   visibility?: 'default' | 'history' | 'hidden';
 }
 
+export type ManuscriptNodeType = 'act' | 'part' | 'chapter_outline' | 'scene_outline' | 'note';
+
+export interface ManuscriptNode {
+  id: string;
+  title: string;
+  type: ManuscriptNodeType;
+  parentId: string | null;
+  orderIndex: number;
+  linkedChapterId: string | null;
+  linkedSceneId: string | null;
+  depth: number;
+  collapsed: boolean;
+  wordCount: number;
+}
+
 export type TodoStatus = 'pending' | 'done' | 'dismissed';
 export type TodoPriority = 'low' | 'medium' | 'high';
 
@@ -886,6 +901,7 @@ export interface NarrativeProject {
   issues: ConsistencyIssue[];
   exports: ExportArtifact[];
   todos: TodoItem[];
+  manuscriptNodes?: ManuscriptNode[];
   unreadUpdates: UnreadUpdateState;
   archivedIds: string[];
   metadataFiles: MetadataFile[];

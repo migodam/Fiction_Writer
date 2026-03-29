@@ -16,6 +16,7 @@ import type {
   GraphNode,
   ImportJob,
   Locale,
+  ManuscriptNode,
   MetadataFile,
   NarrativeProject,
   PromptTemplate,
@@ -235,6 +236,13 @@ interface ProjectState {
   createTodo: (item: Omit<TodoItem, 'id' | 'createdAt' | 'updatedAt'>) => void;
   updateTodo: (id: string, patch: Partial<Pick<TodoItem, 'title' | 'description' | 'status' | 'priority' | 'relatedEntityType' | 'relatedEntityId'>>) => void;
   deleteTodo: (id: string) => void;
+  manuscriptNodes: ManuscriptNode[];
+  addManuscriptNode: (node: Omit<ManuscriptNode, 'id'>) => ManuscriptNode;
+  updateManuscriptNode: (id: string, updates: Partial<ManuscriptNode>) => void;
+  deleteManuscriptNode: (id: string) => void;
+  moveManuscriptNode: (id: string, newParentId: string | null, newOrderIndex: number) => void;
+  loadManuscriptNodeContent: (projectRoot: string, nodeId: string) => Promise<string>;
+  saveManuscriptNodeContent: (projectRoot: string, nodeId: string, content: string) => Promise<void>;
 }
 
 const now = () => new Date().toISOString();
@@ -288,6 +296,7 @@ const deriveState = (project: NarrativeProject) => ({
   unreadUpdates: project.unreadUpdates,
   metadataFiles: project.metadataFiles || [],
   todos: project.todos ?? [],
+  manuscriptNodes: project.manuscriptNodes ?? [],
   currentProject: project,
 });
 
@@ -341,6 +350,7 @@ const cloneProject = (state: ProjectState, locale?: Locale): NarrativeProject =>
   archivedIds: state.archivedIds,
   metadataFiles: state.metadataFiles,
   todos: state.todos,
+  manuscriptNodes: state.manuscriptNodes,
   uiState: {
     panes: {
       sidebarWidth: useUIStore.getState().sidebarWidth,
@@ -815,6 +825,70 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     ),
   deleteTodo: (id) =>
     set((state) => withDirtyState({ todos: state.todos.filter((t) => t.id !== id) })),
+  manuscriptNodes: [],
+  addManuscriptNode: (node) => {
+    const id = crypto.randomUUID();
+    const newNode: ManuscriptNode = { ...node, id };
+    set((state) => withDirtyState({ manuscriptNodes: [...state.manuscriptNodes, newNode] }));
+    return newNode;
+  },
+  updateManuscriptNode: (id, updates) =>
+    set((state) =>
+      withDirtyState({
+        manuscriptNodes: state.manuscriptNodes.map((n) => (n.id === id ? { ...n, ...updates } : n)),
+      })
+    ),
+  deleteManuscriptNode: (id) =>
+    set((state) =>
+      withDirtyState({
+        manuscriptNodes: state.manuscriptNodes.filter((n) => n.id !== id && n.parentId !== id),
+      })
+    ),
+  moveManuscriptNode: (id, newParentId, newOrderIndex) =>
+    set((state) => {
+      const node = state.manuscriptNodes.find((n) => n.id === id);
+      if (!node) return state;
+      const siblings = state.manuscriptNodes
+        .filter((n) => n.parentId === newParentId && n.id !== id)
+        .sort((a, b) => a.orderIndex - b.orderIndex);
+      const insertAt = Math.min(Math.max(newOrderIndex, 0), siblings.length);
+      const reordered = [
+        ...siblings.slice(0, insertAt),
+        { ...node, parentId: newParentId, orderIndex: insertAt },
+        ...siblings.slice(insertAt),
+      ].map((n, i) => ({ ...n, orderIndex: i }));
+      const untouched = state.manuscriptNodes.filter(
+        (n) => n.id !== id && n.parentId !== newParentId
+      );
+      return withDirtyState({ manuscriptNodes: [...untouched, ...reordered] });
+    }),
+  loadManuscriptNodeContent: async (projectRoot, nodeId) => {
+    const scope = globalThis as typeof globalThis & { require?: NodeRequire };
+    const loader = scope.require;
+    if (!loader) return '';
+    try {
+      const fs = loader('fs') as typeof import('fs');
+      const path = loader('path') as typeof import('path');
+      const filePath = path.join(projectRoot, 'writing', 'manuscript', `${nodeId}.md`);
+      return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
+    } catch {
+      return '';
+    }
+  },
+  saveManuscriptNodeContent: async (projectRoot, nodeId, content) => {
+    const scope = globalThis as typeof globalThis & { require?: NodeRequire };
+    const loader = scope.require;
+    if (!loader) return;
+    try {
+      const fs = loader('fs') as typeof import('fs');
+      const path = loader('path') as typeof import('path');
+      const dir = path.join(projectRoot, 'writing', 'manuscript');
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, `${nodeId}.md`), content, 'utf8');
+    } catch (err) {
+      console.error('[manuscriptNode] saveManuscriptNodeContent failed:', err);
+    }
+  },
   searchEntities: (query) => {
     if (!query) return [];
     const loweredQuery = query.toLowerCase();
