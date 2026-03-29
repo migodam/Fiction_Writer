@@ -359,7 +359,7 @@ const CharacterDetail = ({ character, tab }: any) => {
                     className="max-h-48 w-full object-cover rounded-2xl"
                   />
                 ) : (
-                  <div className="flex flex-col items-center gap-2 py-8 text-text-3">
+                  <div data-testid="character-portrait-placeholder" className="flex flex-col items-center gap-2 py-8 text-text-3">
                     <ImageIcon size={32} />
                     <span className="text-xs">{t('aiPortrait.noPortrait')}</span>
                   </div>

@@ -186,6 +186,16 @@ ipcMain.handle('portrait:save', async (_event, { projectRoot, characterId, image
   return `file://${filePath}`;
 });
 
+// Upload portrait from local file path by copying to project portraits folder
+ipcMain.handle('portrait:upload', async (_event, { projectRoot, characterId, sourcePath }) => {
+  if (!/^[a-zA-Z0-9_\-]+$/.test(characterId)) throw new Error('Invalid characterId');
+  const portraitsDir = path.join(projectRoot, 'characters', 'portraits');
+  await fsPromises.mkdir(portraitsDir, { recursive: true });
+  const filePath = path.join(portraitsDir, `${characterId}.png`);
+  await fsPromises.copyFile(sourcePath, filePath);
+  return `file://${filePath}`;
+});
+
 ipcMain.on('ai:stream-cancel', (_event, { requestId }) => {
   streamControllers.get(requestId)?.abort();
   streamControllers.delete(requestId);

@@ -91,6 +91,12 @@ export const electronApi = {
     return (await ipcRenderer.invoke('portrait:save', { projectRoot, characterId, imageData })) as string;
   },
 
+  async portraitUpload(projectRoot: string, characterId: string, sourcePath: string): Promise<string> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return '';
+    return (await ipcRenderer.invoke('portrait:upload', { projectRoot, characterId, sourcePath })) as string;
+  },
+
   aiStreamStart(requestId: string, messages: Array<{ role: string; content: string }>): void {
     const ipcRenderer = getIpcRenderer();
     if (!ipcRenderer) return;

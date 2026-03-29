@@ -106,7 +106,7 @@ export const AIPortraitModal: React.FC<AIPortraitModalProps> = ({ character, pro
           <div className="mb-2 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">
             {t('aiPortrait.characterSummary')}
           </div>
-          <pre className="rounded-2xl border border-border bg-bg-elev-1 p-3 text-xs leading-relaxed text-text-2 whitespace-pre-wrap font-sans">
+          <pre data-testid="ai-portrait-char-summary" className="rounded-2xl border border-border bg-bg-elev-1 p-3 text-xs leading-relaxed text-text-2 whitespace-pre-wrap font-sans">
             {characterSummaryText}
           </pre>
         </div>
@@ -152,7 +152,7 @@ export const AIPortraitModal: React.FC<AIPortraitModalProps> = ({ character, pro
         )}
 
         {error && (
-          <div className="mb-4 rounded-2xl border border-red/30 bg-red/10 p-3 text-xs text-red">
+          <div data-testid="ai-portrait-error" className="mb-4 rounded-2xl border border-red/30 bg-red/10 p-3 text-xs text-red">
             {t('aiPortrait.error').replace('{msg}', error)}
           </div>
         )}
