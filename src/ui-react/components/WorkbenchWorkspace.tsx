@@ -1,5 +1,6 @@
-import React, { useRef, useState } from 'react';
-import { CheckCircle2, FileUp, Inbox, ShieldAlert, Sparkles, UploadCloud, XCircle } from 'lucide-react';
+import React, { useRef, useMemo, useState } from 'react';
+import { CheckCircle2, FileUp, Inbox, RefreshCw, ShieldAlert, Sparkles, UploadCloud, XCircle } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useProjectStore, useUIStore } from '../store';
 import { useI18n } from '../i18n';
 import type { Chapter, ImportJob, Proposal, Scene, TodoItem, TodoPriority, TodoStatus } from '../models/project';
@@ -321,13 +322,61 @@ const TasksPanel = ({
   resolveProposal: (proposalId: string, status: Proposal['status']) => void;
 }) => {
   const { t } = useI18n();
-  const [activeTab, setActiveTab] = useState<'my-tasks' | 'agent-proposals'>('my-tasks');
+  const navigate = useNavigate();
+  const { scenes, characters, chapters } = useProjectStore();
+  const { setSelectedEntity } = useProjectStore();
+  const [activeTab, setActiveTab] = useState<'story-gaps' | 'my-tasks' | 'agent-proposals'>('story-gaps');
+  const [refreshCount, setRefreshCount] = useState<number>(0);
   const [newTitle, setNewTitle] = useState('');
   const [newPriority, setNewPriority] = useState<TodoPriority>('medium');
   const [statusFilter, setStatusFilter] = useState<TodoStatus | 'all'>('all');
 
   const pendingProposals = proposals.filter((p) => p.status === 'pending');
   const filteredTodos = statusFilter === 'all' ? todos : todos.filter((todo) => todo.status === statusFilter);
+
+  const storyGaps = useMemo(() => {
+    const gaps: Array<{ entityType: string; entityId: string; entityName: string; description: string }> = [];
+
+    // Scenes with short content/summary (< 200 chars)
+    for (const scene of scenes) {
+      const content = (scene.content ?? scene.summary ?? '').trim();
+      if (content.length < 200) {
+        gaps.push({ entityType: 'scene', entityId: scene.id, entityName: scene.title, description: t('backlog.gapSceneShort').replace('{name}', scene.title) });
+      }
+    }
+    // Characters with empty background or arc
+    for (const char of characters) {
+      if (!char.background?.trim()) {
+        gaps.push({ entityType: 'character', entityId: char.id, entityName: char.name, description: t('backlog.gapNoBackground').replace('{name}', char.name) });
+      }
+      if (!char.arc?.trim()) {
+        gaps.push({ entityType: 'character', entityId: `${char.id}_arc`, entityName: char.name, description: t('backlog.gapNoArc').replace('{name}', char.name) });
+      }
+    }
+    // Chapters with no scenes
+    for (const chapter of chapters) {
+      if (!chapter.sceneIds?.length) {
+        gaps.push({ entityType: 'chapter', entityId: chapter.id, entityName: chapter.title, description: t('backlog.gapNoScenes').replace('{name}', chapter.title) });
+      }
+    }
+    return gaps;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scenes, characters, chapters, refreshCount]);
+
+  const handleGoFix = (entityType: string, entityId: string) => {
+    // Strip _arc suffix for arc gaps
+    const realId = entityId.endsWith('_arc') ? entityId.slice(0, -4) : entityId;
+    if (entityType === 'scene') {
+      setSelectedEntity('scene', realId);
+      navigate('/writing/scenes');
+    } else if (entityType === 'character') {
+      setSelectedEntity('character', realId);
+      navigate('/characters/overview');
+    } else if (entityType === 'chapter') {
+      setSelectedEntity('chapter', realId);
+      navigate('/writing/chapters');
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -359,28 +408,91 @@ const TasksPanel = ({
 
   return (
     <div className="space-y-4">
+      {/* Section label */}
+      <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('backlog.title')}</div>
+
       {/* Tab bar */}
       <div className="flex gap-2">
         <button
           type="button"
-          data-testid="todo-tab-my-tasks"
-          className={`rounded-lg px-4 py-2 text-[11px] font-black uppercase tracking-widest ${activeTab === 'my-tasks' ? 'bg-brand text-white' : 'border border-border text-text-2 hover:bg-hover'}`}
-          onClick={() => setActiveTab('my-tasks')}
+          data-testid="backlog-story-gaps-tab"
+          className={`rounded-lg px-4 py-2 text-[11px] font-black uppercase tracking-widest ${activeTab === 'story-gaps' ? 'bg-brand text-white' : 'border border-border text-text-2 hover:bg-hover'}`}
+          onClick={() => setActiveTab('story-gaps')}
         >
-          {t('todo.myTasks')}
+          {t('backlog.storyGaps')}
+          {storyGaps.length > 0 && (
+            <span className="ml-2 rounded-full bg-red/20 px-1.5 text-[10px] text-red">{storyGaps.length}</span>
+          )}
         </button>
         <button
           type="button"
-          data-testid="todo-tab-proposals"
+          data-testid="backlog-tasks-tab"
+          className={`rounded-lg px-4 py-2 text-[11px] font-black uppercase tracking-widest ${activeTab === 'my-tasks' ? 'bg-brand text-white' : 'border border-border text-text-2 hover:bg-hover'}`}
+          onClick={() => setActiveTab('my-tasks')}
+        >
+          {t('backlog.myTasks')}
+        </button>
+        <button
+          type="button"
+          data-testid="backlog-proposals-tab"
           className={`rounded-lg px-4 py-2 text-[11px] font-black uppercase tracking-widest ${activeTab === 'agent-proposals' ? 'bg-brand text-white' : 'border border-border text-text-2 hover:bg-hover'}`}
           onClick={() => setActiveTab('agent-proposals')}
         >
-          {t('todo.agentProposals')}
+          {t('backlog.proposals')}
           {pendingProposals.length > 0 && (
             <span className="ml-2 rounded-full bg-amber/20 px-1.5 text-[10px] text-amber">{pendingProposals.length}</span>
           )}
         </button>
       </div>
+
+      {activeTab === 'story-gaps' && (
+        <div className="space-y-3">
+          {/* Refresh button */}
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-text-2">{storyGaps.length} {storyGaps.length === 1 ? 'gap' : 'gaps'}</span>
+            <button
+              type="button"
+              data-testid="backlog-refresh-btn"
+              onClick={() => setRefreshCount((c) => c + 1)}
+              className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-[11px] font-black uppercase tracking-widest text-text-2 hover:bg-hover"
+            >
+              <RefreshCw size={12} />
+              {t('backlog.refreshGaps')}
+            </button>
+          </div>
+          {storyGaps.length === 0 ? (
+            <p data-testid="backlog-no-gaps" className="rounded-2xl border border-dashed border-divider bg-bg-elev-1 p-6 text-center text-sm text-text-3">
+              {t('backlog.noGaps')}
+            </p>
+          ) : (
+            storyGaps.map((gap) => (
+              <div
+                key={gap.entityId}
+                data-testid={`backlog-gap-item-${gap.entityId}`}
+                className="flex items-start justify-between gap-4 rounded-2xl border border-border bg-card px-4 py-3"
+              >
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-full border border-border bg-bg-elev-1 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-text-3">
+                      {gap.entityType}
+                    </span>
+                    <span className="text-sm font-bold text-text">{gap.entityName}</span>
+                  </div>
+                  <p className="mt-1 text-sm text-text-2">{gap.description}</p>
+                </div>
+                <button
+                  type="button"
+                  data-testid={`backlog-gap-fix-btn-${gap.entityId}`}
+                  onClick={() => handleGoFix(gap.entityType, gap.entityId)}
+                  className="shrink-0 rounded-lg border border-brand/40 px-3 py-1.5 text-[11px] font-black uppercase tracking-widest text-brand hover:bg-brand/10"
+                >
+                  {t('backlog.goFix')}
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      )}
 
       {activeTab === 'my-tasks' && (
         <div className="space-y-4">

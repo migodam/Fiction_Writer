@@ -366,11 +366,13 @@ export interface TodoItem {
   id: string;
   title: string;
   description: string;
-  type: 'manual';
+  type: 'manual' | 'story_gap';
   status: TodoStatus;
   priority: TodoPriority;
   relatedEntityType: EntityKind | null;
   relatedEntityId: string | null;
+  gapEntityType?: string;
+  gapEntityId?: string;
   createdAt: string;
   updatedAt: string;
 }
