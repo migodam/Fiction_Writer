@@ -26,7 +26,7 @@ const importanceDotCount = (importance?: string): number => {
 };
 
 export function TimelineEventNode({ data, selected, id }: NodeProps) {
-  const d = data as EventNodeData;
+  const d = data as unknown as EventNodeData;
   const borderColor = importanceBorderColor(d.importance);
   const dotCount = importanceDotCount(d.importance);
 
