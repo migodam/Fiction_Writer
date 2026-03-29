@@ -50,6 +50,14 @@ function createWindow() {
   } else {
     win.loadFile(path.join(__dirname, '../../dist/index.html'));
   }
+
+  win.on('closed', () => {
+    // Abort all in-flight AI streams
+    for (const controller of streamControllers.values()) {
+      controller.abort();
+    }
+    streamControllers.clear();
+  });
 }
 
 ipcMain.handle('dialog:pick-directory', async (_event, payload = { mode: 'open' }) => {

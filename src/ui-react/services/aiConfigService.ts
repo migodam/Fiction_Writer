@@ -2,7 +2,6 @@ import { appSettingsService } from './appSettingsService';
 
 export interface AITextConfig {
   endpoint: string;
-  apiKey: string;
   model: string;
   temperature: number;
   maxTokens: number;
@@ -10,7 +9,6 @@ export interface AITextConfig {
 
 export interface AIImageConfig {
   endpoint: string;
-  apiKey: string;
   model: string;
   size: string;
 }
@@ -26,7 +24,6 @@ export async function getActiveTextConfig(): Promise<AITextConfig> {
   if (!profile) throw new Error('No AI provider configured');
   return {
     endpoint: profile.endpoint,
-    apiKey: profile.apiKey,
     model: modelProfile?.model ?? 'gpt-4o-mini',
     temperature: modelProfile?.temperature ?? 0.7,
     maxTokens: (modelProfile as (typeof modelProfile & { maxTokens?: number }))?.maxTokens ?? 2048,
@@ -41,7 +38,6 @@ export async function getActiveImageConfig(): Promise<AIImageConfig> {
   if (!profile) throw new Error('No AI provider configured');
   return {
     endpoint: profile.endpoint,
-    apiKey: profile.apiKey,
     model: (profile as typeof profile & { imageModel?: string }).imageModel ?? 'dall-e-3',
     size: '1024x1024',
   };
