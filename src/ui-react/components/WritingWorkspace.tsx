@@ -7,6 +7,7 @@ import { cn } from '../utils';
 import { useI18n } from '../i18n';
 import { NarrativeEditor } from './editor';
 import { ManuscriptNavigator } from './ManuscriptNavigator';
+import { AIWritingModal } from './ai/AIWritingModal';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -181,6 +182,7 @@ const SceneEditor = ({ query, setQuery }: { query: string; setQuery: (value: str
   const [title, setTitle] = useState(activeScene?.title || '');
   const [content, setContent] = useState(activeScene?.content || '');
   const saveRef = useRef<NodeJS.Timeout | null>(null);
+  const [aiMode, setAiMode] = useState<'continue' | 'polish' | null>(null);
 
   useEffect(() => {
     if (activeScene) return;
@@ -295,6 +297,26 @@ const SceneEditor = ({ query, setQuery }: { query: string; setQuery: (value: str
                 <SmallInfo label={t('writing.scene.events')} value={linkedEvents.map((entry) => entry.title).join(', ') || t('writing.none')} />
                 <SmallInfo label={t('writing.scene.world')} value={linkedItems.map((entry) => entry.name).join(', ') || t('writing.none')} />
               </div>
+              <div className="mb-3 flex items-center gap-2">
+                <button
+                  type="button"
+                  data-testid="writing-ai-continue-btn"
+                  onClick={() => setAiMode('continue')}
+                  className="flex items-center gap-1.5 rounded-xl border border-border px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-brand hover:border-brand"
+                >
+                  <Sparkles size={13} />
+                  {t('aiWriting.continueTitle')}
+                </button>
+                <button
+                  type="button"
+                  data-testid="writing-ai-polish-btn"
+                  onClick={() => setAiMode('polish')}
+                  className="flex items-center gap-1.5 rounded-xl border border-border px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-text-2 hover:border-brand"
+                >
+                  <Sparkles size={13} />
+                  {t('aiWriting.polishTitle')}
+                </button>
+              </div>
               <NarrativeEditor
                 content={content}
                 onUpdate={(html) => {
@@ -308,6 +330,20 @@ const SceneEditor = ({ query, setQuery }: { query: string; setQuery: (value: str
                 placeholder={t('writing.scene.placeholder')}
                 testId="writing-editor"
               />
+              {aiMode && (
+                <AIWritingModal
+                  mode={aiMode}
+                  sceneTitle={activeScene.title}
+                  existingContent={content}
+                  onAccept={(newContent) => {
+                    setContent(newContent);
+                    updateScene({ ...activeScene, content: newContent });
+                    setLastActionStatus(t('common.saved'));
+                    setAiMode(null);
+                  }}
+                  onClose={() => setAiMode(null)}
+                />
+              )}
             </div>
           </div>
         ) : <Empty title={t('writing.empty.idle')} body={t('writing.empty.idleBody')} />}
