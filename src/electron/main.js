@@ -2,6 +2,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import electron from 'electron';
+import { chatCompletion, streamCompletion, generateImage } from './services/aiService.js';
 
 const { app, BrowserWindow, dialog, ipcMain } = electron;
 
@@ -78,6 +79,80 @@ ipcMain.handle('settings:test-provider', async (_event, payload = {}) => ({
   ok: Boolean(payload?.endpoint && payload?.provider),
   message: payload?.endpoint && payload?.provider ? 'connected_placeholder' : 'missing_endpoint_or_provider',
 }));
+
+// Map of active stream abort controllers
+const streamControllers = new Map();
+
+// Helper: get active AI text config from app settings
+function getAITextConfig(settings) {
+  const profiles = settings.providerProfiles ?? [];
+  const modelProfiles = settings.modelProfiles ?? [];
+  const profile =
+    profiles.find((p) => p.id === settings.selectedProviderProfileId) ?? profiles[0];
+  const modelProfile =
+    modelProfiles.find((m) => m.id === settings.selectedModelProfileId) ?? modelProfiles[0];
+  if (!profile) throw new Error('No AI provider configured');
+  return {
+    endpoint: profile.endpoint,
+    apiKey: profile.apiKey,
+    model: modelProfile?.model ?? 'gpt-4o-mini',
+    temperature: modelProfile?.temperature ?? 0.7,
+    maxTokens: modelProfile?.maxTokens ?? 2048,
+  };
+}
+
+function getAIImageConfig(settings) {
+  const profiles = settings.providerProfiles ?? [];
+  const profile =
+    profiles.find((p) => p.id === settings.selectedProviderProfileId) ?? profiles[0];
+  if (!profile) throw new Error('No AI provider configured');
+  return {
+    endpoint: profile.endpoint,
+    apiKey: profile.apiKey,
+    model: profile.imageModel ?? 'dall-e-3',
+    size: '1024x1024',
+  };
+}
+
+// Single-turn chat
+ipcMain.handle('ai:chat', async (_event, { messages }) => {
+  const settings = loadAppSettings() ?? {};
+  const config = getAITextConfig(settings);
+  return await chatCompletion(messages, config);
+});
+
+// Image generation
+ipcMain.handle('ai:generate-image', async (_event, { prompt }) => {
+  const settings = loadAppSettings() ?? {};
+  const config = getAIImageConfig(settings);
+  return await generateImage(prompt, config);
+});
+
+// Streaming chat
+ipcMain.on('ai:stream-start', async (event, { requestId, messages }) => {
+  try {
+    const settings = loadAppSettings() ?? {};
+    const config = getAITextConfig(settings);
+    const controller = new AbortController();
+    streamControllers.set(requestId, controller);
+    await streamCompletion(
+      messages,
+      config,
+      (text) => event.reply(`ai:chunk:${requestId}`, text),
+      controller.signal,
+    );
+    streamControllers.delete(requestId);
+    event.reply(`ai:done:${requestId}`);
+  } catch (err) {
+    streamControllers.delete(requestId);
+    event.reply(`ai:error:${requestId}`, err.message);
+  }
+});
+
+ipcMain.on('ai:stream-cancel', (_event, { requestId }) => {
+  streamControllers.get(requestId)?.abort();
+  streamControllers.delete(requestId);
+});
 
 app.whenReady().then(() => {
   createWindow();
