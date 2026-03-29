@@ -260,5 +260,74 @@ insight-scene-density
 generate-report-btn
 
 ==================================================
+14 GRAPH CRUD (Phase 3)
+==================================================
+
+graph-node-edit-modal
+graph-node-modal-save-btn
+graph-context-menu
+graph-context-delete-btn
+
+==================================================
+15 WORLD CONTAINER RENAME (Phase 3)
+==================================================
+
+world-context-menu
+world-context-rename-btn
+world-container-rename-input
+
+==================================================
+16 TIMELINE FREE CANVAS (Phase 3)
+==================================================
+
+timeline-event-node-<eventId>
+event-edit-drawer
+event-edit-title
+event-edit-save-btn
+
+==================================================
+17 MANUSCRIPT WORKSPACE (Phase 3)
+==================================================
+
+manuscript-workspace
+manuscript-add-node-btn
+manuscript-node-title-input
+manuscript-node-confirm-btn
+
+==================================================
+18 BACKLOG / STORY GAPS (Phase 3)
+==================================================
+
+backlog-story-gaps-tab
+backlog-refresh-btn
+backlog-no-gaps
+backlog-gap-item-<gapId>
+
+==================================================
+19 CHAPTER PREVIEW (Phase 3)
+==================================================
+
+chapter-preview-btn-<chapterId>
+chapter-preview-modal
+chapter-preview-stats
+chapter-preview-close-btn
+
+==================================================
+20 TAG CHARACTER SEARCH (Phase 3)
+==================================================
+
+character-tag-<tagId>
+tag-character-search-input
+
+==================================================
+21 AI WRITING MODAL (Phase 3)
+==================================================
+
+writing-ai-continue-btn
+writing-ai-polish-btn
+ai-writing-modal
+ai-writing-close-btn
+
+==================================================
 END
 ==================================================
