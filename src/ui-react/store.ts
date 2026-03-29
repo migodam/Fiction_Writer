@@ -841,10 +841,43 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   deleteManuscriptNode: (id) =>
     set((state) =>
       withDirtyState({
-        manuscriptNodes: state.manuscriptNodes.filter((n) => n.id !== id && n.parentId !== id),
+        manuscriptNodes: (() => {
+          // Collect all ids to delete (node + all descendants)
+          const toDelete = new Set<string>();
+          const queue = [id];
+          while (queue.length > 0) {
+            const current = queue.shift()!;
+            toDelete.add(current);
+            state.manuscriptNodes
+              .filter(n => n.parentId === current)
+              .forEach(n => queue.push(n.id));
+          }
+          return state.manuscriptNodes.filter(n => !toDelete.has(n.id));
+        })(),
       })
     ),
-  moveManuscriptNode: (id, newParentId, newOrderIndex) =>
+  moveManuscriptNode: (id, newParentId, newOrderIndex) => {
+    // Guard: newParentId must not be a descendant of id
+    if (newParentId !== null) {
+      const isDescendant = (ancestorId: string, targetId: string, nodes: ManuscriptNode[]): boolean => {
+        let current: string | null = targetId;
+        const visited = new Set<string>();
+        while (current) {
+          if (visited.has(current)) return false; // cycle in existing data — bail
+          if (current === ancestorId) return true;
+          visited.add(current);
+          const node = nodes.find(n => n.id === current);
+          if (!node || node.parentId === null) return false;
+          current = node.parentId;
+        }
+        return false;
+      };
+      const currentNodes = get().manuscriptNodes;
+      if (isDescendant(id, newParentId, currentNodes)) {
+        console.warn('moveManuscriptNode: cannot move node into its own descendant');
+        return;
+      }
+    }
     set((state) => {
       const node = state.manuscriptNodes.find((n) => n.id === id);
       if (!node) return state;
@@ -860,8 +893,33 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       const untouched = state.manuscriptNodes.filter(
         (n) => n.id !== id && n.parentId !== newParentId
       );
-      return withDirtyState({ manuscriptNodes: [...untouched, ...reordered] });
-    }),
+
+      // First pass: combine all nodes with updated parentId/orderIndex
+      let nodes = [...untouched, ...reordered];
+
+      // Recalculate depth for the moved subtree
+      const calcDepth = (nodeId: string, nodeList: typeof state.manuscriptNodes): number => {
+        const n = nodeList.find(x => x.id === nodeId);
+        if (!n || n.parentId === null) return 0;
+        return calcDepth(n.parentId, nodeList) + 1;
+      };
+
+      // Collect all ids in the moved subtree (node + descendants)
+      const subtreeIds = new Set<string>();
+      const queue = [id];
+      while (queue.length > 0) {
+        const current = queue.shift()!;
+        subtreeIds.add(current);
+        nodes.filter(n => n.parentId === current).forEach(n => queue.push(n.id));
+      }
+
+      nodes = nodes.map(n =>
+        subtreeIds.has(n.id) ? { ...n, depth: calcDepth(n.id, nodes) } : n
+      );
+
+      return withDirtyState({ manuscriptNodes: nodes });
+    });
+  },
   loadManuscriptNodeContent: async (projectRoot, nodeId) => {
     const scope = globalThis as typeof globalThis & { require?: NodeRequire };
     const loader = scope.require;

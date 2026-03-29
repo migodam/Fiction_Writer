@@ -65,6 +65,15 @@ export const ManuscriptWorkspace: React.FC = () => {
 
   const sortedNodes = useMemo(() => buildTree(manuscriptNodes), [manuscriptNodes]);
 
+  // Cleanup debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+      }
+    };
+  }, []);
+
   // Load content when selected node changes
   useEffect(() => {
     if (!selectedNodeId) {
