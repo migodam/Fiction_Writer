@@ -162,6 +162,8 @@ export interface TimelineBranch {
     bend: number;
     thickness: number;
   };
+  anchorStartPos?: { x: number; y: number };
+  anchorEndPos?: { x: number; y: number };
 }
 
 export interface TimelineEvent {
@@ -181,6 +183,7 @@ export interface TimelineEvent {
   colorToken?: string;
   layoutLock?: boolean;
   modalStateHints?: string[];
+  position?: { x: number; y: number };
 }
 
 export interface Relationship {

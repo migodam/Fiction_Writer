@@ -169,6 +169,8 @@ interface ProjectState {
   createTimelineBranch: (mode: TimelineBranch['mode'], anchor?: { branchId: string; eventId: string } | null) => string | null;
   moveTimelineEvent: (eventId: string, targetBranchId: string, targetSlot: number) => void;
   setTimelineBranchGeometry: (branchId: string, geometry: TimelineBranch['geometry']) => void;
+  setTimelineBranchAnchors: (branchId: string, startPos: { x: number; y: number }, endPos: { x: number; y: number }) => void;
+  updateTimelineEventPosition: (eventId: string, position: { x: number; y: number }) => void;
   addRelationship: (relationship: Relationship) => void;
   updateRelationship: (relationship: Relationship) => void;
   deleteRelationship: (id: string) => void;
@@ -622,6 +624,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         thickness: geometry?.thickness ?? entry.geometry?.thickness ?? 1,
       },
     } : entry),
+  })),
+  setTimelineBranchAnchors: (branchId, startPos, endPos) => set((state) => withDirtyState({
+    timelineBranches: state.timelineBranches.map((b) =>
+      b.id === branchId ? { ...b, anchorStartPos: startPos, anchorEndPos: endPos } : b
+    ),
+  })),
+  updateTimelineEventPosition: (eventId, position) => set((state) => withDirtyState({
+    timelineEvents: state.timelineEvents.map((e) => e.id === eventId ? { ...e, position } : e),
   })),
   addRelationship: (relationship) => set((state) => withDirtyState({
     relationships: [...state.relationships, relationship],
