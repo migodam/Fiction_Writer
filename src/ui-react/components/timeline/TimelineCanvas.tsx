@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -115,6 +115,8 @@ function TimelineCanvasInner({ events, branches }: TimelineCanvasProps) {
   const { openContextMenu } = useUIStore();
   const { t } = useI18n();
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
+  const editingEventIdRef = useRef<string | null>(null);
+  useEffect(() => { editingEventIdRef.current = editingEventId; }, [editingEventId]);
   const [snapEnabled, setSnapEnabled] = useState(true);
 
   const initialNodes = useMemo(
@@ -177,15 +179,14 @@ function TimelineCanvasInner({ events, branches }: TimelineCanvasProps) {
             label: t('timeline.deleteEvent'),
             action: () => {
               deleteTimelineEvent(nodeId);
-              setNodes((nds) => nds.filter((n) => n.id !== nodeId));
-              if (editingEventId === nodeId) setEditingEventId(null);
+              if (editingEventIdRef.current === nodeId) setEditingEventId(null);
             },
             destructive: true,
           },
         ],
       });
     },
-    [openContextMenu, t, deleteTimelineEvent, setNodes, editingEventId]
+    [openContextMenu, t, deleteTimelineEvent]
   );
 
   const editingEvent = events.find((e) => e.id === editingEventId) ?? null;
