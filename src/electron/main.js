@@ -1,5 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs';
+import fsPromises from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import electron from 'electron';
 import { chatCompletion, streamCompletion, generateImage } from './services/aiService.js';
@@ -74,11 +75,14 @@ ipcMain.handle('dialog:pick-directory', async (_event, payload = { mode: 'open' 
 
 ipcMain.handle('settings:load-app', async () => loadAppSettings());
 ipcMain.handle('settings:save-app', async (_event, payload = {}) => saveAppSettings(payload));
-ipcMain.handle('dialog:pick-files', async (_event, _payload) => {
+ipcMain.handle('dialog:pick-files', async (_event, payload) => {
+  const filters = payload?.filters ?? [{ name: 'Text Files', extensions: ['txt', 'md'] }];
+  const multiple = payload?.multiple !== false;
+  const properties = multiple ? ['openFile', 'multiSelections'] : ['openFile'];
   const result = await dialog.showOpenDialog({
-    title: 'Import Reference Files',
-    properties: ['openFile', 'multiSelections'],
-    filters: [{ name: 'Text Files', extensions: ['txt', 'md'] }],
+    title: 'Select Files',
+    properties,
+    filters,
   });
   return { canceled: result.canceled, paths: result.canceled ? [] : result.filePaths };
 });
@@ -155,6 +159,31 @@ ipcMain.on('ai:stream-start', async (event, { requestId, messages }) => {
     streamControllers.delete(requestId);
     event.reply(`ai:error:${requestId}`, err.message);
   }
+});
+
+// Save portrait image to project folder
+ipcMain.handle('portrait:save', async (_event, { projectRoot, characterId, imageData }) => {
+  if (!/^[a-zA-Z0-9_\-]+$/.test(characterId)) throw new Error('Invalid characterId');
+  const portraitsDir = path.join(projectRoot, 'characters', 'portraits');
+  await fsPromises.mkdir(portraitsDir, { recursive: true });
+  const filePath = path.join(portraitsDir, `${characterId}.png`);
+
+  if (imageData.startsWith('http')) {
+    const response = await fetch(imageData);
+    if (!response.ok) throw new Error(`Failed to download image: ${response.status}`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    await fsPromises.writeFile(filePath, buffer);
+  } else if (imageData.startsWith('file://')) {
+    const srcPath = imageData.replace(/^file:\/\//, '');
+    await fsPromises.copyFile(srcPath, filePath);
+  } else if (imageData.startsWith('/') || /^[A-Za-z]:\\/.test(imageData)) {
+    await fsPromises.copyFile(imageData, filePath);
+  } else {
+    const base64 = imageData.replace(/^data:image\/\w+;base64,/, '');
+    await fsPromises.writeFile(filePath, Buffer.from(base64, 'base64'));
+  }
+
+  return `file://${filePath}`;
 });
 
 ipcMain.on('ai:stream-cancel', (_event, { requestId }) => {

@@ -58,10 +58,10 @@ export const electronApi = {
     return (await ipcRenderer.invoke('settings:save-app', payload)) as T | null;
   },
 
-  async pickFiles(): Promise<string[]> {
+  async pickFiles(options?: { filters?: Array<{ name: string; extensions: string[] }>; multiple?: boolean }): Promise<string[]> {
     const ipcRenderer = getIpcRenderer();
     if (!ipcRenderer) return [];
-    const result = (await ipcRenderer.invoke('dialog:pick-files')) as { canceled: boolean; paths: string[] } | null;
+    const result = (await ipcRenderer.invoke('dialog:pick-files', options)) as { canceled: boolean; paths: string[] } | null;
     return result?.paths ?? [];
   },
 
@@ -83,6 +83,12 @@ export const electronApi = {
     const ipcRenderer = getIpcRenderer();
     if (!ipcRenderer) return '';
     return (await ipcRenderer.invoke('ai:generate-image', { prompt })) as string;
+  },
+
+  async portraitSave(projectRoot: string, characterId: string, imageData: string): Promise<string> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return '';
+    return (await ipcRenderer.invoke('portrait:save', { projectRoot, characterId, imageData })) as string;
   },
 
   aiStreamStart(requestId: string, messages: Array<{ role: string; content: string }>): void {

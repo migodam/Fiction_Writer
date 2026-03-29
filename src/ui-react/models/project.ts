@@ -92,6 +92,7 @@ export interface Character {
   aliases: string[];
   birthdayText: string;
   portraitAssetId?: string | null;
+  portrait?: string | null;
   traits?: string;
   goals?: string;
   fears?: string;

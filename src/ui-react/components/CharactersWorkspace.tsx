@@ -1,11 +1,13 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Check, Clock3, Link2, Plus, Search, Tag, Trash2 } from 'lucide-react';
+import { Check, Clock3, ImageIcon, Link2, Plus, Search, Tag, Trash2, Upload } from 'lucide-react';
 import { useProjectStore, useUIStore } from '../store';
 import { RadarChart } from './RadarChart';
 import { cn } from '../utils';
 import { useI18n } from '../i18n';
 import { CharacterRelationshipFlow } from './graph';
+import { AIPortraitModal } from './ai/AIPortraitModal';
+import { electronApi } from '../services/electronApi';
 
 const GROUPS = ['core', 'major', 'supporting', 'minor', 'ungrouped'] as const;
 
@@ -171,13 +173,14 @@ export const CharactersWorkspace = () => {
 
 const CharacterDetail = ({ character, tab }: any) => {
   const navigate = useNavigate();
-  const { locale } = useI18n();
+  const { locale, t } = useI18n();
   const zh = locale === 'zh-CN';
   const { setLastActionStatus } = useUIStore();
-  const { characters, relationships, timelineEvents, characterTags, updateCharacter, addCharacterTag, toggleCharacterTagMembership, addRelationship, deleteRelationship } = useProjectStore();
+  const { characters, relationships, timelineEvents, characterTags, updateCharacter, addCharacterTag, toggleCharacterTagMembership, addRelationship, deleteRelationship, projectRoot } = useProjectStore();
   const [draft, setDraft] = useState(character);
   const [newTag, setNewTag] = useState('');
   const [tagOpen, setTagOpen] = useState(false);
+  const [portraitModalOpen, setPortraitModalOpen] = useState(false);
   const [relationTargetId, setRelationTargetId] = useState(characters.find((entry) => entry.id !== character.id)?.id || '');
   const [relationType, setRelationType] = useState('');
   const [relationDescription, setRelationDescription] = useState('');
@@ -346,6 +349,57 @@ const CharacterDetail = ({ character, tab }: any) => {
           </div>
           <div className="space-y-6">
             <div className="rounded-3xl border border-border bg-card p-5">
+              <div className="mb-3 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{t('aiPortrait.characterSummary')}</div>
+              <div className="mb-3 flex items-center justify-center overflow-hidden rounded-2xl border border-border bg-bg-elev-1" style={{ minHeight: 160 }}>
+                {draft.portrait ? (
+                  <img
+                    data-testid="character-portrait-img"
+                    src={draft.portrait}
+                    alt={draft.name}
+                    className="max-h-48 w-full object-cover rounded-2xl"
+                  />
+                ) : (
+                  <div className="flex flex-col items-center gap-2 py-8 text-text-3">
+                    <ImageIcon size={32} />
+                    <span className="text-xs">{t('aiPortrait.noPortrait')}</span>
+                  </div>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  data-testid="character-portrait-upload-btn"
+                  className="flex-1 rounded-xl border border-border px-3 py-2 text-xs font-black text-text-2 hover:bg-hover"
+                  onClick={async () => {
+                    const paths = await electronApi.pickFiles({ filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }], multiple: false });
+                    if (paths.length === 0) return;
+                    const filePath = paths[0];
+                    try {
+                      const fileUrl = await electronApi.portraitSave(projectRoot, draft.id, filePath);
+                      const updated = { ...draft, portrait: fileUrl };
+                      setDraft(updated);
+                      updateCharacter(updated);
+                      setLastActionStatus(zh ? '肖像已上传' : 'Portrait uploaded');
+                    } catch (err) {
+                      setLastActionStatus(String(err));
+                    }
+                  }}
+                >
+                  <Upload size={12} className="mr-1 inline" />
+                  {t('aiPortrait.upload')}
+                </button>
+                <button
+                  type="button"
+                  data-testid="character-portrait-ai-btn"
+                  className="flex-1 rounded-xl bg-brand px-3 py-2 text-xs font-black text-white"
+                  onClick={() => setPortraitModalOpen(true)}
+                >
+                  <ImageIcon size={12} className="mr-1 inline" />
+                  {t('aiPortrait.generate')}
+                </button>
+              </div>
+            </div>
+            <div className="rounded-3xl border border-border bg-card p-5">
               <div className="mb-4 flex items-center justify-between">
                 <div className="text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{zh ? '标签' : 'Tags'}</div>
                 <button type="button" className="rounded-full border border-border px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-text-2" onClick={() => setTagOpen((current) => !current)}>
@@ -396,6 +450,20 @@ const CharacterDetail = ({ character, tab }: any) => {
             </div>
           </div>
         </div>
+      )}
+      {portraitModalOpen && (
+        <AIPortraitModal
+          character={draft}
+          projectRoot={projectRoot}
+          onSave={(portraitUrl) => {
+            const updated = { ...draft, portrait: portraitUrl };
+            setDraft(updated);
+            updateCharacter(updated);
+            setPortraitModalOpen(false);
+            setLastActionStatus(zh ? '肖像已保存' : 'Portrait saved');
+          }}
+          onClose={() => setPortraitModalOpen(false)}
+        />
       )}
     </div>
   );
