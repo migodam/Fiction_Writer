@@ -680,6 +680,22 @@ export interface ScriptDocument {
   updatedAt: string;
 }
 
+export interface ScriptShot {
+  id: string;
+  title: string;
+  summary: string;
+  shotType?: string;
+  description?: string;
+  linkedCharacterIds: string[];
+  linkedWorldItemIds: string[];
+  cameraMovement?: string;       // e.g. "pan left", "zoom in", "dolly forward"
+  transitionIn?: string;         // e.g. "cut", "fade in", "dissolve"
+  transitionOut?: string;        // e.g. "cut to black", "match cut"
+  backgroundDescription?: string;
+  audioNotes?: string;           // ambient sound, music cues
+  estimatedDuration?: number;    // seconds
+}
+
 export interface StoryboardShot {
   id: string;
   title: string;
