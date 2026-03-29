@@ -16,6 +16,7 @@ import type {
   GraphNode,
   ImportJob,
   Locale,
+  ManuscriptNode,
   MetadataFile,
   NarrativeProject,
   PromptTemplate,
@@ -168,6 +169,8 @@ interface ProjectState {
   createTimelineBranch: (mode: TimelineBranch['mode'], anchor?: { branchId: string; eventId: string } | null) => string | null;
   moveTimelineEvent: (eventId: string, targetBranchId: string, targetSlot: number) => void;
   setTimelineBranchGeometry: (branchId: string, geometry: TimelineBranch['geometry']) => void;
+  setTimelineBranchAnchors: (branchId: string, startPos: { x: number; y: number }, endPos: { x: number; y: number }) => void;
+  updateTimelineEventPosition: (eventId: string, position: { x: number; y: number }) => void;
   addRelationship: (relationship: Relationship) => void;
   updateRelationship: (relationship: Relationship) => void;
   deleteRelationship: (id: string) => void;
@@ -195,7 +198,10 @@ interface ProjectState {
   setActiveGraphBoard: (boardId: string) => void;
   addGraphNode: (boardId: string, node: GraphNode) => void;
   updateGraphNode: (boardId: string, node: GraphNode) => void;
+  deleteGraphNode: (boardId: string, nodeId: string) => void;
   addGraphEdge: (boardId: string, edge: GraphBoard['edges'][number]) => void;
+  deleteGraphEdge: (boardId: string, edgeId: string) => void;
+  updateGraphEdge: (boardId: string, edge: Partial<GraphBoard['edges'][number]> & { id: string }) => void;
   setGraphBoardView: (boardId: string, view: GraphBoard['view']) => void;
   resolveProposal: (proposalId: string, status: Proposal['status']) => void;
   resolveIssue: (issueId: string, resolution: 'resolved' | 'ignored') => void;
@@ -232,6 +238,13 @@ interface ProjectState {
   createTodo: (item: Omit<TodoItem, 'id' | 'createdAt' | 'updatedAt'>) => void;
   updateTodo: (id: string, patch: Partial<Pick<TodoItem, 'title' | 'description' | 'status' | 'priority' | 'relatedEntityType' | 'relatedEntityId'>>) => void;
   deleteTodo: (id: string) => void;
+  manuscriptNodes: ManuscriptNode[];
+  addManuscriptNode: (node: Omit<ManuscriptNode, 'id'>) => ManuscriptNode;
+  updateManuscriptNode: (id: string, updates: Partial<ManuscriptNode>) => void;
+  deleteManuscriptNode: (id: string) => void;
+  moveManuscriptNode: (id: string, newParentId: string | null, newOrderIndex: number) => void;
+  loadManuscriptNodeContent: (projectRoot: string, nodeId: string) => Promise<string>;
+  saveManuscriptNodeContent: (projectRoot: string, nodeId: string, content: string) => Promise<void>;
 }
 
 const now = () => new Date().toISOString();
@@ -285,6 +298,7 @@ const deriveState = (project: NarrativeProject) => ({
   unreadUpdates: project.unreadUpdates,
   metadataFiles: project.metadataFiles || [],
   todos: project.todos ?? [],
+  manuscriptNodes: project.manuscriptNodes ?? [],
   currentProject: project,
 });
 
@@ -338,6 +352,7 @@ const cloneProject = (state: ProjectState, locale?: Locale): NarrativeProject =>
   archivedIds: state.archivedIds,
   metadataFiles: state.metadataFiles,
   todos: state.todos,
+  manuscriptNodes: state.manuscriptNodes,
   uiState: {
     panes: {
       sidebarWidth: useUIStore.getState().sidebarWidth,
@@ -610,6 +625,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       },
     } : entry),
   })),
+  setTimelineBranchAnchors: (branchId, startPos, endPos) => set((state) => withDirtyState({
+    timelineBranches: state.timelineBranches.map((b) =>
+      b.id === branchId ? { ...b, anchorStartPos: startPos, anchorEndPos: endPos } : b
+    ),
+  })),
+  updateTimelineEventPosition: (eventId, position) => set((state) => withDirtyState({
+    timelineEvents: state.timelineEvents.map((e) => e.id === eventId ? { ...e, position } : e),
+  })),
   addRelationship: (relationship) => set((state) => withDirtyState({
     relationships: [...state.relationships, relationship],
     characters: state.characters.map((character) => character.id === relationship.sourceId || character.id === relationship.targetId ? { ...character, relationshipIds: Array.from(new Set([...(character.relationshipIds || []), relationship.id])) } : character),
@@ -650,6 +673,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   addGraphNode: (boardId, node) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, nodes: [...board.nodes, node], selectedNodeIds: [node.id] } : board) })),
   updateGraphNode: (boardId, node) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, nodes: board.nodes.map((entry) => entry.id === node.id ? node : entry) } : board) })),
   addGraphEdge: (boardId, edge) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, edges: [...board.edges, edge] } : board) })),
+  deleteGraphNode: (boardId, nodeId) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, nodes: board.nodes.filter((n) => n.id !== nodeId), edges: board.edges.filter((e) => e.sourceId !== nodeId && e.targetId !== nodeId), selectedNodeIds: board.selectedNodeIds.filter((id) => id !== nodeId) } : board) })),
+  deleteGraphEdge: (boardId, edgeId) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, edges: board.edges.filter((e) => e.id !== edgeId) } : board) })),
+  updateGraphEdge: (boardId, edge) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, edges: board.edges.map((e) => e.id === edge.id ? { ...e, ...edge } : e) } : board) })),
   setGraphBoardView: (boardId, view) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, view } : board) })),
   resolveProposal: (proposalId, status) => set((state) => withDirtyState(projectService.resolveProposal(cloneProject(state, useUIStore.getState().locale), proposalId, status))),
   resolveIssue: (issueId, resolution) => set((state) => withDirtyState({
@@ -809,6 +835,128 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     ),
   deleteTodo: (id) =>
     set((state) => withDirtyState({ todos: state.todos.filter((t) => t.id !== id) })),
+  manuscriptNodes: [],
+  addManuscriptNode: (node) => {
+    const id = crypto.randomUUID();
+    const newNode: ManuscriptNode = { ...node, id };
+    set((state) => withDirtyState({ manuscriptNodes: [...state.manuscriptNodes, newNode] }));
+    return newNode;
+  },
+  updateManuscriptNode: (id, updates) =>
+    set((state) =>
+      withDirtyState({
+        manuscriptNodes: state.manuscriptNodes.map((n) => (n.id === id ? { ...n, ...updates } : n)),
+      })
+    ),
+  deleteManuscriptNode: (id) =>
+    set((state) =>
+      withDirtyState({
+        manuscriptNodes: (() => {
+          // Collect all ids to delete (node + all descendants)
+          const toDelete = new Set<string>();
+          const queue = [id];
+          while (queue.length > 0) {
+            const current = queue.shift()!;
+            toDelete.add(current);
+            state.manuscriptNodes
+              .filter(n => n.parentId === current)
+              .forEach(n => queue.push(n.id));
+          }
+          return state.manuscriptNodes.filter(n => !toDelete.has(n.id));
+        })(),
+      })
+    ),
+  moveManuscriptNode: (id, newParentId, newOrderIndex) => {
+    // Guard: newParentId must not be a descendant of id
+    if (newParentId !== null) {
+      const isDescendant = (ancestorId: string, targetId: string, nodes: ManuscriptNode[]): boolean => {
+        let current: string | null = targetId;
+        const visited = new Set<string>();
+        while (current) {
+          if (visited.has(current)) return false; // cycle in existing data — bail
+          if (current === ancestorId) return true;
+          visited.add(current);
+          const node = nodes.find(n => n.id === current);
+          if (!node || node.parentId === null) return false;
+          current = node.parentId;
+        }
+        return false;
+      };
+      const currentNodes = get().manuscriptNodes;
+      if (isDescendant(id, newParentId, currentNodes)) {
+        console.warn('moveManuscriptNode: cannot move node into its own descendant');
+        return;
+      }
+    }
+    set((state) => {
+      const node = state.manuscriptNodes.find((n) => n.id === id);
+      if (!node) return state;
+      const siblings = state.manuscriptNodes
+        .filter((n) => n.parentId === newParentId && n.id !== id)
+        .sort((a, b) => a.orderIndex - b.orderIndex);
+      const insertAt = Math.min(Math.max(newOrderIndex, 0), siblings.length);
+      const reordered = [
+        ...siblings.slice(0, insertAt),
+        { ...node, parentId: newParentId, orderIndex: insertAt },
+        ...siblings.slice(insertAt),
+      ].map((n, i) => ({ ...n, orderIndex: i }));
+      const untouched = state.manuscriptNodes.filter(
+        (n) => n.id !== id && n.parentId !== newParentId
+      );
+
+      // First pass: combine all nodes with updated parentId/orderIndex
+      let nodes = [...untouched, ...reordered];
+
+      // Recalculate depth for the moved subtree
+      const calcDepth = (nodeId: string, nodeList: typeof state.manuscriptNodes): number => {
+        const n = nodeList.find(x => x.id === nodeId);
+        if (!n || n.parentId === null) return 0;
+        return calcDepth(n.parentId, nodeList) + 1;
+      };
+
+      // Collect all ids in the moved subtree (node + descendants)
+      const subtreeIds = new Set<string>();
+      const queue = [id];
+      while (queue.length > 0) {
+        const current = queue.shift()!;
+        subtreeIds.add(current);
+        nodes.filter(n => n.parentId === current).forEach(n => queue.push(n.id));
+      }
+
+      nodes = nodes.map(n =>
+        subtreeIds.has(n.id) ? { ...n, depth: calcDepth(n.id, nodes) } : n
+      );
+
+      return withDirtyState({ manuscriptNodes: nodes });
+    });
+  },
+  loadManuscriptNodeContent: async (projectRoot, nodeId) => {
+    const scope = globalThis as typeof globalThis & { require?: NodeRequire };
+    const loader = scope.require;
+    if (!loader) return '';
+    try {
+      const fs = loader('fs') as typeof import('fs');
+      const path = loader('path') as typeof import('path');
+      const filePath = path.join(projectRoot, 'writing', 'manuscript', `${nodeId}.md`);
+      return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
+    } catch {
+      return '';
+    }
+  },
+  saveManuscriptNodeContent: async (projectRoot, nodeId, content) => {
+    const scope = globalThis as typeof globalThis & { require?: NodeRequire };
+    const loader = scope.require;
+    if (!loader) return;
+    try {
+      const fs = loader('fs') as typeof import('fs');
+      const path = loader('path') as typeof import('path');
+      const dir = path.join(projectRoot, 'writing', 'manuscript');
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, `${nodeId}.md`), content, 'utf8');
+    } catch (err) {
+      console.error('[manuscriptNode] saveManuscriptNodeContent failed:', err);
+    }
+  },
   searchEntities: (query) => {
     if (!query) return [];
     const loweredQuery = query.toLowerCase();

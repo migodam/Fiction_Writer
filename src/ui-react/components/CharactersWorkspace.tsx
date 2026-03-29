@@ -1,11 +1,13 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Check, Clock3, Link2, Plus, Search, Tag, Trash2 } from 'lucide-react';
+import { Check, Clock3, ImageIcon, Link2, Plus, Search, Tag, Trash2, Upload } from 'lucide-react';
 import { useProjectStore, useUIStore } from '../store';
 import { RadarChart } from './RadarChart';
 import { cn } from '../utils';
 import { useI18n } from '../i18n';
 import { CharacterRelationshipFlow } from './graph';
+import { AIPortraitModal } from './ai/AIPortraitModal';
+import { electronApi } from '../services/electronApi';
 
 const GROUPS = ['core', 'major', 'supporting', 'minor', 'ungrouped'] as const;
 
@@ -171,13 +173,14 @@ export const CharactersWorkspace = () => {
 
 const CharacterDetail = ({ character, tab }: any) => {
   const navigate = useNavigate();
-  const { locale } = useI18n();
+  const { locale, t } = useI18n();
   const zh = locale === 'zh-CN';
   const { setLastActionStatus } = useUIStore();
-  const { characters, relationships, timelineEvents, characterTags, updateCharacter, addCharacterTag, toggleCharacterTagMembership, addRelationship, deleteRelationship } = useProjectStore();
+  const { characters, relationships, timelineEvents, characterTags, updateCharacter, addCharacterTag, toggleCharacterTagMembership, addRelationship, deleteRelationship, projectRoot } = useProjectStore();
   const [draft, setDraft] = useState(character);
   const [newTag, setNewTag] = useState('');
   const [tagOpen, setTagOpen] = useState(false);
+  const [portraitModalOpen, setPortraitModalOpen] = useState(false);
   const [relationTargetId, setRelationTargetId] = useState(characters.find((entry) => entry.id !== character.id)?.id || '');
   const [relationType, setRelationType] = useState('');
   const [relationDescription, setRelationDescription] = useState('');
@@ -346,6 +349,57 @@ const CharacterDetail = ({ character, tab }: any) => {
           </div>
           <div className="space-y-6">
             <div className="rounded-3xl border border-border bg-card p-5">
+              <div className="mb-3 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{t('aiPortrait.characterSummary')}</div>
+              <div className="mb-3 flex items-center justify-center overflow-hidden rounded-2xl border border-border bg-bg-elev-1" style={{ minHeight: 160 }}>
+                {draft.portrait ? (
+                  <img
+                    data-testid="character-portrait-img"
+                    src={draft.portrait}
+                    alt={draft.name}
+                    className="max-h-48 w-full object-cover rounded-2xl"
+                  />
+                ) : (
+                  <div data-testid="character-portrait-placeholder" className="flex flex-col items-center gap-2 py-8 text-text-3">
+                    <ImageIcon size={32} />
+                    <span className="text-xs">{t('aiPortrait.noPortrait')}</span>
+                  </div>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  data-testid="character-portrait-upload-btn"
+                  className="flex-1 rounded-xl border border-border px-3 py-2 text-xs font-black text-text-2 hover:bg-hover"
+                  onClick={async () => {
+                    const paths = await electronApi.pickFiles({ filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }], multiple: false });
+                    if (paths.length === 0) return;
+                    const filePath = paths[0];
+                    try {
+                      const fileUrl = await electronApi.portraitUpload(projectRoot, draft.id, filePath);
+                      const updated = { ...draft, portrait: fileUrl };
+                      setDraft(updated);
+                      updateCharacter(updated);
+                      setLastActionStatus(zh ? '肖像已上传' : 'Portrait uploaded');
+                    } catch (err) {
+                      setLastActionStatus(String(err));
+                    }
+                  }}
+                >
+                  <Upload size={12} className="mr-1 inline" />
+                  {t('aiPortrait.upload')}
+                </button>
+                <button
+                  type="button"
+                  data-testid="character-portrait-ai-btn"
+                  className="flex-1 rounded-xl bg-brand px-3 py-2 text-xs font-black text-white"
+                  onClick={() => setPortraitModalOpen(true)}
+                >
+                  <ImageIcon size={12} className="mr-1 inline" />
+                  {t('aiPortrait.generate')}
+                </button>
+              </div>
+            </div>
+            <div className="rounded-3xl border border-border bg-card p-5">
               <div className="mb-4 flex items-center justify-between">
                 <div className="text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{zh ? '标签' : 'Tags'}</div>
                 <button type="button" className="rounded-full border border-border px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-text-2" onClick={() => setTagOpen((current) => !current)}>
@@ -397,6 +451,20 @@ const CharacterDetail = ({ character, tab }: any) => {
           </div>
         </div>
       )}
+      {portraitModalOpen && (
+        <AIPortraitModal
+          character={draft}
+          projectRoot={projectRoot}
+          onSave={(portraitUrl) => {
+            const updated = { ...draft, portrait: portraitUrl };
+            setDraft(updated);
+            updateCharacter(updated);
+            setPortraitModalOpen(false);
+            setLastActionStatus(zh ? '肖像已保存' : 'Portrait saved');
+          }}
+          onClose={() => setPortraitModalOpen(false)}
+        />
+      )}
     </div>
   );
 };
@@ -417,9 +485,22 @@ const RelationshipGraphPanel: React.FC = () => {
 
 const TagsPanel = () => {
   const { characters, characterTags, addCharacterTag, toggleCharacterTagMembership } = useProjectStore();
-  const { locale } = useI18n();
+  const { locale, t } = useI18n();
   const zh = locale === 'zh-CN';
   const [draft, setDraft] = useState({ name: '', color: '#f59e0b' });
+  const [selectedTagId, setSelectedTagId] = useState<string | null>(null);
+  const [tagSearch, setTagSearch] = useState('');
+
+  useEffect(() => {
+    setTagSearch('');
+  }, [selectedTagId]);
+
+  const filteredCharacters = useMemo(() => {
+    if (!tagSearch.trim()) return characters;
+    return characters
+      .filter((c) => c.name.toLowerCase().includes(tagSearch.toLowerCase()))
+      .slice(0, 20);
+  }, [characters, tagSearch]);
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -440,24 +521,46 @@ const TagsPanel = () => {
         </button>
       </div>
       <div className="grid gap-5 lg:grid-cols-2">
-        {characterTags.map((tagEntry) => (
-          <div key={tagEntry.id} className="rounded-3xl border border-border bg-card p-6 shadow-1">
-            <div className="mb-4 flex items-center gap-3">
-              <div className="h-3 w-3 rounded-full" style={{ background: tagEntry.color }} />
-              <div className="text-lg font-black text-text">{tagEntry.name}</div>
+        {characterTags.map((tagEntry) => {
+          const isSelected = selectedTagId === tagEntry.id;
+          return (
+            <div key={tagEntry.id} className="rounded-3xl border border-border bg-card p-6 shadow-1">
+              <button
+                type="button"
+                className="mb-4 flex w-full items-center gap-3 text-left"
+                onClick={() => setSelectedTagId(isSelected ? null : tagEntry.id)}
+              >
+                <div className="h-3 w-3 flex-shrink-0 rounded-full" style={{ background: tagEntry.color }} />
+                <div className="text-lg font-black text-text">{tagEntry.name}</div>
+                <span className="ml-auto rounded-full border border-border bg-bg px-2 py-0.5 text-[10px] font-black text-text-3">
+                  ({tagEntry.characterIds.length})
+                </span>
+              </button>
+              {isSelected && (
+                <div>
+                  <input
+                    type="text"
+                    data-testid="tag-character-search-input"
+                    value={tagSearch}
+                    onChange={(event) => setTagSearch(event.target.value)}
+                    placeholder={t('tags.searchCharacters')}
+                    className="mb-3 w-full rounded-xl border border-border bg-bg px-3 py-2 text-sm outline-none"
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    {filteredCharacters.map((character) => {
+                      const active = tagEntry.characterIds.includes(character.id);
+                      return (
+                        <button key={character.id} type="button" className={cn('rounded-full border px-3 py-2 text-xs font-bold transition-colors', active ? 'border-brand bg-brand/15 text-brand-2' : 'border-border text-text-2 hover:border-brand')} onClick={() => toggleCharacterTagMembership(tagEntry.id, character.id)}>
+                          {character.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
-            <div className="flex flex-wrap gap-2">
-              {characters.map((character) => {
-                const active = tagEntry.characterIds.includes(character.id);
-                return (
-                  <button key={character.id} type="button" className={cn('rounded-full border px-3 py-2 text-xs font-bold transition-colors', active ? 'border-brand bg-brand/15 text-brand-2' : 'border-border text-text-2 hover:border-brand')} onClick={() => toggleCharacterTagMembership(tagEntry.id, character.id)}>
-                    {character.name}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

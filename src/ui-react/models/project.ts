@@ -92,6 +92,7 @@ export interface Character {
   aliases: string[];
   birthdayText: string;
   portraitAssetId?: string | null;
+  portrait?: string | null;
   traits?: string;
   goals?: string;
   fears?: string;
@@ -161,6 +162,8 @@ export interface TimelineBranch {
     bend: number;
     thickness: number;
   };
+  anchorStartPos?: { x: number; y: number };
+  anchorEndPos?: { x: number; y: number };
 }
 
 export interface TimelineEvent {
@@ -180,6 +183,7 @@ export interface TimelineEvent {
   colorToken?: string;
   layoutLock?: boolean;
   modalStateHints?: string[];
+  position?: { x: number; y: number };
 }
 
 export interface Relationship {
@@ -359,6 +363,21 @@ export interface ConsistencyIssue {
   visibility?: 'default' | 'history' | 'hidden';
 }
 
+export type ManuscriptNodeType = 'act' | 'part' | 'chapter_outline' | 'scene_outline' | 'note';
+
+export interface ManuscriptNode {
+  id: string;
+  title: string;
+  type: ManuscriptNodeType;
+  parentId: string | null;
+  orderIndex: number;
+  linkedChapterId: string | null;
+  linkedSceneId: string | null;
+  depth: number;
+  collapsed: boolean;
+  wordCount: number;
+}
+
 export type TodoStatus = 'pending' | 'done' | 'dismissed';
 export type TodoPriority = 'low' | 'medium' | 'high';
 
@@ -366,11 +385,13 @@ export interface TodoItem {
   id: string;
   title: string;
   description: string;
-  type: 'manual';
+  type: 'manual' | 'story_gap';
   status: TodoStatus;
   priority: TodoPriority;
   relatedEntityType: EntityKind | null;
   relatedEntityId: string | null;
+  gapEntityType?: string;
+  gapEntityId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -662,6 +683,22 @@ export interface ScriptDocument {
   updatedAt: string;
 }
 
+export interface ScriptShot {
+  id: string;
+  title: string;
+  summary: string;
+  shotType?: string;
+  description?: string;
+  linkedCharacterIds: string[];
+  linkedWorldItemIds: string[];
+  cameraMovement?: string;       // e.g. "pan left", "zoom in", "dolly forward"
+  transitionIn?: string;         // e.g. "cut", "fade in", "dissolve"
+  transitionOut?: string;        // e.g. "cut to black", "match cut"
+  backgroundDescription?: string;
+  audioNotes?: string;           // ambient sound, music cues
+  estimatedDuration?: number;    // seconds
+}
+
 export interface StoryboardShot {
   id: string;
   title: string;
@@ -883,6 +920,7 @@ export interface NarrativeProject {
   issues: ConsistencyIssue[];
   exports: ExportArtifact[];
   todos: TodoItem[];
+  manuscriptNodes?: ManuscriptNode[];
   unreadUpdates: UnreadUpdateState;
   archivedIds: string[];
   metadataFiles: MetadataFile[];

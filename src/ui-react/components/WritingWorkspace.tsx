@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useSearchParams } from 'react-router-dom';
-import { BookOpen, ChevronLeft, ChevronRight, PanelLeft, PanelRight, Plus, Search, Sparkles } from 'lucide-react';
+import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, Eye, PanelLeft, PanelRight, Plus, Search, Sparkles } from 'lucide-react';
 import { useProjectStore, useUIStore } from '../store';
 import { PaneResizeHandle } from './PaneResizeHandle';
 import { cn } from '../utils';
 import { useI18n } from '../i18n';
 import { NarrativeEditor } from './editor';
-import { ManuscriptNavigator } from './ManuscriptNavigator';
+import { ManuscriptWorkspace } from './ManuscriptWorkspace';
+import { AIWritingModal } from './ai/AIWritingModal';
+import { ChapterPreviewModal } from './ChapterPreviewModal';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -63,7 +65,7 @@ export const WritingWorkspace = () => {
   }, [syncProjectUiState, ui.writingOutlineWidth, ui.writingContextWidth, ui.isWritingOutlineCollapsed, ui.isWritingContextCollapsed]);
 
   if (routeSection === 'chapters') return <ChapterEditor />;
-  if (routeSection === 'manuscript') return <ManuscriptNavigator />;
+  if (routeSection === 'manuscript') return <ManuscriptWorkspace />;
   if (routeSection === 'scripts') return <ScriptEditor query={scriptQuery} setQuery={setScriptQuery} />;
   if (routeSection === 'storyboards') return <StoryboardEditor />;
   return <SceneEditor query={sceneQuery} setQuery={setSceneQuery} />;
@@ -76,6 +78,7 @@ const ChapterEditor = () => {
   const activeId = selectedEntity.type === 'chapter' ? selectedEntity.id : chapters[0]?.id || null;
   const chapter = chapters.find((entry) => entry.id === activeId) || chapters[0] || null;
   const [draft, setDraft] = useState(chapter);
+  const [previewingChapterId, setPreviewingChapterId] = useState<string | null>(null);
 
   useEffect(() => setDraft(chapter), [chapter]);
 
@@ -111,16 +114,30 @@ const ChapterEditor = () => {
             <div key={group.id} className="mb-4 rounded-2xl border border-border bg-card">
               <div className="border-b border-divider px-4 py-3 text-[10px] font-black uppercase tracking-[0.2em] text-text-3">{group.label}</div>
               {group.items.map((item: any) => (
-                <button key={item.id} type="button" data-testid={`chapter-item-${item.id}`} className={cn('block w-full border-b border-divider px-4 py-3 text-left last:border-b-0', item.id === chapter?.id ? 'bg-selected text-text' : 'text-text-2 hover:bg-hover')} onClick={() => setSelectedEntity('chapter', item.id)}>
-                  <div className="text-sm font-black">{item.title}</div>
-                  <div className="mt-1 line-clamp-1 text-xs text-text-3">{item.summary || t('writing.noSummary')}</div>
-                </button>
+                <div key={item.id} className={cn('flex items-center border-b border-divider last:border-b-0', item.id === chapter?.id ? 'bg-selected' : 'hover:bg-hover')}>
+                  <button type="button" data-testid={`chapter-item-${item.id}`} className="flex-1 px-4 py-3 text-left" onClick={() => setSelectedEntity('chapter', item.id)}>
+                    <div className={cn('text-sm font-black', item.id === chapter?.id ? 'text-text' : 'text-text-2')}>{item.title}</div>
+                    <div className="mt-1 line-clamp-1 text-xs text-text-3">{item.summary || t('writing.noSummary')}</div>
+                  </button>
+                  <button
+                    type="button"
+                    data-testid={`chapter-preview-btn-${item.id}`}
+                    className="mr-3 rounded-lg border border-border p-1.5 text-text-3 hover:border-brand hover:text-brand"
+                    onClick={(e) => { e.stopPropagation(); setPreviewingChapterId(item.id); }}
+                    title="Preview chapter"
+                  >
+                    <Eye size={12} />
+                  </button>
+                </div>
               ))}
             </div>
           ))}
         </div>
       </aside>
       <main className="flex-1 overflow-y-auto custom-scrollbar px-8 py-10">
+        {previewingChapterId && (
+          <ChapterPreviewModal chapterId={previewingChapterId} onClose={() => setPreviewingChapterId(null)} />
+        )}
         {draft ? (
           <div className="mx-auto max-w-5xl rounded-[32px] border border-border bg-card p-8 shadow-1" data-testid="chapter-editor">
             <div className="mb-8 flex items-center justify-between">
@@ -181,6 +198,7 @@ const SceneEditor = ({ query, setQuery }: { query: string; setQuery: (value: str
   const [title, setTitle] = useState(activeScene?.title || '');
   const [content, setContent] = useState(activeScene?.content || '');
   const saveRef = useRef<NodeJS.Timeout | null>(null);
+  const [aiMode, setAiMode] = useState<'continue' | 'polish' | null>(null);
 
   useEffect(() => {
     if (activeScene) return;
@@ -295,6 +313,26 @@ const SceneEditor = ({ query, setQuery }: { query: string; setQuery: (value: str
                 <SmallInfo label={t('writing.scene.events')} value={linkedEvents.map((entry) => entry.title).join(', ') || t('writing.none')} />
                 <SmallInfo label={t('writing.scene.world')} value={linkedItems.map((entry) => entry.name).join(', ') || t('writing.none')} />
               </div>
+              <div className="mb-3 flex items-center gap-2">
+                <button
+                  type="button"
+                  data-testid="writing-ai-continue-btn"
+                  onClick={() => setAiMode('continue')}
+                  className="flex items-center gap-1.5 rounded-xl border border-border px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-brand hover:border-brand"
+                >
+                  <Sparkles size={13} />
+                  {t('aiWriting.continueTitle')}
+                </button>
+                <button
+                  type="button"
+                  data-testid="writing-ai-polish-btn"
+                  onClick={() => setAiMode('polish')}
+                  className="flex items-center gap-1.5 rounded-xl border border-border px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-text-2 hover:border-brand"
+                >
+                  <Sparkles size={13} />
+                  {t('aiWriting.polishTitle')}
+                </button>
+              </div>
               <NarrativeEditor
                 content={content}
                 onUpdate={(html) => {
@@ -308,6 +346,20 @@ const SceneEditor = ({ query, setQuery }: { query: string; setQuery: (value: str
                 placeholder={t('writing.scene.placeholder')}
                 testId="writing-editor"
               />
+              {aiMode && (
+                <AIWritingModal
+                  mode={aiMode}
+                  sceneTitle={activeScene.title}
+                  existingContent={content}
+                  onAccept={(newContent) => {
+                    setContent(newContent);
+                    updateScene({ ...activeScene, content: newContent });
+                    setLastActionStatus(t('common.saved'));
+                    setAiMode(null);
+                  }}
+                  onClose={() => setAiMode(null)}
+                />
+              )}
             </div>
           </div>
         ) : <Empty title={t('writing.empty.idle')} body={t('writing.empty.idleBody')} />}
@@ -355,6 +407,115 @@ const ScriptEditor = ({ query, setQuery }: { query: string; setQuery: (value: st
   </div>;
 };
 
+const DirectorNotesSection = ({ shot, onUpdate, t }: { shot: any; onUpdate: (partial: Record<string, unknown>) => void; t: (key: string, fallback?: string) => string }) => {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-3 rounded-2xl border border-border bg-bg">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between px-4 py-3 text-[10px] font-black uppercase tracking-[0.18em] text-text-3 hover:text-text"
+        onClick={() => setOpen((v) => !v)}
+      >
+        {t('script.directorNotes')}
+        <ChevronDown size={12} className={cn('transition-transform', open ? 'rotate-180' : '')} />
+      </button>
+      {open && (
+        <div className="border-t border-border p-4 space-y-3">
+          <div>
+            <label className="mb-1 block text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{t('script.cameraMovement')}</label>
+            <input
+              list={`camera-movement-list-${shot.id}`}
+              value={shot.cameraMovement || ''}
+              onChange={(e) => onUpdate({ cameraMovement: e.target.value })}
+              className="w-full rounded-2xl border border-border bg-bg-elev-1 px-4 py-2 text-sm text-text-2 outline-none"
+              data-testid="shot-camera-movement-input"
+              placeholder="pan, zoom, dolly..."
+            />
+            <datalist id={`camera-movement-list-${shot.id}`}>
+              <option value="pan left" />
+              <option value="pan right" />
+              <option value="zoom in" />
+              <option value="zoom out" />
+              <option value="dolly forward" />
+              <option value="dolly back" />
+              <option value="tilt up" />
+              <option value="tilt down" />
+              <option value="crane up" />
+              <option value="handheld" />
+            </datalist>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{t('script.transitionIn')}</label>
+              <select
+                value={shot.transitionIn || ''}
+                onChange={(e) => onUpdate({ transitionIn: e.target.value })}
+                className="w-full rounded-2xl border border-border bg-bg-elev-1 px-4 py-2 text-sm text-text-2 outline-none"
+                data-testid="shot-transition-in-select"
+              >
+                <option value="">—</option>
+                <option value="cut">{t('script.transitionCut')}</option>
+                <option value="fade-in">{t('script.transitionFadeIn')}</option>
+                <option value="dissolve">{t('script.transitionDissolve')}</option>
+                <option value="wipe">{t('script.transitionWipe')}</option>
+                <option value="match-cut">{t('script.transitionMatchCut')}</option>
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{t('script.transitionOut')}</label>
+              <select
+                value={shot.transitionOut || ''}
+                onChange={(e) => onUpdate({ transitionOut: e.target.value })}
+                className="w-full rounded-2xl border border-border bg-bg-elev-1 px-4 py-2 text-sm text-text-2 outline-none"
+                data-testid="shot-transition-out-select"
+              >
+                <option value="">—</option>
+                <option value="cut">{t('script.transitionCut')}</option>
+                <option value="fade-out">{t('script.transitionFadeOut')}</option>
+                <option value="cut-to-black">{t('script.transitionCutToBlack')}</option>
+                <option value="dissolve">{t('script.transitionDissolve')}</option>
+                <option value="match-cut">{t('script.transitionMatchCut')}</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="mb-1 block text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{t('script.backgroundDescription')}</label>
+            <textarea
+              value={shot.backgroundDescription || ''}
+              onChange={(e) => onUpdate({ backgroundDescription: e.target.value })}
+              className="h-20 w-full rounded-2xl border border-border bg-bg-elev-1 p-3 text-sm text-text-2 outline-none"
+              data-testid="shot-bg-description-input"
+              placeholder="Describe background setting..."
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{t('script.audioNotes')}</label>
+            <textarea
+              value={shot.audioNotes || ''}
+              onChange={(e) => onUpdate({ audioNotes: e.target.value })}
+              className="h-20 w-full rounded-2xl border border-border bg-bg-elev-1 p-3 text-sm text-text-2 outline-none"
+              data-testid="shot-audio-notes-input"
+              placeholder="Music cues, ambient sound..."
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{t('script.estimatedDuration')}</label>
+            <input
+              type="number"
+              min={0}
+              value={shot.estimatedDuration ?? ''}
+              onChange={(e) => onUpdate({ estimatedDuration: e.target.value === '' ? undefined : Number(e.target.value) })}
+              className="w-full rounded-2xl border border-border bg-bg-elev-1 px-4 py-2 text-sm text-text-2 outline-none"
+              data-testid="shot-duration-input"
+              placeholder="0"
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const StoryboardEditor = () => {
   const { t } = useI18n();
   const { storyboards, scripts, characters, worldItems, selectedEntity, setSelectedEntity, addStoryboard, updateStoryboard } = useProjectStore();
@@ -368,7 +529,7 @@ const StoryboardEditor = () => {
       <div className="border-b border-border bg-bg-elev-2 p-4"><div className="mb-3 flex items-center justify-between"><div><div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('writing.storyboards.title')}</div><div className="text-sm font-black text-text">{t('writing.storyboards.subtitle')}</div></div><button type="button" className="rounded-xl border border-border p-2 text-brand hover:border-brand" onClick={() => { const id = `storyboard_${Date.now()}`; const linked = scripts[0]; addStoryboard({ id, scriptId: linked?.id || '', episodeId: linked?.episodes[0]?.id || `episode_${Date.now()}`, title: `Storyboard ${storyboards.length + 1}`, shots: [{ id: `shot_${Date.now()}`, title: 'Opening shot', summary: '', visualPrompt: '', linkedCharacterIds: [], linkedWorldItemIds: [], durationSeconds: 5 }], visualStyleNotes: '', assetRefs: [], promptPackagePath: null, status: 'draft', createdAt: now(), updatedAt: now() }); setSelectedEntity('storyboard', id); setLastActionStatus('Storyboard created'); }}><Plus size={16} /></button></div></div>
       <div className="h-full overflow-y-auto custom-scrollbar p-3">{storyboards.map((storyboard) => <button key={storyboard.id} type="button" data-testid={`storyboard-item-${storyboard.id}`} className={cn('mb-2 w-full rounded-2xl border px-4 py-3 text-left', draft?.id === storyboard.id ? 'border-brand bg-selected' : 'border-border bg-card hover:border-brand')} onClick={() => setSelectedEntity('storyboard', storyboard.id)}><div className="text-sm font-black text-text">{storyboard.title}</div><div className="mt-1 line-clamp-2 text-xs text-text-3">{storyboard.visualStyleNotes || t('writing.storyboard.styleNotesPlaceholder')}</div></button>)}</div>
     </aside>
-    <main className="flex-1 overflow-y-auto custom-scrollbar px-8 py-10">{draft ? <div className="mx-auto max-w-6xl rounded-[32px] border border-border bg-card p-8 shadow-1" data-testid="storyboard-panel"><div className="mb-8 flex items-center justify-between"><div><div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('writing.storyboard.heading')}</div><div className="text-sm font-black text-text">{t('writing.storyboard.subtitle')}</div></div><button type="button" className="rounded-xl bg-brand px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-white" onClick={() => { updateStoryboard({ ...draft, updatedAt: now() }); setLastActionStatus('Storyboard saved'); }}>{t('writing.storyboard.saveBtn')}</button></div><input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} className="mb-4 w-full bg-transparent text-5xl font-black tracking-tight outline-none" /><textarea value={draft.visualStyleNotes} onChange={(e) => setDraft({ ...draft, visualStyleNotes: e.target.value })} className="mb-4 h-24 w-full rounded-3xl border border-border bg-bg p-5 text-sm text-text-2 outline-none" placeholder={t('writing.storyboard.styleNotesPlaceholder')} /><select value={draft.scriptId} onChange={(e) => setDraft({ ...draft, scriptId: e.target.value })} className="mb-6 w-full rounded-2xl border border-border bg-bg px-4 py-3 outline-none">{scripts.map((script) => <option key={script.id} value={script.id}>{script.title}</option>)}</select><div className="space-y-4">{draft.shots.map((shot, index) => <div key={shot.id} className="rounded-3xl border border-border bg-bg-elev-1 p-5"><div className="mb-4 flex items-center justify-between"><div className="text-[10px] font-black uppercase tracking-[0.18em] text-brand-2">{t('writing.storyboard.shot')} {index + 1}</div><button type="button" className="rounded-xl border border-border px-3 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-text-2 hover:border-brand" onClick={() => setDraft({ ...draft, shots: draft.shots.filter((entry) => entry.id !== shot.id) })}>{t('writing.storyboard.removeShot')}</button></div><input value={shot.title} onChange={(e) => setDraft(updateShot(draft, shot.id, { title: e.target.value }))} className="mb-3 w-full rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('writing.storyboard.shotTitle')} /><textarea value={shot.summary} onChange={(e) => setDraft(updateShot(draft, shot.id, { summary: e.target.value }))} className="mb-3 h-24 w-full rounded-3xl border border-border bg-bg p-4 text-sm text-text-2 outline-none" placeholder={t('writing.storyboard.shotSummary')} /><textarea value={shot.visualPrompt} onChange={(e) => setDraft(updateShot(draft, shot.id, { visualPrompt: e.target.value }))} className="h-24 w-full rounded-3xl border border-border bg-bg p-4 text-sm text-text-2 outline-none" placeholder={t('writing.storyboard.visualPrompt')} /><div className="mt-3 flex flex-wrap gap-2">{shot.linkedCharacterIds.map((id) => <span key={id} className="rounded-full border border-border bg-bg px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{characters.find((entry) => entry.id === id)?.name || id}</span>)}{shot.linkedWorldItemIds.map((id) => <span key={id} className="rounded-full border border-border bg-bg px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{worldItems.find((entry) => entry.id === id)?.name || id}</span>)}</div></div>)}</div><button type="button" className="mt-5 rounded-xl border border-border px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-text-2 hover:border-brand" onClick={() => setDraft({ ...draft, shots: [...draft.shots, { id: `shot_${Date.now()}`, title: `Shot ${draft.shots.length + 1}`, summary: '', visualPrompt: '', linkedCharacterIds: [], linkedWorldItemIds: [], durationSeconds: 5 }] })}><Plus size={12} className="mr-2 inline" />{t('writing.storyboard.addShot')}</button></div> : <Empty title={t('writing.empty.noStoryboards')} body={t('writing.empty.noStoryboardsBody')} />}</main>
+    <main className="flex-1 overflow-y-auto custom-scrollbar px-8 py-10">{draft ? <div className="mx-auto max-w-6xl rounded-[32px] border border-border bg-card p-8 shadow-1" data-testid="storyboard-panel"><div className="mb-8 flex items-center justify-between"><div><div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('writing.storyboard.heading')}</div><div className="text-sm font-black text-text">{t('writing.storyboard.subtitle')}</div></div><button type="button" className="rounded-xl bg-brand px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-white" onClick={() => { updateStoryboard({ ...draft, updatedAt: now() }); setLastActionStatus('Storyboard saved'); }}>{t('writing.storyboard.saveBtn')}</button></div><input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} className="mb-4 w-full bg-transparent text-5xl font-black tracking-tight outline-none" /><textarea value={draft.visualStyleNotes} onChange={(e) => setDraft({ ...draft, visualStyleNotes: e.target.value })} className="mb-4 h-24 w-full rounded-3xl border border-border bg-bg p-5 text-sm text-text-2 outline-none" placeholder={t('writing.storyboard.styleNotesPlaceholder')} /><select value={draft.scriptId} onChange={(e) => setDraft({ ...draft, scriptId: e.target.value })} className="mb-6 w-full rounded-2xl border border-border bg-bg px-4 py-3 outline-none">{scripts.map((script) => <option key={script.id} value={script.id}>{script.title}</option>)}</select><div className="space-y-4">{draft.shots.map((shot, index) => <div key={shot.id} className="rounded-3xl border border-border bg-bg-elev-1 p-5"><div className="mb-4 flex items-center justify-between"><div className="text-[10px] font-black uppercase tracking-[0.18em] text-brand-2">{t('writing.storyboard.shot')} {index + 1}</div><button type="button" className="rounded-xl border border-border px-3 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-text-2 hover:border-brand" onClick={() => setDraft({ ...draft, shots: draft.shots.filter((entry) => entry.id !== shot.id) })}>{t('writing.storyboard.removeShot')}</button></div><input value={shot.title} onChange={(e) => setDraft(updateShot(draft, shot.id, { title: e.target.value }))} className="mb-3 w-full rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('writing.storyboard.shotTitle')} /><textarea value={shot.summary} onChange={(e) => setDraft(updateShot(draft, shot.id, { summary: e.target.value }))} className="mb-3 h-24 w-full rounded-3xl border border-border bg-bg p-4 text-sm text-text-2 outline-none" placeholder={t('writing.storyboard.shotSummary')} /><textarea value={shot.visualPrompt} onChange={(e) => setDraft(updateShot(draft, shot.id, { visualPrompt: e.target.value }))} className="h-24 w-full rounded-3xl border border-border bg-bg p-4 text-sm text-text-2 outline-none" placeholder={t('writing.storyboard.visualPrompt')} /><DirectorNotesSection shot={shot} onUpdate={(partial) => setDraft(updateShot(draft, shot.id, partial))} t={t} /><div className="mt-3 flex flex-wrap gap-2">{shot.linkedCharacterIds.map((id) => <span key={id} className="rounded-full border border-border bg-bg px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{characters.find((entry) => entry.id === id)?.name || id}</span>)}{shot.linkedWorldItemIds.map((id) => <span key={id} className="rounded-full border border-border bg-bg px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{worldItems.find((entry) => entry.id === id)?.name || id}</span>)}</div></div>)}</div><button type="button" className="mt-5 rounded-xl border border-border px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-text-2 hover:border-brand" onClick={() => setDraft({ ...draft, shots: [...draft.shots, { id: `shot_${Date.now()}`, title: `Shot ${draft.shots.length + 1}`, summary: '', visualPrompt: '', linkedCharacterIds: [], linkedWorldItemIds: [], durationSeconds: 5 }] })}><Plus size={12} className="mr-2 inline" />{t('writing.storyboard.addShot')}</button></div> : <Empty title={t('writing.empty.noStoryboards')} body={t('writing.empty.noStoryboardsBody')} />}</main>
   </div>;
 };
 
