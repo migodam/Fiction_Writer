@@ -375,7 +375,7 @@ const CharacterDetail = ({ character, tab }: any) => {
                     if (paths.length === 0) return;
                     const filePath = paths[0];
                     try {
-                      const fileUrl = await electronApi.portraitSave(projectRoot, draft.id, filePath);
+                      const fileUrl = await electronApi.portraitUpload(projectRoot, draft.id, filePath);
                       const updated = { ...draft, portrait: fileUrl };
                       setDraft(updated);
                       updateCharacter(updated);

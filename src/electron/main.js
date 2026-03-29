@@ -1,7 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import fsPromises from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import electron from 'electron';
 import { chatCompletion, streamCompletion, generateImage } from './services/aiService.js';
 
@@ -165,6 +165,11 @@ ipcMain.on('ai:stream-start', async (event, { requestId, messages }) => {
 ipcMain.handle('portrait:save', async (_event, { projectRoot, characterId, imageData }) => {
   if (!/^[a-zA-Z0-9_\-]+$/.test(characterId)) throw new Error('Invalid characterId');
   const portraitsDir = path.join(projectRoot, 'characters', 'portraits');
+  const resolvedRoot = path.resolve(projectRoot);
+  const resolvedPortraitsDir = path.resolve(portraitsDir);
+  if (!resolvedPortraitsDir.startsWith(resolvedRoot + path.sep) && resolvedPortraitsDir !== resolvedRoot) {
+    throw new Error('Path traversal detected');
+  }
   await fsPromises.mkdir(portraitsDir, { recursive: true });
   const filePath = path.join(portraitsDir, `${characterId}.png`);
 
@@ -183,17 +188,22 @@ ipcMain.handle('portrait:save', async (_event, { projectRoot, characterId, image
     await fsPromises.writeFile(filePath, Buffer.from(base64, 'base64'));
   }
 
-  return `file://${filePath}`;
+  return pathToFileURL(filePath).href;
 });
 
 // Upload portrait from local file path by copying to project portraits folder
 ipcMain.handle('portrait:upload', async (_event, { projectRoot, characterId, sourcePath }) => {
   if (!/^[a-zA-Z0-9_\-]+$/.test(characterId)) throw new Error('Invalid characterId');
   const portraitsDir = path.join(projectRoot, 'characters', 'portraits');
+  const resolvedRoot = path.resolve(projectRoot);
+  const resolvedPortraitsDir = path.resolve(portraitsDir);
+  if (!resolvedPortraitsDir.startsWith(resolvedRoot + path.sep) && resolvedPortraitsDir !== resolvedRoot) {
+    throw new Error('Path traversal detected');
+  }
   await fsPromises.mkdir(portraitsDir, { recursive: true });
   const filePath = path.join(portraitsDir, `${characterId}.png`);
   await fsPromises.copyFile(sourcePath, filePath);
-  return `file://${filePath}`;
+  return pathToFileURL(filePath).href;
 });
 
 ipcMain.on('ai:stream-cancel', (_event, { requestId }) => {
