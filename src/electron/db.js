@@ -3,6 +3,16 @@ import path from 'node:path';
 
 const SCHEMA_VERSION = 1;
 
+export const ALLOWED_TABLES = new Set([
+  'characters', 'scenes', 'chapters', 'timeline_events',
+  'timeline_branches', 'world_items', 'world_containers', 'manuscript_nodes',
+  'graph_boards', 'graph_relationships', 'tags', 'todos', 'script_shots',
+]);
+
+function validateTable(table) {
+  if (!ALLOWED_TABLES.has(table)) throw new Error(`Invalid table: ${table}`);
+}
+
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
@@ -137,9 +147,20 @@ export function closeDb(projectRoot) {
 }
 
 /**
+ * Close all open DB connections cleanly (call on app quit).
+ */
+export function closeAllDbs() {
+  for (const [projectRoot, db] of openDbs) {
+    try { db.close(); } catch {}
+    openDbs.delete(projectRoot);
+  }
+}
+
+/**
  * Upsert a single entity row.
  */
 export function upsertEntity(db, table, id, data) {
+  validateTable(table);
   db.prepare(
     `INSERT INTO ${table} (id, data, updated_at) VALUES (?, ?, unixepoch())
      ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`
@@ -150,6 +171,7 @@ export function upsertEntity(db, table, id, data) {
  * Get all entities from a table as parsed objects.
  */
 export function getAllEntities(db, table) {
+  validateTable(table);
   return db.prepare(`SELECT data FROM ${table}`).all().map((row) => JSON.parse(row.data));
 }
 
@@ -157,6 +179,7 @@ export function getAllEntities(db, table) {
  * Delete an entity by id.
  */
 export function deleteEntity(db, table, id) {
+  validateTable(table);
   db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(id);
 }
 

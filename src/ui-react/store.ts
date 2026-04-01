@@ -177,6 +177,7 @@ interface ProjectState {
   deleteRelationship: (id: string) => void;
   addChapter: (chapter: Chapter) => void;
   updateChapter: (chapter: Chapter) => void;
+  deleteChapter: (id: string) => void;
   addScene: (scene: Scene) => void;
   updateScene: (scene: Scene) => void;
   deleteScene: (id: string) => void;
@@ -542,21 +543,27 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const { projectRoot } = get();
     if (projectRoot) electronApi.dbUpsert(projectRoot, 'characters', character.id, character).catch(() => {});
   },
-  deleteCharacter: (id) => set((state) => withDirtyState({
-    characters: state.characters
-      .filter((entry) => entry.id !== id)
-      .map((entry) => ({
-        ...entry,
-        relationshipIds: (entry.relationshipIds ?? []).filter(
-          (rid) => !state.relationships.some(
-            (rel) => rel.id === rid && (rel.sourceId === id || rel.targetId === id)
-          )
-        ),
-      })),
-    relationships: state.relationships.filter(
-      (entry) => entry.sourceId !== id && entry.targetId !== id
-    ),
-  })),
+  deleteCharacter: (id) => {
+    set((state) => withDirtyState({
+      characters: state.characters
+        .filter((entry) => entry.id !== id)
+        .map((entry) => ({
+          ...entry,
+          relationshipIds: (entry.relationshipIds ?? []).filter(
+            (rid) => !state.relationships.some(
+              (rel) => rel.id === rid && (rel.sourceId === id || rel.targetId === id)
+            )
+          ),
+        })),
+      relationships: state.relationships.filter(
+        (entry) => entry.sourceId !== id && entry.targetId !== id
+      ),
+    }));
+    const { projectRoot } = get();
+    if (projectRoot) {
+      electronApi.dbDelete(projectRoot, 'characters', id).catch(() => {});
+    }
+  },
   addCharacterTag: (tag) => set((state) => withDirtyState({ characterTags: [...state.characterTags, tag] })),
   updateCharacterTag: (tag) => set((state) => withDirtyState({ characterTags: state.characterTags.map((entry) => entry.id === tag.id ? tag : entry) })),
   deleteCharacterTag: (tagId) => set((state) => withDirtyState({
@@ -669,6 +676,13 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const { projectRoot } = get();
     if (projectRoot) electronApi.dbUpsert(projectRoot, 'chapters', chapter.id, chapter).catch(() => {});
   },
+  deleteChapter: (id) => {
+    set((state) => withDirtyState({ chapters: state.chapters.filter((entry) => entry.id !== id) }));
+    const { projectRoot } = get();
+    if (projectRoot) {
+      electronApi.dbDelete(projectRoot, 'chapters', id).catch(() => {});
+    }
+  },
   addScene: (scene) => {
     set((state) => withDirtyState({ scenes: [...state.scenes, scene] }));
     const { projectRoot } = get();
@@ -679,10 +693,16 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const { projectRoot } = get();
     if (projectRoot) electronApi.dbUpsert(projectRoot, 'scenes', scene.id, scene).catch(() => {});
   },
-  deleteScene: (id) => set((state) => withDirtyState({
-    scenes: state.scenes.filter((entry) => entry.id !== id),
-    chapters: state.chapters.map((ch) => ({ ...ch, sceneIds: ch.sceneIds.filter((sid) => sid !== id) })),
-  })),
+  deleteScene: (id) => {
+    set((state) => withDirtyState({
+      scenes: state.scenes.filter((entry) => entry.id !== id),
+      chapters: state.chapters.map((ch) => ({ ...ch, sceneIds: ch.sceneIds.filter((sid) => sid !== id) })),
+    }));
+    const { projectRoot } = get();
+    if (projectRoot) {
+      electronApi.dbDelete(projectRoot, 'scenes', id).catch(() => {});
+    }
+  },
   updateScript: (script) => set((state) => withDirtyState({ scripts: state.scripts.map((entry) => entry.id === script.id ? script : entry) })),
   addScript: (script) => set((state) => withDirtyState({ scripts: [...state.scripts, script] })),
   addStoryboard: (storyboard) => set((state) => withDirtyState({ storyboards: [...state.storyboards, storyboard] })),

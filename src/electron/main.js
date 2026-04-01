@@ -4,7 +4,7 @@ import fsPromises from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import electron from 'electron';
 import { chatCompletion, streamCompletion, generateImage } from './services/aiService.js';
-import { openDb, closeDb, upsertEntity, getAllEntities, deleteEntity, migrateFromJson, indexEntity, searchEntities } from './db.js';
+import { openDb, closeDb, closeAllDbs, upsertEntity, getAllEntities, deleteEntity, migrateFromJson, indexEntity, searchEntities } from './db.js';
 
 const { app, BrowserWindow, dialog, ipcMain } = electron;
 
@@ -276,4 +276,8 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+app.on('before-quit', () => {
+  closeAllDbs();
 });
