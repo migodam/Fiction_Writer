@@ -132,4 +132,41 @@ export const electronApi = {
     ipcRenderer.on(channel, (_event: unknown, msg: unknown) => callback(msg as string));
     return () => ipcRenderer.removeAllListeners(channel);
   },
+
+  // DB methods
+  async dbOpen(projectRoot: string, projectJson?: unknown): Promise<{ ok: boolean }> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return { ok: false };
+    return (await ipcRenderer.invoke('db:open', { projectRoot, projectJson })) as { ok: boolean };
+  },
+
+  async dbClose(projectRoot: string): Promise<{ ok: boolean }> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return { ok: false };
+    return (await ipcRenderer.invoke('db:close', { projectRoot })) as { ok: boolean };
+  },
+
+  async dbUpsert(projectRoot: string, table: string, id: string, data: unknown): Promise<{ ok: boolean }> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return { ok: false };
+    return (await ipcRenderer.invoke('db:upsert', { projectRoot, table, id, data })) as { ok: boolean };
+  },
+
+  async dbGetAll(projectRoot: string, table: string): Promise<unknown[]> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return [];
+    return (await ipcRenderer.invoke('db:getAll', { projectRoot, table })) as unknown[];
+  },
+
+  async dbDelete(projectRoot: string, table: string, id: string): Promise<{ ok: boolean }> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return { ok: false };
+    return (await ipcRenderer.invoke('db:delete', { projectRoot, table, id })) as { ok: boolean };
+  },
+
+  async dbSearch(projectRoot: string, query: string): Promise<Array<{ entity_type: string; entity_id: string; title: string }>> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return [];
+    return (await ipcRenderer.invoke('db:search', { projectRoot, query })) as Array<{ entity_type: string; entity_id: string; title: string }>;
+  },
 };

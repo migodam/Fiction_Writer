@@ -4,6 +4,7 @@ import fsPromises from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import electron from 'electron';
 import { chatCompletion, streamCompletion, generateImage } from './services/aiService.js';
+import { openDb, closeDb, closeAllDbs, upsertEntity, getAllEntities, deleteEntity, migrateFromJson, indexEntity, searchEntities } from './db.js';
 
 const { app, BrowserWindow, dialog, ipcMain } = electron;
 
@@ -211,6 +212,56 @@ ipcMain.on('ai:stream-cancel', (_event, { requestId }) => {
   streamControllers.delete(requestId);
 });
 
+// --- DB IPC handlers ---
+
+// Open/migrate DB when project opens
+ipcMain.handle('db:open', async (_event, { projectRoot, projectJson }) => {
+  const db = openDb(projectRoot);
+  if (projectJson) await migrateFromJson(projectRoot, projectJson);
+  // Suppress unused variable warning — db used internally via openDbs map
+  void db;
+  return { ok: true };
+});
+
+// Close DB when project closes
+ipcMain.handle('db:close', async (_event, { projectRoot }) => {
+  closeDb(projectRoot);
+  return { ok: true };
+});
+
+// Upsert entity
+ipcMain.handle('db:upsert', async (_event, { projectRoot, table, id, data }) => {
+  const db = openDb(projectRoot);
+  upsertEntity(db, table, id, data);
+  return { ok: true };
+});
+
+// Get all entities from a table
+ipcMain.handle('db:getAll', async (_event, { projectRoot, table }) => {
+  const db = openDb(projectRoot);
+  return getAllEntities(db, table);
+});
+
+// Delete entity
+ipcMain.handle('db:delete', async (_event, { projectRoot, table, id }) => {
+  const db = openDb(projectRoot);
+  deleteEntity(db, table, id);
+  return { ok: true };
+});
+
+// Index entity for FTS
+ipcMain.handle('db:indexEntity', async (_event, { projectRoot, entityType, entityId, title, content }) => {
+  const db = openDb(projectRoot);
+  indexEntity(db, entityType, entityId, title, content);
+  return { ok: true };
+});
+
+// Full-text search
+ipcMain.handle('db:search', async (_event, { projectRoot, query }) => {
+  const db = openDb(projectRoot);
+  return searchEntities(db, query);
+});
+
 app.whenReady().then(() => {
   createWindow();
 
@@ -225,4 +276,8 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+app.on('before-quit', () => {
+  closeAllDbs();
 });
