@@ -52,6 +52,7 @@ import { createStarterProject } from './mock/seedProject';
 import { projectService } from './services/projectService';
 import { appSettingsService, defaultAppSettings } from './services/appSettingsService';
 import * as metadataService from './services/metadataService';
+import { electronApi } from './services/electronApi';
 
 const UI_SETTINGS_KEY = 'narrative-ide-ui-settings';
 
@@ -230,6 +231,7 @@ interface ProjectState {
   clearUnreadEntity: (entityId: string) => void;
   clearUnreadActivity: (activityId: string) => void;
   searchEntities: (query: string) => SearchResult[];
+  dbSearchEntities: (query: string) => Promise<Array<{ entity_type: string; entity_id: string; title: string }>>;
   metadataFiles: MetadataFile[];
   loadMetadata: (projectRoot: string) => void;
   importMetadataFile: (projectRoot: string, filePath: string, meta: Pick<MetadataFile, 'type' | 'tags' | 'description'>) => void;
@@ -506,12 +508,19 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     setTimeout(() => get().saveStatus === 'Saved' && set({ saveStatus: 'Idle' }), 1200);
   },
   openProject: async (rootPath) => {
+    // Close previous DB if switching projects
+    const prevRoot = get().projectRoot;
+    if (prevRoot && prevRoot !== rootPath) {
+      electronApi.dbClose(prevRoot).catch(() => {});
+    }
     set({ saveStatus: 'Saving' });
     const project = projectService.openProject(rootPath);
     useUIStore.getState().hydrateFromProjectUiState(project.uiState);
     set({ ...deriveState(project), selectedEntity: { type: null, id: null }, saveStatus: 'Saved' });
     useUIStore.getState().setLocale(project.metadata.locale);
     if (rootPath) get().loadMetadata(rootPath);
+    // Open/migrate SQLite DB (fire-and-forget; JSON store still drives memory)
+    electronApi.dbOpen(rootPath ?? project.metadata.rootPath, project).catch(() => {});
     setTimeout(() => get().saveStatus === 'Saved' && set({ saveStatus: 'Idle' }), 1200);
   },
   saveProject: async () => {
@@ -523,8 +532,16 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   loadProject: (project) => { useUIStore.getState().hydrateFromProjectUiState(project.uiState); set({ ...deriveState(project), selectedEntity: { type: null, id: null }, saveStatus: 'Idle' }); },
   setProjectLocale: (locale) => set((state) => ({ currentProject: cloneProject(state, locale), saveStatus: 'Unsaved changes' })),
   syncProjectUiState: () => set((state) => ({ currentProject: cloneProject(state, useUIStore.getState().locale), saveStatus: state.saveStatus === 'Idle' ? 'Unsaved changes' : state.saveStatus })),
-  addCharacter: (character) => set((state) => withDirtyState({ characters: [...state.characters, character] })),
-  updateCharacter: (character) => set((state) => withDirtyState({ characters: state.characters.map((entry) => entry.id === character.id ? character : entry) })),
+  addCharacter: (character) => {
+    set((state) => withDirtyState({ characters: [...state.characters, character] }));
+    const { projectRoot } = get();
+    if (projectRoot) electronApi.dbUpsert(projectRoot, 'characters', character.id, character).catch(() => {});
+  },
+  updateCharacter: (character) => {
+    set((state) => withDirtyState({ characters: state.characters.map((entry) => entry.id === character.id ? character : entry) }));
+    const { projectRoot } = get();
+    if (projectRoot) electronApi.dbUpsert(projectRoot, 'characters', character.id, character).catch(() => {});
+  },
   deleteCharacter: (id) => set((state) => withDirtyState({
     characters: state.characters
       .filter((entry) => entry.id !== id)
@@ -642,10 +659,26 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     relationships: state.relationships.filter((entry) => entry.id !== id),
     characters: state.characters.map((character) => ({ ...character, relationshipIds: (character.relationshipIds || []).filter((entry) => entry !== id) })),
   })),
-  addChapter: (chapter) => set((state) => withDirtyState({ chapters: [...state.chapters, chapter] })),
-  updateChapter: (chapter) => set((state) => withDirtyState({ chapters: state.chapters.map((entry) => entry.id === chapter.id ? chapter : entry) })),
-  addScene: (scene) => set((state) => withDirtyState({ scenes: [...state.scenes, scene] })),
-  updateScene: (scene) => set((state) => withDirtyState({ scenes: state.scenes.map((entry) => entry.id === scene.id ? scene : entry), currentSceneContent: scene.content })),
+  addChapter: (chapter) => {
+    set((state) => withDirtyState({ chapters: [...state.chapters, chapter] }));
+    const { projectRoot } = get();
+    if (projectRoot) electronApi.dbUpsert(projectRoot, 'chapters', chapter.id, chapter).catch(() => {});
+  },
+  updateChapter: (chapter) => {
+    set((state) => withDirtyState({ chapters: state.chapters.map((entry) => entry.id === chapter.id ? chapter : entry) }));
+    const { projectRoot } = get();
+    if (projectRoot) electronApi.dbUpsert(projectRoot, 'chapters', chapter.id, chapter).catch(() => {});
+  },
+  addScene: (scene) => {
+    set((state) => withDirtyState({ scenes: [...state.scenes, scene] }));
+    const { projectRoot } = get();
+    if (projectRoot) electronApi.dbUpsert(projectRoot, 'scenes', scene.id, scene).catch(() => {});
+  },
+  updateScene: (scene) => {
+    set((state) => withDirtyState({ scenes: state.scenes.map((entry) => entry.id === scene.id ? scene : entry), currentSceneContent: scene.content }));
+    const { projectRoot } = get();
+    if (projectRoot) electronApi.dbUpsert(projectRoot, 'scenes', scene.id, scene).catch(() => {});
+  },
   deleteScene: (id) => set((state) => withDirtyState({
     scenes: state.scenes.filter((entry) => entry.id !== id),
     chapters: state.chapters.map((ch) => ({ ...ch, sceneIds: ch.sceneIds.filter((sid) => sid !== id) })),
@@ -984,5 +1017,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     pushMatches(state.graphBoards, 'graph_board', (item) => item.name, 'Graph Board');
     pushMatches(state.betaPersonas, 'beta_persona', (item) => item.name, 'Beta Persona');
     return stateResults;
+  },
+  dbSearchEntities: async (query) => {
+    const { projectRoot } = get();
+    if (!projectRoot || !query?.trim()) return [];
+    return electronApi.dbSearch(projectRoot, query).catch(() => []);
   },
 }));
