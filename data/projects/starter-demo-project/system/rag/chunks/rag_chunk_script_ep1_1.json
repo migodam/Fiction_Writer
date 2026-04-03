@@ -1,0 +1,20 @@
+{
+  "id": "rag_chunk_script_ep1_1",
+  "documentId": "rag_doc_script_ep1",
+  "text": "INT. SKY DOCK - DAWN. Aria steps out of the lift into cold copper haze.",
+  "tokenCount": 14,
+  "keywords": [
+    "script",
+    "sky",
+    "dock",
+    "aria",
+    "dawn"
+  ],
+  "entityRefs": [
+    {
+      "type": "script",
+      "id": "script_episode_1"
+    }
+  ],
+  "sourcePath": "entities/scripts/script_episode_1.fountain"
+}

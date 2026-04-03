@@ -1,1 +1,67 @@
-[]
+[
+  {
+    "id": "import_seed_project",
+    "sourceFileName": "starter-manuscript.md",
+    "sourcePath": "system/imports/staging/import_seed_project/source.md",
+    "sourceFormat": "md",
+    "status": "awaiting_user_input",
+    "stage": "proposal_generated",
+    "segmentationConfidence": "high",
+    "createdAt": "2026-04-03T18:37:04.333Z",
+    "updatedAt": "2026-04-03T18:37:04.333Z",
+    "taskRequestId": "task_import_seed",
+    "taskRunId": "run_import_seed",
+    "canonicalChapterIds": [
+      "chap_1",
+      "chap_2"
+    ],
+    "canonicalSceneIds": [
+      "scene_arrival",
+      "scene_market",
+      "scene_choir",
+      "scene_archive",
+      "scene_consul",
+      "scene_bridge"
+    ],
+    "chapterCandidates": [
+      {
+        "id": "import_chap_1",
+        "title": "Fractured Arrival",
+        "summary": "Imported from markdown heading.",
+        "confidence": "high",
+        "contentPath": "system/imports/staging/import_seed_project/chapter_candidates.json"
+      },
+      {
+        "id": "import_chap_2",
+        "title": "Pressure Lines",
+        "summary": "Imported from markdown heading.",
+        "confidence": "high",
+        "contentPath": "system/imports/staging/import_seed_project/chapter_candidates.json"
+      }
+    ],
+    "sceneCandidates": [
+      {
+        "id": "import_scene_arrival",
+        "title": "Dockside Arrival",
+        "summary": "Imported from second-level heading.",
+        "confidence": "high",
+        "contentPath": "system/imports/staging/import_seed_project/scene_candidates.json"
+      },
+      {
+        "id": "import_scene_bridge",
+        "title": "Glass Bridge Intercept",
+        "summary": "Imported from second-level heading.",
+        "confidence": "high",
+        "contentPath": "system/imports/staging/import_seed_project/scene_candidates.json"
+      }
+    ],
+    "proposalIds": [
+      "proposal_import_entities_seed"
+    ],
+    "issueIds": [],
+    "notes": [
+      "Deterministic chapter split succeeded.",
+      "Metadata extraction is staged behind Workbench review."
+    ]
+  }
+]

@@ -5,10 +5,10 @@
     "targetId": "char_rowan",
     "type": "Uneasy alliance",
     "description": "Professional trust forming under pressure.",
-    "category": "general",
+    "category": "alliance",
     "directionality": "bidirectional",
     "status": "active",
-    "sourceNotes": ""
+    "sourceNotes": "Starts transactional, trends toward trust."
   },
   {
     "id": "rel_aria_seren",
@@ -16,10 +16,10 @@
     "targetId": "char_seren",
     "type": "Negotiated trust",
     "description": "They need each other but disagree on exposure.",
-    "category": "general",
+    "category": "political",
     "directionality": "bidirectional",
-    "status": "active",
-    "sourceNotes": ""
+    "status": "strained",
+    "sourceNotes": "Useful alliance with ideological friction."
   },
   {
     "id": "rel_aria_vesper",
@@ -27,10 +27,10 @@
     "targetId": "char_vesper",
     "type": "Hidden rivalry",
     "description": "Aria suspects Vesper before she can prove it.",
-    "category": "general",
-    "directionality": "bidirectional",
+    "category": "conflict",
+    "directionality": "source_to_target",
     "status": "active",
-    "sourceNotes": ""
+    "sourceNotes": "Suspicion escalates across archive and bridge scenes."
   },
   {
     "id": "rel_rowan_nila",
@@ -38,10 +38,10 @@
     "targetId": "char_nila",
     "type": "Tactical banter",
     "description": "A fast-moving analyst duo.",
-    "category": "general",
+    "category": "alliance",
     "directionality": "bidirectional",
     "status": "active",
-    "sourceNotes": ""
+    "sourceNotes": "High chemistry in route-analysis scenes."
   },
   {
     "id": "rel_seren_vesper",
@@ -49,9 +49,9 @@
     "targetId": "char_vesper",
     "type": "Political opposition",
     "description": "They understand each other too well.",
-    "category": "general",
+    "category": "conflict",
     "directionality": "bidirectional",
     "status": "active",
-    "sourceNotes": ""
+    "sourceNotes": "Public and covert power centers collide here."
   }
 ]

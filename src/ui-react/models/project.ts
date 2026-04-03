@@ -155,6 +155,10 @@ export interface TimelineBranch {
     branchId: string;
     eventId: string;
   } | null;
+  endAnchor?: {
+    branchId: string;
+    eventId: string;
+  } | null;
   endMode?: 'open' | 'merge' | 'closed';
   mergeTargetBranchId?: string | null;
   geometry?: {

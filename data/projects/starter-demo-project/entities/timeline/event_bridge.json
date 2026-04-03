@@ -25,9 +25,18 @@
   "tags": [
     "climax"
   ],
-  "sharedBranchIds": [],
-  "importance": "medium",
-  "colorToken": "",
-  "layoutLock": false,
-  "modalStateHints": []
+  "sharedBranchIds": [
+    "branch_shadow",
+    "branch_echo"
+  ],
+  "importance": "critical",
+  "colorToken": "red",
+  "layoutLock": true,
+  "modalStateHints": [
+    "merge-anchor"
+  ],
+  "position": {
+    "x": 1312.2029568,
+    "y": 0
+  }
 }

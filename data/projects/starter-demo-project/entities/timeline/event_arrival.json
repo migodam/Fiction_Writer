@@ -21,9 +21,15 @@
   "tags": [
     "arrival"
   ],
-  "sharedBranchIds": [],
-  "importance": "medium",
-  "colorToken": "",
-  "layoutLock": false,
-  "modalStateHints": []
+  "sharedBranchIds": [
+    "branch_shadow",
+    "branch_public",
+    "branch_echo"
+  ],
+  "importance": "high",
+  "colorToken": "amber",
+  "layoutLock": true,
+  "modalStateHints": [
+    "fork-anchor"
+  ]
 }

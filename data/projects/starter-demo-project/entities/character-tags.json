@@ -1,1 +1,39 @@
-[]
+[
+  {
+    "id": "tag_lead",
+    "name": "Lead",
+    "color": "#f59e0b",
+    "description": "Primary perspective driver.",
+    "characterIds": [
+      "char_aria"
+    ]
+  },
+  {
+    "id": "tag_strategist",
+    "name": "Strategist",
+    "color": "#38bdf8",
+    "description": "Pattern-detecting operators.",
+    "characterIds": [
+      "char_rowan",
+      "char_nila"
+    ]
+  },
+  {
+    "id": "tag_resistance",
+    "name": "Resistance",
+    "color": "#22c55e",
+    "description": "Opposition-aligned characters.",
+    "characterIds": [
+      "char_seren"
+    ]
+  },
+  {
+    "id": "tag_antagonist",
+    "name": "Antagonist",
+    "color": "#ef4444",
+    "description": "Primary hostile force.",
+    "characterIds": [
+      "char_vesper"
+    ]
+  }
+]

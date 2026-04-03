@@ -1,0 +1,86 @@
+{
+  "id": "board_relationships",
+  "name": "Relationship Tensions",
+  "description": "Character pressure map for alliance and betrayal analysis.",
+  "nodes": [
+    {
+      "id": "graph_rel_aria",
+      "kind": "character_ref",
+      "label": "Aria",
+      "description": "Anchor point.",
+      "x": 220,
+      "y": 180,
+      "width": 180,
+      "height": 120,
+      "linkedEntityId": "char_aria",
+      "linkedEntityType": "character",
+      "imageAssetId": null
+    },
+    {
+      "id": "graph_rel_seren",
+      "kind": "character_ref",
+      "label": "Seren",
+      "description": "Public pressure axis.",
+      "x": 480,
+      "y": 80,
+      "width": 180,
+      "height": 120,
+      "linkedEntityId": "char_seren",
+      "linkedEntityType": "character",
+      "imageAssetId": null
+    },
+    {
+      "id": "graph_rel_vesper",
+      "kind": "character_ref",
+      "label": "Vesper",
+      "description": "Hidden threat axis.",
+      "x": 690,
+      "y": 250,
+      "width": 180,
+      "height": 120,
+      "linkedEntityId": "char_vesper",
+      "linkedEntityType": "character",
+      "imageAssetId": null
+    },
+    {
+      "id": "graph_rel_rowan",
+      "kind": "character_ref",
+      "label": "Rowan",
+      "description": "Shadow logistics.",
+      "x": 360,
+      "y": 330,
+      "width": 180,
+      "height": 120,
+      "linkedEntityId": "char_rowan",
+      "linkedEntityType": "character",
+      "imageAssetId": null
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge_rel_a_s",
+      "sourceId": "graph_rel_aria",
+      "targetId": "graph_rel_seren",
+      "label": "trust / leverage"
+    },
+    {
+      "id": "edge_rel_a_v",
+      "sourceId": "graph_rel_aria",
+      "targetId": "graph_rel_vesper",
+      "label": "suspects"
+    },
+    {
+      "id": "edge_rel_a_r",
+      "sourceId": "graph_rel_aria",
+      "targetId": "graph_rel_rowan",
+      "label": "needs"
+    }
+  ],
+  "view": {
+    "zoom": 0.95,
+    "panX": 0,
+    "panY": 0
+  },
+  "selectedNodeIds": [],
+  "sortOrder": 1
+}

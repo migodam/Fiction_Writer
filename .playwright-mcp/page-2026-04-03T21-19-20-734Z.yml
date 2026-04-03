@@ -1,0 +1,214 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e7]:
+          - generic [ref=e8]: F
+          - generic [ref=e9]:
+            - generic [ref=e10]: Narrative IDE
+            - generic [ref=e11]: Starter Demo Project
+        - button "Toggle Sidebar" [ref=e12] [cursor=pointer]:
+          - img [ref=e13]
+        - button "New Project" [ref=e15] [cursor=pointer]:
+          - img [ref=e16]
+        - button "Open Project" [ref=e19] [cursor=pointer]:
+          - img [ref=e20]
+        - button "Save Project" [ref=e22] [cursor=pointer]:
+          - img [ref=e23]
+        - button "Undo" [ref=e28] [cursor=pointer]:
+          - img [ref=e29]
+        - button "Redo" [ref=e32] [cursor=pointer]:
+          - img [ref=e33]
+        - button "Run Simulation" [ref=e37] [cursor=pointer]:
+          - img [ref=e38]
+        - button "Check Consistency" [ref=e40] [cursor=pointer]:
+          - img [ref=e41]
+        - button "Export Book" [ref=e44] [cursor=pointer]:
+          - img [ref=e45]
+      - button "Search entities, proposals, and settings... (Ctrl+P)" [ref=e48] [cursor=pointer]:
+        - img [ref=e49]
+        - generic [ref=e52]: Search entities, proposals, and settings... (Ctrl+P)
+      - generic [ref=e53]:
+        - button "Toggle Agent Dock" [ref=e54] [cursor=pointer]:
+          - img [ref=e55]
+        - button "Settings" [ref=e58] [cursor=pointer]:
+          - img [ref=e59]
+  - generic [ref=e62]:
+    - navigation [ref=e63]:
+      - generic [ref=e64]:
+        - button "Workbench" [ref=e65] [cursor=pointer]:
+          - img [ref=e67]
+        - button "Writing Studio" [ref=e69] [cursor=pointer]:
+          - img [ref=e70]
+        - button "Characters" [ref=e75] [cursor=pointer]:
+          - img [ref=e76]
+        - button "Timeline" [ref=e81] [cursor=pointer]:
+          - img [ref=e82]
+        - button "Graph" [active] [ref=e85] [cursor=pointer]:
+          - img [ref=e86]
+        - button "World Model" [ref=e91] [cursor=pointer]:
+          - img [ref=e92]
+        - button "Simulation" [ref=e95] [cursor=pointer]:
+          - img [ref=e96]
+        - button "Beta Reader" [ref=e99] [cursor=pointer]:
+          - img [ref=e100]
+        - button "Consistency" [ref=e103] [cursor=pointer]:
+          - img [ref=e104]
+        - button "Agents" [ref=e107] [cursor=pointer]:
+          - img [ref=e108]
+        - button "Publish" [ref=e111] [cursor=pointer]:
+          - img [ref=e112]
+        - button "Insights" [ref=e114] [cursor=pointer]:
+          - img [ref=e115]
+        - button "Reference Library" [ref=e116] [cursor=pointer]:
+          - img [ref=e117]
+    - complementary [ref=e120]:
+      - generic [ref=e121]:
+        - generic: Graph
+        - button "Collapse Sidebar" [ref=e123] [cursor=pointer]:
+          - img [ref=e124]
+      - generic [ref=e650] [cursor=pointer]:
+        - generic: Boards
+    - main [ref=e151]:
+      - generic [ref=e651]:
+        - complementary [ref=e652]:
+          - generic [ref=e654]:
+            - generic [ref=e655]:
+              - generic [ref=e656]: Boards
+              - generic [ref=e657]: Graph Navigator
+            - button [ref=e658] [cursor=pointer]:
+              - img [ref=e659]
+          - generic [ref=e660]:
+            - button "Main Storyboard 7 nodes / 4 edges" [ref=e661] [cursor=pointer]:
+              - generic [ref=e662]: Main Storyboard
+              - generic [ref=e663]: 7 nodes / 4 edges
+            - button "Relationship Tensions 4 nodes / 3 edges" [ref=e664] [cursor=pointer]:
+              - generic [ref=e665]: Relationship Tensions
+              - generic [ref=e666]: 4 nodes / 3 edges
+        - generic [ref=e667]:
+          - generic [ref=e668]:
+            - button "Add Node" [ref=e669] [cursor=pointer]:
+              - img [ref=e670]
+              - text: Add Node
+            - button "Auto Layout" [ref=e671] [cursor=pointer]:
+              - img [ref=e672]
+              - text: Auto Layout
+            - button "Queue Sync" [ref=e677] [cursor=pointer]:
+              - img [ref=e678]
+              - text: Queue Sync
+          - application [ref=e684]:
+            - generic [ref=e686]:
+              - generic:
+                - generic:
+                  - img:
+                    - group "Edge from graph_char_aria to graph_event_bridge" [ref=e687] [cursor=pointer]:
+                      - generic [ref=e690]:
+                        - generic: drives
+                  - img:
+                    - group "Edge from graph_event_bridge to graph_loc_bridge" [ref=e692] [cursor=pointer]:
+                      - generic [ref=e695]:
+                        - generic: happens at
+                  - img:
+                    - group "Edge from graph_event_bridge to graph_item_shard" [ref=e697] [cursor=pointer]:
+                      - generic [ref=e700]:
+                        - generic: centers on
+                  - img:
+                    - group "Edge from graph_note_public to graph_event_bridge" [ref=e702] [cursor=pointer]:
+                      - generic [ref=e705]:
+                        - generic: aftershock
+                - generic:
+                  - group [ref=e707]:
+                    - generic [ref=e708]:
+                      - generic [ref=e710]: character ref
+                      - generic [ref=e711]: Aria Solis
+                      - generic [ref=e712]: Lead investigator card.
+                  - group [ref=e714]:
+                    - generic [ref=e715]:
+                      - generic [ref=e717]: event ref
+                      - generic [ref=e718]: Bridge Intercept
+                      - generic [ref=e719]: Climax event card.
+                  - group [ref=e721]:
+                    - generic [ref=e722]:
+                      - generic [ref=e724]: location ref
+                      - generic [ref=e725]: Glass Bridge
+                      - generic [ref=e726]: Climax location node.
+                  - group [ref=e728]:
+                    - generic [ref=e729]:
+                      - generic [ref=e731]: world item_ref
+                      - generic [ref=e732]: Memory Shard
+                      - generic [ref=e733]: Central artifact.
+                  - group [ref=e735]:
+                    - generic [ref=e736]:
+                      - generic [ref=e738]: free note
+                      - generic [ref=e739]: Public fallout escalates after bridge damage
+                      - generic [ref=e740]: Potential expansion for Chapter 3.
+                  - group [ref=e742]:
+                    - generic [ref=e743]:
+                      - generic [ref=e745]: image card
+                      - generic [ref=e746]: City mood board
+                      - generic [ref=e747]: Reference texture for Asterfall.
+                  - group [ref=e749]:
+                    - generic [ref=e750]:
+                      - generic [ref=e752]: group frame
+                      - generic [ref=e753]: Climax cluster
+                      - generic [ref=e754]: All elements needed for the intercept.
+            - img
+            - generic "Control Panel" [ref=e756]:
+              - button "Zoom In" [ref=e757] [cursor=pointer]:
+                - img [ref=e758]
+              - button "Zoom Out" [ref=e760] [cursor=pointer]:
+                - img [ref=e761]
+              - button "Fit View" [ref=e763] [cursor=pointer]:
+                - img [ref=e764]
+              - button "Toggle Interactivity" [ref=e766] [cursor=pointer]:
+                - img [ref=e767]
+            - img "Mini Map" [ref=e770]
+            - link "React Flow attribution" [ref=e779] [cursor=pointer]:
+              - /url: https://reactflow.dev
+              - text: React Flow
+    - complementary [ref=e240]:
+      - generic [ref=e241]:
+        - generic [ref=e242]:
+          - img [ref=e244]
+          - generic [ref=e247]:
+            - generic [ref=e248]: Agent Dock
+            - generic [ref=e249]: Future CLI control surface
+        - button [ref=e250] [cursor=pointer]:
+          - img [ref=e251]
+      - generic [ref=e253]:
+        - generic [ref=e254]:
+          - generic [ref=e255]: Live Queue
+          - generic [ref=e256]:
+            - generic [ref=e257]:
+              - generic [ref=e258]: Queued
+              - generic [ref=e259]: "1"
+            - generic [ref=e260]:
+              - generic [ref=e261]: Running
+              - generic [ref=e262]: "0"
+          - generic [ref=e263]:
+            - generic [ref=e264]:
+              - generic [ref=e265]: Generated one graph sync proposal and one consistency summary.
+              - generic [ref=e266]: completed
+            - generic [ref=e267]:
+              - generic [ref=e268]: Imported manuscript skeleton and paused for user confirmation.
+              - generic [ref=e269]: awaiting_user_input
+        - generic [ref=e270]: View full chat history in the /agents page.
+  - contentinfo [ref=e271]:
+    - generic [ref=e272]:
+      - generic [ref=e273]:
+        - generic [ref=e274]:
+          - generic [ref=e275]: Project
+          - generic [ref=e276]: Starter Demo Project
+        - generic [ref=e277]:
+          - generic [ref=e278]: Path
+          - generic [ref=e279]: memory://starter-demo-project
+        - generic [ref=e280]:
+          - generic [ref=e281]: Status
+          - generic [ref=e282]: Idle
+      - generic [ref=e283]:
+        - generic [ref=e284]:
+          - generic [ref=e285]: Selection
+          - generic [ref=e286]: No Selection
+        - generic [ref=e287]:
+          - generic [ref=e288]: Workbench
+          - generic [ref=e289]: 3 pending / 3 issues

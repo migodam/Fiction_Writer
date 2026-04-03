@@ -1,0 +1,20 @@
+{
+  "id": "rag_chunk_scene_arrival_1",
+  "documentId": "rag_doc_scene_arrival",
+  "text": "Aria stepped off the lift into the Sky Dock haze, where the city smelled like cold copper and stormwater.",
+  "tokenCount": 18,
+  "keywords": [
+    "aria",
+    "sky",
+    "dock",
+    "lift",
+    "city"
+  ],
+  "entityRefs": [
+    {
+      "type": "scene",
+      "id": "scene_arrival"
+    }
+  ],
+  "sourcePath": "writing/scenes/scene_arrival.md"
+}

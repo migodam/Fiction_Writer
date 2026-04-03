@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 4,
+  "updatedAt": "2026-04-03T00:00:00.000Z",
+  "entities": {
+    "timelineBranch": {
+      "required": [
+        "id",
+        "name",
+        "sortOrder"
+      ],
+      "optional": [
+        "description",
+        "parentBranchId",
+        "forkEventId",
+        "mergeEventId",
+        "color",
+        "collapsed",
+        "mode",
+        "startAnchor",
+        "endAnchor",
+        "endMode",
+        "mergeTargetBranchId",
+        "geometry",
+        "anchorStartPos",
+        "anchorEndPos"
+      ]
+    },
+    "timelineEvent": {
+      "required": [
+        "id",
+        "title",
+        "summary",
+        "branchId",
+        "orderIndex",
+        "locationIds",
+        "participantCharacterIds",
+        "linkedSceneIds",
+        "linkedWorldItemIds",
+        "tags"
+      ],
+      "optional": [
+        "time",
+        "sharedBranchIds",
+        "importance",
+        "colorToken",
+        "layoutLock",
+        "modalStateHints",
+        "position"
+      ]
+    }
+  },
+  "audit": [
+    "project.json is metadata plus counts only; canonical timeline entities live under entities/timeline.",
+    "timeline branches persist semantic snap references with startAnchor/endAnchor and resolved canvas coordinates with anchorStartPos/anchorEndPos.",
+    "SQLite migration maps the project-model key characterTags into the internal tags table."
+  ]
+}

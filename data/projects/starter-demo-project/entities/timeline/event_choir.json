@@ -24,7 +24,9 @@
   ],
   "sharedBranchIds": [],
   "importance": "medium",
-  "colorToken": "",
+  "colorToken": "emerald",
   "layoutLock": false,
-  "modalStateHints": []
+  "modalStateHints": [
+    "branch-public"
+  ]
 }

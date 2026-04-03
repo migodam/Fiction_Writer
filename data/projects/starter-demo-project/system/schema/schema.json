@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "updatedAt": "2026-03-18T21:33:34.431Z",
+  "updatedAt": "2026-04-03T18:37:07.309Z",
   "capabilities": {
     "import": true,
     "rag": true,
@@ -16,5 +16,53 @@
     "sqlite",
     "embedding-provider",
     "video-provider"
-  ]
+  ],
+  "entities": {
+    "timelineBranch": {
+      "required": [
+        "id",
+        "name",
+        "sortOrder"
+      ],
+      "optional": [
+        "description",
+        "parentBranchId",
+        "forkEventId",
+        "mergeEventId",
+        "color",
+        "collapsed",
+        "mode",
+        "startAnchor",
+        "endAnchor",
+        "endMode",
+        "mergeTargetBranchId",
+        "geometry",
+        "anchorStartPos",
+        "anchorEndPos"
+      ]
+    },
+    "timelineEvent": {
+      "required": [
+        "id",
+        "title",
+        "summary",
+        "branchId",
+        "orderIndex",
+        "locationIds",
+        "participantCharacterIds",
+        "linkedSceneIds",
+        "linkedWorldItemIds",
+        "tags"
+      ],
+      "optional": [
+        "time",
+        "sharedBranchIds",
+        "importance",
+        "colorToken",
+        "layoutLock",
+        "modalStateHints",
+        "position"
+      ]
+    }
+  }
 }

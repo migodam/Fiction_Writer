@@ -1,0 +1,16 @@
+[
+  {
+    "id": "import_chap_1",
+    "title": "Fractured Arrival",
+    "summary": "Imported from markdown heading.",
+    "confidence": "high",
+    "contentPath": "system/imports/staging/import_seed_project/chapter_candidates.json"
+  },
+  {
+    "id": "import_chap_2",
+    "title": "Pressure Lines",
+    "summary": "Imported from markdown heading.",
+    "confidence": "high",
+    "contentPath": "system/imports/staging/import_seed_project/chapter_candidates.json"
+  }
+]

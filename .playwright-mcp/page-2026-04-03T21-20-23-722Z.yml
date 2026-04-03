@@ -1,0 +1,172 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e7]:
+          - generic [ref=e8]: F
+          - generic [ref=e9]:
+            - generic [ref=e10]: Narrative IDE
+            - generic [ref=e11]: Starter Demo Project
+        - button "Toggle Sidebar" [ref=e12] [cursor=pointer]:
+          - img [ref=e13]
+        - button "New Project" [ref=e15] [cursor=pointer]:
+          - img [ref=e16]
+        - button "Open Project" [ref=e19] [cursor=pointer]:
+          - img [ref=e20]
+        - button "Save Project" [ref=e22] [cursor=pointer]:
+          - img [ref=e23]
+        - button "Undo" [ref=e28] [cursor=pointer]:
+          - img [ref=e29]
+        - button "Redo" [ref=e32] [cursor=pointer]:
+          - img [ref=e33]
+        - button "Run Simulation" [ref=e37] [cursor=pointer]:
+          - img [ref=e38]
+        - button "Check Consistency" [ref=e40] [cursor=pointer]:
+          - img [ref=e41]
+        - button "Export Book" [ref=e44] [cursor=pointer]:
+          - img [ref=e45]
+      - button "Search entities, proposals, and settings... (Ctrl+P)" [ref=e48] [cursor=pointer]:
+        - img [ref=e49]
+        - generic [ref=e52]: Search entities, proposals, and settings... (Ctrl+P)
+      - generic [ref=e53]:
+        - button "Toggle Agent Dock" [ref=e54] [cursor=pointer]:
+          - img [ref=e55]
+        - button "Settings" [ref=e58] [cursor=pointer]:
+          - img [ref=e59]
+  - generic [ref=e62]:
+    - navigation [ref=e63]:
+      - generic [ref=e64]:
+        - button "Workbench" [ref=e65] [cursor=pointer]:
+          - img [ref=e67]
+        - button "Writing Studio" [ref=e69] [cursor=pointer]:
+          - img [ref=e70]
+        - button "Characters" [ref=e75] [cursor=pointer]:
+          - img [ref=e76]
+        - button "Timeline" [active] [ref=e81] [cursor=pointer]:
+          - img [ref=e82]
+        - button "Graph" [ref=e85] [cursor=pointer]:
+          - img [ref=e86]
+        - button "World Model" [ref=e91] [cursor=pointer]:
+          - img [ref=e92]
+        - button "Simulation" [ref=e95] [cursor=pointer]:
+          - img [ref=e96]
+        - button "Beta Reader" [ref=e99] [cursor=pointer]:
+          - img [ref=e100]
+        - button "Consistency" [ref=e103] [cursor=pointer]:
+          - img [ref=e104]
+        - button "Agents" [ref=e107] [cursor=pointer]:
+          - img [ref=e108]
+        - button "Publish" [ref=e111] [cursor=pointer]:
+          - img [ref=e112]
+        - button "Insights" [ref=e114] [cursor=pointer]:
+          - img [ref=e115]
+        - button "Reference Library" [ref=e116] [cursor=pointer]:
+          - img [ref=e117]
+    - complementary [ref=e120]:
+      - generic [ref=e121]:
+        - generic: Timeline
+        - button "Collapse Sidebar" [ref=e123] [cursor=pointer]:
+          - img [ref=e124]
+      - generic [ref=e1426] [cursor=pointer]:
+        - generic: Timeline
+    - main [ref=e151]:
+      - generic [ref=e1427]:
+        - generic [ref=e1428]:
+          - button "Add Event" [ref=e1429] [cursor=pointer]:
+            - img [ref=e1430]
+            - text: Add Event
+          - button "New Branch" [ref=e1431] [cursor=pointer]:
+            - img [ref=e1432]
+            - text: New Branch
+          - button "Fork from Event" [ref=e1436] [cursor=pointer]:
+            - img [ref=e1437]
+            - text: Fork from Event
+          - button "Synchronize" [ref=e1441] [cursor=pointer]
+          - combobox [ref=e1442]:
+            - option "Main Investigation" [selected]
+            - option "Shadow Routes"
+            - option "Public Pressure"
+            - option "Echo Line"
+          - combobox [ref=e1443]:
+            - option "All Characters" [selected]
+            - option "Aria Solis"
+            - option "Rowan Vale"
+            - option "Seren Thorne"
+            - option "Vesper Hale"
+            - option "Nila Quill"
+          - combobox [ref=e1444]:
+            - option "All Locations" [selected]
+            - option "Sky Dock"
+            - option "Flood Market"
+            - option "Lantern Ward"
+            - option "Glass Bridge"
+        - img [ref=e1447]:
+          - generic [ref=e1449]:
+            - generic [ref=e1450]:
+              - generic [ref=e1451]:
+                - generic: Main Investigation
+              - generic [ref=e1452]:
+                - generic: Shadow Routes
+              - generic [ref=e1454]:
+                - generic: Public Pressure
+              - generic [ref=e1456]:
+                - generic: Echo Line
+            - generic [ref=e1475]:
+              - generic [ref=e1476]:
+                - generic: Arrival at Sky Doc…
+              - generic [ref=e1481]:
+                - generic: Market Route Leak
+              - generic [ref=e1486]:
+                - generic: Choir Salon Meetin…
+              - generic [ref=e1491]:
+                - generic: Archive Breach Rev…
+              - generic [ref=e1496]:
+                - generic: Bridge Intercept
+              - generic [ref=e1501]:
+                - generic: Emergency Public H…
+    - complementary [ref=e240]:
+      - generic [ref=e241]:
+        - generic [ref=e242]:
+          - img [ref=e244]
+          - generic [ref=e247]:
+            - generic [ref=e248]: Agent Dock
+            - generic [ref=e249]: Future CLI control surface
+        - button [ref=e250] [cursor=pointer]:
+          - img [ref=e251]
+      - generic [ref=e253]:
+        - generic [ref=e254]:
+          - generic [ref=e255]: Live Queue
+          - generic [ref=e256]:
+            - generic [ref=e257]:
+              - generic [ref=e258]: Queued
+              - generic [ref=e259]: "1"
+            - generic [ref=e260]:
+              - generic [ref=e261]: Running
+              - generic [ref=e262]: "0"
+          - generic [ref=e263]:
+            - generic [ref=e264]:
+              - generic [ref=e265]: Generated one graph sync proposal and one consistency summary.
+              - generic [ref=e266]: completed
+            - generic [ref=e267]:
+              - generic [ref=e268]: Imported manuscript skeleton and paused for user confirmation.
+              - generic [ref=e269]: awaiting_user_input
+        - generic [ref=e270]: View full chat history in the /agents page.
+  - contentinfo [ref=e271]:
+    - generic [ref=e272]:
+      - generic [ref=e273]:
+        - generic [ref=e274]:
+          - generic [ref=e275]: Project
+          - generic [ref=e276]: Starter Demo Project
+        - generic [ref=e277]:
+          - generic [ref=e278]: Path
+          - generic [ref=e279]: memory://starter-demo-project
+        - generic [ref=e280]:
+          - generic [ref=e281]: Status
+          - generic [ref=e282]: Idle
+      - generic [ref=e283]:
+        - generic [ref=e284]:
+          - generic [ref=e285]: Selection
+          - generic [ref=e286]: No Selection
+        - generic [ref=e287]:
+          - generic [ref=e288]: Workbench
+          - generic [ref=e289]: 3 pending / 3 issues

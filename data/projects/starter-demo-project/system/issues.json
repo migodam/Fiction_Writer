@@ -5,6 +5,7 @@
     "description": "One note still references South Bridge while the canonical location is Glass Bridge.",
     "severity": "high",
     "status": "open",
+    "source": "consistency",
     "referenceIds": [
       {
         "type": "timeline_event",
@@ -19,6 +20,10 @@
         "id": "loc_glass_bridge"
       }
     ],
+    "originTaskRunId": "run_graph_sync_seed",
+    "suggestedProposalIds": [
+      "proposal_consistency_fix_bridge"
+    ],
     "fixSuggestion": "Create a Workbench fix proposal that rewrites the stale location reference to Glass Bridge.",
     "visibility": "default",
     "dismissedAt": null,
@@ -31,6 +36,7 @@
     "description": "A graph note and a lore note appear to describe the same hidden route network.",
     "severity": "medium",
     "status": "open",
+    "source": "qa",
     "referenceIds": [
       {
         "type": "world_item",
@@ -53,6 +59,7 @@
     "description": "Vesper appears in one draft outline as deceased while all current scenes still use him as active.",
     "severity": "low",
     "status": "open",
+    "source": "qa",
     "referenceIds": [
       {
         "type": "character",

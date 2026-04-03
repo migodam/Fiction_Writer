@@ -1,63 +1,150 @@
-import React from 'react';
-import { Handle, Position, NodeProps } from '@xyflow/react';
+import React, { useCallback } from 'react';
+import type { TimelineEvent } from '../../models/project';
+import type { Point } from './bezierMath';
+import { EventTooltip } from './EventTooltip';
 
-interface EventNodeData {
-  label: string;
-  importance?: 'critical' | 'high' | 'medium' | 'low';
-  summary?: string;
-  timeText?: string;
-  onEdit?: () => void;
-  eventId: string;
+interface TimelineEventNodeProps {
+  event: TimelineEvent;
+  position: Point;
+  isHovered: boolean;
+  dragMode: 'move' | 'drop' | null;
+  onPointerDown: (eventId: string, e: React.PointerEvent<SVGCircleElement>) => void;
+  onPointerUp: (eventId: string) => void;
+  onPointerMove: (eventId: string, e: React.PointerEvent<SVGCircleElement>) => void;
+  onContextMenu: (eventId: string, e: React.MouseEvent<SVGCircleElement>) => void;
+  onHover: (eventId: string | null) => void;
 }
 
-const importanceBorderColor = (importance?: string): string => {
+const importanceRadius = (importance?: string): number => {
+  if (importance === 'critical') return 13;
+  if (importance === 'high') return 10;
+  if (importance === 'medium') return 8;
+  return 6;
+};
+
+const importanceColor = (importance?: string): string => {
   if (importance === 'critical') return '#ef4444';
   if (importance === 'high') return '#f59e0b';
   if (importance === 'medium') return '#3b82f6';
   return '#6b7280';
 };
 
-const importanceDotCount = (importance?: string): number => {
-  if (importance === 'critical') return 5;
-  if (importance === 'high') return 4;
-  if (importance === 'medium') return 3;
-  if (importance === 'low') return 2;
-  return 1;
-};
+export function TimelineEventNode({
+  event,
+  position,
+  isHovered,
+  dragMode,
+  onPointerDown,
+  onPointerUp,
+  onPointerMove,
+  onContextMenu,
+  onHover,
+}: TimelineEventNodeProps) {
+  const baseR = importanceRadius(event.importance);
+  const color = importanceColor(event.importance);
+  const isDragging = dragMode !== null;
+  const isDropDragging = dragMode === 'drop';
 
-export function TimelineEventNode({ data, selected, id }: NodeProps) {
-  const d = data as unknown as EventNodeData;
-  const borderColor = importanceBorderColor(d.importance);
-  const dotCount = importanceDotCount(d.importance);
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent<SVGCircleElement>) => {
+      e.stopPropagation();
+      onPointerDown(event.id, e);
+    },
+    [event.id, onPointerDown]
+  );
+
+  const handlePointerUp = useCallback(() => onPointerUp(event.id), [event.id, onPointerUp]);
+
+  const handlePointerMove = useCallback(
+    (e: React.PointerEvent<SVGCircleElement>) => onPointerMove(event.id, e),
+    [event.id, onPointerMove]
+  );
+
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent<SVGCircleElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onContextMenu(event.id, e);
+    },
+    [event.id, onContextMenu]
+  );
+
+  const handlePointerEnter = useCallback(() => onHover(event.id), [event.id, onHover]);
+  const handlePointerLeave = useCallback(() => onHover(null), [onHover]);
 
   return (
-    <div
-      data-testid={`timeline-event-node-${id}`}
-      onDoubleClick={() => d.onEdit?.()}
-      className="relative min-w-[160px] max-w-[220px] rounded-2xl border-2 bg-bg-elev-1 p-3 shadow-sm cursor-pointer select-none"
-      style={{
-        borderColor: selected ? '#f59e0b' : borderColor,
-        boxShadow: selected ? `0 0 0 2px #f59e0b55` : undefined,
-      }}
+    <g
+      transform={`translate(${position.x},${position.y})`}
+      opacity={isDragging ? 0.7 : 1}
+      data-testid={`timeline-event-node-${event.id}`}
+      data-position-x={position.x}
+      data-position-y={position.y}
     >
-      <Handle type="target" position={Position.Left} />
-      <div className="text-[10px] font-black uppercase tracking-[0.18em] text-text-3 mb-1 truncate">
-        {d.timeText || ''}
-      </div>
-      <div className="text-sm font-black text-text leading-tight truncate">{d.label}</div>
-      {d.summary && (
-        <div className="mt-1 text-xs text-text-2 line-clamp-2 leading-relaxed">{d.summary}</div>
+      {/* Hover ring — expands on hover */}
+      <circle
+        r={isHovered ? baseR + 8 : baseR + 2}
+        fill="none"
+        stroke={color}
+        strokeWidth={2}
+        opacity={isHovered ? 0.3 : 0.1}
+        style={{ transition: 'r 0.15s ease, opacity 0.15s ease' }}
+      />
+
+      {/* Base circle */}
+      <circle
+        r={baseR}
+        fill="var(--bg-elev-1, #1e1e2e)"
+        stroke={color}
+        strokeWidth={2.5}
+      />
+
+      {/* Importance fill dot */}
+      <circle r={baseR * 0.5} fill={color} opacity={0.8} />
+
+      {isDropDragging && (
+        <circle
+          r={baseR + 11}
+          fill="none"
+          stroke={color}
+          strokeWidth={2}
+          strokeDasharray="3 3"
+          opacity={0.55}
+          data-testid={`timeline-event-drop-indicator-${event.id}`}
+        />
       )}
-      <div className="mt-2 flex gap-0.5">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <div
-            key={i}
-            className="h-1.5 w-1.5 rounded-full"
-            style={{ background: i < dotCount ? borderColor : 'rgba(255,255,255,0.1)' }}
-          />
-        ))}
-      </div>
-      <Handle type="source" position={Position.Right} />
-    </div>
+
+      {/* Pointer event target */}
+      <circle
+        r={baseR + 6}
+        fill="transparent"
+        stroke="none"
+        pointerEvents="all"
+        style={{ cursor: isDropDragging ? 'grabbing' : 'pointer' }}
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
+        onPointerMove={handlePointerMove}
+        onContextMenu={handleContextMenu}
+        onPointerEnter={handlePointerEnter}
+        onPointerLeave={handlePointerLeave}
+        data-testid={`timeline-event-hitarea-${event.id}`}
+      />
+
+      {/* Tooltip on hover (not during drag) */}
+      <EventTooltip event={event} visible={isHovered && !isDragging} />
+
+      {/* Title label below node */}
+      <text
+        y={baseR + 16}
+        textAnchor="middle"
+        fill="currentColor"
+        fontSize={10}
+        fontWeight={600}
+        opacity={0.8}
+        pointerEvents="none"
+        style={{ userSelect: 'none' }}
+      >
+        {event.title.length > 18 ? event.title.slice(0, 18) + '…' : event.title}
+      </text>
+    </g>
   );
 }

@@ -23,7 +23,9 @@
   ],
   "sharedBranchIds": [],
   "importance": "medium",
-  "colorToken": "",
+  "colorToken": "sky",
   "layoutLock": false,
-  "modalStateHints": []
+  "modalStateHints": [
+    "branch-shadow"
+  ]
 }

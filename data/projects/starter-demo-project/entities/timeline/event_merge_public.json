@@ -1,0 +1,35 @@
+{
+  "id": "event_merge_public",
+  "title": "Emergency Public Hearing",
+  "summary": "The political fallout merges back into the main investigation after the bridge clash.",
+  "time": "Day 3 - Morning",
+  "branchId": "branch_main",
+  "orderIndex": 3,
+  "locationIds": [
+    "loc_glass_bridge"
+  ],
+  "participantCharacterIds": [
+    "char_aria",
+    "char_seren"
+  ],
+  "linkedSceneIds": [],
+  "linkedWorldItemIds": [
+    "loc_glass_bridge"
+  ],
+  "tags": [
+    "merge"
+  ],
+  "sharedBranchIds": [
+    "branch_public"
+  ],
+  "importance": "high",
+  "colorToken": "emerald",
+  "layoutLock": true,
+  "modalStateHints": [
+    "merge-anchor"
+  ],
+  "position": {
+    "x": 1825.1278336,
+    "y": 0
+  }
+}

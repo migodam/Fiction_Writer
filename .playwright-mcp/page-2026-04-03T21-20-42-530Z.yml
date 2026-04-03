@@ -1,0 +1,223 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e7]:
+          - generic [ref=e8]: F
+          - generic [ref=e9]:
+            - generic [ref=e10]: Narrative IDE
+            - generic [ref=e11]: Starter Demo Project
+        - button "Toggle Sidebar" [ref=e12] [cursor=pointer]:
+          - img [ref=e13]
+        - button "New Project" [ref=e15] [cursor=pointer]:
+          - img [ref=e16]
+        - button "Open Project" [ref=e19] [cursor=pointer]:
+          - img [ref=e20]
+        - button "Save Project" [ref=e22] [cursor=pointer]:
+          - img [ref=e23]
+        - button "Undo" [ref=e28] [cursor=pointer]:
+          - img [ref=e29]
+        - button "Redo" [ref=e32] [cursor=pointer]:
+          - img [ref=e33]
+        - button "Run Simulation" [ref=e37] [cursor=pointer]:
+          - img [ref=e38]
+        - button "Check Consistency" [ref=e40] [cursor=pointer]:
+          - img [ref=e41]
+        - button "Export Book" [ref=e44] [cursor=pointer]:
+          - img [ref=e45]
+      - button "Search entities, proposals, and settings... (Ctrl+P)" [ref=e48] [cursor=pointer]:
+        - img [ref=e49]
+        - generic [ref=e52]: Search entities, proposals, and settings... (Ctrl+P)
+      - generic [ref=e53]:
+        - button "Toggle Agent Dock" [ref=e54] [cursor=pointer]:
+          - img [ref=e55]
+        - button "Settings" [ref=e58] [cursor=pointer]:
+          - img [ref=e59]
+  - generic [ref=e62]:
+    - navigation [ref=e63]:
+      - generic [ref=e64]:
+        - button "Workbench" [ref=e65] [cursor=pointer]:
+          - img [ref=e66]
+        - button "Writing Studio" [ref=e68] [cursor=pointer]:
+          - img [ref=e69]
+        - button "Characters" [ref=e74] [cursor=pointer]:
+          - img [ref=e75]
+        - button "Timeline" [ref=e80] [cursor=pointer]:
+          - img [ref=e81]
+        - button "Graph" [ref=e84] [cursor=pointer]:
+          - img [ref=e85]
+        - button "World Model" [ref=e90] [cursor=pointer]:
+          - img [ref=e91]
+        - button "Simulation" [ref=e94] [cursor=pointer]:
+          - img [ref=e95]
+        - button "Beta Reader" [ref=e98] [cursor=pointer]:
+          - img [ref=e100]
+        - button "Consistency" [ref=e103] [cursor=pointer]:
+          - img [ref=e104]
+        - button "Agents" [ref=e107] [cursor=pointer]:
+          - img [ref=e108]
+        - button "Publish" [ref=e111] [cursor=pointer]:
+          - img [ref=e112]
+        - button "Insights" [ref=e114] [cursor=pointer]:
+          - img [ref=e115]
+        - button "Reference Library" [ref=e116] [cursor=pointer]:
+          - img [ref=e117]
+    - complementary [ref=e119]:
+      - generic [ref=e120]:
+        - generic: Beta Reader
+        - button "Collapse Sidebar" [ref=e121] [cursor=pointer]:
+          - img [ref=e122]
+      - generic [ref=e125] [cursor=pointer]:
+        - generic: Personas
+    - main [ref=e126]:
+      - generic [ref=e127]:
+        - complementary [ref=e128]:
+          - generic [ref=e129]:
+            - generic [ref=e130]:
+              - generic [ref=e131]:
+                - generic [ref=e132]: Beta Reader
+                - generic [ref=e133]: Reader Personas
+              - img [ref=e134]
+            - generic [ref=e139]:
+              - textbox "Persona name" [ref=e140]
+              - textbox "What do they care about?" [ref=e141]
+              - button "Create Persona" [ref=e142] [cursor=pointer]:
+                - img [ref=e143]
+                - text: Create Persona
+          - generic [ref=e144]:
+            - button "The Logician Focuses on plot holes and cause-effect chains." [ref=e145] [cursor=pointer]:
+              - generic [ref=e146]:
+                - generic [ref=e147]: The Logician
+                - button [ref=e148]:
+                  - img [ref=e149]
+              - generic [ref=e152]: Focuses on plot holes and cause-effect chains.
+            - button "The Empath Tracks emotional resonance and character arcs." [ref=e153] [cursor=pointer]:
+              - generic [ref=e154]:
+                - generic [ref=e155]: The Empath
+                - button [ref=e156]:
+                  - img [ref=e157]
+              - generic [ref=e160]: Tracks emotional resonance and character arcs.
+            - button "The Generalist Represents average reader enjoyment and clarity." [ref=e161] [cursor=pointer]:
+              - generic [ref=e162]:
+                - generic [ref=e163]: The Generalist
+                - button [ref=e164]:
+                  - img [ref=e165]
+              - generic [ref=e168]: Represents average reader enjoyment and clarity.
+        - main [ref=e169]:
+          - generic [ref=e170]:
+            - generic [ref=e171]:
+              - generic [ref=e172]:
+                - generic [ref=e173]:
+                  - generic [ref=e174]: Engagement
+                  - img [ref=e175]
+                - generic [ref=e178]: 82%
+              - generic [ref=e179]:
+                - generic [ref=e180]:
+                  - generic [ref=e181]: Retention
+                  - img [ref=e182]
+                - generic [ref=e186]: 71%
+              - generic [ref=e187]:
+                - generic [ref=e188]:
+                  - generic [ref=e189]: Resonance
+                  - img [ref=e190]
+                - generic [ref=e192]: 85%
+              - generic [ref=e193]:
+                - generic [ref=e194]:
+                  - generic [ref=e195]: Personas
+                  - img [ref=e196]
+                - generic [ref=e201]: 3%
+            - generic [ref=e202]:
+              - generic [ref=e203]:
+                - generic [ref=e204]:
+                  - generic [ref=e205]: Current Persona
+                  - generic [ref=e206]: The Logician
+                - button "Run Persona" [ref=e207] [cursor=pointer]:
+                  - img [ref=e208]
+                  - text: Run Persona
+              - generic [ref=e210]:
+                - generic [ref=e211]:
+                  - generic [ref=e212]:
+                    - generic [ref=e213]: Profile
+                    - generic [ref=e214]: Focuses on plot holes and cause-effect chains.
+                  - generic [ref=e215]:
+                    - generic [ref=e216]:
+                      - generic [ref=e217]:
+                        - generic [ref=e218]: Chapter 1 pacing
+                        - generic [ref=e219]: Pacing
+                      - generic [ref=e220]: The introduction is strong, but the market transition wants one more beat of emotional processing.
+                    - generic [ref=e221]:
+                      - generic [ref=e222]:
+                        - generic [ref=e223]: Cipher setup
+                        - generic [ref=e224]: Consistency
+                      - generic [ref=e225]: The archive reconstruction sequence is compelling, but Nila should own more of the deciphering setup earlier.
+                    - generic [ref=e226]:
+                      - generic [ref=e227]:
+                        - generic [ref=e228]: Rowan voice
+                        - generic [ref=e229]: Voice
+                      - generic [ref=e230]: Rowan consistently lands with a dry tactical humor that helps the investigation feel sharp.
+                - generic [ref=e232]:
+                  - generic [ref=e233]:
+                    - img [ref=e234]
+                    - text: Aggregate Scores
+                  - generic [ref=e236]:
+                    - generic [ref=e237]:
+                      - generic [ref=e238]: Engagement
+                      - generic [ref=e241]: 82%
+                    - generic [ref=e242]:
+                      - generic [ref=e243]: Retention
+                      - generic [ref=e246]: 71%
+                    - generic [ref=e247]:
+                      - generic [ref=e248]: Resonance
+                      - generic [ref=e251]: 85%
+                    - generic [ref=e252]:
+                      - generic [ref=e253]: Pacing
+                      - generic [ref=e256]: 77%
+                    - generic [ref=e257]:
+                      - generic [ref=e258]: Consistency
+                      - generic [ref=e261]: 68%
+    - complementary [ref=e265]:
+      - generic [ref=e266]:
+        - generic [ref=e267]:
+          - img [ref=e269]
+          - generic [ref=e272]:
+            - generic [ref=e273]: Agent Dock
+            - generic [ref=e274]: Future CLI control surface
+        - button [ref=e275] [cursor=pointer]:
+          - img [ref=e276]
+      - generic [ref=e278]:
+        - generic [ref=e279]:
+          - generic [ref=e280]: Live Queue
+          - generic [ref=e281]:
+            - generic [ref=e282]:
+              - generic [ref=e283]: Queued
+              - generic [ref=e284]: "1"
+            - generic [ref=e285]:
+              - generic [ref=e286]: Running
+              - generic [ref=e287]: "0"
+          - generic [ref=e288]:
+            - generic [ref=e289]:
+              - generic [ref=e290]: Generated one graph sync proposal and one consistency summary.
+              - generic [ref=e291]: completed
+            - generic [ref=e292]:
+              - generic [ref=e293]: Imported manuscript skeleton and paused for user confirmation.
+              - generic [ref=e294]: awaiting_user_input
+        - generic [ref=e295]: View full chat history in the /agents page.
+  - contentinfo [ref=e296]:
+    - generic [ref=e297]:
+      - generic [ref=e298]:
+        - generic [ref=e299]:
+          - generic [ref=e300]: Project
+          - generic [ref=e301]: Starter Demo Project
+        - generic [ref=e302]:
+          - generic [ref=e303]: Path
+          - generic [ref=e304]: memory://starter-demo-project
+        - generic [ref=e305]:
+          - generic [ref=e306]: Status
+          - generic [ref=e307]: Unsaved changes
+      - generic [ref=e308]:
+        - generic [ref=e309]:
+          - generic [ref=e310]: Selection
+          - generic [ref=e311]: No Selection
+        - generic [ref=e312]:
+          - generic [ref=e313]: Workbench
+          - generic [ref=e314]: 3 pending / 3 issues

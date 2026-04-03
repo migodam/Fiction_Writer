@@ -3,12 +3,14 @@
     "id": "proposal_hist_candidate",
     "title": "Promote courier witness into candidate profile",
     "source": "agent",
+    "kind": "entity_update",
     "description": "Resolved earlier narrative import.",
     "targetEntityType": "candidate",
     "targetEntityId": "cand_mina",
     "preview": "Created candidate Mina Vale from scene witness notes.",
+    "reviewPolicy": "manual_workbench",
     "status": "accepted",
-    "createdAt": "2026-03-12T02:40:26.701Z",
-    "resolvedAt": "2026-03-12T02:40:26.701Z"
+    "createdAt": "2026-04-03T18:37:04.333Z",
+    "resolvedAt": "2026-04-03T18:37:04.333Z"
   }
 ]

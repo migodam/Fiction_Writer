@@ -1,0 +1,12 @@
+{
+  "id": "video_pkg_ep1",
+  "storyboardId": "storyboard_ep1",
+  "provider": "placeholder-runway",
+  "status": "not_configured",
+  "promptPackagePath": "exports/video/video_pkg_ep1.json",
+  "providerPayloadPath": "exports/video/video_pkg_ep1.provider.json",
+  "providerResponsePath": "exports/video/video_pkg_ep1.response.json",
+  "renderManifestPath": "exports/video/video_pkg_ep1.render.json",
+  "createdAt": "2026-04-03T18:37:04.333Z",
+  "updatedAt": "2026-04-03T18:37:04.333Z"
+}

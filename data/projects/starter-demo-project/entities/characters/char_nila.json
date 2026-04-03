@@ -31,11 +31,61 @@
   "linkedWorldItemIds": [
     "item_city_map"
   ],
+  "importance": "supporting",
+  "groupKey": "supporting",
+  "relationshipIds": [
+    "rel_rowan_nila"
+  ],
+  "povInsights": {
+    "summary": "Nila adds analytic clarity and map-centric exposition without stalling pace.",
+    "scores": [
+      {
+        "key": "agency",
+        "label": "Agency",
+        "score": 67
+      },
+      {
+        "key": "volatility",
+        "label": "Volatility",
+        "score": 51
+      },
+      {
+        "key": "mystery",
+        "label": "Mystery Value",
+        "score": 72
+      }
+    ],
+    "radar": [
+      {
+        "key": "resolve",
+        "label": "Resolve",
+        "score": 69
+      },
+      {
+        "key": "empathy",
+        "label": "Empathy",
+        "score": 73
+      },
+      {
+        "key": "risk",
+        "label": "Risk Appetite",
+        "score": 48
+      },
+      {
+        "key": "secrecy",
+        "label": "Secrecy",
+        "score": 58
+      },
+      {
+        "key": "leadership",
+        "label": "Leadership",
+        "score": 44
+      }
+    ],
+    "source": "placeholder",
+    "updatedAt": "2026-04-03T18:37:04.333Z"
+  },
   "statusFlags": {
     "alive": true
-  },
-  "importance": "ungrouped",
-  "groupKey": "ungrouped",
-  "relationshipIds": [],
-  "povInsights": null
+  }
 }

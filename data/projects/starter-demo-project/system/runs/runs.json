@@ -1,1 +1,40 @@
-[]
+[
+  {
+    "id": "run_graph_sync_seed",
+    "taskRequestId": "task_graph_sync",
+    "status": "completed",
+    "executor": "manual",
+    "adapter": "noop-qa-adapter",
+    "attempt": 1,
+    "startedAt": "2026-04-03T18:37:04.333Z",
+    "heartbeatAt": "2026-04-03T18:37:04.333Z",
+    "finishedAt": "2026-04-03T18:37:04.333Z",
+    "summary": "Generated one graph sync proposal and one consistency summary.",
+    "artifactIds": [
+      "artifact_graph_sync_seed"
+    ]
+  },
+  {
+    "id": "run_import_seed",
+    "taskRequestId": "task_import_seed",
+    "status": "awaiting_user_input",
+    "executor": "local-cli",
+    "adapter": "rule-import-adapter",
+    "attempt": 1,
+    "startedAt": "2026-04-03T18:37:04.333Z",
+    "heartbeatAt": "2026-04-03T18:37:04.333Z",
+    "summary": "Imported manuscript skeleton and paused for user confirmation.",
+    "artifactIds": [
+      "artifact_import_manifest_seed",
+      "artifact_context_seed"
+    ],
+    "awaitingUserInput": {
+      "prompt": "Confirm whether imported chapter boundaries are acceptable before metadata extraction.",
+      "fields": [
+        "chapter_boundaries",
+        "scene_split_quality"
+      ],
+      "reason": "Import staging needs human review before downstream agent steps."
+    }
+  }
+]

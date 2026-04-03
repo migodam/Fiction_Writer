@@ -64,7 +64,7 @@ export const BetaReaderWorkspace = () => {
         </div>
         <div className="h-full overflow-y-auto custom-scrollbar p-2">
           {betaPersonas.map((persona) => (
-            <button key={persona.id} type="button" className={cn('mb-2 w-full rounded-2xl border px-4 py-4 text-left transition-colors', activePersonaId === persona.id ? 'border-brand bg-active text-text' : 'border-transparent text-text-2 hover:bg-hover')} onClick={() => setActivePersonaId(persona.id)} data-testid={`beta-persona-${persona.id}`}>
+            <div key={persona.id} role="button" tabIndex={0} className={cn('mb-2 w-full cursor-pointer rounded-2xl border px-4 py-4 text-left transition-colors', activePersonaId === persona.id ? 'border-brand bg-active text-text' : 'border-transparent text-text-2 hover:bg-hover')} onClick={() => setActivePersonaId(persona.id)} onKeyDown={(e) => e.key === 'Enter' && setActivePersonaId(persona.id)} data-testid={`beta-persona-${persona.id}`}>
               <div className="mb-2 flex items-center justify-between gap-3">
                 <div className="text-sm font-black text-text">{persona.name}</div>
                 <button type="button" className="rounded border border-red/40 p-1 text-red" onClick={(event) => {
@@ -77,7 +77,7 @@ export const BetaReaderWorkspace = () => {
                 </button>
               </div>
               <div className="text-xs leading-relaxed text-text-3">{persona.profile}</div>
-            </button>
+            </div>
           ))}
         </div>
       </aside>

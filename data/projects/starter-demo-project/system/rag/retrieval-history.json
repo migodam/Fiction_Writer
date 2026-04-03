@@ -1,1 +1,21 @@
-[]
+[
+  {
+    "requestId": "retrieval_seed_1",
+    "backend": "keyword",
+    "items": [
+      {
+        "chunkId": "rag_chunk_scene_arrival_1",
+        "documentId": "rag_doc_scene_arrival",
+        "excerpt": "Aria stepped off the lift into the Sky Dock haze...",
+        "score": 0.88,
+        "entityRefs": [
+          {
+            "type": "scene",
+            "id": "scene_arrival"
+          }
+        ],
+        "sourcePath": "writing/scenes/scene_arrival.md"
+      }
+    ]
+  }
+]

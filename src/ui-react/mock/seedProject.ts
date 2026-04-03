@@ -743,13 +743,68 @@ const createWorldItems = (): WorldItem[] => [
   },
 ];
 
-const createStarterBranches = (): TimelineBranch[] => [
-  { id: 'branch_main', name: 'Main Investigation', description: 'Primary narrative thread.', parentBranchId: null, forkEventId: null, mergeEventId: 'event_merge_public', color: '#f59e0b', sortOrder: 0, collapsed: false, mode: 'root', startAnchor: null, endMode: 'open', mergeTargetBranchId: null, geometry: { laneOffset: 0, bend: 0.18, thickness: 1 } },
-  { id: 'branch_shadow', name: 'Shadow Routes', description: 'Undercity movements and hidden handoffs.', parentBranchId: 'branch_main', forkEventId: 'event_arrival', mergeEventId: 'event_bridge', color: '#38bdf8', sortOrder: 1, collapsed: false, mode: 'forked', startAnchor: { branchId: 'branch_main', eventId: 'event_arrival' }, endMode: 'merge', mergeTargetBranchId: 'branch_main', geometry: { laneOffset: -90, bend: 0.36, thickness: 1 } },
-  { id: 'branch_public', name: 'Public Pressure', description: 'Political and civic fallout.', parentBranchId: 'branch_main', forkEventId: 'event_arrival', mergeEventId: 'event_merge_public', color: '#22c55e', sortOrder: 2, collapsed: false, mode: 'forked', startAnchor: { branchId: 'branch_main', eventId: 'event_arrival' }, endMode: 'merge', mergeTargetBranchId: 'branch_main', geometry: { laneOffset: 110, bend: 0.28, thickness: 1 } },
-];
+const STARTER_TIMELINE_CANVAS_WIDTH = 2000;
 
-const createStarterEvents = (): TimelineEvent[] => [
+const cubicBezierPointForSeed = (
+  p0: { x: number; y: number },
+  p1: { x: number; y: number },
+  p2: { x: number; y: number },
+  p3: { x: number; y: number },
+  t: number,
+) => {
+  const u = 1 - t;
+  const u2 = u * u;
+  const u3 = u2 * u;
+  const t2 = t * t;
+  const t3 = t2 * t;
+
+  return {
+    x: u3 * p0.x + 3 * u2 * t * p1.x + 3 * u * t2 * p2.x + t3 * p3.x,
+    y: u3 * p0.y + 3 * u2 * t * p1.y + 3 * u * t2 * p2.y + t3 * p3.y,
+  };
+};
+
+const timelineTFromOrderIndex = (totalOnBranch: number, index: number) => {
+  if (totalOnBranch <= 1) return 0.5;
+  const pad = 0.08;
+  return pad + (index / (totalOnBranch - 1)) * (1 - 2 * pad);
+};
+
+const buildStarterEventAnchorPositions = () => {
+  const p0 = { x: 80, y: 0 };
+  const p3 = { x: STARTER_TIMELINE_CANVAS_WIDTH - 80, y: 0 };
+  const dx = (p3.x - p0.x) * 0.18;
+  const p1 = { x: p0.x + dx, y: 0 };
+  const p2 = { x: p3.x - dx, y: 0 };
+
+  return {
+    event_arrival: cubicBezierPointForSeed(p0, p1, p2, p3, timelineTFromOrderIndex(4, 0)),
+    event_bridge: cubicBezierPointForSeed(p0, p1, p2, p3, timelineTFromOrderIndex(4, 2)),
+    event_merge_public: cubicBezierPointForSeed(p0, p1, p2, p3, timelineTFromOrderIndex(4, 3)),
+  };
+};
+
+const hydrateStarterBranchAnchors = (branches: TimelineBranch[]): TimelineBranch[] => {
+  const anchorPositions = buildStarterEventAnchorPositions();
+  return branches.map((branch) => ({
+    ...branch,
+    anchorStartPos: branch.startAnchor ? anchorPositions[branch.startAnchor.eventId as keyof typeof anchorPositions] : branch.anchorStartPos,
+    anchorEndPos: branch.endAnchor ? anchorPositions[branch.endAnchor.eventId as keyof typeof anchorPositions] : branch.anchorEndPos,
+  }));
+};
+
+const createStarterBranches = (): TimelineBranch[] =>
+  hydrateStarterBranchAnchors([
+    { id: 'branch_main', name: 'Main Investigation', description: 'Primary narrative thread.', parentBranchId: null, forkEventId: null, mergeEventId: 'event_merge_public', color: '#f59e0b', sortOrder: 0, collapsed: false, mode: 'root', startAnchor: null, endAnchor: null, endMode: 'open', mergeTargetBranchId: null, geometry: { laneOffset: 0, bend: 0.18, thickness: 1 } },
+    { id: 'branch_shadow', name: 'Shadow Routes', description: 'Undercity movements and hidden handoffs.', parentBranchId: 'branch_main', forkEventId: 'event_arrival', mergeEventId: 'event_bridge', color: '#38bdf8', sortOrder: 1, collapsed: false, mode: 'forked', startAnchor: { branchId: 'branch_main', eventId: 'event_arrival' }, endAnchor: { branchId: 'branch_main', eventId: 'event_bridge' }, endMode: 'merge', mergeTargetBranchId: 'branch_main', geometry: { laneOffset: -90, bend: 0.36, thickness: 1 } },
+    { id: 'branch_public', name: 'Public Pressure', description: 'Political and civic fallout.', parentBranchId: 'branch_main', forkEventId: 'event_arrival', mergeEventId: 'event_merge_public', color: '#22c55e', sortOrder: 2, collapsed: false, mode: 'forked', startAnchor: { branchId: 'branch_main', eventId: 'event_arrival' }, endAnchor: { branchId: 'branch_main', eventId: 'event_merge_public' }, endMode: 'merge', mergeTargetBranchId: 'branch_main', geometry: { laneOffset: 110, bend: 0.28, thickness: 1 } },
+    { id: 'branch_echo', name: 'Echo Line', description: 'A mirrored investigative run that fully overlaps the host branch between two shared events.', parentBranchId: 'branch_main', forkEventId: 'event_arrival', mergeEventId: 'event_bridge', color: '#a855f7', sortOrder: 3, collapsed: false, mode: 'forked', startAnchor: { branchId: 'branch_main', eventId: 'event_arrival' }, endAnchor: { branchId: 'branch_main', eventId: 'event_bridge' }, endMode: 'merge', mergeTargetBranchId: 'branch_main', geometry: { laneOffset: 0, bend: 0.18, thickness: 1 } },
+  ]);
+
+const createStarterEvents = (): TimelineEvent[] => {
+  const mainlinePositions = buildStarterEventAnchorPositions();
+
+  return [
   {
     id: 'event_arrival',
     title: 'Arrival at Sky Dock',
@@ -762,7 +817,7 @@ const createStarterEvents = (): TimelineEvent[] => [
     linkedSceneIds: ['scene_arrival'],
     linkedWorldItemIds: ['loc_sky_dock'],
     tags: ['arrival'],
-    sharedBranchIds: ['branch_shadow', 'branch_public'],
+    sharedBranchIds: ['branch_shadow', 'branch_public', 'branch_echo'],
     importance: 'high',
     colorToken: 'amber',
     layoutLock: true,
@@ -780,6 +835,7 @@ const createStarterEvents = (): TimelineEvent[] => [
     linkedSceneIds: ['scene_market'],
     linkedWorldItemIds: ['item_city_map'],
     tags: ['intel'],
+    sharedBranchIds: [],
     importance: 'medium',
     colorToken: 'sky',
     layoutLock: false,
@@ -797,6 +853,7 @@ const createStarterEvents = (): TimelineEvent[] => [
     linkedSceneIds: ['scene_choir'],
     linkedWorldItemIds: ['lore_memory_tax', 'org_glass_choir'],
     tags: ['politics'],
+    sharedBranchIds: [],
     importance: 'medium',
     colorToken: 'emerald',
     layoutLock: false,
@@ -814,6 +871,7 @@ const createStarterEvents = (): TimelineEvent[] => [
     linkedSceneIds: ['scene_archive', 'scene_consul'],
     linkedWorldItemIds: ['item_memory_shard', 'org_meridian'],
     tags: ['artifact'],
+    sharedBranchIds: [],
     importance: 'high',
     colorToken: 'amber',
     layoutLock: false,
@@ -831,11 +889,12 @@ const createStarterEvents = (): TimelineEvent[] => [
     linkedSceneIds: ['scene_bridge'],
     linkedWorldItemIds: ['loc_glass_bridge', 'item_memory_shard', 'item_city_map'],
     tags: ['climax'],
-    sharedBranchIds: ['branch_shadow'],
+    sharedBranchIds: ['branch_shadow', 'branch_echo'],
     importance: 'critical',
     colorToken: 'red',
     layoutLock: true,
     modalStateHints: ['merge-anchor'],
+    position: mainlinePositions.event_bridge,
   },
   {
     id: 'event_merge_public',
@@ -854,8 +913,10 @@ const createStarterEvents = (): TimelineEvent[] => [
     colorToken: 'emerald',
     layoutLock: true,
     modalStateHints: ['merge-anchor'],
+    position: mainlinePositions.event_merge_public,
   },
-];
+  ];
+};
 
 const createStarterChapters = (): Chapter[] => [
   {

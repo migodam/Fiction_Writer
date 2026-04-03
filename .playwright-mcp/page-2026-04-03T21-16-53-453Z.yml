@@ -1,0 +1,246 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e7]:
+          - generic [ref=e8]: F
+          - generic [ref=e9]:
+            - generic [ref=e10]: Narrative IDE
+            - generic [ref=e11]: Starter Demo Project
+        - button "Toggle Sidebar" [ref=e12] [cursor=pointer]:
+          - img [ref=e13]
+        - button "New Project" [ref=e15] [cursor=pointer]:
+          - img [ref=e16]
+        - button "Open Project" [ref=e19] [cursor=pointer]:
+          - img [ref=e20]
+        - button "Save Project" [ref=e22] [cursor=pointer]:
+          - img [ref=e23]
+        - button "Undo" [ref=e28] [cursor=pointer]:
+          - img [ref=e29]
+        - button "Redo" [ref=e32] [cursor=pointer]:
+          - img [ref=e33]
+        - button "Run Simulation" [ref=e37] [cursor=pointer]:
+          - img [ref=e38]
+        - button "Check Consistency" [ref=e40] [cursor=pointer]:
+          - img [ref=e41]
+        - button "Export Book" [ref=e44] [cursor=pointer]:
+          - img [ref=e45]
+      - button "Search entities, proposals, and settings... (Ctrl+P)" [ref=e48] [cursor=pointer]:
+        - img [ref=e49]
+        - generic [ref=e52]: Search entities, proposals, and settings... (Ctrl+P)
+      - generic [ref=e53]:
+        - button "Toggle Agent Dock" [ref=e54] [cursor=pointer]:
+          - img [ref=e55]
+        - button "Settings" [ref=e58] [cursor=pointer]:
+          - img [ref=e59]
+  - generic [ref=e62]:
+    - navigation [ref=e63]:
+      - generic [ref=e64]:
+        - button "Workbench" [ref=e65] [cursor=pointer]:
+          - img [ref=e66]
+        - button "Writing Studio" [ref=e68] [cursor=pointer]:
+          - img [ref=e70]
+        - button "Characters" [ref=e75] [cursor=pointer]:
+          - img [ref=e76]
+        - button "Timeline" [ref=e81] [cursor=pointer]:
+          - img [ref=e82]
+        - button "Graph" [ref=e85] [cursor=pointer]:
+          - img [ref=e86]
+        - button "World Model" [ref=e91] [cursor=pointer]:
+          - img [ref=e92]
+        - button "Simulation" [ref=e95] [cursor=pointer]:
+          - img [ref=e96]
+        - button "Beta Reader" [ref=e99] [cursor=pointer]:
+          - img [ref=e100]
+        - button "Consistency" [ref=e103] [cursor=pointer]:
+          - img [ref=e104]
+        - button "Agents" [ref=e107] [cursor=pointer]:
+          - img [ref=e108]
+        - button "Publish" [ref=e111] [cursor=pointer]:
+          - img [ref=e112]
+        - button "Insights" [ref=e114] [cursor=pointer]:
+          - img [ref=e115]
+        - button "Reference Library" [ref=e116] [cursor=pointer]:
+          - img [ref=e117]
+    - complementary [ref=e120]:
+      - generic [ref=e121]:
+        - generic [ref=e122]: Writing Studio
+        - button "Collapse Sidebar" [ref=e123] [cursor=pointer]:
+          - img [ref=e124]
+      - generic [ref=e127]:
+        - generic [ref=e129] [cursor=pointer]: Scenes
+        - generic [ref=e131] [cursor=pointer]: Chapters
+        - generic [ref=e133] [cursor=pointer]: Manuscript
+        - generic [ref=e134] [cursor=pointer]:
+          - generic [ref=e135]: Scripts
+          - generic [ref=e136]: "1"
+        - generic [ref=e137] [cursor=pointer]:
+          - generic [ref=e138]: Storyboards
+          - generic [ref=e139]: "1"
+    - main [ref=e142]:
+      - generic [ref=e143]:
+        - complementary [ref=e144]:
+          - generic [ref=e145]:
+            - generic [ref=e146]:
+              - generic [ref=e147]:
+                - generic [ref=e148]: Scenes
+                - generic [ref=e149]: Scalable outline
+              - generic [ref=e150]:
+                - button [ref=e151] [cursor=pointer]:
+                  - img [ref=e152]
+                - button [ref=e153] [cursor=pointer]:
+                  - img [ref=e154]
+            - generic [ref=e157]:
+              - img [ref=e158]
+              - textbox "Search scenes across the whole manuscript" [ref=e161]
+          - generic [ref=e162]:
+            - generic [ref=e163]:
+              - generic [ref=e164]:
+                - img [ref=e165]
+                - text: Fractured Arrival
+              - button "Dockside Arrival" [ref=e168] [cursor=pointer]:
+                - button "Dockside Arrival" [ref=e169]:
+                  - generic [ref=e170]: Dockside Arrival
+                  - img [ref=e171]
+              - button "Flood Market Line" [ref=e173] [cursor=pointer]:
+                - button "Flood Market Line" [ref=e174]:
+                  - generic [ref=e175]: Flood Market Line
+                  - img [ref=e176]
+              - status [ref=e178]
+            - generic [ref=e179]:
+              - generic [ref=e180]:
+                - img [ref=e181]
+                - text: Pressure Lines
+              - button "Choir in Lantern Ward" [ref=e184] [cursor=pointer]:
+                - button "Choir in Lantern Ward" [ref=e185]:
+                  - generic [ref=e186]: Choir in Lantern Ward
+                  - img [ref=e187]
+              - button "Archive Reconstruction" [ref=e189] [cursor=pointer]:
+                - button "Archive Reconstruction" [ref=e190]:
+                  - generic [ref=e191]: Archive Reconstruction
+                  - img [ref=e192]
+              - button "Consul's Smile" [ref=e194] [cursor=pointer]:
+                - button "Consul's Smile" [ref=e195]:
+                  - generic [ref=e196]: Consul's Smile
+                  - img [ref=e197]
+              - button "Glass Bridge Intercept" [ref=e199] [cursor=pointer]:
+                - button "Glass Bridge Intercept" [ref=e200]:
+                  - generic [ref=e201]: Glass Bridge Intercept
+                  - img [ref=e202]
+              - status [ref=e204]
+        - generic [ref=e207]:
+          - generic [ref=e208]:
+            - generic [ref=e209]:
+              - button [ref=e210] [cursor=pointer]:
+                - img [ref=e211]
+              - generic [ref=e213]:
+                - generic [ref=e214]: Scene Draft
+                - generic [ref=e215]: Dockside Arrival
+            - button [ref=e216] [cursor=pointer]:
+              - img [ref=e217]
+          - generic [ref=e220]:
+            - textbox "Scene title" [ref=e221]: Dockside Arrival
+            - generic [ref=e222]:
+              - generic [ref=e223]:
+                - generic [ref=e224]: POV
+                - generic [ref=e225]: Aria Solis
+              - generic [ref=e226]:
+                - generic [ref=e227]: Events
+                - generic [ref=e228]: Arrival at Sky Dock
+              - generic [ref=e229]:
+                - generic [ref=e230]: World
+                - generic [ref=e231]: Sky Dock
+            - generic [ref=e232]:
+              - button "Continue Writing" [ref=e233] [cursor=pointer]:
+                - img [ref=e234]
+                - text: Continue Writing
+              - button "Polish Scene" [ref=e236] [cursor=pointer]:
+                - img [ref=e237]
+                - text: Polish Scene
+            - generic [ref=e239]:
+              - generic [ref=e240]:
+                - button "Bold" [ref=e241] [cursor=pointer]:
+                  - img [ref=e242]
+                - button "Italic" [ref=e244] [cursor=pointer]:
+                  - img [ref=e245]
+                - button "Strike" [ref=e247] [cursor=pointer]:
+                  - img [ref=e248]
+                - button "H1" [ref=e252] [cursor=pointer]:
+                  - img [ref=e253]
+                - button "H2" [ref=e255] [cursor=pointer]:
+                  - img [ref=e256]
+                - button "H3" [ref=e258] [cursor=pointer]:
+                  - img [ref=e259]
+                - button "Bullet List" [ref=e263] [cursor=pointer]:
+                  - img [ref=e264]
+                - button "Ordered List" [ref=e265] [cursor=pointer]:
+                  - img [ref=e266]
+                - button "Divider" [ref=e269] [cursor=pointer]:
+                  - img [ref=e270]
+                - generic [ref=e271]: 38 words · 220 chars
+              - paragraph [ref=e274]: Aria stepped off the lift into the Sky Dock haze, where the city smelled like cold copper and stormwater. Rowan waited beside a stack of confiscated trunks, already bored by her questions and curious in spite of himself.
+        - complementary [ref=e277]:
+          - generic [ref=e279]:
+            - generic [ref=e280]:
+              - generic [ref=e281]: Context
+              - generic [ref=e282]: Local references
+            - button [ref=e283] [cursor=pointer]:
+              - img [ref=e284]
+          - generic [ref=e286]:
+            - generic [ref=e287]:
+              - generic [ref=e288]: Characters
+              - generic [ref=e289]:
+                - generic [ref=e290]: Aria Solis
+                - generic [ref=e291]: Rowan Vale
+            - generic [ref=e292]:
+              - generic [ref=e293]: Timeline
+              - generic [ref=e295]: Arrival at Sky Dock
+            - generic [ref=e296]:
+              - generic [ref=e297]: World
+              - generic [ref=e299]: Sky Dock
+    - complementary [ref=e303]:
+      - generic [ref=e304]:
+        - generic [ref=e305]:
+          - img [ref=e307]
+          - generic [ref=e310]:
+            - generic [ref=e311]: Agent Dock
+            - generic [ref=e312]: Future CLI control surface
+        - button [ref=e313] [cursor=pointer]:
+          - img [ref=e314]
+      - generic [ref=e316]:
+        - generic [ref=e317]:
+          - generic [ref=e318]: Live Queue
+          - generic [ref=e319]:
+            - generic [ref=e320]:
+              - generic [ref=e321]: Queued
+              - generic [ref=e322]: "1"
+            - generic [ref=e323]:
+              - generic [ref=e324]: Running
+              - generic [ref=e325]: "0"
+          - generic [ref=e326]:
+            - generic [ref=e327]:
+              - generic [ref=e328]: Generated one graph sync proposal and one consistency summary.
+              - generic [ref=e329]: completed
+            - generic [ref=e330]:
+              - generic [ref=e331]: Imported manuscript skeleton and paused for user confirmation.
+              - generic [ref=e332]: awaiting_user_input
+        - generic [ref=e333]: View full chat history in the /agents page.
+  - contentinfo [ref=e334]:
+    - generic [ref=e335]:
+      - generic [ref=e336]:
+        - generic [ref=e337]:
+          - generic [ref=e338]: Project
+          - generic [ref=e339]: Starter Demo Project
+        - generic [ref=e340]:
+          - generic [ref=e341]: Path
+          - generic [ref=e342]: memory://starter-demo-project
+        - generic [ref=e343]:
+          - generic [ref=e344]: Status
+          - generic [ref=e345]: Unsaved changes
+      - generic [ref=e346]:
+        - generic [ref=e347]:
+          - generic [ref=e348]: Selection
+          - generic [ref=e349]: No Selection
+        - generic [ref=e350]:
+          - generic [ref=e351]: Workbench
+          - generic [ref=e352]: 3 pending / 3 issues

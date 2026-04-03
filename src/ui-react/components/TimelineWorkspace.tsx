@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { GitBranchPlus, Plus, Route, X } from 'lucide-react';
 import { useProjectStore, useUIStore } from '../store';
-import type { TimelineEvent } from '../models/project';
+import type { TimelineBranch, TimelineEvent } from '../models/project';
 import { useI18n } from '../i18n';
 import { TimelineCanvas } from './timeline/TimelineCanvas';
 
@@ -10,18 +10,17 @@ const MAIN_BRANCH_ID = 'branch_main';
 
 export const TimelineWorkspace = () => {
   const {
+    projectRoot,
     timelineEvents,
     timelineBranches,
     characters,
     worldItems,
     addTimelineEvent,
-    updateTimelineEvent,
-    deleteTimelineEvent,
     createTimelineBranch,
     moveTimelineEvent,
   } = useProjectStore();
   const { setLastActionStatus } = useUIStore();
-  const { locale, t } = useI18n();
+  const { locale } = useI18n();
   const zh = locale === 'zh-CN';
   const [searchParams] = useSearchParams();
   const [activeBranchId, setActiveBranchId] = useState<string>(timelineBranches[0]?.id || MAIN_BRANCH_ID);
@@ -29,6 +28,7 @@ export const TimelineWorkspace = () => {
   const [characterFilter, setCharacterFilter] = useState(searchParams.get('character') || '');
   const [locationFilter, setLocationFilter] = useState(searchParams.get('location') || '');
   const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [drawModeBranchId, setDrawModeBranchId] = useState<string | null>(null);
 
   const sortedBranches = useMemo(() => timelineBranches.slice().sort((a, b) => a.sortOrder - b.sortOrder), [timelineBranches]);
 
@@ -79,6 +79,140 @@ export const TimelineWorkspace = () => {
     setLastActionStatus(zh ? '已创建独立分支' : 'Independent branch created');
   };
 
+  const handleSynchronizeAnalysis = () => {
+    const scope = globalThis as typeof globalThis & { require?: NodeRequire };
+    const loader = scope.require;
+    if (!loader) {
+      console.warn('[Timeline Synchronize] Node file access is unavailable in this environment.');
+      setLastActionStatus('Synchronize analysis unavailable');
+      return;
+    }
+
+    try {
+      const fs = loader('fs') as typeof import('fs');
+      const path = loader('path') as typeof import('path');
+      // projectRoot may be a virtual URI like "memory://starter-demo-project" for seed/demo
+      // projects. Those are not real filesystem paths, so we must fall back to the on-disk
+      // dev fixture instead of letting path.resolve() produce a garbled result.
+      const isVirtualRoot = !projectRoot || /^[a-z][a-z0-9+\-.]*:\/\//i.test(projectRoot);
+      const resolvedRoot = isVirtualRoot
+        ? path.resolve('data/projects/starter-demo-project')
+        : path.resolve(projectRoot);
+      const projectJsonPath = path.join(resolvedRoot, 'project.json');
+      const projectJson = JSON.parse(fs.readFileSync(projectJsonPath, 'utf8')) as Record<string, unknown>;
+      const projectSchemaPath = path.join(resolvedRoot, 'system', 'schema', 'schema.json');
+      const projectSchema = fs.existsSync(projectSchemaPath)
+        ? (JSON.parse(fs.readFileSync(projectSchemaPath, 'utf8')) as Record<string, unknown>)
+        : null;
+      const timelineDir = path.join(resolvedRoot, 'entities', 'timeline');
+      const branchesPath = path.join(timelineDir, 'branches.json');
+      const backendBranches = fs.existsSync(branchesPath)
+        ? (JSON.parse(fs.readFileSync(branchesPath, 'utf8')) as TimelineBranch[])
+        : [];
+      const backendEvents = fs.existsSync(timelineDir)
+        ? fs
+            .readdirSync(timelineDir)
+            .filter((name: string) => name.endsWith('.json') && name !== 'branches.json')
+            .map((name: string) =>
+              JSON.parse(fs.readFileSync(path.join(timelineDir, name), 'utf8')) as TimelineEvent
+            )
+        : [];
+
+      const projectJsonCounts = (projectJson.counts as Record<string, number> | undefined) || {};
+      const schemaEntities = (projectSchema?.entities as Record<string, { required?: string[]; optional?: string[] }> | undefined) || {};
+      const timelineBranchSchemaFields = new Set([
+        ...(schemaEntities.timelineBranch?.required || []),
+        ...(schemaEntities.timelineBranch?.optional || []),
+      ]);
+      const timelineEventSchemaFields = new Set([
+        ...(schemaEntities.timelineEvent?.required || []),
+        ...(schemaEntities.timelineEvent?.optional || []),
+      ]);
+      const missingProjectJsonFields = [
+        ...(!('timelineBranches' in projectJsonCounts) ? ['counts.timelineBranches'] : []),
+        ...(!('timelineEvents' in projectJsonCounts) ? ['counts.timelineEvents'] : []),
+      ];
+      const missingSchemaFields = [
+        ...collectFields<TimelineBranch>(timelineBranches).filter((field) => timelineBranchSchemaFields.size > 0 && !timelineBranchSchemaFields.has(field)).map((field) => `schema.timelineBranch.${field}`),
+        ...collectFields<TimelineEvent>(timelineEvents).filter((field) => timelineEventSchemaFields.size > 0 && !timelineEventSchemaFields.has(field)).map((field) => `schema.timelineEvent.${field}`),
+      ];
+      const entityFieldMismatches = [
+        ...findMissingEntityFields(backendBranches, timelineBranches, 'timelineBranches[]'),
+        ...findMissingEntityFields(backendEvents, timelineEvents, 'timelineEvents[]'),
+      ];
+      const entityValueMismatches = [
+        ...findValueMismatches(backendBranches, timelineBranches, 'timelineBranches', BRANCH_RUNTIME_FIELDS),
+        ...findValueMismatches(backendEvents, timelineEvents, 'timelineEvents', EVENT_RUNTIME_FIELDS),
+      ];
+
+      const projectJsonMatchesCanvas =
+        missingProjectJsonFields.length === 0 &&
+        projectJsonCounts.timelineEvents === timelineEvents.length &&
+        projectJsonCounts.timelineBranches === timelineBranches.length;
+
+      const report = {
+        projectJsonPath,
+        answers: {
+          projectJsonMatchesCanvas,
+          projectJsonStructureMatchesCanvasWriteNeeds: missingProjectJsonFields.length === 0,
+          schemaMatchesCanvasWriteNeeds: missingSchemaFields.length === 0,
+          entityTimelineFilesMatchCanvas:
+            backendBranches.length === timelineBranches.length &&
+            backendEvents.length === timelineEvents.length &&
+            entityFieldMismatches.length === 0 &&
+            entityValueMismatches.length === 0,
+        },
+        fieldMismatches: {
+          projectJsonMissingFields: missingProjectJsonFields,
+          schemaMissingFields: missingSchemaFields,
+          entityTimelineFieldMismatches: entityFieldMismatches,
+          entityTimelineValueMismatches: entityValueMismatches,
+        },
+        counts: {
+          frontend: {
+            timelineBranches: timelineBranches.length,
+            timelineEvents: timelineEvents.length,
+          },
+          projectJson: {
+            timelineBranches: projectJsonCounts.timelineBranches ?? null,
+            timelineEvents: projectJsonCounts.timelineEvents ?? null,
+          },
+          entityTimelineFiles: {
+            timelineBranches: backendBranches.length,
+            timelineEvents: backendEvents.length,
+          },
+        },
+        notes: [
+          '`project.json` stores metadata and counts only; canonical timeline entities live under `entities/timeline/`.',
+          'Timeline branches are persisted in `entities/timeline/branches.json`.',
+          'Timeline events are persisted as one JSON file per event in `entities/timeline/`.',
+          'Canvas snap propagation relies on semantic anchors (`startAnchor` / `endAnchor`) plus resolved positions (`anchorStartPos` / `anchorEndPos`).',
+        ],
+      };
+
+      console.group('[Timeline Synchronize] Analysis Report');
+      console.log('Report:', report);
+      console.table(report.counts);
+      if (report.fieldMismatches.projectJsonMissingFields.length > 0) {
+        console.warn('Missing project.json fields:', report.fieldMismatches.projectJsonMissingFields);
+      }
+      if (report.fieldMismatches.schemaMissingFields.length > 0) {
+        console.warn('Missing schema fields:', report.fieldMismatches.schemaMissingFields);
+      }
+      if (report.fieldMismatches.entityTimelineFieldMismatches.length > 0) {
+        console.warn('Timeline entity field mismatches:', report.fieldMismatches.entityTimelineFieldMismatches);
+      }
+      if (report.fieldMismatches.entityTimelineValueMismatches.length > 0) {
+        console.warn('Timeline entity value mismatches:', report.fieldMismatches.entityTimelineValueMismatches);
+      }
+      console.groupEnd();
+      setLastActionStatus('Synchronize analysis written to console');
+    } catch (error) {
+      console.error('[Timeline Synchronize] Analysis failed:', error);
+      setLastActionStatus('Synchronize analysis failed');
+    }
+  };
+
   return (
     <div className="flex h-full flex-col overflow-hidden bg-bg">
       <div className="flex flex-wrap items-center gap-3 border-b border-border bg-bg-elev-1 px-6 py-3" data-testid="timeline-toolbar">
@@ -93,14 +227,16 @@ export const TimelineWorkspace = () => {
         </button>
         <button
           type="button"
+          data-testid="timeline-new-branch-btn"
           className="rounded-xl border border-border px-4 py-2 text-[11px] font-black uppercase tracking-[0.25em] text-text-2"
           onClick={addIndependentBranch}
         >
           <Route size={13} className="mr-2 inline" />
-          {zh ? '独立分支' : 'New Independent Branch'}
+          {zh ? '独立分支' : 'New Branch'}
         </button>
         <button
           type="button"
+          data-testid="timeline-fork-branch-btn"
           className="rounded-xl border border-border px-4 py-2 text-[11px] font-black uppercase tracking-[0.25em] text-text-2"
           onClick={addForkBranch}
           disabled={!activeEvent}
@@ -108,7 +244,29 @@ export const TimelineWorkspace = () => {
           <GitBranchPlus size={13} className="mr-2 inline" />
           {zh ? '从当前事件分叉' : 'Fork from Event'}
         </button>
+        <button
+          type="button"
+          data-testid="timeline-synchronize-btn"
+          className="rounded-xl border border-border px-4 py-2 text-[11px] font-black uppercase tracking-[0.25em] text-text-2"
+          onClick={handleSynchronizeAnalysis}
+        >
+          Synchronize
+        </button>
+        {drawModeBranchId && (
+          <span className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.18em] text-brand">
+            Drawing: {timelineBranches.find(b => b.id === drawModeBranchId)?.name || drawModeBranchId}
+            <button
+              type="button"
+              data-testid="timeline-draw-cancel-btn"
+              className="ml-2 rounded px-2 py-0.5 text-[10px] text-text-3 hover:bg-hover"
+              onClick={() => setDrawModeBranchId(null)}
+            >
+              {zh ? '取消' : 'Cancel'}
+            </button>
+          </span>
+        )}
         <select
+          data-testid="timeline-branch-filter"
           className="rounded-xl border border-border bg-bg px-3 py-2 text-[11px] font-black text-text-2"
           value={activeBranchId}
           onChange={(e) => setActiveBranchId(e.target.value)}
@@ -118,6 +276,7 @@ export const TimelineWorkspace = () => {
           ))}
         </select>
         <select
+          data-testid="timeline-character-filter"
           className="rounded-xl border border-border bg-bg px-3 py-2 text-[11px] font-black text-text-2"
           value={characterFilter}
           onChange={(e) => setCharacterFilter(e.target.value)}
@@ -128,6 +287,7 @@ export const TimelineWorkspace = () => {
           ))}
         </select>
         <select
+          data-testid="timeline-location-filter"
           className="rounded-xl border border-border bg-bg px-3 py-2 text-[11px] font-black text-text-2"
           value={locationFilter}
           onChange={(e) => setLocationFilter(e.target.value)}
@@ -140,7 +300,12 @@ export const TimelineWorkspace = () => {
       </div>
 
       <div className="min-h-0 flex-1">
-        <TimelineCanvas events={filteredEvents} branches={sortedBranches} />
+        <TimelineCanvas
+          events={filteredEvents}
+          branches={sortedBranches}
+          drawModeBranchId={drawModeBranchId}
+          onDrawModeChange={(id) => setDrawModeBranchId(id)}
+        />
       </div>
 
       {createModalOpen && (
@@ -166,6 +331,114 @@ export const TimelineWorkspace = () => {
       )}
     </div>
   );
+};
+
+const collectFields = <T extends object>(records: T[]) =>
+  Array.from(
+    records.reduce((fields, record) => {
+      Object.keys(record).forEach((field) => fields.add(field));
+      return fields;
+    }, new Set<string>()),
+  ).sort();
+
+const findMissingEntityFields = <T extends object>(
+  backendRecords: T[],
+  frontendRecords: T[],
+  prefix: string,
+) => {
+  const backendFields = new Set(collectFields(backendRecords));
+  return collectFields(frontendRecords)
+    .filter((field) => !backendFields.has(field))
+    .map((field) => `${prefix}.${field}`);
+};
+
+// Fields that are recomputed at runtime and intentionally diverge from disk state.
+// Comparing these always produces false positives in the Synchronize report.
+const BRANCH_RUNTIME_FIELDS = new Set([
+  'anchorStartPos',    // recomputed from event positions by propagateTimelineAnchorDependencies()
+  'anchorEndPos',      // same
+  'endAnchor',         // normalized from anchor semantics on load
+  'endMode',           // same
+  'mergeEventId',      // same
+  'mergeTargetBranchId', // same
+]);
+
+const EVENT_RUNTIME_FIELDS = new Set([
+  'position',          // SVG canvas coord derived from tFromOrderIndex + Bézier; not persisted
+  'sharedBranchIds',   // derived from cross-branch membership at render time
+]);
+
+const sortComparableObject = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map((entry) => sortComparableObject(entry));
+  }
+
+  if (!value || typeof value !== 'object') {
+    return value ?? null;
+  }
+
+  return Object.keys(value as Record<string, unknown>)
+    .sort()
+    .reduce<Record<string, unknown>>((acc, key) => {
+      acc[key] = sortComparableObject((value as Record<string, unknown>)[key]);
+      return acc;
+    }, {});
+};
+
+const normalizeComparableFieldValue = (field: string, value: unknown) => {
+  if (field === 'startAnchor' || field === 'endAnchor') {
+    const anchor = value as Partial<{ branchId: unknown; eventId: unknown }> | null | undefined;
+    if (!anchor?.branchId || !anchor?.eventId) {
+      return null;
+    }
+
+    return {
+      branchId: String(anchor.branchId),
+      eventId: String(anchor.eventId),
+    };
+  }
+
+  return sortComparableObject(value ?? null);
+};
+
+const findValueMismatches = <T extends { id?: string }>(
+  backendRecords: T[],
+  frontendRecords: T[],
+  prefix: string,
+  skipFields: Set<string> = new Set(),
+) => {
+  const backendById = new Map(backendRecords.map((record) => [record.id || JSON.stringify(record), record]));
+  const frontendById = new Map(frontendRecords.map((record) => [record.id || JSON.stringify(record), record]));
+  const mismatches: string[] = [];
+
+  frontendById.forEach((frontendRecord, recordId) => {
+    const backendRecord = backendById.get(recordId);
+    if (!backendRecord) {
+      mismatches.push(`${prefix}.${recordId}: missing backend record`);
+      return;
+    }
+
+    collectFields([frontendRecord]).forEach((field) => {
+      if (skipFields.has(field)) return;
+      const frontendValue = JSON.stringify(
+        normalizeComparableFieldValue(field, (frontendRecord as Record<string, unknown>)[field]),
+      );
+      const backendValue = JSON.stringify(
+        normalizeComparableFieldValue(field, (backendRecord as Record<string, unknown>)[field]),
+      );
+      if (frontendValue !== backendValue) {
+        mismatches.push(`${prefix}.${recordId}.${field}`);
+      }
+    });
+  });
+
+  backendById.forEach((_backendRecord, recordId) => {
+    if (!frontendById.has(recordId)) {
+      mismatches.push(`${prefix}.${recordId}: extra backend record`);
+    }
+  });
+
+  return mismatches;
 };
 
 const CreateEventModal = ({
@@ -223,7 +496,12 @@ const CreateEventModal = ({
             <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{zh ? '新增事件' : 'New Event'}</div>
             <div className="mt-1 text-lg font-black text-text">{zh ? '配置事件' : 'Configure Event'}</div>
           </div>
-          <button type="button" className="rounded p-2 text-text-3 hover:bg-hover hover:text-text" onClick={close}>
+          <button
+            type="button"
+            data-testid="create-event-close-btn"
+            className="rounded p-2 text-text-3 hover:bg-hover hover:text-text"
+            onClick={close}
+          >
             <X size={16} />
           </button>
         </div>
@@ -244,12 +522,14 @@ const CreateEventModal = ({
               placeholder={zh ? '填写事件概览...' : 'Describe the event...'}
             />
             <input
+              data-testid="create-event-time-input"
               className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none"
               value={time}
               onChange={(e) => setTime(e.target.value)}
               placeholder={zh ? '时间标签' : 'Time label'}
             />
             <select
+              data-testid="create-event-importance-select"
               className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none text-sm text-text"
               value={importance}
               onChange={(e) => setImportance(e.target.value as TimelineEvent['importance'])}
@@ -260,7 +540,12 @@ const CreateEventModal = ({
               <option value="critical">{zh ? '关键' : 'Critical'}</option>
             </select>
             <div className="flex justify-end gap-3">
-              <button type="button" className="rounded-xl border border-border px-5 py-3 text-sm text-text-2" onClick={close}>
+              <button
+                type="button"
+                data-testid="create-event-cancel-btn"
+                className="rounded-xl border border-border px-5 py-3 text-sm text-text-2"
+                onClick={close}
+              >
                 {zh ? '取消' : 'Cancel'}
               </button>
               <button

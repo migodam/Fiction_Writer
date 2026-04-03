@@ -1,1 +1,44 @@
-[]
+[
+  {
+    "id": "artifact_graph_sync_seed",
+    "taskRunId": "run_graph_sync_seed",
+    "type": "report",
+    "summary": "Seed analysis bundle for review.",
+    "path": null,
+    "mimeType": "application/json",
+    "entityRefs": [
+      {
+        "type": "proposal",
+        "id": "proposal_graph_public_fallout"
+      }
+    ]
+  },
+  {
+    "id": "artifact_import_manifest_seed",
+    "taskRunId": "run_import_seed",
+    "type": "import-manifest",
+    "summary": "Staged import manifest for starter demo project.",
+    "path": "system/imports/staging/import_seed_project/manifest.json",
+    "mimeType": "application/json",
+    "entityRefs": [
+      {
+        "type": "import_job",
+        "id": "import_seed_project"
+      }
+    ]
+  },
+  {
+    "id": "artifact_context_seed",
+    "taskRunId": "run_import_seed",
+    "type": "context-package",
+    "summary": "Keyword retrieval context generated from imported source.",
+    "path": "system/rag/indexes/keyword-index.json",
+    "mimeType": "application/json",
+    "entityRefs": [
+      {
+        "type": "rag_document",
+        "id": "rag_doc_import_seed"
+      }
+    ]
+  }
+]

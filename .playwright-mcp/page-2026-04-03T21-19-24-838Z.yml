@@ -1,0 +1,199 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e7]:
+          - generic [ref=e8]: F
+          - generic [ref=e9]:
+            - generic [ref=e10]: Narrative IDE
+            - generic [ref=e11]: Starter Demo Project
+        - button "Toggle Sidebar" [ref=e12] [cursor=pointer]:
+          - img [ref=e13]
+        - button "New Project" [ref=e15] [cursor=pointer]:
+          - img [ref=e16]
+        - button "Open Project" [ref=e19] [cursor=pointer]:
+          - img [ref=e20]
+        - button "Save Project" [ref=e22] [cursor=pointer]:
+          - img [ref=e23]
+        - button "Undo" [ref=e28] [cursor=pointer]:
+          - img [ref=e29]
+        - button "Redo" [ref=e32] [cursor=pointer]:
+          - img [ref=e33]
+        - button "Run Simulation" [ref=e37] [cursor=pointer]:
+          - img [ref=e38]
+        - button "Check Consistency" [ref=e40] [cursor=pointer]:
+          - img [ref=e41]
+        - button "Export Book" [ref=e44] [cursor=pointer]:
+          - img [ref=e45]
+      - button "Search entities, proposals, and settings... (Ctrl+P)" [ref=e48] [cursor=pointer]:
+        - img [ref=e49]
+        - generic [ref=e52]: Search entities, proposals, and settings... (Ctrl+P)
+      - generic [ref=e53]:
+        - button "Toggle Agent Dock" [ref=e54] [cursor=pointer]:
+          - img [ref=e55]
+        - button "Settings" [ref=e58] [cursor=pointer]:
+          - img [ref=e59]
+  - generic [ref=e62]:
+    - navigation [ref=e63]:
+      - generic [ref=e64]:
+        - button "Workbench" [ref=e65] [cursor=pointer]:
+          - img [ref=e67]
+        - button "Writing Studio" [ref=e69] [cursor=pointer]:
+          - img [ref=e70]
+        - button "Characters" [ref=e75] [cursor=pointer]:
+          - img [ref=e76]
+        - button "Timeline" [ref=e81] [cursor=pointer]:
+          - img [ref=e82]
+        - button "Graph" [ref=e85] [cursor=pointer]:
+          - img [ref=e86]
+        - button "World Model" [active] [ref=e91] [cursor=pointer]:
+          - img [ref=e92]
+        - button "Simulation" [ref=e95] [cursor=pointer]:
+          - img [ref=e96]
+        - button "Beta Reader" [ref=e99] [cursor=pointer]:
+          - img [ref=e100]
+        - button "Consistency" [ref=e103] [cursor=pointer]:
+          - img [ref=e104]
+        - button "Agents" [ref=e107] [cursor=pointer]:
+          - img [ref=e108]
+        - button "Publish" [ref=e111] [cursor=pointer]:
+          - img [ref=e112]
+        - button "Insights" [ref=e114] [cursor=pointer]:
+          - img [ref=e115]
+        - button "Reference Library" [ref=e116] [cursor=pointer]:
+          - img [ref=e117]
+    - complementary [ref=e120]:
+      - generic [ref=e121]:
+        - generic [ref=e122]: World Model
+        - button "Collapse Sidebar" [ref=e123] [cursor=pointer]:
+          - img [ref=e124]
+      - generic [ref=e127]:
+        - generic [ref=e783] [cursor=pointer]: Entries
+        - generic [ref=e785] [cursor=pointer]: Map
+        - generic [ref=e787] [cursor=pointer]: Settings
+    - main [ref=e151]:
+      - generic [ref=e790]:
+        - complementary [ref=e791]:
+          - generic [ref=e793]:
+            - generic [ref=e794]:
+              - generic [ref=e795]: World Entries
+              - generic [ref=e796]: Containers and Entries
+            - button [ref=e797] [cursor=pointer]:
+              - img [ref=e798]
+          - generic [ref=e799]:
+            - button "Locations notebook" [ref=e800] [cursor=pointer]:
+              - generic [ref=e801]: Locations
+              - generic [ref=e802]: notebook
+            - button "Organizations graph" [ref=e803] [cursor=pointer]:
+              - generic [ref=e804]: Organizations
+              - generic [ref=e805]: graph
+            - button "Items notebook" [ref=e806] [cursor=pointer]:
+              - generic [ref=e807]: Items
+              - generic [ref=e808]: notebook
+            - button "Lore notebook" [ref=e809] [cursor=pointer]:
+              - generic [ref=e810]: Lore
+              - generic [ref=e811]: notebook
+            - button "World Map map" [ref=e812] [cursor=pointer]:
+              - generic [ref=e813]: World Map
+              - generic [ref=e814]: map
+            - button "Notes notebook" [ref=e815] [cursor=pointer]:
+              - generic [ref=e816]: Notes
+              - generic [ref=e817]: notebook
+        - complementary [ref=e818]:
+          - generic [ref=e820]:
+            - generic [ref=e821]:
+              - generic [ref=e822]: notebook
+              - generic [ref=e823]: Locations
+            - button [ref=e824] [cursor=pointer]:
+              - img [ref=e825]
+          - generic [ref=e826]:
+            - button "Sky Dock The upper docking ring where official arrivals and silent inspections happen." [ref=e827] [cursor=pointer]:
+              - generic [ref=e828]: Sky Dock
+              - generic [ref=e829]: The upper docking ring where official arrivals and silent inspections happen.
+            - button "Flood Market An undercity bazaar rebuilt around old water channels and rumor traders." [ref=e830] [cursor=pointer]:
+              - generic [ref=e831]: Flood Market
+              - generic [ref=e832]: An undercity bazaar rebuilt around old water channels and rumor traders.
+            - button "Lantern Ward A cultural quarter of salons, hidden stages, and encrypted meeting houses." [ref=e833] [cursor=pointer]:
+              - generic [ref=e834]: Lantern Ward
+              - generic [ref=e835]: A cultural quarter of salons, hidden stages, and encrypted meeting houses.
+            - button "Glass Bridge A suspended transit line where the decisive interception will happen." [ref=e836] [cursor=pointer]:
+              - generic [ref=e837]: Glass Bridge
+              - generic [ref=e838]: A suspended transit line where the decisive interception will happen.
+        - main [ref=e839]:
+          - generic [ref=e840]:
+            - generic [ref=e841]:
+              - generic [ref=e842]: Entry Name
+              - textbox [ref=e843]: Sky Dock
+            - generic [ref=e844]:
+              - generic [ref=e845]: Description
+              - textbox [ref=e846]: The upper docking ring where official arrivals and silent inspections happen.
+            - generic [ref=e847]:
+              - generic [ref=e848]:
+                - generic [ref=e849]: Attributes
+                - button "Add Row" [ref=e850] [cursor=pointer]
+              - generic [ref=e852]:
+                - textbox "Attribute" [ref=e853]: District
+                - textbox "Value" [ref=e854]: North Elevation
+                - button [ref=e855] [cursor=pointer]:
+                  - img [ref=e856]
+            - generic [ref=e859]:
+              - generic [ref=e860]:
+                - generic [ref=e861]: Linked Timeline
+                - generic [ref=e862]:
+                  - button "Arrival at Sky Dock" [ref=e863] [cursor=pointer]:
+                    - generic [ref=e864]: Arrival at Sky Dock
+                    - img [ref=e865]
+                  - button "Archive Breach Review" [ref=e869] [cursor=pointer]:
+                    - generic [ref=e870]: Archive Breach Review
+                    - img [ref=e871]
+              - generic [ref=e875]:
+                - generic [ref=e876]: Linked Scenes
+                - button "Dockside Arrival" [ref=e878] [cursor=pointer]:
+                  - generic [ref=e879]: Dockside Arrival
+                  - img [ref=e880]
+    - complementary [ref=e240]:
+      - generic [ref=e241]:
+        - generic [ref=e242]:
+          - img [ref=e244]
+          - generic [ref=e247]:
+            - generic [ref=e248]: Agent Dock
+            - generic [ref=e249]: Future CLI control surface
+        - button [ref=e250] [cursor=pointer]:
+          - img [ref=e251]
+      - generic [ref=e253]:
+        - generic [ref=e254]:
+          - generic [ref=e255]: Live Queue
+          - generic [ref=e256]:
+            - generic [ref=e257]:
+              - generic [ref=e258]: Queued
+              - generic [ref=e259]: "1"
+            - generic [ref=e260]:
+              - generic [ref=e261]: Running
+              - generic [ref=e262]: "0"
+          - generic [ref=e263]:
+            - generic [ref=e264]:
+              - generic [ref=e265]: Generated one graph sync proposal and one consistency summary.
+              - generic [ref=e266]: completed
+            - generic [ref=e267]:
+              - generic [ref=e268]: Imported manuscript skeleton and paused for user confirmation.
+              - generic [ref=e269]: awaiting_user_input
+        - generic [ref=e270]: View full chat history in the /agents page.
+  - contentinfo [ref=e271]:
+    - generic [ref=e272]:
+      - generic [ref=e273]:
+        - generic [ref=e274]:
+          - generic [ref=e275]: Project
+          - generic [ref=e276]: Starter Demo Project
+        - generic [ref=e277]:
+          - generic [ref=e278]: Path
+          - generic [ref=e279]: memory://starter-demo-project
+        - generic [ref=e280]:
+          - generic [ref=e281]: Status
+          - generic [ref=e282]: Idle
+      - generic [ref=e283]:
+        - generic [ref=e284]:
+          - generic [ref=e285]: Selection
+          - generic [ref=e286]: No Selection
+        - generic [ref=e287]:
+          - generic [ref=e288]: Workbench
+          - generic [ref=e289]: 3 pending / 3 issues

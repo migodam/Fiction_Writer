@@ -1,0 +1,17 @@
+{
+  "id": "rag_doc_import_seed",
+  "sourceType": "import_source",
+  "sourceId": "import_seed_project",
+  "title": "Starter manuscript import source",
+  "path": "system/imports/staging/import_seed_project/source.md",
+  "entityRefs": [
+    {
+      "type": "import_job",
+      "id": "import_seed_project"
+    }
+  ],
+  "chunkIds": [
+    "rag_chunk_import_seed_1"
+  ],
+  "updatedAt": "2026-04-03T18:37:04.333Z"
+}

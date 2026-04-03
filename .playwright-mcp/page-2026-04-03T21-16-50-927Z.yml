@@ -1,0 +1,214 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e7]:
+          - generic [ref=e8]: F
+          - generic [ref=e9]:
+            - generic [ref=e10]: Narrative IDE
+            - generic [ref=e11]: Starter Demo Project
+        - button "Toggle Sidebar" [ref=e12] [cursor=pointer]:
+          - img [ref=e13]
+        - button "New Project" [ref=e15] [cursor=pointer]:
+          - img [ref=e16]
+        - button "Open Project" [ref=e19] [cursor=pointer]:
+          - img [ref=e20]
+        - button "Save Project" [ref=e22] [cursor=pointer]:
+          - img [ref=e23]
+        - button "Undo" [ref=e28] [cursor=pointer]:
+          - img [ref=e29]
+        - button "Redo" [ref=e32] [cursor=pointer]:
+          - img [ref=e33]
+        - button "Run Simulation" [ref=e37] [cursor=pointer]:
+          - img [ref=e38]
+        - button "Check Consistency" [ref=e40] [cursor=pointer]:
+          - img [ref=e41]
+        - button "Export Book" [ref=e44] [cursor=pointer]:
+          - img [ref=e45]
+      - button "Search entities, proposals, and settings... (Ctrl+P)" [ref=e48] [cursor=pointer]:
+        - img [ref=e49]
+        - generic [ref=e52]: Search entities, proposals, and settings... (Ctrl+P)
+      - generic [ref=e53]:
+        - button "Toggle Agent Dock" [ref=e54] [cursor=pointer]:
+          - img [ref=e55]
+        - button "Settings" [ref=e58] [cursor=pointer]:
+          - img [ref=e59]
+  - generic [ref=e62]:
+    - navigation [ref=e63]:
+      - generic [ref=e64]:
+        - button "Workbench" [ref=e65] [cursor=pointer]:
+          - img [ref=e66]
+        - button "Writing Studio" [ref=e68] [cursor=pointer]:
+          - img [ref=e69]
+        - button "Characters" [ref=e74] [cursor=pointer]:
+          - img [ref=e76]
+        - button "Timeline" [ref=e81] [cursor=pointer]:
+          - img [ref=e82]
+        - button "Graph" [ref=e85] [cursor=pointer]:
+          - img [ref=e86]
+        - button "World Model" [ref=e91] [cursor=pointer]:
+          - img [ref=e92]
+        - button "Simulation" [ref=e95] [cursor=pointer]:
+          - img [ref=e96]
+        - button "Beta Reader" [ref=e99] [cursor=pointer]:
+          - img [ref=e100]
+        - button "Consistency" [ref=e103] [cursor=pointer]:
+          - img [ref=e104]
+        - button "Agents" [ref=e107] [cursor=pointer]:
+          - img [ref=e108]
+        - button "Publish" [ref=e111] [cursor=pointer]:
+          - img [ref=e112]
+        - button "Insights" [ref=e114] [cursor=pointer]:
+          - img [ref=e115]
+        - button "Reference Library" [ref=e116] [cursor=pointer]:
+          - img [ref=e117]
+    - complementary [ref=e120]:
+      - generic [ref=e121]:
+        - generic [ref=e122]: Characters
+        - button "Collapse Sidebar" [ref=e123] [cursor=pointer]:
+          - img [ref=e124]
+      - generic [ref=e127]:
+        - generic [ref=e129] [cursor=pointer]: Overview
+        - generic [ref=e131] [cursor=pointer]: Candidate Queue
+        - generic [ref=e133] [cursor=pointer]: Relationship Graph
+        - generic [ref=e135] [cursor=pointer]: Tags
+    - main [ref=e138]:
+      - generic [ref=e139]:
+        - complementary [ref=e140]:
+          - generic [ref=e141]:
+            - generic [ref=e142]:
+              - generic [ref=e143]:
+                - generic [ref=e144]: Characters
+                - generic [ref=e145]: Character Navigator
+              - button [ref=e146] [cursor=pointer]:
+                - img [ref=e147]
+            - generic [ref=e149]:
+              - img [ref=e150]
+              - textbox "Search characters" [ref=e153]
+          - generic [ref=e154]:
+            - generic [ref=e155]:
+              - button "core 2" [ref=e156] [cursor=pointer]:
+                - generic [ref=e157]: core
+                - generic [ref=e158]: "2"
+              - button "Aria Solis" [ref=e159] [cursor=pointer]:
+                - generic [ref=e160]: Aria Solis
+              - button "Vesper Hale" [ref=e161] [cursor=pointer]:
+                - generic [ref=e162]: Vesper Hale
+            - generic [ref=e163]:
+              - button "major 2" [ref=e164] [cursor=pointer]:
+                - generic [ref=e165]: major
+                - generic [ref=e166]: "2"
+              - button "Rowan Vale" [ref=e167] [cursor=pointer]:
+                - generic [ref=e168]: Rowan Vale
+              - button "Seren Thorne" [ref=e169] [cursor=pointer]:
+                - generic [ref=e170]: Seren Thorne
+            - generic [ref=e171]:
+              - button "supporting 1" [ref=e172] [cursor=pointer]:
+                - generic [ref=e173]: supporting
+                - generic [ref=e174]: "1"
+              - button "Nila Quill" [ref=e175] [cursor=pointer]:
+                - generic [ref=e176]: Nila Quill
+        - main [ref=e177]:
+          - generic:
+            - generic:
+              - generic [ref=e178]:
+                - generic [ref=e179]: Character Detail
+                - generic [ref=e180]: Aria Solis
+              - generic [ref=e181]:
+                - button "Relationship Graph" [ref=e182] [cursor=pointer]:
+                  - img [ref=e183]
+                  - text: Relationship Graph
+                - button "Save Character" [ref=e186] [cursor=pointer]
+            - generic [ref=e187]:
+              - button "Profile" [ref=e188] [cursor=pointer]
+              - button "Relationships" [ref=e189] [cursor=pointer]
+              - button "Timeline" [ref=e190] [cursor=pointer]
+              - button "POV Insights" [ref=e191] [cursor=pointer]
+            - generic [ref=e192]:
+              - textbox "Character name" [ref=e193]: Aria Solis
+              - textbox "Background" [ref=e194]: Aria grew up in the Ember Quarter and now works as a field archivist for the Meridian Bureau.
+            - generic:
+              - generic [ref=e195]:
+                - textbox "Character name" [ref=e196]: Aria Solis
+                - textbox "Background" [ref=e197]: Aria grew up in the Ember Quarter and now works as a field archivist for the Meridian Bureau.
+                - textbox "Summary" [ref=e198]: Lead investigator chasing the memory archive theft.
+                - generic [ref=e199]:
+                  - textbox "Traits" [ref=e200]: Observant, stubborn, quietly compassionate
+                  - textbox "Goals" [ref=e201]: Recover the stolen archive shard before the city fractures.
+                  - textbox "Fears" [ref=e202]: Repeating the failure that cost her mentor.
+                  - combobox [ref=e203]:
+                    - option "core" [selected]
+                    - option "major"
+                    - option "supporting"
+                    - option "minor"
+                    - option "ungrouped"
+              - generic [ref=e204]:
+                - generic [ref=e205]:
+                  - generic [ref=e206]: Character Details
+                  - generic [ref=e208]:
+                    - img [ref=e209]
+                    - generic [ref=e213]: No portrait
+                  - generic [ref=e214]:
+                    - button "Upload Portrait" [ref=e215] [cursor=pointer]:
+                      - img [ref=e216]
+                      - text: Upload Portrait
+                    - button "Generate" [ref=e219] [cursor=pointer]:
+                      - img [ref=e220]
+                      - text: Generate
+                - generic [ref=e225]:
+                  - generic [ref=e226]: Tags
+                  - button "Add" [ref=e227] [cursor=pointer]:
+                    - img [ref=e228]
+                    - text: Add
+                - generic [ref=e229]:
+                  - generic [ref=e230]: Profile Meta
+                  - generic [ref=e231]:
+                    - textbox "Birthday / time marker" [ref=e232]: Late Frost 14
+                    - textbox "Speech style" [ref=e233]: Precise with sudden flashes of warmth.
+                    - textbox "Character arc" [ref=e234]: From guarded investigator to visible leader.
+    - complementary [ref=e238]:
+      - generic [ref=e239]:
+        - generic [ref=e240]:
+          - img [ref=e242]
+          - generic [ref=e245]:
+            - generic [ref=e246]: Agent Dock
+            - generic [ref=e247]: Future CLI control surface
+        - button [ref=e248] [cursor=pointer]:
+          - img [ref=e249]
+      - generic [ref=e251]:
+        - generic [ref=e252]:
+          - generic [ref=e253]: Live Queue
+          - generic [ref=e254]:
+            - generic [ref=e255]:
+              - generic [ref=e256]: Queued
+              - generic [ref=e257]: "1"
+            - generic [ref=e258]:
+              - generic [ref=e259]: Running
+              - generic [ref=e260]: "0"
+          - generic [ref=e261]:
+            - generic [ref=e262]:
+              - generic [ref=e263]: Generated one graph sync proposal and one consistency summary.
+              - generic [ref=e264]: completed
+            - generic [ref=e265]:
+              - generic [ref=e266]: Imported manuscript skeleton and paused for user confirmation.
+              - generic [ref=e267]: awaiting_user_input
+        - generic [ref=e268]: View full chat history in the /agents page.
+  - contentinfo [ref=e269]:
+    - generic [ref=e270]:
+      - generic [ref=e271]:
+        - generic [ref=e272]:
+          - generic [ref=e273]: Project
+          - generic [ref=e274]: Starter Demo Project
+        - generic [ref=e275]:
+          - generic [ref=e276]: Path
+          - generic [ref=e277]: memory://starter-demo-project
+        - generic [ref=e278]:
+          - generic [ref=e279]: Status
+          - generic [ref=e280]: Unsaved changes
+      - generic [ref=e281]:
+        - generic [ref=e282]:
+          - generic [ref=e283]: Selection
+          - generic [ref=e284]: No Selection
+        - generic [ref=e285]:
+          - generic [ref=e286]: Workbench
+          - generic [ref=e287]: 3 pending / 3 issues

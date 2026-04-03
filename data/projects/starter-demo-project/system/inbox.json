@@ -3,22 +3,99 @@
     "id": "proposal_graph_public_fallout",
     "title": "Convert public fallout note into timeline candidate",
     "source": "graph",
+    "kind": "entity_update",
     "description": "Graph selection suggests a new event after the bridge intercept.",
     "targetEntityType": "timeline_event",
     "targetEntityId": null,
+    "targetEntityRefs": [
+      {
+        "type": "timeline_event",
+        "id": "event_bridge"
+      }
+    ],
     "preview": "Create event: Public Hearing After Bridge Collapse on branch Public Pressure.",
+    "proposedOperations": [
+      {
+        "op": "create",
+        "entityType": "timeline_event",
+        "fields": {
+          "title": "Public Hearing After Bridge Collapse",
+          "branchId": "branch_public"
+        }
+      }
+    ],
+    "reviewNotes": "Derived from graph free-note and existing public pressure branch.",
+    "confidence": 0.84,
+    "payloadPath": "system/runs/artifacts/proposal_graph_public_fallout.json",
+    "originTaskRunId": "run_graph_sync_seed",
+    "reviewPolicy": "manual_workbench",
     "status": "pending",
-    "createdAt": "2026-03-12T02:40:26.701Z"
+    "createdAt": "2026-04-03T18:37:04.333Z"
   },
   {
     "id": "proposal_consistency_fix_bridge",
     "title": "Resolve bridge location mismatch",
     "source": "consistency",
+    "kind": "qa_fix",
     "description": "One note refers to South Bridge while every linked scene uses Glass Bridge.",
     "targetEntityType": "world_item",
     "targetEntityId": "loc_glass_bridge",
+    "targetEntityRefs": [
+      {
+        "type": "world_item",
+        "id": "loc_glass_bridge"
+      }
+    ],
     "preview": "Update the inconsistent location reference to Glass Bridge.",
+    "proposedOperations": [
+      {
+        "op": "update",
+        "entityType": "world_item",
+        "entityId": "loc_glass_bridge",
+        "fields": {
+          "description": "Glass Bridge remains the canonical location reference."
+        }
+      }
+    ],
+    "reviewNotes": "Safe rename alignment across references.",
+    "confidence": 0.91,
+    "payloadPath": "system/runs/artifacts/proposal_consistency_fix_bridge.json",
+    "originTaskRunId": "run_graph_sync_seed",
+    "reviewPolicy": "manual_workbench",
     "status": "pending",
-    "createdAt": "2026-03-12T02:40:26.701Z"
+    "createdAt": "2026-04-03T18:37:04.333Z"
+  },
+  {
+    "id": "proposal_import_entities_seed",
+    "title": "Review imported metadata candidates",
+    "source": "import",
+    "kind": "import_review",
+    "description": "Imported manuscript suggests new entity candidates and link proposals.",
+    "targetEntityType": "proposal",
+    "targetEntityId": null,
+    "targetEntityRefs": [
+      {
+        "type": "import_job",
+        "id": "import_seed_project"
+      }
+    ],
+    "preview": "Create import review batch for character, location, and organization candidates extracted from source manuscript.",
+    "proposedOperations": [
+      {
+        "op": "create",
+        "entityType": "proposal",
+        "fields": {
+          "source": "import",
+          "relatedImportJobId": "import_seed_project"
+        }
+      }
+    ],
+    "reviewNotes": "Metadata extraction stayed in staging and has not modified canonical entities.",
+    "confidence": 0.72,
+    "payloadPath": "system/imports/staging/import_seed_project/proposals.json",
+    "originTaskRunId": "run_import_seed",
+    "reviewPolicy": "manual_workbench",
+    "status": "pending",
+    "createdAt": "2026-04-03T18:37:04.333Z"
   }
 ]

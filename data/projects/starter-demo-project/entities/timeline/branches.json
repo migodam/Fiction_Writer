@@ -5,17 +5,18 @@
     "description": "Primary narrative thread.",
     "parentBranchId": null,
     "forkEventId": null,
-    "mergeEventId": null,
+    "mergeEventId": "event_merge_public",
     "color": "#f59e0b",
     "sortOrder": 0,
     "collapsed": false,
     "mode": "root",
     "startAnchor": null,
+    "endAnchor": null,
     "endMode": "open",
     "mergeTargetBranchId": null,
     "geometry": {
       "laneOffset": 0,
-      "bend": 0.25,
+      "bend": 0.18,
       "thickness": 1
     }
   },
@@ -23,40 +24,105 @@
     "id": "branch_shadow",
     "name": "Shadow Routes",
     "description": "Undercity movements and hidden handoffs.",
-    "parentBranchId": null,
-    "forkEventId": null,
-    "mergeEventId": null,
-    "color": "#f59e0b",
+    "parentBranchId": "branch_main",
+    "forkEventId": "event_arrival",
+    "mergeEventId": "event_bridge",
+    "color": "#38bdf8",
     "sortOrder": 1,
     "collapsed": false,
-    "mode": "independent",
-    "startAnchor": null,
-    "endMode": "open",
-    "mergeTargetBranchId": null,
+    "mode": "forked",
+    "startAnchor": {
+      "branchId": "branch_main",
+      "eventId": "event_arrival"
+    },
+    "endAnchor": {
+      "branchId": "branch_main",
+      "eventId": "event_bridge"
+    },
+    "endMode": "merge",
+    "mergeTargetBranchId": "branch_main",
     "geometry": {
-      "laneOffset": 96,
-      "bend": 0.25,
+      "laneOffset": -90,
+      "bend": 0.36,
       "thickness": 1
+    },
+    "anchorStartPos": {
+      "x": 174.8721664,
+      "y": 0
+    },
+    "anchorEndPos": {
+      "x": 1312.2029567999998,
+      "y": 0
     }
   },
   {
     "id": "branch_public",
     "name": "Public Pressure",
     "description": "Political and civic fallout.",
-    "parentBranchId": null,
-    "forkEventId": null,
-    "mergeEventId": null,
-    "color": "#f59e0b",
+    "parentBranchId": "branch_main",
+    "forkEventId": "event_arrival",
+    "mergeEventId": "event_merge_public",
+    "color": "#22c55e",
     "sortOrder": 2,
     "collapsed": false,
-    "mode": "independent",
-    "startAnchor": null,
-    "endMode": "open",
-    "mergeTargetBranchId": null,
+    "mode": "forked",
+    "startAnchor": {
+      "branchId": "branch_main",
+      "eventId": "event_arrival"
+    },
+    "endAnchor": {
+      "branchId": "branch_main",
+      "eventId": "event_merge_public"
+    },
+    "endMode": "merge",
+    "mergeTargetBranchId": "branch_main",
     "geometry": {
-      "laneOffset": 192,
-      "bend": 0.25,
+      "laneOffset": 110,
+      "bend": 0.28,
       "thickness": 1
+    },
+    "anchorStartPos": {
+      "x": 174.8721664,
+      "y": 0
+    },
+    "anchorEndPos": {
+      "x": 1825.1278336,
+      "y": 0
+    }
+  },
+  {
+    "id": "branch_echo",
+    "name": "Echo Line",
+    "description": "A mirrored investigative run that fully overlaps the host branch between two shared events.",
+    "parentBranchId": "branch_main",
+    "forkEventId": "event_arrival",
+    "mergeEventId": "event_bridge",
+    "color": "#a855f7",
+    "sortOrder": 3,
+    "collapsed": false,
+    "mode": "forked",
+    "startAnchor": {
+      "branchId": "branch_main",
+      "eventId": "event_arrival"
+    },
+    "endAnchor": {
+      "branchId": "branch_main",
+      "eventId": "event_bridge"
+    },
+    "endMode": "merge",
+    "mergeTargetBranchId": "branch_main",
+    "geometry": {
+      "laneOffset": 0,
+      "bend": 0.18,
+      "thickness": 1
+    },
+    "anchorStartPos": {
+      "x": 174.8721664,
+      "y": 0
+    },
+    "anchorEndPos": {
+      "x": 1312.2029567999998,
+      "y": 0
     }
   }
 ]

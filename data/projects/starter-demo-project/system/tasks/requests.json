@@ -1,1 +1,60 @@
-[]
+[
+  {
+    "id": "task_graph_sync",
+    "title": "Graph sync candidate review",
+    "taskType": "proposal_generation",
+    "agentType": "qa-consistency-agent",
+    "source": "manual",
+    "status": "queued",
+    "prompt": "Review selected graph notes and prepare canonical-safe proposals.",
+    "input": {
+      "objective": "Turn reviewed graph notes into Workbench-safe proposals."
+    },
+    "contextScope": {
+      "graphBoardIds": [
+        "board_main"
+      ],
+      "targetEntityIds": [
+        "event_bridge"
+      ]
+    },
+    "targetIds": [
+      {
+        "type": "graph_board",
+        "id": "board_main"
+      },
+      {
+        "type": "timeline_event",
+        "id": "event_bridge"
+      }
+    ],
+    "reviewPolicy": "manual_workbench",
+    "createdAt": "2026-04-03T18:37:04.333Z"
+  },
+  {
+    "id": "task_import_seed",
+    "title": "Starter import review",
+    "taskType": "novel_import",
+    "agentType": "import-agent",
+    "source": "local-cli",
+    "status": "awaiting_user_input",
+    "prompt": "Validate imported chapter and scene structure before metadata extraction.",
+    "input": {
+      "importJobId": "import_seed_project",
+      "sourceFormat": "md"
+    },
+    "contextScope": {
+      "importJobIds": [
+        "import_seed_project"
+      ]
+    },
+    "targetIds": [
+      {
+        "type": "import_job",
+        "id": "import_seed_project"
+      }
+    ],
+    "reviewPolicy": "manual_workbench",
+    "createdAt": "2026-04-03T18:37:04.333Z"
+  }
+]

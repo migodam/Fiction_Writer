@@ -29,11 +29,62 @@
   "linkedWorldItemIds": [
     "loc_flood_market"
   ],
+  "importance": "major",
+  "groupKey": "major",
+  "relationshipIds": [
+    "rel_aria_rowan",
+    "rel_rowan_nila"
+  ],
+  "povInsights": {
+    "summary": "Rowan is a pressure-release POV with tactical ambiguity and strong decision prediction value.",
+    "scores": [
+      {
+        "key": "agency",
+        "label": "Agency",
+        "score": 74
+      },
+      {
+        "key": "volatility",
+        "label": "Volatility",
+        "score": 63
+      },
+      {
+        "key": "mystery",
+        "label": "Mystery Value",
+        "score": 82
+      }
+    ],
+    "radar": [
+      {
+        "key": "resolve",
+        "label": "Resolve",
+        "score": 72
+      },
+      {
+        "key": "empathy",
+        "label": "Empathy",
+        "score": 58
+      },
+      {
+        "key": "risk",
+        "label": "Risk Appetite",
+        "score": 66
+      },
+      {
+        "key": "secrecy",
+        "label": "Secrecy",
+        "score": 88
+      },
+      {
+        "key": "leadership",
+        "label": "Leadership",
+        "score": 54
+      }
+    ],
+    "source": "placeholder",
+    "updatedAt": "2026-04-03T18:37:04.333Z"
+  },
   "statusFlags": {
     "alive": true
-  },
-  "importance": "ungrouped",
-  "groupKey": "ungrouped",
-  "relationshipIds": [],
-  "povInsights": null
+  }
 }

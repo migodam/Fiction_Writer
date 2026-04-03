@@ -1,0 +1,211 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e7]:
+          - generic [ref=e8]: F
+          - generic [ref=e9]:
+            - generic [ref=e10]: Narrative IDE
+            - generic [ref=e11]: Starter Demo Project
+        - button "Toggle Sidebar" [ref=e12] [cursor=pointer]:
+          - img [ref=e13]
+        - button "New Project" [ref=e15] [cursor=pointer]:
+          - img [ref=e16]
+        - button "Open Project" [ref=e19] [cursor=pointer]:
+          - img [ref=e20]
+        - button "Save Project" [ref=e22] [cursor=pointer]:
+          - img [ref=e23]
+        - button "Undo" [ref=e28] [cursor=pointer]:
+          - img [ref=e29]
+        - button "Redo" [ref=e32] [cursor=pointer]:
+          - img [ref=e33]
+        - button "Run Simulation" [ref=e37] [cursor=pointer]:
+          - img [ref=e38]
+        - button "Check Consistency" [ref=e40] [cursor=pointer]:
+          - img [ref=e41]
+        - button "Export Book" [ref=e44] [cursor=pointer]:
+          - img [ref=e45]
+      - button "Search entities, proposals, and settings... (Ctrl+P)" [ref=e48] [cursor=pointer]:
+        - img [ref=e49]
+        - generic [ref=e52]: Search entities, proposals, and settings... (Ctrl+P)
+      - generic [ref=e53]:
+        - button "Toggle Agent Dock" [ref=e54] [cursor=pointer]:
+          - img [ref=e55]
+        - button "Settings" [ref=e58] [cursor=pointer]:
+          - img [ref=e59]
+  - generic [ref=e62]:
+    - navigation [ref=e63]:
+      - generic [ref=e64]:
+        - button "Workbench" [ref=e65] [cursor=pointer]:
+          - img [ref=e67]
+        - button "Writing Studio" [ref=e69] [cursor=pointer]:
+          - img [ref=e70]
+        - button "Characters" [ref=e75] [cursor=pointer]:
+          - img [ref=e76]
+        - button "Timeline" [ref=e81] [cursor=pointer]:
+          - img [ref=e82]
+        - button "Graph" [ref=e85] [cursor=pointer]:
+          - img [ref=e86]
+        - button "World Model" [ref=e91] [cursor=pointer]:
+          - img [ref=e92]
+        - button "Simulation" [ref=e95] [cursor=pointer]:
+          - img [ref=e96]
+        - button "Beta Reader" [ref=e99] [cursor=pointer]:
+          - img [ref=e100]
+        - button "Consistency" [active] [ref=e103] [cursor=pointer]:
+          - img [ref=e104]
+        - button "Agents" [ref=e107] [cursor=pointer]:
+          - img [ref=e108]
+        - button "Publish" [ref=e111] [cursor=pointer]:
+          - img [ref=e112]
+        - button "Insights" [ref=e114] [cursor=pointer]:
+          - img [ref=e115]
+        - button "Reference Library" [ref=e116] [cursor=pointer]:
+          - img [ref=e117]
+    - complementary [ref=e120]:
+      - generic [ref=e121]:
+        - generic: Consistency
+        - button "Collapse Sidebar" [ref=e123] [cursor=pointer]:
+          - img [ref=e124]
+      - generic [ref=e1145] [cursor=pointer]:
+        - generic: Overview
+    - main [ref=e151]:
+      - generic [ref=e1146]:
+        - generic [ref=e1147]:
+          - generic [ref=e1148]:
+            - generic [ref=e1149]: Consistency
+            - generic [ref=e1150]: Narrative Audit Center
+          - generic [ref=e1151]:
+            - button "Open" [ref=e1152] [cursor=pointer]
+            - button "Resolved" [ref=e1153] [cursor=pointer]
+            - button "Ignored" [ref=e1154] [cursor=pointer]
+            - button "All" [ref=e1155] [cursor=pointer]
+            - button "Run Audit" [ref=e1156] [cursor=pointer]:
+              - img [ref=e1157]
+              - text: Run Audit
+        - generic [ref=e1162]:
+          - generic [ref=e1163]:
+            - generic [ref=e1164]: Open Issues
+            - generic [ref=e1165]: "3"
+          - generic [ref=e1166]:
+            - generic [ref=e1167]: Resolved
+            - generic [ref=e1168]: "0"
+          - generic [ref=e1169]:
+            - generic [ref=e1170]: Ignored
+            - generic [ref=e1171]: "0"
+          - generic [ref=e1172]:
+            - generic [ref=e1173]: Pending Fixes
+            - generic [ref=e1174]: "1"
+        - generic [ref=e1176]:
+          - generic [ref=e1177]:
+            - generic [ref=e1178]:
+              - generic [ref=e1179]:
+                - img [ref=e1181]
+                - generic [ref=e1183]:
+                  - generic [ref=e1184]: consistency
+                  - generic [ref=e1185]: Bridge location mismatch
+                  - paragraph [ref=e1186]: One note still references South Bridge while the canonical location is Glass Bridge.
+                  - generic [ref=e1187]:
+                    - generic [ref=e1188]: Suggested Fix
+                    - text: Create a Workbench fix proposal that rewrites the stale location reference to Glass Bridge.
+              - generic [ref=e1189]: high
+            - generic [ref=e1190]:
+              - button "Queue Fix" [ref=e1191] [cursor=pointer]:
+                - img [ref=e1192]
+                - text: Queue Fix
+              - button "Mark Resolved" [ref=e1194] [cursor=pointer]:
+                - img [ref=e1195]
+                - text: Mark Resolved
+              - button "Hide" [ref=e1198] [cursor=pointer]:
+                - img [ref=e1199]
+                - text: Hide
+          - generic [ref=e1204]:
+            - generic [ref=e1205]:
+              - generic [ref=e1206]:
+                - img [ref=e1208]
+                - generic [ref=e1210]:
+                  - generic [ref=e1211]: qa
+                  - generic [ref=e1212]: Possible duplicate market route intel
+                  - paragraph [ref=e1213]: A graph note and a lore note appear to describe the same hidden route network.
+                  - generic [ref=e1214]:
+                    - generic [ref=e1215]: Suggested Fix
+                    - text: Merge the duplicated route phrasing through Workbench before chapter three drafting.
+              - generic [ref=e1216]: medium
+            - generic [ref=e1217]:
+              - button "Queue Fix" [ref=e1218] [cursor=pointer]:
+                - img [ref=e1219]
+                - text: Queue Fix
+              - button "Mark Resolved" [ref=e1221] [cursor=pointer]:
+                - img [ref=e1222]
+                - text: Mark Resolved
+              - button "Hide" [ref=e1225] [cursor=pointer]:
+                - img [ref=e1226]
+                - text: Hide
+          - generic [ref=e1231]:
+            - generic [ref=e1232]:
+              - generic [ref=e1233]:
+                - img [ref=e1235]
+                - generic [ref=e1237]:
+                  - generic [ref=e1238]: qa
+                  - generic [ref=e1239]: Character state flag review
+                  - paragraph [ref=e1240]: Vesper appears in one draft outline as deceased while all current scenes still use him as active.
+                  - generic [ref=e1241]:
+                    - generic [ref=e1242]: Suggested Fix
+                    - text: Keep Vesper alive for the current draft and move the death note to future branching notes.
+              - generic [ref=e1243]: low
+            - generic [ref=e1244]:
+              - button "Queue Fix" [ref=e1245] [cursor=pointer]:
+                - img [ref=e1246]
+                - text: Queue Fix
+              - button "Mark Resolved" [ref=e1248] [cursor=pointer]:
+                - img [ref=e1249]
+                - text: Mark Resolved
+              - button "Hide" [ref=e1252] [cursor=pointer]:
+                - img [ref=e1253]
+                - text: Hide
+    - complementary [ref=e240]:
+      - generic [ref=e241]:
+        - generic [ref=e242]:
+          - img [ref=e244]
+          - generic [ref=e247]:
+            - generic [ref=e248]: Agent Dock
+            - generic [ref=e249]: Future CLI control surface
+        - button [ref=e250] [cursor=pointer]:
+          - img [ref=e251]
+      - generic [ref=e253]:
+        - generic [ref=e254]:
+          - generic [ref=e255]: Live Queue
+          - generic [ref=e256]:
+            - generic [ref=e257]:
+              - generic [ref=e258]: Queued
+              - generic [ref=e259]: "1"
+            - generic [ref=e260]:
+              - generic [ref=e261]: Running
+              - generic [ref=e262]: "0"
+          - generic [ref=e263]:
+            - generic [ref=e264]:
+              - generic [ref=e265]: Generated one graph sync proposal and one consistency summary.
+              - generic [ref=e266]: completed
+            - generic [ref=e267]:
+              - generic [ref=e268]: Imported manuscript skeleton and paused for user confirmation.
+              - generic [ref=e269]: awaiting_user_input
+        - generic [ref=e270]: View full chat history in the /agents page.
+  - contentinfo [ref=e271]:
+    - generic [ref=e272]:
+      - generic [ref=e273]:
+        - generic [ref=e274]:
+          - generic [ref=e275]: Project
+          - generic [ref=e276]: Starter Demo Project
+        - generic [ref=e277]:
+          - generic [ref=e278]: Path
+          - generic [ref=e279]: memory://starter-demo-project
+        - generic [ref=e280]:
+          - generic [ref=e281]: Status
+          - generic [ref=e282]: Idle
+      - generic [ref=e283]:
+        - generic [ref=e284]:
+          - generic [ref=e285]: Selection
+          - generic [ref=e286]: No Selection
+        - generic [ref=e287]:
+          - generic [ref=e288]: Workbench
+          - generic [ref=e289]: 3 pending / 3 issues

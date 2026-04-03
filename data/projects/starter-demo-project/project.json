@@ -4,12 +4,12 @@
     "projectId": "project_starter-demo_starter_demo_project",
     "name": "Starter Demo Project",
     "description": "A guided starter project for the acceptance walkthrough.",
-    "createdAt": "2026-03-12T02:40:26.701Z",
-    "updatedAt": "2026-03-18T21:33:34.431Z",
-    "version": 2,
+    "createdAt": "2026-04-03T18:37:04.333Z",
+    "updatedAt": "2026-04-03T18:37:07.309Z",
+    "version": 4,
     "rootPath": "D:\\NUS\\Computing\\Projects\\Fiction_Writer\\data\\projects\\starter-demo-project",
     "storageMode": "nodefs",
-    "locale": "en",
+    "locale": "zh-CN",
     "template": "starter-demo",
     "capabilities": {
       "import": true,
@@ -33,13 +33,14 @@
   },
   "counts": {
     "characters": 5,
-    "timelineEvents": 5,
+    "timelineBranches": 4,
+    "timelineEvents": 6,
     "scenes": 6,
     "worldItems": 12,
-    "scripts": 0,
-    "storyboards": 0,
-    "importJobs": 0,
-    "proposals": 2,
+    "scripts": 1,
+    "storyboards": 1,
+    "importJobs": 1,
+    "proposals": 3,
     "exports": 0
   }
 }

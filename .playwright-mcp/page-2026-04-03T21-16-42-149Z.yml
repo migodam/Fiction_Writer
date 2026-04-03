@@ -1,0 +1,209 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e7]:
+          - generic [ref=e8]: F
+          - generic [ref=e9]:
+            - generic [ref=e10]: Narrative IDE
+            - generic [ref=e11]: Starter Demo Project
+        - button "Toggle Sidebar" [ref=e12] [cursor=pointer]:
+          - img [ref=e13]
+        - button "New Project" [ref=e15] [cursor=pointer]:
+          - img [ref=e16]
+        - button "Open Project" [ref=e19] [cursor=pointer]:
+          - img [ref=e20]
+        - button "Save Project" [ref=e22] [cursor=pointer]:
+          - img [ref=e23]
+        - button "Undo" [ref=e28] [cursor=pointer]:
+          - img [ref=e29]
+        - button "Redo" [ref=e32] [cursor=pointer]:
+          - img [ref=e33]
+        - button "Run Simulation" [ref=e37] [cursor=pointer]:
+          - img [ref=e38]
+        - button "Check Consistency" [ref=e40] [cursor=pointer]:
+          - img [ref=e41]
+        - button "Export Book" [ref=e44] [cursor=pointer]:
+          - img [ref=e45]
+      - button "Search entities, proposals, and settings... (Ctrl+P)" [ref=e48] [cursor=pointer]:
+        - img [ref=e49]
+        - generic [ref=e52]: Search entities, proposals, and settings... (Ctrl+P)
+      - generic [ref=e53]:
+        - button "Toggle Agent Dock" [ref=e54] [cursor=pointer]:
+          - img [ref=e55]
+        - button "Settings" [ref=e58] [cursor=pointer]:
+          - img [ref=e59]
+  - generic [ref=e62]:
+    - navigation [ref=e63]:
+      - generic [ref=e64]:
+        - button "Workbench" [ref=e65] [cursor=pointer]:
+          - img [ref=e67]
+        - button "Writing Studio" [ref=e69] [cursor=pointer]:
+          - img [ref=e70]
+        - button "Characters" [ref=e75] [cursor=pointer]:
+          - img [ref=e76]
+        - button "Timeline" [ref=e81] [cursor=pointer]:
+          - img [ref=e82]
+        - button "Graph" [ref=e85] [cursor=pointer]:
+          - img [ref=e86]
+        - button "World Model" [ref=e91] [cursor=pointer]:
+          - img [ref=e92]
+        - button "Simulation" [ref=e95] [cursor=pointer]:
+          - img [ref=e96]
+        - button "Beta Reader" [ref=e99] [cursor=pointer]:
+          - img [ref=e100]
+        - button "Consistency" [ref=e103] [cursor=pointer]:
+          - img [ref=e104]
+        - button "Agents" [ref=e107] [cursor=pointer]:
+          - img [ref=e108]
+        - button "Publish" [ref=e111] [cursor=pointer]:
+          - img [ref=e112]
+        - button "Insights" [ref=e114] [cursor=pointer]:
+          - img [ref=e115]
+        - button "Reference Library" [ref=e116] [cursor=pointer]:
+          - img [ref=e117]
+    - complementary [ref=e120]:
+      - generic [ref=e121]:
+        - generic [ref=e122]: Workbench
+        - button "Collapse Sidebar" [ref=e123] [cursor=pointer]:
+          - img [ref=e124]
+      - generic [ref=e127]:
+        - generic [ref=e128] [cursor=pointer]:
+          - generic [ref=e129]: Inbox
+          - generic [ref=e130]: "3"
+        - generic [ref=e132] [cursor=pointer]:
+          - generic [ref=e133]: History
+          - generic [ref=e134]: "1"
+        - generic [ref=e135] [cursor=pointer]:
+          - generic [ref=e136]: Issues
+          - generic [ref=e137]: "3"
+        - generic [ref=e138] [cursor=pointer]:
+          - generic [ref=e139]: Imports
+          - generic [ref=e140]: "1"
+        - generic [ref=e141] [cursor=pointer]:
+          - generic [ref=e142]: Runs
+          - generic [ref=e143]: "1"
+        - generic [ref=e144] [cursor=pointer]:
+          - generic [ref=e145]: Prompts
+          - generic [ref=e146]: "8"
+        - generic [ref=e148] [cursor=pointer]: Backlog
+    - main [ref=e151]:
+      - generic [ref=e153]:
+        - generic [ref=e154]:
+          - generic [ref=e155]:
+            - generic [ref=e156]:
+              - img [ref=e157]
+              - text: Workbench
+            - heading "Review and Runtime Center" [level=1] [ref=e159]
+            - paragraph [ref=e160]: Imports, proposals, runtime logs, and prompt templates converge here.
+          - button "Import Novel" [ref=e161] [cursor=pointer]:
+            - img [ref=e162]
+            - text: Import Novel
+        - generic [ref=e166]:
+          - generic [ref=e167]:
+            - generic: Inbox
+            - generic: "3"
+          - generic [ref=e168]:
+            - generic: Open Issues
+            - generic: "3"
+          - generic [ref=e169]:
+            - generic: Imports
+            - generic: "1"
+          - generic [ref=e170]:
+            - generic: Active Runs
+            - generic: "1"
+          - generic [ref=e171]:
+            - generic: Prompt Templates
+            - generic: "8"
+        - generic [ref=e172]:
+          - generic [ref=e173]:
+            - generic [ref=e174]:
+              - generic [ref=e175]:
+                - generic [ref=e176]: graph
+                - heading "Convert public fallout note into timeline candidate" [level=2] [ref=e177]
+              - generic [ref=e178]: Pending
+            - paragraph [ref=e179]: Graph selection suggests a new event after the bridge intercept.
+            - generic [ref=e180]: "Create event: Public Hearing After Bridge Collapse on branch Public Pressure."
+            - generic [ref=e181]:
+              - button "Accept" [ref=e182] [cursor=pointer]:
+                - img [ref=e183]
+                - text: Accept
+              - button "Reject" [ref=e186] [cursor=pointer]:
+                - img [ref=e187]
+                - text: Reject
+          - generic [ref=e191]:
+            - generic [ref=e192]:
+              - generic [ref=e193]:
+                - generic [ref=e194]: consistency
+                - heading "Resolve bridge location mismatch" [level=2] [ref=e195]
+              - generic [ref=e196]: Pending
+            - paragraph [ref=e197]: One note refers to South Bridge while every linked scene uses Glass Bridge.
+            - generic [ref=e198]: Update the inconsistent location reference to Glass Bridge.
+            - generic [ref=e199]:
+              - button "Accept" [ref=e200] [cursor=pointer]:
+                - img [ref=e201]
+                - text: Accept
+              - button "Reject" [ref=e204] [cursor=pointer]:
+                - img [ref=e205]
+                - text: Reject
+          - generic [ref=e209]:
+            - generic [ref=e210]:
+              - generic [ref=e211]:
+                - generic [ref=e212]: import
+                - heading "Review imported metadata candidates" [level=2] [ref=e213]
+              - generic [ref=e214]: Pending
+            - paragraph [ref=e215]: Imported manuscript suggests new entity candidates and link proposals.
+            - generic [ref=e216]: Create import review batch for character, location, and organization candidates extracted from source manuscript.
+            - generic [ref=e217]:
+              - button "Accept" [ref=e218] [cursor=pointer]:
+                - img [ref=e219]
+                - text: Accept
+              - button "Reject" [ref=e222] [cursor=pointer]:
+                - img [ref=e223]
+                - text: Reject
+    - complementary [ref=e230]:
+      - generic [ref=e231]:
+        - generic [ref=e232]:
+          - img [ref=e234]
+          - generic [ref=e237]:
+            - generic [ref=e238]: Agent Dock
+            - generic [ref=e239]: Future CLI control surface
+        - button [ref=e240] [cursor=pointer]:
+          - img [ref=e241]
+      - generic [ref=e243]:
+        - generic [ref=e244]:
+          - generic [ref=e245]: Live Queue
+          - generic [ref=e246]:
+            - generic [ref=e247]:
+              - generic [ref=e248]: Queued
+              - generic [ref=e249]: "1"
+            - generic [ref=e250]:
+              - generic [ref=e251]: Running
+              - generic [ref=e252]: "0"
+          - generic [ref=e253]:
+            - generic [ref=e254]:
+              - generic [ref=e255]: Generated one graph sync proposal and one consistency summary.
+              - generic [ref=e256]: completed
+            - generic [ref=e257]:
+              - generic [ref=e258]: Imported manuscript skeleton and paused for user confirmation.
+              - generic [ref=e259]: awaiting_user_input
+        - generic [ref=e260]: View full chat history in the /agents page.
+  - contentinfo [ref=e261]:
+    - generic [ref=e262]:
+      - generic [ref=e263]:
+        - generic [ref=e264]:
+          - generic [ref=e265]: Project
+          - generic [ref=e266]: Starter Demo Project
+        - generic [ref=e267]:
+          - generic [ref=e268]: Path
+          - generic [ref=e269]: memory://starter-demo-project
+        - generic [ref=e270]:
+          - generic [ref=e271]: Status
+          - generic [ref=e272]: Unsaved changes
+      - generic [ref=e273]:
+        - generic [ref=e274]:
+          - generic [ref=e275]: Selection
+          - generic [ref=e276]: No Selection
+        - generic [ref=e277]:
+          - generic [ref=e278]: Workbench
+          - generic [ref=e279]: 3 pending / 3 issues

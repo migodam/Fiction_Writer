@@ -1,0 +1,17 @@
+{
+  "id": "rag_doc_script_ep1",
+  "sourceType": "script",
+  "sourceId": "script_episode_1",
+  "title": "Short Drama Episode 1",
+  "path": "entities/scripts/script_episode_1.fountain",
+  "entityRefs": [
+    {
+      "type": "script",
+      "id": "script_episode_1"
+    }
+  ],
+  "chunkIds": [
+    "rag_chunk_script_ep1_1"
+  ],
+  "updatedAt": "2026-04-03T18:37:04.333Z"
+}

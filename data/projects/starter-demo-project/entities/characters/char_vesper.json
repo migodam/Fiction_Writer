@@ -32,12 +32,63 @@
     "org_black_tide",
     "item_memory_shard"
   ],
+  "importance": "core",
+  "groupKey": "core",
+  "relationshipIds": [
+    "rel_aria_vesper",
+    "rel_seren_vesper"
+  ],
+  "povInsights": {
+    "summary": "Vesper is a high-control antagonist POV best used sparingly for precision reveals.",
+    "scores": [
+      {
+        "key": "agency",
+        "label": "Agency",
+        "score": 89
+      },
+      {
+        "key": "volatility",
+        "label": "Volatility",
+        "score": 44
+      },
+      {
+        "key": "mystery",
+        "label": "Mystery Value",
+        "score": 95
+      }
+    ],
+    "radar": [
+      {
+        "key": "resolve",
+        "label": "Resolve",
+        "score": 87
+      },
+      {
+        "key": "empathy",
+        "label": "Empathy",
+        "score": 28
+      },
+      {
+        "key": "risk",
+        "label": "Risk Appetite",
+        "score": 52
+      },
+      {
+        "key": "secrecy",
+        "label": "Secrecy",
+        "score": 97
+      },
+      {
+        "key": "leadership",
+        "label": "Leadership",
+        "score": 83
+      }
+    ],
+    "source": "placeholder",
+    "updatedAt": "2026-04-03T18:37:04.333Z"
+  },
   "statusFlags": {
     "antagonist": true,
     "alive": true
-  },
-  "importance": "ungrouped",
-  "groupKey": "ungrouped",
-  "relationshipIds": [],
-  "povInsights": null
+  }
 }

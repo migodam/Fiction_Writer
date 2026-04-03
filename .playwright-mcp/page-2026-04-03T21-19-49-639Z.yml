@@ -1,0 +1,169 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e7]:
+          - generic [ref=e8]: F
+          - generic [ref=e9]:
+            - generic [ref=e10]: Narrative IDE
+            - generic [ref=e11]: Starter Demo Project
+        - button "Toggle Sidebar" [ref=e12] [cursor=pointer]:
+          - img [ref=e13]
+        - button "New Project" [ref=e15] [cursor=pointer]:
+          - img [ref=e16]
+        - button "Open Project" [ref=e19] [cursor=pointer]:
+          - img [ref=e20]
+        - button "Save Project" [ref=e22] [cursor=pointer]:
+          - img [ref=e23]
+        - button "Undo" [ref=e28] [cursor=pointer]:
+          - img [ref=e29]
+        - button "Redo" [ref=e32] [cursor=pointer]:
+          - img [ref=e33]
+        - button "Run Simulation" [ref=e37] [cursor=pointer]:
+          - img [ref=e38]
+        - button "Check Consistency" [ref=e40] [cursor=pointer]:
+          - img [ref=e41]
+        - button "Export Book" [ref=e44] [cursor=pointer]:
+          - img [ref=e45]
+      - button "Search entities, proposals, and settings... (Ctrl+P)" [ref=e48] [cursor=pointer]:
+        - img [ref=e49]
+        - generic [ref=e52]: Search entities, proposals, and settings... (Ctrl+P)
+      - generic [ref=e53]:
+        - button "Toggle Agent Dock" [ref=e54] [cursor=pointer]:
+          - img [ref=e55]
+        - button "Settings" [ref=e58] [cursor=pointer]:
+          - img [ref=e59]
+  - generic [ref=e62]:
+    - navigation [ref=e63]:
+      - generic [ref=e64]:
+        - button "Workbench" [ref=e65] [cursor=pointer]:
+          - img [ref=e67]
+        - button "Writing Studio" [ref=e69] [cursor=pointer]:
+          - img [ref=e70]
+        - button "Characters" [ref=e75] [cursor=pointer]:
+          - img [ref=e76]
+        - button "Timeline" [ref=e81] [cursor=pointer]:
+          - img [ref=e82]
+        - button "Graph" [ref=e85] [cursor=pointer]:
+          - img [ref=e86]
+        - button "World Model" [ref=e91] [cursor=pointer]:
+          - img [ref=e92]
+        - button "Simulation" [ref=e95] [cursor=pointer]:
+          - img [ref=e96]
+        - button "Beta Reader" [ref=e99] [cursor=pointer]:
+          - img [ref=e100]
+        - button "Consistency" [ref=e103] [cursor=pointer]:
+          - img [ref=e104]
+        - button "Agents" [ref=e107] [cursor=pointer]:
+          - img [ref=e108]
+        - button "Publish" [active] [ref=e111] [cursor=pointer]:
+          - img [ref=e112]
+        - button "Insights" [ref=e114] [cursor=pointer]:
+          - img [ref=e115]
+        - button "Reference Library" [ref=e116] [cursor=pointer]:
+          - img [ref=e117]
+    - complementary [ref=e120]:
+      - generic [ref=e121]:
+        - generic [ref=e122]: Publish
+        - button "Collapse Sidebar" [ref=e123] [cursor=pointer]:
+          - img [ref=e124]
+      - generic [ref=e127]:
+        - generic [ref=e1321] [cursor=pointer]: Exports
+        - generic [ref=e1322] [cursor=pointer]:
+          - generic [ref=e1323]: Video
+          - generic [ref=e1324]: "1"
+    - main [ref=e151]:
+      - generic [ref=e1327]:
+        - generic [ref=e1328]:
+          - generic [ref=e1329]:
+            - generic [ref=e1330]: Publishing Desk
+            - heading "Starter Demo Project" [level=1] [ref=e1331]
+            - paragraph [ref=e1332]: Export the full project or a selected chapter subset.
+          - generic [ref=e1333]:
+            - generic [ref=e1334]:
+              - generic [ref=e1335]: Scope
+              - combobox "Scope" [ref=e1336]:
+                - option "Whole project"
+                - option "By chapter" [selected]
+            - generic [ref=e1337]:
+              - generic [ref=e1338]: Format
+              - generic [ref=e1339]:
+                - button "Format HTML" [ref=e1340] [cursor=pointer]:
+                  - img [ref=e1341]
+                  - text: Markdown
+                - button "HTML" [ref=e1344] [cursor=pointer]:
+                  - img [ref=e1345]
+                  - text: HTML
+            - generic [ref=e1350]:
+              - generic [ref=e1351]:
+                - img [ref=e1352]
+                - text: Include appendices
+              - checkbox "Include appendices" [checked] [ref=e1356]
+            - generic [ref=e1357]:
+              - generic [ref=e1358]: Select chapters
+              - generic [ref=e1359]:
+                - generic [ref=e1360]:
+                  - checkbox "Fractured Arrival" [ref=e1361]
+                  - generic [ref=e1362]: Fractured Arrival
+                - generic [ref=e1363]:
+                  - checkbox "Pressure Lines" [ref=e1364]
+                  - generic [ref=e1365]: Pressure Lines
+            - button "Generate export markdown" [ref=e1366] [cursor=pointer]:
+              - generic [ref=e1367]:
+                - img [ref=e1368]
+                - text: Generate export
+              - generic [ref=e1371]: markdown
+          - generic [ref=e1372]:
+            - generic [ref=e1373]: Generated Exports
+            - generic [ref=e1375]: No exports yet.
+        - generic [ref=e1376]:
+          - generic [ref=e1377]:
+            - img [ref=e1378]
+            - text: Preview
+          - generic [ref=e1381]: "# Starter Demo Project # Fractured Arrival The investigation begins and the first hidden route surfaces. ## Dockside Arrival Aria stepped off the lift into the Sky Dock haze, where the city smelled like cold copper and stormwater. Rowan waited beside a stack of confiscated trunks, already bored by her questions and curious in spite of himself. ## Flood Market Line Below the market awnings, Nila unrolled her layered city map across a tea crate. Rowan pointed to a corridor no patrol report admitted existed, and the ink shimmered as though the city itself disliked being found. # Pressure Lines Political pressure, archive reconstruction, and the bridge setup collide. ## Choir in Lantern Ward Seren did not greet Aria with suspicion but with receipts, witness statements, and names of families priced out of their own memories. The room listened for Aria's answer before anyone reached for wine. ## Archive Reconstruction The breach looked surgical until Nila overlaid the transit lines. Then the theft became choreography: a convoy stepping between map revisions, using the city's own forgotten seams as cover. ## Consul's Smile Vesper spoke like a man tidying an inconvenience rather than defending a crime scene. Every answer he offered was elegant, plausible, and positioned exactly one step away from the truth. ## Glass Bridge Intercept By the time the convoy reached the Glass Bridge, every alliance had already become conditional. Aria tracked the shard, Seren controlled the crowd, Nila corrected the map in real time, and Vesper smiled like he had authored the weather. # Appendices ## Characters - Aria Solis: Lead investigator chasing the memory archive theft. - Rowan Vale: A disgraced tactician who knows the undercity routes. - Seren Thorne: Leader of the Glass Choir opposition cell. - Vesper Hale: A polished antagonist directing the theft network. - Nila Quill: Cartographer and world-map specialist for the Bureau. ## Timeline - Arrival at Sky Dock (Day 1 - Dawn) - Market Route Leak (Day 1 - Midday) - Choir Salon Meeting (Day 1 - Night) - Archive Breach Review (Day 2 - Morning) - Bridge Intercept (Day 2 - Sunset) - Emergency Public Hearing (Day 3 - Morning)"
+    - complementary [ref=e240]:
+      - generic [ref=e241]:
+        - generic [ref=e242]:
+          - img [ref=e244]
+          - generic [ref=e247]:
+            - generic [ref=e248]: Agent Dock
+            - generic [ref=e249]: Future CLI control surface
+        - button [ref=e250] [cursor=pointer]:
+          - img [ref=e251]
+      - generic [ref=e253]:
+        - generic [ref=e254]:
+          - generic [ref=e255]: Live Queue
+          - generic [ref=e256]:
+            - generic [ref=e257]:
+              - generic [ref=e258]: Queued
+              - generic [ref=e259]: "1"
+            - generic [ref=e260]:
+              - generic [ref=e261]: Running
+              - generic [ref=e262]: "0"
+          - generic [ref=e263]:
+            - generic [ref=e264]:
+              - generic [ref=e265]: Generated one graph sync proposal and one consistency summary.
+              - generic [ref=e266]: completed
+            - generic [ref=e267]:
+              - generic [ref=e268]: Imported manuscript skeleton and paused for user confirmation.
+              - generic [ref=e269]: awaiting_user_input
+        - generic [ref=e270]: View full chat history in the /agents page.
+  - contentinfo [ref=e271]:
+    - generic [ref=e272]:
+      - generic [ref=e273]:
+        - generic [ref=e274]:
+          - generic [ref=e275]: Project
+          - generic [ref=e276]: Starter Demo Project
+        - generic [ref=e277]:
+          - generic [ref=e278]: Path
+          - generic [ref=e279]: memory://starter-demo-project
+        - generic [ref=e280]:
+          - generic [ref=e281]: Status
+          - generic [ref=e282]: Idle
+      - generic [ref=e283]:
+        - generic [ref=e284]:
+          - generic [ref=e285]: Selection
+          - generic [ref=e286]: No Selection
+        - generic [ref=e287]:
+          - generic [ref=e288]: Workbench
+          - generic [ref=e289]: 3 pending / 3 issues

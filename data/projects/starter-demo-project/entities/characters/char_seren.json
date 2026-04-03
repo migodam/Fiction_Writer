@@ -32,11 +32,62 @@
     "org_glass_choir",
     "loc_lantern_ward"
   ],
+  "importance": "major",
+  "groupKey": "major",
+  "relationshipIds": [
+    "rel_aria_seren",
+    "rel_seren_vesper"
+  ],
+  "povInsights": {
+    "summary": "Seren works best as a conviction-driven POV that sharpens public stakes.",
+    "scores": [
+      {
+        "key": "agency",
+        "label": "Agency",
+        "score": 85
+      },
+      {
+        "key": "volatility",
+        "label": "Volatility",
+        "score": 57
+      },
+      {
+        "key": "mystery",
+        "label": "Mystery Value",
+        "score": 61
+      }
+    ],
+    "radar": [
+      {
+        "key": "resolve",
+        "label": "Resolve",
+        "score": 94
+      },
+      {
+        "key": "empathy",
+        "label": "Empathy",
+        "score": 81
+      },
+      {
+        "key": "risk",
+        "label": "Risk Appetite",
+        "score": 75
+      },
+      {
+        "key": "secrecy",
+        "label": "Secrecy",
+        "score": 46
+      },
+      {
+        "key": "leadership",
+        "label": "Leadership",
+        "score": 88
+      }
+    ],
+    "source": "placeholder",
+    "updatedAt": "2026-04-03T18:37:04.333Z"
+  },
   "statusFlags": {
     "alive": true
-  },
-  "importance": "ungrouped",
-  "groupKey": "ungrouped",
-  "relationshipIds": [],
-  "povInsights": null
+  }
 }

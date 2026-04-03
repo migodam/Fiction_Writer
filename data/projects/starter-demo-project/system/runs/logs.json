@@ -1,1 +1,12 @@
-[]
+[
+  {
+    "taskRunId": "run_graph_sync_seed",
+    "path": "system/runs/logs/run_graph_sync_seed.jsonl",
+    "entryCount": 3
+  },
+  {
+    "taskRunId": "run_import_seed",
+    "path": "system/runs/logs/run_import_seed.jsonl",
+    "entryCount": 4
+  }
+]

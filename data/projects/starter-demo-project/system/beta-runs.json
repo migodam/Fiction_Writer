@@ -1,1 +1,42 @@
-[]
+[
+  {
+    "id": "beta_run_seed",
+    "personaId": "beta_generalist",
+    "createdAt": "2026-04-03T18:37:04.333Z",
+    "aggregate": {
+      "engagement": 82,
+      "retention": 71,
+      "resonance": 85,
+      "pacing": 77,
+      "consistency": 68,
+      "highlights": [
+        "Bridge Intercept lands as a strong act-turning sequence.",
+        "Rowan and Nila have memorable tactical chemistry.",
+        "The public fallout thread wants one more aftermath scene."
+      ]
+    },
+    "feedback": [
+      {
+        "id": "feedback_1",
+        "title": "Chapter 1 pacing",
+        "text": "The introduction is strong, but the market transition wants one more beat of emotional processing.",
+        "tag": "Pacing",
+        "type": "constructive"
+      },
+      {
+        "id": "feedback_2",
+        "title": "Cipher setup",
+        "text": "The archive reconstruction sequence is compelling, but Nila should own more of the deciphering setup earlier.",
+        "tag": "Consistency",
+        "type": "critical"
+      },
+      {
+        "id": "feedback_3",
+        "title": "Rowan voice",
+        "text": "Rowan consistently lands with a dry tactical humor that helps the investigation feel sharp.",
+        "tag": "Voice",
+        "type": "positive"
+      }
+    ]
+  }
+]

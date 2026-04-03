@@ -1,1 +1,59 @@
-[]
+[
+  {
+    "id": "beta_logician",
+    "name": "The Logician",
+    "archetype": "Analytical",
+    "profile": "Focuses on plot holes and cause-effect chains.",
+    "tone": "precise",
+    "focusAreas": [
+      "consistency",
+      "causality",
+      "pacing"
+    ],
+    "weights": {
+      "engagement": 62,
+      "retention": 68,
+      "resonance": 48,
+      "pacing": 82,
+      "consistency": 95
+    }
+  },
+  {
+    "id": "beta_empath",
+    "name": "The Empath",
+    "archetype": "Emotional",
+    "profile": "Tracks emotional resonance and character arcs.",
+    "tone": "warm",
+    "focusAreas": [
+      "resonance",
+      "engagement",
+      "character"
+    ],
+    "weights": {
+      "engagement": 85,
+      "retention": 74,
+      "resonance": 93,
+      "pacing": 58,
+      "consistency": 65
+    }
+  },
+  {
+    "id": "beta_generalist",
+    "name": "The Generalist",
+    "archetype": "Broad audience",
+    "profile": "Represents average reader enjoyment and clarity.",
+    "tone": "balanced",
+    "focusAreas": [
+      "engagement",
+      "retention",
+      "clarity"
+    ],
+    "weights": {
+      "engagement": 81,
+      "retention": 79,
+      "resonance": 75,
+      "pacing": 78,
+      "consistency": 71
+    }
+  }
+]

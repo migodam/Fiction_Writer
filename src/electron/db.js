@@ -205,7 +205,7 @@ export async function migrateFromJson(projectRoot, projectJson) {
     manuscriptNodes: 'manuscript_nodes',
     graphBoards: 'graph_boards',
     relationships: 'graph_relationships',
-    tags: 'tags',
+    characterTags: 'tags',
     todos: 'todos',
   };
 

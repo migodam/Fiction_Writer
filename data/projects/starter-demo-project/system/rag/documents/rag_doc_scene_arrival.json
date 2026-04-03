@@ -1,0 +1,25 @@
+{
+  "id": "rag_doc_scene_arrival",
+  "sourceType": "scene",
+  "sourceId": "scene_arrival",
+  "title": "Dockside Arrival",
+  "path": "writing/scenes/scene_arrival.md",
+  "entityRefs": [
+    {
+      "type": "scene",
+      "id": "scene_arrival"
+    },
+    {
+      "type": "character",
+      "id": "char_aria"
+    },
+    {
+      "type": "character",
+      "id": "char_rowan"
+    }
+  ],
+  "chunkIds": [
+    "rag_chunk_scene_arrival_1"
+  ],
+  "updatedAt": "2026-04-03T18:37:04.333Z"
+}

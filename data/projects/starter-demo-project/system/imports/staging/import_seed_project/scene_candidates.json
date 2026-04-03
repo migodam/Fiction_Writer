@@ -1,0 +1,16 @@
+[
+  {
+    "id": "import_scene_arrival",
+    "title": "Dockside Arrival",
+    "summary": "Imported from second-level heading.",
+    "confidence": "high",
+    "contentPath": "system/imports/staging/import_seed_project/scene_candidates.json"
+  },
+  {
+    "id": "import_scene_bridge",
+    "title": "Glass Bridge Intercept",
+    "summary": "Imported from second-level heading.",
+    "confidence": "high",
+    "contentPath": "system/imports/staging/import_seed_project/scene_candidates.json"
+  }
+]

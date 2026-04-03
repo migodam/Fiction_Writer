@@ -1,0 +1,238 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e7]:
+          - generic [ref=e8]: F
+          - generic [ref=e9]:
+            - generic [ref=e10]: Narrative IDE
+            - generic [ref=e11]: Starter Demo Project
+        - button "Toggle Sidebar" [ref=e12] [cursor=pointer]:
+          - img [ref=e13]
+        - button "New Project" [ref=e15] [cursor=pointer]:
+          - img [ref=e16]
+        - button "Open Project" [ref=e19] [cursor=pointer]:
+          - img [ref=e20]
+        - button "Save Project" [ref=e22] [cursor=pointer]:
+          - img [ref=e23]
+        - button "Undo" [ref=e28] [cursor=pointer]:
+          - img [ref=e29]
+        - button "Redo" [ref=e32] [cursor=pointer]:
+          - img [ref=e33]
+        - button "Run Simulation" [ref=e37] [cursor=pointer]:
+          - img [ref=e38]
+        - button "Check Consistency" [ref=e40] [cursor=pointer]:
+          - img [ref=e41]
+        - button "Export Book" [ref=e44] [cursor=pointer]:
+          - img [ref=e45]
+      - button "Search entities, proposals, and settings... (Ctrl+P)" [ref=e48] [cursor=pointer]:
+        - img [ref=e49]
+        - generic [ref=e52]: Search entities, proposals, and settings... (Ctrl+P)
+      - generic [ref=e53]:
+        - button "Toggle Agent Dock" [ref=e54] [cursor=pointer]:
+          - img [ref=e55]
+        - button "Settings" [ref=e58] [cursor=pointer]:
+          - img [ref=e59]
+  - generic [ref=e62]:
+    - navigation [ref=e63]:
+      - generic [ref=e64]:
+        - button "Workbench" [ref=e65] [cursor=pointer]:
+          - img [ref=e67]
+        - button "Writing Studio" [ref=e69] [cursor=pointer]:
+          - img [ref=e70]
+        - button "Characters" [ref=e75] [cursor=pointer]:
+          - img [ref=e76]
+        - button "Timeline" [ref=e81] [cursor=pointer]:
+          - img [ref=e82]
+        - button "Graph" [ref=e85] [cursor=pointer]:
+          - img [ref=e86]
+        - button "World Model" [ref=e91] [cursor=pointer]:
+          - img [ref=e92]
+        - button "Simulation" [active] [ref=e95] [cursor=pointer]:
+          - img [ref=e96]
+        - button "Beta Reader" [ref=e99] [cursor=pointer]:
+          - img [ref=e100]
+        - button "Consistency" [ref=e103] [cursor=pointer]:
+          - img [ref=e104]
+        - button "Agents" [ref=e107] [cursor=pointer]:
+          - img [ref=e108]
+        - button "Publish" [ref=e111] [cursor=pointer]:
+          - img [ref=e112]
+        - button "Insights" [ref=e114] [cursor=pointer]:
+          - img [ref=e115]
+        - button "Reference Library" [ref=e116] [cursor=pointer]:
+          - img [ref=e117]
+    - complementary [ref=e120]:
+      - generic [ref=e121]:
+        - generic [ref=e122]: Simulation
+        - button "Collapse Sidebar" [ref=e123] [cursor=pointer]:
+          - img [ref=e124]
+      - generic [ref=e127]:
+        - generic [ref=e886] [cursor=pointer]: Labs
+        - generic [ref=e888] [cursor=pointer]: Reviewer
+    - main [ref=e151]:
+      - generic [ref=e889]:
+        - complementary [ref=e890]:
+          - generic [ref=e892]:
+            - generic [ref=e893]:
+              - generic [ref=e894]: Labs
+              - generic [ref=e895]: Simulation containers
+            - button [ref=e896] [cursor=pointer]:
+              - img [ref=e897]
+          - button "Main Forecast Lab Primary lab for predicting next developments across scenario, character, author, reader, and logic engines." [ref=e899] [cursor=pointer]:
+            - generic [ref=e900]: Main Forecast Lab
+            - generic [ref=e901]: Primary lab for predicting next developments across scenario, character, author, reader, and logic engines.
+        - main [ref=e902]:
+          - generic [ref=e903]:
+            - generic [ref=e904]:
+              - generic [ref=e905]:
+                - generic [ref=e906]: Lab Overview
+                - generic [ref=e907]: Main Forecast Lab
+              - button "Run Lab" [ref=e908] [cursor=pointer]:
+                - img [ref=e909]
+                - text: Run Lab
+            - generic [ref=e912]:
+              - generic [ref=e913]:
+                - generic [ref=e914]: Engines
+                - generic [ref=e915]: "5"
+              - generic [ref=e916]:
+                - generic [ref=e917]: Runs
+                - generic [ref=e918]: "1"
+              - generic [ref=e919]:
+                - generic [ref=e920]: Mode
+                - generic [ref=e921]: Projection
+            - generic [ref=e922]:
+              - generic [ref=e924]: Basics
+              - generic [ref=e925]:
+                - textbox [ref=e926]: Main Forecast Lab
+                - textbox [ref=e927]: Primary lab for predicting next developments across scenario, character, author, reader, and logic engines.
+            - generic [ref=e928]:
+              - generic [ref=e929]:
+                - generic [ref=e930]: Engines
+                - generic [ref=e931]:
+                  - button "Scenario Engine" [ref=e932] [cursor=pointer]:
+                    - img [ref=e933]
+                    - text: Scenario Engine
+                  - button "Character Engine" [ref=e934] [cursor=pointer]:
+                    - img [ref=e935]
+                    - text: Character Engine
+                  - button "Author Engine" [ref=e936] [cursor=pointer]:
+                    - img [ref=e937]
+                    - text: Author Engine
+                  - button "Reader Engine" [ref=e938] [cursor=pointer]:
+                    - img [ref=e939]
+                    - text: Reader Engine
+                  - button "Logic Engine" [ref=e940] [cursor=pointer]:
+                    - img [ref=e941]
+                    - text: Logic Engine
+                  - button "Custom Engine" [ref=e942] [cursor=pointer]:
+                    - img [ref=e943]
+                    - text: Custom Engine
+              - generic [ref=e944]:
+                - generic [ref=e945]:
+                  - generic [ref=e946]:
+                    - generic [ref=e947]:
+                      - generic [ref=e948]: Scenario Engine
+                      - generic [ref=e949]: scenario
+                    - button "Run" [ref=e950] [cursor=pointer]
+                  - generic [ref=e951]:
+                    - textbox [ref=e952]: Scenario Engine
+                    - textbox "Summary" [ref=e953]: Predict likely next scenario threads.
+                  - textbox "Prompt override" [ref=e954]: Focus on next 3 scenario beats.
+                  - textbox "Input notes" [ref=e955]: Use current chapters and open issues.
+                - generic [ref=e956]:
+                  - generic [ref=e957]:
+                    - generic [ref=e958]:
+                      - generic [ref=e959]: Character Engine
+                      - generic [ref=e960]: character
+                    - button "Run" [ref=e961] [cursor=pointer]
+                  - generic [ref=e962]:
+                    - textbox [ref=e963]: Character Engine
+                    - textbox "Summary" [ref=e964]: Predict likely next character decisions.
+                  - textbox "Prompt override" [ref=e965]: Weight protagonist and antagonist motivations first.
+                  - textbox "Input notes" [ref=e966]
+                - generic [ref=e967]:
+                  - generic [ref=e968]:
+                    - generic [ref=e969]:
+                      - generic [ref=e970]: Author Engine
+                      - generic [ref=e971]: author
+                    - button "Run" [ref=e972] [cursor=pointer]
+                  - generic [ref=e973]:
+                    - textbox [ref=e974]: Author Engine
+                    - textbox "Summary" [ref=e975]: Forecast twists, reversals, and pacing spikes.
+                  - textbox "Prompt override" [ref=e976]: Prioritize escalation and reversals every 2-3 chapters.
+                  - textbox "Input notes" [ref=e977]
+                - generic [ref=e978]:
+                  - generic [ref=e979]:
+                    - generic [ref=e980]:
+                      - generic [ref=e981]: Reader Engine
+                      - generic [ref=e982]: reader
+                    - button "Run" [ref=e983] [cursor=pointer]
+                  - generic [ref=e984]:
+                    - textbox [ref=e985]: Reader Engine
+                    - textbox "Summary" [ref=e986]: Infer what readers may want next.
+                  - textbox "Prompt override" [ref=e987]: Bias toward beta reader aggregate preferences.
+                  - textbox "Input notes" [ref=e988]
+                - generic [ref=e989]:
+                  - generic [ref=e990]:
+                    - generic [ref=e991]:
+                      - generic [ref=e992]: Logic Engine
+                      - generic [ref=e993]: logic
+                    - button "Run" [ref=e994] [cursor=pointer]
+                  - generic [ref=e995]:
+                    - textbox [ref=e996]: Logic Engine
+                    - textbox "Summary" [ref=e997]: Forecast from established story logic and constraints.
+                  - textbox "Prompt override" [ref=e998]: Disallow contradictions with world rules.
+                  - textbox "Input notes" [ref=e999]
+            - generic [ref=e1000]:
+              - generic [ref=e1001]: Recent Runs
+              - generic [ref=e1003]:
+                - generic [ref=e1004]: lab_main
+                - generic [ref=e1005]: completed / 2026-04-03T21:16:42.031Z
+                - generic [ref=e1006]: Scenario engine expects a public fallout chapter, character engine expects Aria to trust Rowan reluctantly, author engine suggests a reveal reversal by chapter 3.
+    - complementary [ref=e240]:
+      - generic [ref=e241]:
+        - generic [ref=e242]:
+          - img [ref=e244]
+          - generic [ref=e247]:
+            - generic [ref=e248]: Agent Dock
+            - generic [ref=e249]: Future CLI control surface
+        - button [ref=e250] [cursor=pointer]:
+          - img [ref=e251]
+      - generic [ref=e253]:
+        - generic [ref=e254]:
+          - generic [ref=e255]: Live Queue
+          - generic [ref=e256]:
+            - generic [ref=e257]:
+              - generic [ref=e258]: Queued
+              - generic [ref=e259]: "1"
+            - generic [ref=e260]:
+              - generic [ref=e261]: Running
+              - generic [ref=e262]: "0"
+          - generic [ref=e263]:
+            - generic [ref=e264]:
+              - generic [ref=e265]: Generated one graph sync proposal and one consistency summary.
+              - generic [ref=e266]: completed
+            - generic [ref=e267]:
+              - generic [ref=e268]: Imported manuscript skeleton and paused for user confirmation.
+              - generic [ref=e269]: awaiting_user_input
+        - generic [ref=e270]: View full chat history in the /agents page.
+  - contentinfo [ref=e271]:
+    - generic [ref=e272]:
+      - generic [ref=e273]:
+        - generic [ref=e274]:
+          - generic [ref=e275]: Project
+          - generic [ref=e276]: Starter Demo Project
+        - generic [ref=e277]:
+          - generic [ref=e278]: Path
+          - generic [ref=e279]: memory://starter-demo-project
+        - generic [ref=e280]:
+          - generic [ref=e281]: Status
+          - generic [ref=e282]: Idle
+      - generic [ref=e283]:
+        - generic [ref=e284]:
+          - generic [ref=e285]: Selection
+          - generic [ref=e286]: No Selection
+        - generic [ref=e287]:
+          - generic [ref=e288]: Workbench
+          - generic [ref=e289]: 3 pending / 3 issues

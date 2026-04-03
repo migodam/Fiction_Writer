@@ -48,6 +48,7 @@ import type {
   WorldItem,
   AppSettings,
 } from './models/project';
+import { buildBranchControlPoints, cubicBezierPoint, nearestTOnCurve, tFromOrderIndex } from './components/timeline/bezierMath';
 import { createStarterProject } from './mock/seedProject';
 import { projectService } from './services/projectService';
 import { appSettingsService, defaultAppSettings } from './services/appSettingsService';
@@ -167,10 +168,16 @@ interface ProjectState {
   deleteTimelineEvent: (id: string) => void;
   addTimelineBranch: (branch: TimelineBranch) => void;
   updateTimelineBranch: (branch: TimelineBranch) => void;
+  deleteTimelineBranch: (branchId: string) => void;
   createTimelineBranch: (mode: TimelineBranch['mode'], anchor?: { branchId: string; eventId: string } | null) => string | null;
   moveTimelineEvent: (eventId: string, targetBranchId: string, targetSlot: number) => void;
   setTimelineBranchGeometry: (branchId: string, geometry: TimelineBranch['geometry']) => void;
-  setTimelineBranchAnchors: (branchId: string, startPos: { x: number; y: number }, endPos: { x: number; y: number }) => void;
+  setTimelineBranchAnchors: (
+    branchId: string,
+    startPos: { x: number; y: number },
+    endPos: { x: number; y: number },
+    anchors?: { startAnchor?: TimelineBranch['startAnchor']; endAnchor?: TimelineBranch['endAnchor'] },
+  ) => void;
   updateTimelineEventPosition: (eventId: string, position: { x: number; y: number }) => void;
   addRelationship: (relationship: Relationship) => void;
   updateRelationship: (relationship: Relationship) => void;
@@ -252,58 +259,226 @@ interface ProjectState {
 
 const now = () => new Date().toISOString();
 const defaultProject = createStarterProject();
+const TIMELINE_CANVAS_WIDTH = 2000;
 const readUiSettings = () => (typeof window === 'undefined' ? null : JSON.parse(window.localStorage.getItem(UI_SETTINGS_KEY) || 'null'));
 const persistUiSettings = (settings: object) => {
   if (typeof window === 'undefined') return;
   window.localStorage.setItem(UI_SETTINGS_KEY, JSON.stringify({ ...(readUiSettings() || {}), ...settings }));
 };
 
-const deriveState = (project: NarrativeProject) => ({
-  projectName: project.metadata.name,
-  projectRoot: project.metadata.rootPath,
-  characters: project.characters,
-  characterTags: project.characterTags,
-  candidates: project.candidates,
-  timelineEvents: project.timelineEvents,
-  timelineBranches: project.timelineBranches,
-  relationships: project.relationships,
-  chapters: project.chapters,
-  scenes: project.scenes,
-  currentSceneContent: project.scenes[0]?.content || '',
-  worldContainers: project.worldContainers,
-  worldItems: project.worldItems,
-  worldSettings: project.worldSettings,
-  worldMaps: project.worldMaps,
-  graphBoards: project.graphBoards,
-  activeGraphBoardId: project.uiState.view.activeGraphBoardId || project.metadata.lastOpenedBoardId || project.graphBoards[0]?.id || null,
-  betaPersonas: project.betaPersonas,
-  betaRuns: project.betaRuns,
-  simulationEngines: project.simulationEngines,
-  simulationLabs: project.simulationLabs,
-  simulationReviewers: project.simulationReviewers,
-  simulationRuns: project.simulationRuns,
-  taskRequests: project.taskRequests,
-  taskRuns: project.taskRuns,
-  taskArtifacts: project.taskArtifacts,
-  taskRunLogs: project.taskRunLogs,
-  importJobs: project.importJobs,
-  promptTemplates: project.promptTemplates,
-  ragDocuments: project.ragDocuments,
-  ragChunks: project.ragChunks,
-  scripts: project.scripts,
-  storyboards: project.storyboards,
-  videoPackages: project.videoPackages,
-  proposals: project.proposals,
-  proposalHistory: project.proposalHistory,
-  issues: project.issues,
-  exports: project.exports,
-  archivedIds: project.archivedIds,
-  unreadUpdates: project.unreadUpdates,
-  metadataFiles: project.metadataFiles || [],
-  todos: project.todos ?? [],
-  manuscriptNodes: project.manuscriptNodes ?? [],
-  currentProject: project,
-});
+const buildStoredBranchControlPoints = (branch: TimelineBranch) =>
+  buildBranchControlPoints(
+    branch.anchorStartPos,
+    branch.anchorEndPos,
+    branch.geometry?.laneOffset ?? branch.sortOrder * 90,
+    branch.geometry?.bend ?? 0.25,
+    TIMELINE_CANVAS_WIDTH,
+  );
+
+const pointsMatch = (
+  left?: { x: number; y: number } | null,
+  right?: { x: number; y: number } | null,
+  epsilon = 0.5,
+) => {
+  if (!left && !right) return true;
+  if (!left || !right) return false;
+  return Math.abs(left.x - right.x) <= epsilon && Math.abs(left.y - right.y) <= epsilon;
+};
+
+const resolveEndAnchor = (branch: TimelineBranch): TimelineBranch['endAnchor'] =>
+  branch.endAnchor ??
+  (branch.mergeEventId && branch.mergeTargetBranchId
+    ? { branchId: branch.mergeTargetBranchId, eventId: branch.mergeEventId }
+    : null);
+
+const withResolvedBranchAnchors = (
+  branch: TimelineBranch,
+  updates?: { startAnchor?: TimelineBranch['startAnchor']; endAnchor?: TimelineBranch['endAnchor'] },
+): TimelineBranch => {
+  const hasStartAnchor = updates && Object.prototype.hasOwnProperty.call(updates, 'startAnchor');
+  const hasEndAnchor = updates && Object.prototype.hasOwnProperty.call(updates, 'endAnchor');
+  const nextStartAnchor = hasStartAnchor ? updates?.startAnchor ?? null : branch.startAnchor ?? null;
+  const nextEndAnchor = hasEndAnchor ? updates?.endAnchor ?? null : resolveEndAnchor(branch);
+
+  return {
+    ...branch,
+    startAnchor: nextStartAnchor,
+    endAnchor: nextEndAnchor,
+    mergeEventId: nextEndAnchor?.eventId ?? null,
+    mergeTargetBranchId: nextEndAnchor?.branchId ?? null,
+    endMode: nextEndAnchor ? 'merge' : branch.endMode === 'merge' ? 'open' : branch.endMode ?? 'open',
+  };
+};
+
+const buildTimelineEventPositionMap = (
+  branches: TimelineBranch[],
+  events: TimelineEvent[],
+) => {
+  const positions = new Map<string, { x: number; y: number }>();
+  const branchMap = new Map(branches.map((branch) => [branch.id, branch]));
+  const eventsByBranch = new Map<string, TimelineEvent[]>();
+
+  for (const event of events) {
+    const bucket = eventsByBranch.get(event.branchId) || [];
+    bucket.push(event);
+    eventsByBranch.set(event.branchId, bucket);
+  }
+
+  for (const [branchId, branchEvents] of eventsByBranch) {
+    const branch = branchMap.get(branchId);
+    if (!branch) continue;
+
+    const controlPoints = buildStoredBranchControlPoints(branch);
+    branchEvents
+      .slice()
+      .sort((left, right) => left.orderIndex - right.orderIndex)
+      .forEach((event, index, orderedBranchEvents) => {
+        positions.set(
+          event.id,
+          event.position ??
+            cubicBezierPoint(
+              controlPoints.p0,
+              controlPoints.p1,
+              controlPoints.p2,
+              controlPoints.p3,
+              tFromOrderIndex(orderedBranchEvents.length, index),
+            ),
+        );
+      });
+  }
+
+  return positions;
+};
+
+const propagateTimelineAnchorDependencies = (
+  branches: TimelineBranch[],
+  events: TimelineEvent[],
+) => {
+  let nextBranches = branches;
+  let nextEvents = events;
+  const maxPasses = Math.max(1, branches.length * 3);
+
+  for (let pass = 0; pass < maxPasses; pass += 1) {
+    const eventPositions = buildTimelineEventPositionMap(nextBranches, nextEvents);
+    let mutated = false;
+
+    for (const branch of nextBranches) {
+      const startAnchor = branch.startAnchor ?? null;
+      const endAnchor = resolveEndAnchor(branch);
+      const nextStartPos = startAnchor ? eventPositions.get(startAnchor.eventId) : undefined;
+      const nextEndPos = endAnchor ? eventPositions.get(endAnchor.eventId) : undefined;
+
+      if (
+        (nextStartPos && !pointsMatch(branch.anchorStartPos, nextStartPos)) ||
+        (nextEndPos && !pointsMatch(branch.anchorEndPos, nextEndPos))
+      ) {
+        const updatedBranch: TimelineBranch = {
+          ...branch,
+          anchorStartPos: nextStartPos ?? branch.anchorStartPos,
+          anchorEndPos: nextEndPos ?? branch.anchorEndPos,
+        };
+
+        nextBranches = nextBranches.map((entry) => (entry.id === branch.id ? updatedBranch : entry));
+        nextEvents = remapBranchEventPositions(nextEvents, branch.id, branch, updatedBranch);
+        mutated = true;
+      }
+    }
+
+    if (!mutated) {
+      break;
+    }
+  }
+
+  return { timelineBranches: nextBranches, timelineEvents: nextEvents };
+};
+
+const remapBranchEventPositions = (
+  events: TimelineEvent[],
+  branchId: string,
+  previousBranch: TimelineBranch,
+  nextBranch: TimelineBranch,
+) => {
+  const prevControlPoints = buildStoredBranchControlPoints(previousBranch);
+  const nextControlPoints = buildStoredBranchControlPoints(nextBranch);
+
+  return events.map((event) => {
+    if (event.branchId !== branchId || !event.position) {
+      return event;
+    }
+
+    const { t } = nearestTOnCurve(prevControlPoints, event.position, 100);
+    return {
+      ...event,
+      position: cubicBezierPoint(
+        nextControlPoints.p0,
+        nextControlPoints.p1,
+        nextControlPoints.p2,
+        nextControlPoints.p3,
+        t,
+      ),
+    };
+  });
+};
+
+const deriveState = (project: NarrativeProject) => {
+  const propagatedTimeline = propagateTimelineAnchorDependencies(project.timelineBranches, project.timelineEvents);
+  const hydratedProject: NarrativeProject = {
+    ...project,
+    timelineBranches: propagatedTimeline.timelineBranches,
+    timelineEvents: propagatedTimeline.timelineEvents,
+  };
+
+  return {
+    projectName: hydratedProject.metadata.name,
+    projectRoot: hydratedProject.metadata.rootPath,
+    characters: hydratedProject.characters,
+    characterTags: hydratedProject.characterTags,
+    candidates: hydratedProject.candidates,
+    timelineEvents: hydratedProject.timelineEvents,
+    timelineBranches: hydratedProject.timelineBranches,
+    relationships: hydratedProject.relationships,
+    chapters: hydratedProject.chapters,
+    scenes: hydratedProject.scenes,
+    currentSceneContent: hydratedProject.scenes[0]?.content || '',
+    worldContainers: hydratedProject.worldContainers,
+    worldItems: hydratedProject.worldItems,
+    worldSettings: hydratedProject.worldSettings,
+    worldMaps: hydratedProject.worldMaps,
+    graphBoards: hydratedProject.graphBoards,
+    activeGraphBoardId:
+      hydratedProject.uiState.view.activeGraphBoardId ||
+      hydratedProject.metadata.lastOpenedBoardId ||
+      hydratedProject.graphBoards[0]?.id ||
+      null,
+    betaPersonas: hydratedProject.betaPersonas,
+    betaRuns: hydratedProject.betaRuns,
+    simulationEngines: hydratedProject.simulationEngines,
+    simulationLabs: hydratedProject.simulationLabs,
+    simulationReviewers: hydratedProject.simulationReviewers,
+    simulationRuns: hydratedProject.simulationRuns,
+    taskRequests: hydratedProject.taskRequests,
+    taskRuns: hydratedProject.taskRuns,
+    taskArtifacts: hydratedProject.taskArtifacts,
+    taskRunLogs: hydratedProject.taskRunLogs,
+    importJobs: hydratedProject.importJobs,
+    promptTemplates: hydratedProject.promptTemplates,
+    ragDocuments: hydratedProject.ragDocuments,
+    ragChunks: hydratedProject.ragChunks,
+    scripts: hydratedProject.scripts,
+    storyboards: hydratedProject.storyboards,
+    videoPackages: hydratedProject.videoPackages,
+    proposals: hydratedProject.proposals,
+    proposalHistory: hydratedProject.proposalHistory,
+    issues: hydratedProject.issues,
+    exports: hydratedProject.exports,
+    archivedIds: hydratedProject.archivedIds,
+    unreadUpdates: hydratedProject.unreadUpdates,
+    metadataFiles: hydratedProject.metadataFiles || [],
+    todos: hydratedProject.todos ?? [],
+    manuscriptNodes: hydratedProject.manuscriptNodes ?? [],
+    currentProject: hydratedProject,
+  };
+};
 
 const cloneProject = (state: ProjectState, locale?: Locale): NarrativeProject => ({
   metadata: {
@@ -590,13 +765,64 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   updateTimelineEvent: (event) => set((state) => withDirtyState({ timelineEvents: state.timelineEvents.map((entry) => entry.id === event.id ? event : entry) })),
   deleteTimelineEvent: (id) => set((state) => withDirtyState({
     timelineEvents: state.timelineEvents.filter((entry) => entry.id !== id),
+    timelineBranches: state.timelineBranches.map((branch) => {
+      const endAnchor = resolveEndAnchor(branch);
+      return withResolvedBranchAnchors(
+        {
+          ...branch,
+          forkEventId: branch.forkEventId === id ? null : branch.forkEventId,
+          mergeEventId: branch.mergeEventId === id ? null : branch.mergeEventId,
+        },
+        {
+          startAnchor: branch.startAnchor?.eventId === id ? null : branch.startAnchor ?? null,
+          endAnchor: endAnchor?.eventId === id ? null : endAnchor,
+        },
+      );
+    }),
   })),
   addTimelineBranch: (branch) => set((state) => withDirtyState({ timelineBranches: [...state.timelineBranches, branch] })),
   updateTimelineBranch: (branch) => set((state) => withDirtyState({ timelineBranches: state.timelineBranches.map((entry) => entry.id === branch.id ? branch : entry) })),
+  deleteTimelineBranch: (branchId) => set((state) => {
+    const branchEventCount = state.timelineEvents.filter((entry) => entry.branchId === branchId).length;
+    // Safer than orphaning: `TimelineEvent.branchId` is currently required across the model, canvas,
+    // and persistence layer, so we block deletion until the timeline is empty instead of silently
+    // rewriting events into an invalid or hidden state.
+    if (branchEventCount > 0) {
+      return state;
+    }
+
+    const nextBranches = state.timelineBranches
+      .filter((entry) => entry.id !== branchId)
+      .map((entry, index) =>
+        withResolvedBranchAnchors(
+          {
+            ...entry,
+            sortOrder: index,
+            parentBranchId: entry.parentBranchId === branchId ? null : entry.parentBranchId,
+          },
+          {
+            startAnchor: entry.startAnchor?.branchId === branchId ? null : entry.startAnchor ?? null,
+            endAnchor: resolveEndAnchor(entry)?.branchId === branchId ? null : resolveEndAnchor(entry),
+          },
+        ),
+      );
+
+    return withDirtyState({
+      timelineBranches: nextBranches,
+      timelineEvents: state.timelineEvents
+        .map((entry) => ({
+          ...entry,
+          sharedBranchIds: (entry.sharedBranchIds || []).filter((sharedBranchId) => sharedBranchId !== branchId),
+        })),
+    });
+  }),
   createTimelineBranch: (mode, anchor) => {
     const state = get();
     const parentBranchId = mode === 'forked' ? anchor?.branchId || state.timelineBranches[0]?.id || null : null;
     const branchId = `branch_${Date.now()}`;
+    const anchorStartPos = mode === 'forked' && anchor
+      ? buildTimelineEventPositionMap(state.timelineBranches, state.timelineEvents).get(anchor.eventId)
+      : undefined;
     const branch: TimelineBranch = {
       id: branchId,
       name: mode === 'independent' ? `Independent Branch ${state.timelineBranches.length + 1}` : `Branch ${state.timelineBranches.length + 1}`,
@@ -609,8 +835,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       collapsed: false,
       mode: mode || 'independent',
       startAnchor: mode === 'forked' && anchor ? anchor : null,
+      endAnchor: null,
       endMode: 'open',
       mergeTargetBranchId: null,
+      anchorStartPos,
       geometry: {
         laneOffset: state.timelineBranches.length * 90,
         bend: 0.25,
@@ -637,7 +865,12 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       .filter((entry) => entry.branchId === moving.branchId && moving.branchId !== targetBranchId)
       .sort((a, b) => a.orderIndex - b.orderIndex)
       .map((entry, index) => ({ ...entry, orderIndex: index }));
-    return withDirtyState({ timelineEvents: [...untouched, ...sourceRemainder, ...reorderedTarget] });
+    return withDirtyState(
+      propagateTimelineAnchorDependencies(
+        state.timelineBranches,
+        [...untouched, ...sourceRemainder, ...reorderedTarget],
+      ),
+    );
   }),
   setTimelineBranchGeometry: (branchId, geometry) => set((state) => withDirtyState({
     timelineBranches: state.timelineBranches.map((entry) => entry.id === branchId ? {
@@ -649,14 +882,31 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       },
     } : entry),
   })),
-  setTimelineBranchAnchors: (branchId, startPos, endPos) => set((state) => withDirtyState({
-    timelineBranches: state.timelineBranches.map((b) =>
-      b.id === branchId ? { ...b, anchorStartPos: startPos, anchorEndPos: endPos } : b
+  setTimelineBranchAnchors: (branchId, startPos, endPos, anchors) => set((state) => {
+    const previousBranch = state.timelineBranches.find((entry) => entry.id === branchId);
+    if (!previousBranch) {
+      return state;
+    }
+
+    const nextBranch = withResolvedBranchAnchors({
+      ...previousBranch,
+      anchorStartPos: startPos,
+      anchorEndPos: endPos,
+    }, anchors);
+
+    const nextBranches = state.timelineBranches.map((branch) =>
+      branch.id === branchId ? nextBranch : branch
+    );
+    const nextEvents = remapBranchEventPositions(state.timelineEvents, branchId, previousBranch, nextBranch);
+
+    return withDirtyState(propagateTimelineAnchorDependencies(nextBranches, nextEvents));
+  }),
+  updateTimelineEventPosition: (eventId, position) => set((state) => withDirtyState(
+    propagateTimelineAnchorDependencies(
+      state.timelineBranches,
+      state.timelineEvents.map((entry) => (entry.id === eventId ? { ...entry, position } : entry)),
     ),
-  })),
-  updateTimelineEventPosition: (eventId, position) => set((state) => withDirtyState({
-    timelineEvents: state.timelineEvents.map((e) => e.id === eventId ? { ...e, position } : e),
-  })),
+  )),
   addRelationship: (relationship) => set((state) => withDirtyState({
     relationships: [...state.relationships, relationship],
     characters: state.characters.map((character) => character.id === relationship.sourceId || character.id === relationship.targetId ? { ...character, relationshipIds: Array.from(new Set([...(character.relationshipIds || []), relationship.id])) } : character),

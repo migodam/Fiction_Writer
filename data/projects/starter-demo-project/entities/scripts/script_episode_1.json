@@ -1,0 +1,40 @@
+{
+  "id": "script_episode_1",
+  "title": "Short Drama Episode 1",
+  "mode": "adaptation",
+  "summary": "Adapts the arrival and market investigation into a fast-paced short drama pilot.",
+  "sourceSceneIds": [
+    "scene_arrival",
+    "scene_market"
+  ],
+  "sourceChapterIds": [
+    "chap_1"
+  ],
+  "linkedCharacterIds": [
+    "char_aria",
+    "char_rowan",
+    "char_nila"
+  ],
+  "linkedWorldItemIds": [
+    "loc_sky_dock",
+    "loc_flood_market",
+    "item_city_map"
+  ],
+  "status": "review",
+  "reviewState": "pending",
+  "version": 1,
+  "draftPath": "entities/scripts/script_episode_1.fountain",
+  "episodes": [
+    {
+      "id": "script_ep1",
+      "title": "Episode 1",
+      "summary": "Arrival, uneasy alliance, first route anomaly.",
+      "sceneIds": [
+        "scene_arrival",
+        "scene_market"
+      ]
+    }
+  ],
+  "createdAt": "2026-04-03T18:37:04.333Z",
+  "updatedAt": "2026-04-03T18:37:04.333Z"
+}

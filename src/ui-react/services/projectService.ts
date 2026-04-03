@@ -90,29 +90,81 @@ const readJsonFilesSafe = <T = Record<string, unknown>>(runtime: NodeRuntime, di
     .map((fileName) => JSON.parse(runtime.fs.readFileSync(runtime.path.join(directory, fileName), 'utf8')) as T);
 };
 
+/*
+Timeline contract audit, resolved on 2026-04-03:
+- `timelineBranches[].anchorStartPos` / `anchorEndPos` were being written but dropped during service normalization.
+- `timelineBranches[].endAnchor` was missing from the normalized contract even though the canvas needs a persistent end snap reference.
+- `project.json` persisted `counts.timelineEvents` but omitted `counts.timelineBranches`, which made the frontend audit report a false mismatch.
+- SQLite JSON migration expected `tags`, while the project model exposes `characterTags`.
+- The checked-in starter demo timeline JSON lagged behind the typed model and seed data for branch anchor metadata and event option fields.
+Resolved by preserving both semantic anchors and resolved positions in the service/model, writing branch counts, fixing the DB migration key, and updating the starter demo JSON fixtures.
+*/
+
+const normalizeStringArray = (value: unknown): string[] =>
+  Array.isArray(value) ? value.map((entry) => String(entry)) : [];
+
+const normalizePoint = (value: unknown): { x: number; y: number } | undefined => {
+  const point = value as Record<string, unknown> | null | undefined;
+  if (!point || typeof point.x !== 'number' || typeof point.y !== 'number') {
+    return undefined;
+  }
+
+  return {
+    x: Number(point.x),
+    y: Number(point.y),
+  };
+};
+
+const normalizeBranchAnchor = (
+  value: unknown,
+): NarrativeProject['timelineBranches'][number]['startAnchor'] | NarrativeProject['timelineBranches'][number]['endAnchor'] => {
+  const anchor = value as Record<string, unknown> | null | undefined;
+  if (!anchor?.branchId || !anchor?.eventId) {
+    return null;
+  }
+
+  return {
+    branchId: String(anchor.branchId),
+    eventId: String(anchor.eventId),
+  };
+};
+
 const normalizeBranches = (branches: unknown): NarrativeProject['timelineBranches'] =>
   Array.isArray(branches)
     ? branches.map((branch, index) => {
         const value = branch as Record<string, unknown>;
+        const startAnchor = normalizeBranchAnchor(value.startAnchor);
+        const endAnchor =
+          normalizeBranchAnchor(value.endAnchor) ||
+          ((value.mergeEventId && value.mergeTargetBranchId)
+            ? { branchId: String(value.mergeTargetBranchId), eventId: String(value.mergeEventId) }
+            : null);
+        const mergeEventId = value.mergeEventId ? String(value.mergeEventId) : endAnchor?.eventId ?? null;
+        const mergeTargetBranchId = value.mergeTargetBranchId
+          ? String(value.mergeTargetBranchId)
+          : endAnchor?.branchId ?? null;
         return {
           id: String(value.id || `branch_${index}`),
           name: String(value.name || `Branch ${index + 1}`),
           description: value.description ? String(value.description) : '',
           parentBranchId: value.parentBranchId ? String(value.parentBranchId) : null,
           forkEventId: value.forkEventId ? String(value.forkEventId) : null,
-          mergeEventId: value.mergeEventId ? String(value.mergeEventId) : null,
+          mergeEventId,
           color: value.color ? String(value.color) : '#f59e0b',
           sortOrder: typeof value.sortOrder === 'number' ? value.sortOrder : index,
           collapsed: Boolean(value.collapsed),
           mode: (value.mode as NarrativeProject['timelineBranches'][number]['mode']) || (index === 0 ? 'root' : value.parentBranchId ? 'forked' : 'independent'),
-          startAnchor: value.startAnchor ? (value.startAnchor as NarrativeProject['timelineBranches'][number]['startAnchor']) : null,
-          endMode: (value.endMode as NarrativeProject['timelineBranches'][number]['endMode']) || 'open',
-          mergeTargetBranchId: value.mergeTargetBranchId ? String(value.mergeTargetBranchId) : null,
+          startAnchor,
+          endAnchor: endAnchor as NarrativeProject['timelineBranches'][number]['endAnchor'],
+          endMode: (value.endMode as NarrativeProject['timelineBranches'][number]['endMode']) || (endAnchor ? 'merge' : 'open'),
+          mergeTargetBranchId,
           geometry: {
             laneOffset: typeof (value.geometry as Record<string, unknown> | undefined)?.laneOffset === 'number' ? Number((value.geometry as Record<string, unknown>).laneOffset) : index * 96,
             bend: typeof (value.geometry as Record<string, unknown> | undefined)?.bend === 'number' ? Number((value.geometry as Record<string, unknown>).bend) : 0.25,
             thickness: typeof (value.geometry as Record<string, unknown> | undefined)?.thickness === 'number' ? Number((value.geometry as Record<string, unknown>).thickness) : 1,
           },
+          anchorStartPos: normalizePoint(value.anchorStartPos),
+          anchorEndPos: normalizePoint(value.anchorEndPos),
         };
       })
     : [];
@@ -198,11 +250,12 @@ const migrateProject = (
     timelineEvents: (rawProject.timelineEvents || fallbackProject.timelineEvents).map((event, index) => ({
       ...event,
       orderIndex: typeof event.orderIndex === 'number' ? event.orderIndex : index,
-      sharedBranchIds: event.sharedBranchIds || [],
+      sharedBranchIds: normalizeStringArray(event.sharedBranchIds),
       importance: event.importance || 'medium',
       colorToken: event.colorToken || '',
       layoutLock: Boolean(event.layoutLock),
-      modalStateHints: event.modalStateHints || [],
+      modalStateHints: normalizeStringArray(event.modalStateHints),
+      position: normalizePoint(event.position),
     })),
     relationships: (rawProject.relationships || fallbackProject.relationships).map((relationship) => ({
       ...relationship,
@@ -346,6 +399,7 @@ const serializeProjectToFolder = (
     metadata: project.metadata,
     counts: {
       characters: project.characters.length,
+      timelineBranches: project.timelineBranches.length,
       timelineEvents: project.timelineEvents.length,
       scenes: project.scenes.length,
       worldItems: project.worldItems.length,
@@ -365,6 +419,17 @@ const serializeProjectToFolder = (
   writeJson(fs, path.join(entitiesDir, 'candidates.json'), project.candidates);
   writeJson(fs, path.join(entitiesDir, 'relationships.json'), project.relationships);
   writeJson(fs, path.join(timelineDir, 'branches.json'), project.timelineBranches);
+  const keepEventIds = new Set(project.timelineEvents.map((e) => e.id));
+  // Delete stale event files (orphans left by previous deletions)
+  if (fs.existsSync(timelineDir)) {
+    fs.readdirSync(timelineDir).forEach((fileName) => {
+      if (fileName === 'branches.json' || !fileName.endsWith('.json')) return;
+      const eventId = fileName.replace(/\.json$/, '');
+      if (!keepEventIds.has(eventId)) {
+        try { fs.unlinkSync(path.join(timelineDir, fileName)); } catch { /* ignore */ }
+      }
+    });
+  }
   project.timelineEvents.forEach((event) => {
     writeJson(fs, path.join(timelineDir, `${event.id}.json`), event);
   });
@@ -407,6 +472,31 @@ const serializeProjectToFolder = (
     capabilities: project.metadata.capabilities,
     storageBackends: project.metadata.storageBackends,
     futureBackends: project.metadata.futureBackends,
+    entities: {
+      timelineBranch: {
+        required: ['id', 'name', 'sortOrder'],
+        optional: [
+          'description',
+          'parentBranchId',
+          'forkEventId',
+          'mergeEventId',
+          'color',
+          'collapsed',
+          'mode',
+          'startAnchor',
+          'endAnchor',
+          'endMode',
+          'mergeTargetBranchId',
+          'geometry',
+          'anchorStartPos',
+          'anchorEndPos',
+        ],
+      },
+      timelineEvent: {
+        required: ['id', 'title', 'summary', 'branchId', 'orderIndex', 'locationIds', 'participantCharacterIds', 'linkedSceneIds', 'linkedWorldItemIds', 'tags'],
+        optional: ['time', 'sharedBranchIds', 'importance', 'colorToken', 'layoutLock', 'modalStateHints', 'position'],
+      },
+    },
   });
   writeJson(fs, path.join(systemDir, 'ui-state.json'), project.uiState);
   writeJson(fs, path.join(tasksDir, 'requests.json'), project.taskRequests);
@@ -674,7 +764,8 @@ export const projectService = {
       runtime ? 'nodefs' : 'memory',
       project.metadata.locale
     );
-    if (!runtime) {
+    const isVirtualPath = !runtime || updatedProject.metadata.rootPath.startsWith('memory://');
+    if (isVirtualPath) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedProject));
       localStorage.setItem(LAST_PATH_KEY, updatedProject.metadata.rootPath);
       return updatedProject;

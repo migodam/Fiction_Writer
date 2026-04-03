@@ -3,7 +3,9 @@
     "activities": {
       "workbench": true,
       "graph": true,
-      "consistency": true
+      "consistency": true,
+      "beta-reader": true,
+      "timeline": false
     },
     "sections": {
       "workbench.inbox": true,

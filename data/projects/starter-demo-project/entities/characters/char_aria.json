@@ -35,12 +35,64 @@
     "loc_sky_dock",
     "item_memory_shard"
   ],
+  "importance": "core",
+  "groupKey": "core",
+  "relationshipIds": [
+    "rel_aria_rowan",
+    "rel_aria_seren",
+    "rel_aria_vesper"
+  ],
+  "povInsights": {
+    "summary": "Aria carries the clearest POV spine and the strongest duty-vs-trust conflict.",
+    "scores": [
+      {
+        "key": "agency",
+        "label": "Agency",
+        "score": 92
+      },
+      {
+        "key": "volatility",
+        "label": "Volatility",
+        "score": 68
+      },
+      {
+        "key": "mystery",
+        "label": "Mystery Value",
+        "score": 88
+      }
+    ],
+    "radar": [
+      {
+        "key": "resolve",
+        "label": "Resolve",
+        "score": 90
+      },
+      {
+        "key": "empathy",
+        "label": "Empathy",
+        "score": 76
+      },
+      {
+        "key": "risk",
+        "label": "Risk Appetite",
+        "score": 71
+      },
+      {
+        "key": "secrecy",
+        "label": "Secrecy",
+        "score": 84
+      },
+      {
+        "key": "leadership",
+        "label": "Leadership",
+        "score": 79
+      }
+    ],
+    "source": "placeholder",
+    "updatedAt": "2026-04-03T18:37:04.333Z"
+  },
   "statusFlags": {
     "protagonist": true,
     "alive": true
-  },
-  "importance": "ungrouped",
-  "groupKey": "ungrouped",
-  "relationshipIds": [],
-  "povInsights": null
+  }
 }

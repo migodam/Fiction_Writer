@@ -1,0 +1,20 @@
+{
+  "id": "rag_chunk_import_seed_1",
+  "documentId": "rag_doc_import_seed",
+  "text": "# Fractured Arrival ## Dockside Arrival Aria arrives at Asterfall and recruits Rowan.",
+  "tokenCount": 15,
+  "keywords": [
+    "fractured",
+    "arrival",
+    "dockside",
+    "rowan",
+    "asterfall"
+  ],
+  "entityRefs": [
+    {
+      "type": "import_job",
+      "id": "import_seed_project"
+    }
+  ],
+  "sourcePath": "system/imports/staging/import_seed_project/source.md"
+}

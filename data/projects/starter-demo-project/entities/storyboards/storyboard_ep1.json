@@ -1,0 +1,45 @@
+{
+  "id": "storyboard_ep1",
+  "scriptId": "script_episode_1",
+  "episodeId": "script_ep1",
+  "title": "Episode 1 Vertical Drama Storyboard",
+  "shots": [
+    {
+      "id": "shot_1",
+      "title": "Dock Reveal",
+      "summary": "Wide shot establishing Sky Dock and Aria arrival.",
+      "visualPrompt": "Cinematic industrial fantasy sky dock at dawn, cold copper haze, lone investigator stepping from lift, vertical frame.",
+      "linkedCharacterIds": [
+        "char_aria"
+      ],
+      "linkedWorldItemIds": [
+        "loc_sky_dock"
+      ],
+      "durationSeconds": 4
+    },
+    {
+      "id": "shot_2",
+      "title": "Map Tension",
+      "summary": "Close-up on city map as Rowan points to impossible route.",
+      "visualPrompt": "Close-up layered city map over tea crate, gloved hand tracing hidden route, neon market reflections.",
+      "dialogueCue": "I know where official maps start lying.",
+      "linkedCharacterIds": [
+        "char_rowan",
+        "char_nila"
+      ],
+      "linkedWorldItemIds": [
+        "loc_flood_market",
+        "item_city_map"
+      ],
+      "durationSeconds": 5
+    }
+  ],
+  "visualStyleNotes": "Vertical short-drama framing, industrial fantasy, blue-amber palette, moody practical lighting.",
+  "assetRefs": [
+    "script_episode_1"
+  ],
+  "promptPackagePath": "exports/video/video_pkg_ep1.json",
+  "status": "review",
+  "createdAt": "2026-04-03T18:37:04.333Z",
+  "updatedAt": "2026-04-03T18:37:04.333Z"
+}
