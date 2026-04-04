@@ -2,6 +2,13 @@
   "backend": "keyword",
   "documents": [
     {
+      "id": "rag_doc_import_seed",
+      "title": "Starter manuscript import source",
+      "chunkIds": [
+        "rag_chunk_import_seed_1"
+      ]
+    },
+    {
       "id": "rag_doc_scene_arrival",
       "title": "Dockside Arrival",
       "chunkIds": [
@@ -14,16 +21,20 @@
       "chunkIds": [
         "rag_chunk_script_ep1_1"
       ]
-    },
-    {
-      "id": "rag_doc_import_seed",
-      "title": "Starter manuscript import source",
-      "chunkIds": [
-        "rag_chunk_import_seed_1"
-      ]
     }
   ],
   "chunks": [
+    {
+      "id": "rag_chunk_import_seed_1",
+      "documentId": "rag_doc_import_seed",
+      "keywords": [
+        "fractured",
+        "arrival",
+        "dockside",
+        "rowan",
+        "asterfall"
+      ]
+    },
     {
       "id": "rag_chunk_scene_arrival_1",
       "documentId": "rag_doc_scene_arrival",
@@ -44,17 +55,6 @@
         "dock",
         "aria",
         "dawn"
-      ]
-    },
-    {
-      "id": "rag_chunk_import_seed_1",
-      "documentId": "rag_doc_import_seed",
-      "keywords": [
-        "fractured",
-        "arrival",
-        "dockside",
-        "rowan",
-        "asterfall"
       ]
     }
   ]

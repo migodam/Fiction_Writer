@@ -6,9 +6,9 @@
     "executor": "manual",
     "adapter": "noop-qa-adapter",
     "attempt": 1,
-    "startedAt": "2026-04-03T18:37:04.333Z",
-    "heartbeatAt": "2026-04-03T18:37:04.333Z",
-    "finishedAt": "2026-04-03T18:37:04.333Z",
+    "startedAt": "2026-04-03T21:52:52.312Z",
+    "heartbeatAt": "2026-04-03T21:52:52.312Z",
+    "finishedAt": "2026-04-03T21:52:52.312Z",
     "summary": "Generated one graph sync proposal and one consistency summary.",
     "artifactIds": [
       "artifact_graph_sync_seed"
@@ -21,8 +21,8 @@
     "executor": "local-cli",
     "adapter": "rule-import-adapter",
     "attempt": 1,
-    "startedAt": "2026-04-03T18:37:04.333Z",
-    "heartbeatAt": "2026-04-03T18:37:04.333Z",
+    "startedAt": "2026-04-03T21:52:52.312Z",
+    "heartbeatAt": "2026-04-03T21:52:52.312Z",
     "summary": "Imported manuscript skeleton and paused for user confirmation.",
     "artifactIds": [
       "artifact_import_manifest_seed",

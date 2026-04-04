@@ -1,11 +1,10 @@
 {
   "unreadUpdates": {
     "activities": {
-      "workbench": true,
+      "workbench": false,
       "graph": true,
       "consistency": true,
-      "beta-reader": true,
-      "timeline": false
+      "beta-reader": true
     },
     "sections": {
       "workbench.inbox": true,

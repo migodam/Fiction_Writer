@@ -1,12 +1,116 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import fsPromises from 'node:fs/promises';
+import net from 'node:net';
+import os from 'node:os';
+import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import electron from 'electron';
 import { chatCompletion, streamCompletion, generateImage } from './services/aiService.js';
 import { openDb, closeDb, closeAllDbs, upsertEntity, getAllEntities, deleteEntity, migrateFromJson, indexEntity, searchEntities } from './db.js';
 
 const { app, BrowserWindow, dialog, ipcMain } = electron;
+
+// ── Sidecar process management ────────────────────────────────────────────────
+
+const PID_DIR = path.join(os.homedir(), '.narrative-ide', 'processes');
+/** Maps projectRoot → spawned ChildProcess */
+const sidecarProcesses = new Map();
+/** Maps projectRoot → sidecar port number */
+const sidecarPorts = new Map();
+/** Maps BrowserWindow → projectRoot */
+const windowProjectMap = new Map();
+
+function getSidecarPidFile(projectRoot) {
+  fs.mkdirSync(PID_DIR, { recursive: true });
+  const projectId = Buffer.from(projectRoot).toString('base64url').slice(0, 40);
+  return path.join(PID_DIR, `${projectId}.json`);
+}
+
+function findFreePort() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.listen(0, '127.0.0.1', () => {
+      const port = srv.address().port;
+      srv.close(() => resolve(port));
+    });
+    srv.on('error', reject);
+  });
+}
+
+function isPidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function spawnSidecar(projectRoot) {
+  // Check for existing PID file
+  const pidFile = getSidecarPidFile(projectRoot);
+  if (fs.existsSync(pidFile)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(pidFile, 'utf8'));
+      if (data.pid && isPidAlive(data.pid)) {
+        // Sidecar already running — reuse
+        sidecarPorts.set(projectRoot, data.port);
+        return data.port;
+      }
+      // Stale PID — delete and respawn
+      fs.unlinkSync(pidFile);
+    } catch { /* corrupt file — ignore */ }
+  }
+
+  const port = await findFreePort();
+  const sidecarEntry = path.resolve(__dirname, '../../sidecar/main.py');
+
+  const proc = spawn('python', [sidecarEntry, '--port', String(port), '--project-path', projectRoot], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: false,
+  });
+
+  proc.stdout.on('data', (d) => console.log(`[sidecar:${port}]`, d.toString().trim()));
+  proc.stderr.on('data', (d) => console.error(`[sidecar:${port}:err]`, d.toString().trim()));
+  proc.on('exit', (code) => {
+    console.log(`[sidecar:${port}] exited with code ${code}`);
+    sidecarProcesses.delete(projectRoot);
+    sidecarPorts.delete(projectRoot);
+    try { fs.unlinkSync(getSidecarPidFile(projectRoot)); } catch { /* ignore */ }
+  });
+
+  sidecarProcesses.set(projectRoot, proc);
+  sidecarPorts.set(projectRoot, port);
+
+  // Write PID file
+  fs.writeFileSync(pidFile, JSON.stringify({ pid: proc.pid, port, projectPath: projectRoot }, null, 2), 'utf8');
+
+  return port;
+}
+
+function killSidecar(projectRoot) {
+  const proc = sidecarProcesses.get(projectRoot);
+  if (proc) {
+    try { proc.kill(); } catch { /* ignore */ }
+    sidecarProcesses.delete(projectRoot);
+    sidecarPorts.delete(projectRoot);
+  }
+  const pidFile = getSidecarPidFile(projectRoot);
+  if (fs.existsSync(pidFile)) {
+    try { fs.unlinkSync(pidFile); } catch { /* ignore */ }
+  }
+}
+
+function killAllSidecars() {
+  for (const projectRoot of [...sidecarProcesses.keys()]) {
+    killSidecar(projectRoot);
+  }
+}
+
+function getSidecarPort(projectRoot) {
+  return sidecarPorts.get(projectRoot) ?? null;
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -59,6 +163,10 @@ function createWindow() {
       controller.abort();
     }
     streamControllers.clear();
+    // Kill per-project sidecar for this window
+    const projectRoot = windowProjectMap.get(win);
+    windowProjectMap.delete(win);
+    if (projectRoot) killSidecar(projectRoot);
   });
 }
 
@@ -262,6 +370,64 @@ ipcMain.handle('db:search', async (_event, { projectRoot, query }) => {
   return searchEntities(db, query);
 });
 
+// ── Sidecar IPC handlers ──────────────────────────────────────────────────────
+
+// Spawn sidecar for a project (called when project opens)
+ipcMain.handle('sidecar:spawn', async (_event, { projectRoot }) => {
+  try {
+    const port = await spawnSidecar(projectRoot);
+    // Associate the sender window with this project
+    const win = BrowserWindow.fromWebContents(_event.sender);
+    if (win) windowProjectMap.set(win, projectRoot);
+    return { ok: true, port };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// Poll workflow lock status (UI polls every 2s)
+ipcMain.handle('workflow:status', async (_event, { projectRoot }) => {
+  const port = getSidecarPort(projectRoot);
+  if (!port) return { status: 'offline', workflowId: null, progress: 0 };
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/workflow/status`);
+    return await res.json();
+  } catch {
+    return { status: 'offline', workflowId: null, progress: 0 };
+  }
+});
+
+// Force-clear a stale workflow.lock file
+ipcMain.handle('workflow:force-clear', async (_event, { projectRoot }) => {
+  const lockPath = path.join(projectRoot, 'workflow.lock');
+  if (fs.existsSync(lockPath)) {
+    try { fs.unlinkSync(lockPath); } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  }
+  return { ok: true };
+});
+
+// SSE bridge: subscribe to sidecar stream, forward events to renderer
+ipcMain.on('workflow:stream-subscribe', async (event, { projectRoot }) => {
+  const port = getSidecarPort(projectRoot);
+  if (!port) return;
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/workflow/stream`);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    const read = async () => {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const text = decoder.decode(value, { stream: true });
+        event.reply('workflow:stream-event', text);
+      }
+    };
+    read().catch(() => {/* stream ended */});
+  } catch { /* sidecar offline */ }
+});
+
 app.whenReady().then(() => {
   createWindow();
 
@@ -280,4 +446,5 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   closeAllDbs();
+  killAllSidecars();
 });

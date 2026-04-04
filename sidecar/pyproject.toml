@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "narrative-ide-sidecar"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.111.0",
+  "uvicorn[standard]>=0.29.0",
+  "langgraph>=0.1.0",
+  "langchain-anthropic>=0.1.0",
+  "langchain-core>=0.2.0",
+  "aiosqlite>=0.20.0",
+  "aiofiles>=23.2.0",
+  "chromadb>=0.5.0",
+  "tiktoken>=0.7.0",
+  "pydantic>=2.7.0",
+  "watchdog>=4.0.0",
+  "python-multipart>=0.0.9",
+]
+
+[tool.setuptools.packages.find]
+where = [".."]
+include = ["sidecar*"]
