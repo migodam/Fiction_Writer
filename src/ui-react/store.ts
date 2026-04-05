@@ -82,6 +82,10 @@ interface UIState {
   appSettings: AppSettings;
   lastActionStatus: string | null;
   contextMenu: ContextMenuState;
+  agentChatMode: 'writing' | 'consistency' | 'simulation' | 'retrieval' | 'general';
+  agentChatMessages: Array<{ id: string; role: 'user' | 'assistant'; content: string; timestamp: string; taskRunId?: string }>;
+  setAgentChatMode: (mode: 'writing' | 'consistency' | 'simulation' | 'retrieval' | 'general') => void;
+  addAgentChatMessage: (msg: { id: string; role: 'user' | 'assistant'; content: string; timestamp: string; taskRunId?: string }) => void;
   setActivity: (id: string) => void;
   setSidebarSection: (section: string) => void;
   setLocale: (locale: Locale) => void;
@@ -255,6 +259,75 @@ interface ProjectState {
   moveManuscriptNode: (id: string, newParentId: string | null, newOrderIndex: number) => void;
   loadManuscriptNodeContent: (projectRoot: string, nodeId: string) => Promise<string>;
   saveManuscriptNodeContent: (projectRoot: string, nodeId: string, content: string) => Promise<void>;
+  // W3 Writing Assistant state
+  w3Status: 'idle' | 'running' | 'waiting_selection' | 'done' | 'error';
+  w3Options: string[];
+  w3Output: string;
+  w3SessionId: string | null;
+  w3Progress: number;
+  w3Error: string | null;
+  startW3: (payload: { scene_id: string; task: string; hitl_mode: 'direct_output' | 'three_options'; metadata_file_id?: string }) => Promise<void>;
+  selectW3Option: (index: number) => Promise<void>;
+  resetW3: () => void;
+
+  // W1 Import state
+  w1Status: 'idle' | 'running' | 'done' | 'error' | 'cancelled';
+  w1Progress: number;
+  w1CompletedChunks: number;
+  w1TotalChunks: number;
+  w1Errors: string[];
+  w1SessionId: string | null;
+  startImport: (payload: { projectRoot: string; sourceFilePath: string }) => Promise<void>;
+  cancelImport: () => Promise<void>;
+  resetImport: () => void;
+
+  // W2 Manuscript Sync state
+  w2Status: 'idle' | 'running' | 'done' | 'error';
+  w2Progress: number;
+  w2ProposalCount: number;
+  startManuscriptSync: (payload: { projectRoot: string; mode: string; target_chapter_id?: string }) => Promise<void>;
+
+  // Entity focus (navigates sidebar to entity)
+  focusEntity: (entityType: string, entityId: string) => void;
+
+  // W4 Consistency Check state
+  w4Status: 'idle' | 'running' | 'done' | 'error';
+  w4Issues: any[];
+  w4SeverityCounts: Record<string, number>;
+  w4Progress: number;
+  runConsistencyCheck: (payload: { projectRoot: string; scope: string; target_id: string }) => Promise<void>;
+
+  // W5 Simulation Engine state
+  w5Status: 'idle' | 'running' | 'done' | 'error';
+  w5Progress: number;
+  w5ReportMarkdown: string;
+  w5EngineResults: Record<string, any>;
+  runSimulation: (payload: { projectRoot: string; scenario_variable: string; affected_chapter_ids: string[]; engines_selected: string[] }) => Promise<void>;
+
+  // W6 Beta Reader state
+  w6Status: 'idle' | 'running' | 'done' | 'error';
+  w6Progress: number;
+  w6ReportMarkdown: string;
+  w6FeedbackItems: any[];
+  runBetaReader: (payload: { projectRoot: string; persona_id: string; target_chapter_ids: string[] }) => Promise<void>;
+
+  // W7 Metadata Ingestion state
+  w7Status: 'idle' | 'running' | 'done' | 'error';
+  w7Progress: number;
+  w7CurrentFileId: string | null;
+  ingestMetadata: (payload: { projectRoot: string; source_file_path: string; file_type: string }) => Promise<void>;
+
+  // Orchestrator state
+  orchestratorStatus: 'idle' | 'planning' | 'executing' | 'waiting_permission' | 'done' | 'error';
+  orchestratorProgress: number;
+  orchestratorPlan: any[];
+  orchestratorCurrentStep: number;
+  orchestratorPendingPermission: any | null;
+  orchestratorSessionId: string | null;
+  startOrchestrator: (payload: { projectRoot: string; goal: string; auto_apply_threshold?: number }) => Promise<void>;
+  grantPermission: (projectRoot: string, stepId: string) => Promise<void>;
+  denyPermission: (projectRoot: string, stepId: string, reason: string) => Promise<void>;
+  resetOrchestrator: () => void;
 }
 
 const now = () => new Date().toISOString();
@@ -580,6 +653,10 @@ export const useUIStore = create<UIState>((set) => ({
   appSettings: defaultAppSettings,
   lastActionStatus: null,
   contextMenu: null,
+  agentChatMode: 'general',
+  agentChatMessages: [{ id: 'welcome', role: 'assistant' as const, content: 'Hello! I\'m your narrative AI assistant. How can I help with your story today?', timestamp: new Date().toISOString() }],
+  setAgentChatMode: (mode) => set({ agentChatMode: mode }),
+  addAgentChatMessage: (msg) => set((state) => ({ agentChatMessages: [...state.agentChatMessages, msg] })),
   setActivity: (id) => set({ currentActivity: id }),
   setSidebarSection: (section) => set({ sidebarSection: section }),
   setLocale: (locale) => { persistUiSettings({ locale }); set({ locale }); },
@@ -1260,6 +1337,345 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       console.error('[manuscriptNode] saveManuscriptNodeContent failed:', err);
     }
   },
+  // ── W3 Writing Assistant ────────────────────────────────────────────────────
+  w3Status: 'idle',
+  w3Options: [],
+  w3Output: '',
+  w3SessionId: null,
+  w3Progress: 0,
+  w3Error: null,
+  startW3: async (payload) => {
+    const { projectRoot } = get();
+    const appSettings = useUIStore.getState().appSettings;
+    const profiles = appSettings?.providerProfiles ?? [];
+    const modelProfiles = appSettings?.modelProfiles ?? [];
+    const profile = profiles.find((p: { id: string }) => p.id === appSettings?.selectedProviderProfileId) ?? profiles[0] as { apiKey?: string; endpoint?: string } | undefined;
+    const modelProfile = modelProfiles.find((m: { id: string }) => m.id === appSettings?.selectedModelProfileId) ?? modelProfiles[0] as { model?: string } | undefined;
+    set({ w3Status: 'running', w3Error: null, w3Progress: 0 });
+    try {
+      const result = await electronApi.w3Start({
+        projectRoot,
+        scene_id: payload.scene_id,
+        task: payload.task,
+        hitl_mode: payload.hitl_mode,
+        metadata_file_id: payload.metadata_file_id,
+        api_key: profile?.apiKey ?? '',
+        model: modelProfile?.model ?? 'claude-sonnet-4-6',
+        endpoint: profile?.endpoint ?? 'https://api.anthropic.com',
+      });
+      if (result.status === 'waiting') {
+        set({ w3Status: 'waiting_selection', w3Options: result.options ?? [], w3SessionId: result.session_id ?? null });
+      } else if (result.status === 'done') {
+        set({ w3Status: 'done', w3Output: result.output ?? '' });
+      } else {
+        set({ w3Status: 'error', w3Error: result.error ?? 'Unknown error' });
+      }
+    } catch (e) {
+      set({ w3Status: 'error', w3Error: String(e) });
+    }
+  },
+  selectW3Option: async (index) => {
+    const { projectRoot, w3SessionId } = get();
+    set({ w3Status: 'running' });
+    try {
+      const result = await electronApi.w3Select(projectRoot, w3SessionId ?? '', index);
+      if (result.status === 'done') {
+        set({ w3Status: 'done', w3Output: result.output ?? '' });
+      } else {
+        set({ w3Status: 'error', w3Error: result.error ?? 'Unknown error' });
+      }
+    } catch (e) {
+      set({ w3Status: 'error', w3Error: String(e) });
+    }
+  },
+  resetW3: () => set({ w3Status: 'idle', w3Options: [], w3Output: '', w3SessionId: null, w3Progress: 0, w3Error: null }),
+
+  // ── W1 Import ─────────────────────────────────────────────────────────────
+  w1Status: 'idle',
+  w1Progress: 0,
+  w1CompletedChunks: 0,
+  w1TotalChunks: 0,
+  w1Errors: [],
+  w1SessionId: null,
+  startImport: async (payload) => {
+    const { projectRoot } = get();
+    set({ w1Status: 'running', w1Progress: 0, w1Errors: [], w1SessionId: null });
+    try {
+      const result = await electronApi.w1Start({
+        projectRoot: projectRoot || payload.projectRoot,
+        source_file_path: payload.sourceFilePath,
+      });
+      set({ w1SessionId: result.session_id });
+      if (result.status === 'error') {
+        set({ w1Status: 'error', w1Errors: ['Import failed to start'] });
+      }
+    } catch (e) {
+      set({ w1Status: 'error', w1Errors: [String(e)] });
+    }
+  },
+  cancelImport: async () => {
+    const { w1SessionId } = get();
+    set({ w1Status: 'cancelled' });
+    if (w1SessionId) {
+      try { await electronApi.w1Cancel({ session_id: w1SessionId }); } catch { /* already cancelled */ }
+    }
+  },
+  resetImport: () => set({ w1Status: 'idle', w1Progress: 0, w1CompletedChunks: 0, w1TotalChunks: 0, w1Errors: [], w1SessionId: null }),
+
+  // ── W2 Manuscript Sync ────────────────────────────────────────────────────
+  w2Status: 'idle',
+  w2Progress: 0,
+  w2ProposalCount: 0,
+  startManuscriptSync: async (payload) => {
+    const { projectRoot } = get();
+    set({ w2Status: 'running', w2Progress: 0 });
+    try {
+      await electronApi.w2Start({
+        projectRoot: projectRoot || payload.projectRoot,
+        mode: payload.mode,
+        target_chapter_id: payload.target_chapter_id,
+      });
+      set({ w2Status: 'done' });
+    } catch (e) {
+      set({ w2Status: 'error' });
+    }
+  },
+
+  // ── Entity focus ──────────────────────────────────────────────────────────
+  focusEntity: (entityType, entityId) => {
+    const activityMap: Record<string, string> = {
+      character: 'characters',
+      location: 'world',
+      item: 'world',
+      todo: 'workbench',
+      event: 'timeline',
+    };
+    const activity = activityMap[entityType] || 'workbench';
+    set({ currentActivity: activity, selectedEntity: { type: entityType as any, id: entityId } });
+  },
+
+  // ── W4 Consistency Check ──────────────────────────────────────────────────
+  w4Status: 'idle',
+  w4Issues: [],
+  w4SeverityCounts: {},
+  w4Progress: 0,
+  runConsistencyCheck: async (payload) => {
+    const appSettings = useUIStore.getState().appSettings;
+    const profiles = appSettings?.providerProfiles ?? [];
+    const modelProfiles = appSettings?.modelProfiles ?? [];
+    const profile = profiles.find((p: { id: string }) => p.id === appSettings?.selectedProviderProfileId) ?? profiles[0] as { apiKey?: string; endpoint?: string } | undefined;
+    const modelProfile = modelProfiles.find((m: { id: string }) => m.id === appSettings?.selectedModelProfileId) ?? modelProfiles[0] as { model?: string } | undefined;
+    const api_key = profile?.apiKey ?? '';
+    const model = modelProfile?.model ?? 'deepseek-chat';
+    const endpoint = profile?.endpoint ?? 'https://api.deepseek.com/v1';
+    set({ w4Status: 'running', w4Progress: 0, w4Issues: [], w4SeverityCounts: {} });
+    try {
+      const start = await electronApi.w4Start({ ...payload, api_key, model, endpoint });
+      if (!start.session_id || start.status === 'error') { set({ w4Status: 'error' }); return; }
+      const poll = async () => {
+        for (let i = 0; i < 150; i++) {
+          await new Promise(r => setTimeout(r, 2000));
+          const s = await electronApi.w4Status(payload.projectRoot, start.session_id);
+          set({ w4Progress: s.progress });
+          if (s.status === 'done' || s.status === 'completed') {
+            set({ w4Status: 'done', w4Issues: s.issues, w4SeverityCounts: s.severity_counts, w4Progress: 1 });
+            return;
+          }
+          if (s.status === 'error' || s.status === 'failed') { set({ w4Status: 'error' }); return; }
+        }
+        set({ w4Status: 'error' });
+      };
+      await poll();
+    } catch { set({ w4Status: 'error' }); }
+  },
+
+  // ── W5 Simulation Engine ──────────────────────────────────────────────────
+  w5Status: 'idle',
+  w5Progress: 0,
+  w5ReportMarkdown: '',
+  w5EngineResults: {},
+  runSimulation: async (payload) => {
+    const appSettings = useUIStore.getState().appSettings;
+    const profiles = appSettings?.providerProfiles ?? [];
+    const modelProfiles = appSettings?.modelProfiles ?? [];
+    const profile = profiles.find((p: { id: string }) => p.id === appSettings?.selectedProviderProfileId) ?? profiles[0] as { apiKey?: string; endpoint?: string } | undefined;
+    const modelProfile = modelProfiles.find((m: { id: string }) => m.id === appSettings?.selectedModelProfileId) ?? modelProfiles[0] as { model?: string } | undefined;
+    const api_key = profile?.apiKey ?? '';
+    const model = modelProfile?.model ?? 'deepseek-chat';
+    const endpoint = profile?.endpoint ?? 'https://api.deepseek.com/v1';
+    set({ w5Status: 'running', w5Progress: 0, w5ReportMarkdown: '', w5EngineResults: {} });
+    try {
+      const start = await electronApi.w5Start({ ...payload, api_key, model, endpoint });
+      if (!start.session_id || start.status === 'error') { set({ w5Status: 'error' }); return; }
+      const poll = async () => {
+        for (let i = 0; i < 150; i++) {
+          await new Promise(r => setTimeout(r, 2000));
+          const s = await electronApi.w5Status(payload.projectRoot, start.session_id);
+          set({ w5Progress: s.progress });
+          if (s.status === 'done' || s.status === 'completed') {
+            set({ w5Status: 'done', w5ReportMarkdown: s.report_markdown, w5EngineResults: s.engine_results, w5Progress: 1 });
+            return;
+          }
+          if (s.status === 'error' || s.status === 'failed') { set({ w5Status: 'error' }); return; }
+        }
+        set({ w5Status: 'error' });
+      };
+      await poll();
+    } catch { set({ w5Status: 'error' }); }
+  },
+
+  // ── W6 Beta Reader ────────────────────────────────────────────────────────
+  w6Status: 'idle',
+  w6Progress: 0,
+  w6ReportMarkdown: '',
+  w6FeedbackItems: [],
+  runBetaReader: async (payload) => {
+    const appSettings = useUIStore.getState().appSettings;
+    const profiles = appSettings?.providerProfiles ?? [];
+    const modelProfiles = appSettings?.modelProfiles ?? [];
+    const profile = profiles.find((p: { id: string }) => p.id === appSettings?.selectedProviderProfileId) ?? profiles[0] as { apiKey?: string; endpoint?: string } | undefined;
+    const modelProfile = modelProfiles.find((m: { id: string }) => m.id === appSettings?.selectedModelProfileId) ?? modelProfiles[0] as { model?: string } | undefined;
+    const api_key = profile?.apiKey ?? '';
+    const model = modelProfile?.model ?? 'deepseek-chat';
+    const endpoint = profile?.endpoint ?? 'https://api.deepseek.com/v1';
+    set({ w6Status: 'running', w6Progress: 0, w6ReportMarkdown: '', w6FeedbackItems: [] });
+    try {
+      const start = await electronApi.w6Start({ ...payload, api_key, model, endpoint });
+      if (!start.session_id || start.status === 'error') { set({ w6Status: 'error' }); return; }
+      const poll = async () => {
+        for (let i = 0; i < 150; i++) {
+          await new Promise(r => setTimeout(r, 2000));
+          const s = await electronApi.w6Status(payload.projectRoot, start.session_id);
+          set({ w6Progress: s.progress });
+          if (s.status === 'done' || s.status === 'completed') {
+            set({ w6Status: 'done', w6ReportMarkdown: s.report_markdown, w6FeedbackItems: s.feedback_items, w6Progress: 1 });
+            return;
+          }
+          if (s.status === 'error' || s.status === 'failed') { set({ w6Status: 'error' }); return; }
+        }
+        set({ w6Status: 'error' });
+      };
+      await poll();
+    } catch { set({ w6Status: 'error' }); }
+  },
+
+  // ── W7 Metadata Ingestion ─────────────────────────────────────────────────
+  w7Status: 'idle',
+  w7Progress: 0,
+  w7CurrentFileId: null,
+  ingestMetadata: async (payload) => {
+    const appSettings = useUIStore.getState().appSettings;
+    const profiles = appSettings?.providerProfiles ?? [];
+    const modelProfiles = appSettings?.modelProfiles ?? [];
+    const profile = profiles.find((p: { id: string }) => p.id === appSettings?.selectedProviderProfileId) ?? profiles[0] as { apiKey?: string; endpoint?: string } | undefined;
+    const modelProfile = modelProfiles.find((m: { id: string }) => m.id === appSettings?.selectedModelProfileId) ?? modelProfiles[0] as { model?: string } | undefined;
+    const api_key = profile?.apiKey ?? '';
+    const model = modelProfile?.model ?? 'deepseek-chat';
+    const endpoint = profile?.endpoint ?? 'https://api.deepseek.com/v1';
+    set({ w7Status: 'running', w7Progress: 0, w7CurrentFileId: null });
+    try {
+      const start = await electronApi.metadataIngest({ ...payload, api_key, model, endpoint });
+      if (!start.session_id || start.status === 'error') { set({ w7Status: 'error' }); return; }
+      set({ w7CurrentFileId: start.file_id });
+      const poll = async () => {
+        for (let i = 0; i < 150; i++) {
+          await new Promise(r => setTimeout(r, 2000));
+          const s = await electronApi.metadataStatus(payload.projectRoot, start.session_id);
+          set({ w7Progress: s.progress });
+          if (s.status === 'done' || s.status === 'completed') {
+            set({ w7Status: 'done', w7Progress: 1, w7CurrentFileId: s.file_id || start.file_id });
+            return;
+          }
+          if (s.status === 'error' || s.status === 'failed') { set({ w7Status: 'error' }); return; }
+        }
+        set({ w7Status: 'error' });
+      };
+      await poll();
+    } catch { set({ w7Status: 'error' }); }
+  },
+
+  // ── Orchestrator ──────────────────────────────────────────────────────────
+  orchestratorStatus: 'idle',
+  orchestratorProgress: 0,
+  orchestratorPlan: [],
+  orchestratorCurrentStep: 0,
+  orchestratorPendingPermission: null,
+  orchestratorSessionId: null,
+  startOrchestrator: async (payload) => {
+    const appSettings = useUIStore.getState().appSettings;
+    const profiles = appSettings?.providerProfiles ?? [];
+    const modelProfiles = appSettings?.modelProfiles ?? [];
+    const profile = profiles.find((p: { id: string }) => p.id === appSettings?.selectedProviderProfileId) ?? profiles[0] as { apiKey?: string; endpoint?: string } | undefined;
+    const modelProfile = modelProfiles.find((m: { id: string }) => m.id === appSettings?.selectedModelProfileId) ?? modelProfiles[0] as { model?: string } | undefined;
+    const api_key = profile?.apiKey ?? '';
+    const model = modelProfile?.model ?? 'deepseek-chat';
+    const endpoint = profile?.endpoint ?? 'https://api.deepseek.com/v1';
+    set({ orchestratorStatus: 'planning', orchestratorProgress: 0, orchestratorPlan: [], orchestratorCurrentStep: 0, orchestratorPendingPermission: null, orchestratorSessionId: null });
+    try {
+      const start = await electronApi.orchestratorStart({ ...payload, api_key, model, endpoint });
+      if (!start.session_id || start.status === 'error') { set({ orchestratorStatus: 'error' }); return; }
+      set({ orchestratorSessionId: start.session_id });
+      const poll = async () => {
+        for (let i = 0; i < 300; i++) {
+          await new Promise(r => setTimeout(r, 2000));
+          const s = await electronApi.orchestratorStatus(payload.projectRoot, start.session_id);
+          set({
+            orchestratorProgress: s.progress,
+            orchestratorPlan: s.plan ?? [],
+            orchestratorCurrentStep: s.current_step,
+            orchestratorPendingPermission: s.pending_permission ?? null,
+          });
+          const st = s.status as string;
+          if (st === 'waiting_permission') { set({ orchestratorStatus: 'waiting_permission' }); return; }
+          if (st === 'done' || st === 'completed') { set({ orchestratorStatus: 'done', orchestratorProgress: 1 }); return; }
+          if (st === 'error' || st === 'failed') { set({ orchestratorStatus: 'error' }); return; }
+          if (st === 'executing') { set({ orchestratorStatus: 'executing' }); }
+        }
+        set({ orchestratorStatus: 'error' });
+      };
+      await poll();
+    } catch { set({ orchestratorStatus: 'error' }); }
+  },
+  grantPermission: async (projectRoot, stepId) => {
+    const { orchestratorSessionId } = get();
+    if (!orchestratorSessionId) return;
+    await electronApi.orchestratorGrant(projectRoot, stepId, orchestratorSessionId);
+    set({ orchestratorStatus: 'executing', orchestratorPendingPermission: null });
+    // Resume polling
+    const poll = async () => {
+      for (let i = 0; i < 300; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        const s = await electronApi.orchestratorStatus(projectRoot, orchestratorSessionId);
+        set({
+          orchestratorProgress: s.progress,
+          orchestratorPlan: s.plan ?? [],
+          orchestratorCurrentStep: s.current_step,
+          orchestratorPendingPermission: s.pending_permission ?? null,
+        });
+        const st = s.status as string;
+        if (st === 'waiting_permission') { set({ orchestratorStatus: 'waiting_permission' }); return; }
+        if (st === 'done' || st === 'completed') { set({ orchestratorStatus: 'done', orchestratorProgress: 1 }); return; }
+        if (st === 'error' || st === 'failed') { set({ orchestratorStatus: 'error' }); return; }
+      }
+      set({ orchestratorStatus: 'error' });
+    };
+    poll();
+  },
+  denyPermission: async (projectRoot, stepId, reason) => {
+    const { orchestratorSessionId } = get();
+    if (!orchestratorSessionId) return;
+    await electronApi.orchestratorDeny(projectRoot, stepId, orchestratorSessionId, reason);
+    set({ orchestratorStatus: 'error', orchestratorPendingPermission: null });
+  },
+  resetOrchestrator: () => set({
+    orchestratorStatus: 'idle',
+    orchestratorProgress: 0,
+    orchestratorPlan: [],
+    orchestratorCurrentStep: 0,
+    orchestratorPendingPermission: null,
+    orchestratorSessionId: null,
+  }),
+
   searchEntities: (query) => {
     if (!query) return [];
     const loweredQuery = query.toLowerCase();

@@ -1,5 +1,24 @@
 [
   {
+    "id": "task_request_1775395178544",
+    "title": "给我简单概括一下现在的小说",
+    "taskType": "agent_instruction",
+    "agentType": "novel-writing-agent",
+    "source": "manual",
+    "status": "queued",
+    "prompt": "给我简单概括一下现在的小说",
+    "input": {
+      "instruction": "给我简单概括一下现在的小说"
+    },
+    "contextScope": {
+      "targetType": "scene",
+      "targetId": "scene_arrival"
+    },
+    "targetIds": [],
+    "reviewPolicy": "manual_workbench",
+    "createdAt": "2026-04-05T13:19:38.544Z"
+  },
+  {
     "id": "task_graph_sync",
     "title": "Graph sync candidate review",
     "taskType": "proposal_generation",
@@ -29,7 +48,7 @@
       }
     ],
     "reviewPolicy": "manual_workbench",
-    "createdAt": "2026-04-03T21:52:52.312Z"
+    "createdAt": "2026-04-05T13:17:33.015Z"
   },
   {
     "id": "task_import_seed",
@@ -55,6 +74,6 @@
       }
     ],
     "reviewPolicy": "manual_workbench",
-    "createdAt": "2026-04-03T21:52:52.312Z"
+    "createdAt": "2026-04-05T13:17:33.015Z"
   }
 ]

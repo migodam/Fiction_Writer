@@ -421,11 +421,217 @@ ipcMain.on('workflow:stream-subscribe', async (event, { projectRoot }) => {
         const { done, value } = await reader.read();
         if (done) break;
         const text = decoder.decode(value, { stream: true });
+        // Parse SSE lines and forward W3 progress events separately
+        for (const line of text.split('\n')) {
+          if (!line.startsWith('data:')) continue;
+          try {
+            const data = JSON.parse(line.slice(5).trim());
+            if (data.workflow_id === 'W3') event.reply('w3:progress', data);
+          } catch { /* non-JSON SSE line */ }
+        }
         event.reply('workflow:stream-event', text);
       }
     };
     read().catch(() => {/* stream ended */});
   } catch { /* sidecar offline */ }
+});
+
+// ── Generic sidecar HTTP proxy ────────────────────────────────────────────────
+
+async function proxyToSidecar(projectRoot, path, method = 'GET', body = null) {
+  const port = getSidecarPort(projectRoot);
+  if (!port) throw new Error('sidecar_offline');
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(`http://127.0.0.1:${port}${path}`, opts);
+  return res.json();
+}
+
+// ── W3 Writing Assistant IPC handlers ─────────────────────────────────────────
+
+ipcMain.handle('w3:start', async (_event, payload) => {
+  try {
+    const { projectRoot, ...rest } = payload;
+    return await proxyToSidecar(projectRoot, '/workflow/w3/start', 'POST', rest);
+  } catch (err) {
+    return { status: 'error', error: err.message };
+  }
+});
+
+ipcMain.handle('w3:select', async (_event, { projectRoot, sessionId, selectedOption }) => {
+  try {
+    return await proxyToSidecar(projectRoot, '/workflow/w3/select', 'POST', {
+      session_id: sessionId,
+      selected_option: selectedOption,
+    });
+  } catch (err) {
+    return { status: 'error', error: err.message };
+  }
+});
+
+ipcMain.handle('w3:status', async (_event, { projectRoot }) => {
+  try {
+    return await proxyToSidecar(projectRoot, '/workflow/w3/status', 'GET');
+  } catch {
+    return { status: 'offline', progress: 0, workflow_id: null };
+  }
+});
+
+// ── W1 Import IPC handlers ─────────────────────────────────────────────────
+
+ipcMain.handle('w1:start', async (_event, payload) => {
+  try {
+    const { projectRoot, ...rest } = payload;
+    return await proxyToSidecar(projectRoot, '/workflow/w1/start', 'POST', { project_path: projectRoot, ...rest });
+  } catch (err) {
+    return { status: 'error', error: err.message };
+  }
+});
+
+ipcMain.handle('w1:cancel', async (_event, payload) => {
+  try {
+    const { projectRoot, ...rest } = payload;
+    return await proxyToSidecar(projectRoot, '/workflow/w1/cancel', 'POST', rest);
+  } catch (err) {
+    return { status: 'error', error: err.message };
+  }
+});
+
+ipcMain.handle('w1:status', async (_event, { projectRoot }) => {
+  try {
+    return await proxyToSidecar(projectRoot, '/workflow/w1/status', 'GET');
+  } catch {
+    return { status: 'offline', progress: 0, errors: [], completed_chunks: 0, total_chunks: 0 };
+  }
+});
+
+// ── W2 Manuscript Sync IPC handlers ────────────────────────────────────────
+
+ipcMain.handle('w2:start', async (_event, payload) => {
+  try {
+    const { projectRoot, ...rest } = payload;
+    return await proxyToSidecar(projectRoot, '/workflow/w2/start', 'POST', { project_path: projectRoot, ...rest });
+  } catch (err) {
+    return { status: 'error', error: err.message };
+  }
+});
+
+// ── W4 Consistency Check IPC handlers ──────────────────────────────────────
+
+ipcMain.handle('w4:start', async (_event, payload) => {
+  try {
+    const { projectRoot, ...rest } = payload;
+    return await proxyToSidecar(projectRoot, '/workflow/w4/start', 'POST', { project_path: projectRoot, ...rest });
+  } catch (err) {
+    return { status: 'error', error: err.message };
+  }
+});
+
+ipcMain.handle('w4:status', async (_event, payload) => {
+  try {
+    const { projectRoot, session_id } = payload;
+    return await proxyToSidecar(projectRoot, `/workflow/w4/status?session_id=${session_id}`, 'GET');
+  } catch (err) {
+    return { status: 'error', error: err.message };
+  }
+});
+
+// ── W5 Simulation Engine IPC handlers ──────────────────────────────────────
+
+ipcMain.handle('w5:start', async (_event, payload) => {
+  try {
+    const { projectRoot, ...rest } = payload;
+    return await proxyToSidecar(projectRoot, '/workflow/w5/start', 'POST', { project_path: projectRoot, ...rest });
+  } catch (err) {
+    return { status: 'error', error: err.message };
+  }
+});
+
+ipcMain.handle('w5:status', async (_event, payload) => {
+  try {
+    const { projectRoot, session_id } = payload;
+    return await proxyToSidecar(projectRoot, `/workflow/w5/status?session_id=${session_id}`, 'GET');
+  } catch (err) {
+    return { status: 'error', error: err.message };
+  }
+});
+
+// ── W6 Beta Reader IPC handlers ─────────────────────────────────────────────
+
+ipcMain.handle('w6:start', async (_event, payload) => {
+  try {
+    const { projectRoot, ...rest } = payload;
+    return await proxyToSidecar(projectRoot, '/workflow/w6/start', 'POST', { project_path: projectRoot, ...rest });
+  } catch (err) {
+    return { status: 'error', error: err.message };
+  }
+});
+
+ipcMain.handle('w6:status', async (_event, payload) => {
+  try {
+    const { projectRoot, session_id } = payload;
+    return await proxyToSidecar(projectRoot, `/workflow/w6/status?session_id=${session_id}`, 'GET');
+  } catch (err) {
+    return { status: 'error', error: err.message };
+  }
+});
+
+// ── W7 Metadata Ingestion IPC handlers ─────────────────────────────────────
+
+ipcMain.handle('metadata:ingest', async (_event, payload) => {
+  try {
+    const { projectRoot, ...rest } = payload;
+    return await proxyToSidecar(projectRoot, '/metadata/ingest', 'POST', { project_path: projectRoot, ...rest });
+  } catch (err) {
+    return { status: 'error', error: err.message };
+  }
+});
+
+ipcMain.handle('metadata:status', async (_event, payload) => {
+  try {
+    const { projectRoot, session_id } = payload;
+    return await proxyToSidecar(projectRoot, `/metadata/status?session_id=${session_id}`, 'GET');
+  } catch (err) {
+    return { status: 'error', error: err.message };
+  }
+});
+
+// ── Orchestrator IPC handlers ───────────────────────────────────────────────
+
+ipcMain.handle('orchestrator:start', async (_event, payload) => {
+  try {
+    const { projectRoot, ...rest } = payload;
+    return await proxyToSidecar(projectRoot, '/orchestrator/start', 'POST', { project_path: projectRoot, ...rest });
+  } catch (err) {
+    return { status: 'error', error: err.message };
+  }
+});
+
+ipcMain.handle('orchestrator:status', async (_event, payload) => {
+  try {
+    const { projectRoot, session_id } = payload;
+    return await proxyToSidecar(projectRoot, `/orchestrator/status?session_id=${session_id}`, 'GET');
+  } catch (err) {
+    return { status: 'error', error: err.message };
+  }
+});
+
+ipcMain.handle('orchestrator:grant', async (_event, payload) => {
+  try {
+    const { projectRoot, stepId, ...rest } = payload;
+    return await proxyToSidecar(projectRoot, `/orchestrator/permission/${stepId}/grant`, 'POST', rest);
+  } catch (err) {
+    return { status: 'error', error: err.message };
+  }
+});
+
+ipcMain.handle('orchestrator:deny', async (_event, payload) => {
+  try {
+    const { projectRoot, stepId, ...rest } = payload;
+    return await proxyToSidecar(projectRoot, `/orchestrator/permission/${stepId}/deny`, 'POST', rest);
+  } catch (err) {
+    return { status: 'error', error: err.message };
+  }
 });
 
 app.whenReady().then(() => {

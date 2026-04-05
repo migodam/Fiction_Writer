@@ -22,16 +22,19 @@ export const SimulationWorkspace = () => {
     simulationLabs,
     simulationReviewers,
     simulationRuns,
+    chapters,
+    projectRoot,
     createSimulationLab,
     updateSimulationLab,
     createSimulationReviewer,
     updateSimulationReviewer,
     addSimulationEngine,
     updateSimulationEngine,
-    runSimulationLab,
-    runSimulationReviewer,
-    runSimulationEngine,
+    runSimulation,
+    w5Status,
   } = useProjectStore();
+  const { setLastActionStatus } = useUIStore();
+  const isRunning = w5Status === 'running';
   const [activeId, setActiveId] = useState(simulationLabs[0]?.id || simulationReviewers[0]?.id || null);
 
   const isReviewerMode = sidebarSection === 'reviewers';
@@ -109,7 +112,7 @@ export const SimulationWorkspace = () => {
                 <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{isReviewerMode ? (zh ? 'Reviewer 总览' : 'Reviewer Overview') : (zh ? 'Lab 总览' : 'Lab Overview')}</div>
                 <div className="mt-2 text-3xl font-black text-text">{active.name}</div>
               </div>
-              <button type="button" className="rounded-xl bg-brand px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-white" onClick={() => isReviewerMode ? runSimulationReviewer(active.id) : runSimulationLab(active.id)}>
+              <button type="button" className="rounded-xl bg-brand px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-white" disabled={isRunning} onClick={() => { void runSimulation({ projectRoot, scenario_variable: active.description || active.name, affected_chapter_ids: chapters.map((c) => c.id), engines_selected: engineList.map((e) => e.type) }).then(() => setLastActionStatus(zh ? '推演完成' : 'Simulation complete')); }}>
                 <PlayCircle size={14} className="mr-2 inline" />
                 {isReviewerMode ? (zh ? '运行当前 Reviewer' : 'Run Reviewer') : (zh ? '运行当前 Lab' : 'Run Lab')}
               </button>
@@ -145,7 +148,7 @@ export const SimulationWorkspace = () => {
               </div>
               <div className="space-y-4">
                 {engineList.map((engine) => (
-                  <EngineCard key={engine.id} engine={engine} onChange={updateSimulationEngine} onRun={() => runSimulationEngine(engine.id, { entityId: active.id, entityType: isReviewerMode ? 'reviewer' : 'lab' })} zh={zh} />
+                  <EngineCard key={engine.id} engine={engine} onChange={updateSimulationEngine} onRun={() => { void runSimulation({ projectRoot, scenario_variable: active.description || active.name, affected_chapter_ids: chapters.map((c) => c.id), engines_selected: [engine.type] }).then(() => setLastActionStatus(zh ? '引擎运行完成' : 'Engine run complete')); }} zh={zh} />
                 ))}
                 {!engineList.length && <div className="rounded-2xl border border-dashed border-border bg-bg p-6 text-sm text-text-3">{zh ? '还没有引擎，先添加一个预设。' : 'No engines yet. Add a preset first.'}</div>}
               </div>

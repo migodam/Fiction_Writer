@@ -5,12 +5,12 @@ import { cn } from '../utils';
 import { useI18n } from '../i18n';
 
 export const ConsistencyWorkspace = () => {
-  const { issues, addProposal, resolveIssue, dismissIssue, setSelectedEntity } = useProjectStore();
+  const { issues, addProposal, resolveIssue, dismissIssue, setSelectedEntity, runConsistencyCheck, w4Status, projectRoot, selectedEntity } = useProjectStore();
   const { setLastActionStatus } = useUIStore();
   const { locale } = useI18n();
   const zh = locale === 'zh-CN';
   const [filter, setFilter] = useState<'open' | 'resolved' | 'ignored' | 'all'>('open');
-  const [isRunning, setIsRunning] = useState(false);
+  const isRunning = w4Status === 'running';
 
   const visibleIssues = useMemo(
     () =>
@@ -56,7 +56,7 @@ export const ConsistencyWorkspace = () => {
               {value === 'open' ? (zh ? '未解决' : 'Open') : value === 'resolved' ? (zh ? '已解决' : 'Resolved') : value === 'ignored' ? (zh ? '已忽略' : 'Ignored') : (zh ? '全部' : 'All')}
             </button>
           ))}
-          <button type="button" className="rounded-xl bg-brand px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-white" onClick={() => { setIsRunning(true); window.setTimeout(() => { setIsRunning(false); setLastActionStatus(zh ? '一致性检查完成' : 'Consistency audit complete'); }, 900); }} data-testid="run-consistency-btn">
+          <button type="button" className="rounded-xl bg-brand px-5 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-white" onClick={() => { void runConsistencyCheck({ projectRoot, scope: 'full', target_id: selectedEntity?.id ?? 'all' }).then(() => setLastActionStatus(zh ? '一致性检查完成' : 'Consistency audit complete')); }} disabled={isRunning} data-testid="run-consistency-btn">
             <RefreshCw size={14} className={cn('mr-2 inline', isRunning && 'animate-spin')} />
             {isRunning ? (zh ? '检查中' : 'Running') : zh ? '运行审计' : 'Run Audit'}
           </button>

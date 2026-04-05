@@ -5,61 +5,81 @@ from typing import Dict, List, Literal, Optional, TypedDict
 
 class OrchestratorStep(TypedDict):
     step_id: str
-    workflow_id: str
-    title: str
-    status: Literal["pending", "running", "waiting_permission", "completed", "failed", "cancelled"]
-    config: Dict[str, object]
+    workflow: str
+    config: dict
+    rationale: str
     requires_permission: bool
+    status: Literal["pending", "running", "done", "failed", "skipped"]
 
 
 class PermissionRequest(TypedDict):
     step_id: str
     description: str
-    scope: List[str]
-    status: Literal["pending", "granted", "denied"]
-
-
-class StepResult(TypedDict):
-    step_id: str
-    status: Literal["completed", "failed", "cancelled"]
-    summary: str
-    output: Dict[str, object]
+    risk_level: Literal["low", "medium", "high"]
+    affected_entities: List[str]
 
 
 class OrchestratorState(TypedDict):
-    request_id: str
     project_path: str
+    workflow_id: str
     goal: str
-    status: Literal["idle", "planning", "running", "waiting_permission", "completed", "failed", "cancelled"]
-    steps: List[OrchestratorStep]
+    plan: List[OrchestratorStep]
+    current_step: int
+    step_results: List[dict]
     pending_permission: Optional[PermissionRequest]
-    results: List[StepResult]
-    started_at: Optional[str]
-    updated_at: Optional[str]
+    status: Literal["planning", "executing", "waiting_permission", "done", "error"]
+    progress: float
+    errors: List[str]
+    proposals: List[dict]
 
 
 class AliasUpdate(TypedDict):
-    alias: str
     canonical_id: str
-    confidence: float
+    new_alias: str
+    note: str
 
 
 class ChunkExtraction(TypedDict):
     chunk_id: int
-    characters: List[str]
-    events: List[str]
-    locations: List[str]
-    alias_updates: List[AliasUpdate]
+    new_characters: List[dict]
+    updated_aliases: List[AliasUpdate]
+    events: List[dict]
+    world_mentions: List[str]
+    manuscript_content: str
+    notes: List[str]
+
+
+class ManuscriptChapter(TypedDict):
+    chapter_id: str
+    title: str
+    chunk_ids: List[int]
+    manuscript_content: str
+
+
+class ImportCheckpoint(TypedDict):
+    project_path: str
+    source_file_path: str
+    total_chunks: int
+    completed_chunk_ids: List[int]
+    entity_registry: dict
+    chunk_extractions: List[ChunkExtraction]
+    started_at: str
+    last_updated: str
 
 
 class ImportState(TypedDict):
     project_path: str
-    source_path: str
-    status: Literal["queued", "running", "completed", "failed"]
+    workflow_id: str
+    source_file_path: str
     chunks: List["Chunk"]
-    extractions: List[ChunkExtraction]
-    imported_entities: Dict[str, List[str]]
+    entity_registry: dict
+    chunk_extractions: List[ChunkExtraction]
+    manuscript_chapters: List[ManuscriptChapter]
+    proposals: List[dict]
+    checkpoint_path: str
+    progress: float
     errors: List[str]
+    status: Literal["running", "done", "error", "cancelled"]
 
 
 class DiffItem(TypedDict):
@@ -73,121 +93,143 @@ class DiffItem(TypedDict):
 
 class ManuscriptSyncState(TypedDict):
     project_path: str
-    chapter_id: Optional[str]
-    status: Literal["queued", "running", "completed", "failed"]
-    diff: List[DiffItem]
-    synced_files: List[str]
+    workflow_id: str
+    mode: Literal["single_chapter", "post_import", "draft_only"]
+    target_chapter_id: Optional[str]
+    extracted_entities: List[dict]
+    diff: List[dict]
+    proposals: List[dict]
+    progress: float
     errors: List[str]
+    status: Literal["running", "done", "error"]
 
 
-class WritingState(TypedDict):
+class WritingState(TypedDict, total=False):
     project_path: str
+    workflow_id: str
     scene_id: Optional[str]
+    task: str
+    context: dict
+    active_todos: List[dict]
+    metadata_style: Optional[str]
+    metadata_chunks: List[dict]
+    hitl_mode: str
+    options: List[str]
+    selected_option: Optional[int]
+    output: str
+    new_entities: List[dict]
+    proposals: List[dict]
+    progress: float
+    errors: List[str]
+    # Legacy fields (kept for backward compat)
     prompt: str
-    status: Literal["queued", "running", "completed", "failed"]
+    status: str
     draft_text: str
     context_ids: List[str]
-    proposals: List[str]
 
 
 class ConsistencyIssue(TypedDict):
     issue_id: str
-    category: Literal["timeline", "character", "world", "style"]
-    severity: Literal["low", "medium", "high"]
+    type: Literal["timeline", "character", "world_rule", "item_tracking"]
+    severity: Literal["HIGH", "MED", "LOW"]
     description: str
-    related_entities: List[str]
+    scene_id: str
+    entity_ids: List[str]
     suggested_fix: Optional[str]
 
 
 class ConsistencyState(TypedDict):
     project_path: str
-    scope: Literal["scene", "chapter", "project"]
-    status: Literal["queued", "running", "completed", "failed"]
+    workflow_id: str
+    scope: Literal["scene", "chapter", "full"]
+    target_id: str
+    context: dict
     issues: List[ConsistencyIssue]
-    checked_ids: List[str]
+    severity_counts: Dict[str, int]
+    proposals: List[dict]
+    progress: float
     errors: List[str]
+    status: Literal["running", "done", "error"]
 
 
 class EngineOutput(TypedDict):
-    engine_name: str
-    status: Literal["queued", "running", "completed", "failed"]
+    engine_type: str
     summary: str
-    score: float
-
-
-class SimulationReport(TypedDict):
-    scenario_id: str
-    overall_status: Literal["completed", "failed"]
-    summary: str
-    outputs: List[EngineOutput]
-    recommendations: List[str]
+    details: List[str]
+    confidence: float
 
 
 class SimulationState(TypedDict):
     project_path: str
-    scenario_prompt: str
-    status: Literal["queued", "running", "completed", "failed"]
-    engine_outputs: List[EngineOutput]
-    report: Optional[SimulationReport]
+    workflow_id: str
+    scenario_variable: str
+    affected_chapter_ids: List[str]
+    engines_selected: List[str]
+    context: dict
+    engine_results: Dict[str, EngineOutput]
+    report_markdown: str
+    progress: float
     errors: List[str]
+    status: Literal["running", "done", "error"]
 
 
 class PersonaProfile(TypedDict):
     persona_id: str
     name: str
-    archetype: str
+    type: Literal["scholar", "shipper", "casual", "custom"]
     traits: List[str]
     focus_areas: List[str]
+    metadata_reference_id: Optional[str]
 
 
 class FeedbackItem(TypedDict):
-    item_id: str
     chapter_id: str
-    category: Literal["engagement", "pacing", "clarity", "character", "world"]
-    sentiment: Literal["positive", "neutral", "negative"]
+    dimension: Literal["engagement", "pacing", "character", "logic", "world"]
+    score: int
     comment: str
-
-
-class BetaReaderReport(TypedDict):
-    report_id: str
-    status: Literal["completed", "failed"]
-    summary: str
-    persona: PersonaProfile
-    feedback: List[FeedbackItem]
+    excerpt_reference: Optional[str]
 
 
 class BetaReaderState(TypedDict):
     project_path: str
+    workflow_id: str
     persona: PersonaProfile
-    status: Literal["queued", "running", "completed", "failed"]
-    target_chapters: List[str]
-    feedback: List[FeedbackItem]
-    report: Optional[BetaReaderReport]
+    target_chapter_ids: List[str]
+    chunks: List["Chunk"]
+    feedback_items: List[FeedbackItem]
+    report_markdown: str
+    progress: float
+    errors: List[str]
+    status: Literal["running", "done", "error"]
 
 
 class StyleProfile(TypedDict):
-    tone: str
-    pov: str
-    tense: str
-    motifs: List[str]
-    banned_phrases: List[str]
+    avg_sentence_length: float
+    dialogue_ratio: float
+    pov_style: str
+    pacing_descriptor: str
+    vocabulary_notes: List[str]
 
 
 class KnowledgeProfile(TypedDict):
-    topics: List[str]
-    key_entities: List[str]
-    canonical_facts: List[str]
-    source_files: List[str]
+    key_facts: List[str]
+    named_entities: List[str]
+    domain_tags: List[str]
 
 
 class MetadataIngestionState(TypedDict):
     project_path: str
+    workflow_id: str
+    source_file_path: str
+    file_type: Literal["novel", "script", "news", "essay", "draft", "other"]
     file_id: str
-    status: Literal["queued", "running", "completed", "failed"]
-    style_profile: Optional[StyleProfile]
-    knowledge_profile: Optional[KnowledgeProfile]
-    chunk_count: int
+    chunks: List["Chunk"]
+    style_profile: StyleProfile
+    knowledge_profile: KnowledgeProfile
+    vector_store_updated: bool
+    progress: float
     errors: List[str]
+    status: Literal["running", "done", "error"]
 
 
 class ChunkConfig(TypedDict):

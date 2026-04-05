@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Bot, Send, User, Clock, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
 import { useProjectStore, useUIStore } from '../../store';
 import { useI18n } from '../../i18n';
+import { electronApi } from '../../services/electronApi';
 import type { AgentType, EntityKind } from '../../models/project';
 import { cn } from '../../utils';
 
@@ -25,31 +26,21 @@ interface ChatMessage {
 
 export const AgentChat: React.FC = () => {
   const store = useProjectStore();
-  const { setLastActionStatus } = useUIStore();
+  const { setLastActionStatus, agentChatMode, agentChatMessages, setAgentChatMode, addAgentChatMessage } = useUIStore();
   const { locale } = useI18n();
   const zh = locale === 'zh-CN';
 
-  const [mode, setMode] = useState<ChatMode>('general');
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: 'welcome',
-      role: 'assistant',
-      content: zh
-        ? '你好！我是叙事助理。你可以告诉我你想做什么——写作、一致性检查、推演，或者检索项目信息。'
-        : "Hello! I'm your Narrative Assistant. Tell me what you'd like to do — write, check consistency, simulate, or retrieve project information.",
-      timestamp: new Date().toISOString(),
-    },
-  ]);
   const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [agentChatMessages]);
 
-  const sendMessage = () => {
+  const sendMessage = async () => {
     const trimmed = input.trim();
-    if (!trimmed) return;
+    if (!trimmed || isLoading) return;
 
     const userMsg: ChatMessage = {
       id: `msg_${Date.now()}`,
@@ -57,14 +48,15 @@ export const AgentChat: React.FC = () => {
       content: trimmed,
       timestamp: new Date().toISOString(),
     };
-    setMessages((prev) => [...prev, userMsg]);
+    addAgentChatMessage(userMsg);
     setInput('');
+    setIsLoading(true);
 
-    // Create task request + run
+    // Create task request for workbench tracking
     const createdAt = new Date().toISOString();
     const requestId = `task_request_${Date.now()}`;
     const runId = `task_run_${Date.now()}`;
-    const agentType = MODE_AGENT_MAP[mode];
+    const agentType = MODE_AGENT_MAP[agentChatMode];
 
     store.addTaskRequest({
       id: requestId,
@@ -84,35 +76,50 @@ export const AgentChat: React.FC = () => {
     store.addTaskRun({
       id: runId,
       taskRequestId: requestId,
-      status: 'awaiting_user_input',
-      executor: 'manual',
-      adapter: 'ui-chat-placeholder',
+      status: 'running',
+      executor: 'langgraph',
+      adapter: 'ai:chat',
       attempt: 1,
       startedAt: createdAt,
       heartbeatAt: createdAt,
-      summary: zh ? `已记录指令，等待执行器接入。` : 'Instruction queued. Awaiting executor connection.',
+      summary: zh ? '正在处理...' : 'Processing...',
       artifactIds: [],
-      awaitingUserInput: {
-        prompt: zh ? '真实 AI 执行器将在 Phase 2 接入。' : 'Real AI executors will connect in Phase 2.',
-        fields: [],
-        reason: zh ? '当前为 Phase 1：记录任务，展示 UI 交互流程。' : 'Phase 1: recording tasks and demonstrating UI flow.',
-      },
     });
 
-    // Assistant reply card
-    setTimeout(() => {
+    try {
+      // Build conversation history for AI context
+      const history = agentChatMessages.slice(-10).map((m) => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+      }));
+      history.push({ role: 'user', content: trimmed });
+
+      const aiResponse = await electronApi.aiChat(history);
+
       const assistantMsg: ChatMessage = {
         id: `msg_${Date.now() + 1}`,
         role: 'assistant',
-        content: zh
-          ? `已收到你的请求并创建任务。任务 ID：${requestId.slice(-8)}。\n\n当前为 Phase 1，真实 AI 执行器尚未接入，但任务已记录到 Workbench → Runs 中供后续处理。`
-          : `Your request has been recorded as a task (ID: ${requestId.slice(-8)}).\n\nThis is Phase 1 — real AI executors aren't connected yet, but the task is logged in Workbench → Runs for processing.`,
+        content: aiResponse,
         taskRunId: runId,
         timestamp: new Date().toISOString(),
       };
-      setMessages((prev) => [...prev, assistantMsg]);
-      setLastActionStatus(zh ? '任务已记录' : 'Task recorded');
-    }, 400);
+      addAgentChatMessage(assistantMsg);
+      setLastActionStatus(zh ? '已收到回复' : 'Response received');
+    } catch (err) {
+      const errorContent = zh
+        ? `抱歉，出现了错误：${String(err)}`
+        : `Sorry, an error occurred: ${String(err)}`;
+      addAgentChatMessage({
+        id: `msg_${Date.now() + 1}`,
+        role: 'assistant',
+        content: errorContent,
+        taskRunId: runId,
+        timestamp: new Date().toISOString(),
+      });
+      setLastActionStatus(zh ? '发送失败' : 'Send failed');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const modes: { id: ChatMode; label: string; labelZh: string }[] = [
@@ -131,10 +138,10 @@ export const AgentChat: React.FC = () => {
           <button
             key={m.id}
             type="button"
-            onClick={() => setMode(m.id)}
+            onClick={() => setAgentChatMode(m.id)}
             className={cn(
               'shrink-0 rounded-xl px-4 py-2 text-[10px] font-black uppercase tracking-[0.2em] transition-colors',
-              mode === m.id ? 'bg-brand text-white' : 'text-text-2 hover:bg-hover',
+              agentChatMode === m.id ? 'bg-brand text-white' : 'text-text-2 hover:bg-hover',
             )}
           >
             {zh ? m.labelZh : m.label}
@@ -144,9 +151,19 @@ export const AgentChat: React.FC = () => {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto custom-scrollbar px-4 py-6 space-y-4">
-        {messages.map((msg) => (
+        {agentChatMessages.map((msg) => (
           <ChatBubble key={msg.id} message={msg} zh={zh} taskRuns={store.taskRuns} />
         ))}
+        {isLoading && (
+          <div className="flex gap-3">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-border bg-bg-elev-1 text-text-2">
+              <Bot size={14} />
+            </div>
+            <div className="rounded-2xl border border-border bg-card px-4 py-3">
+              <Loader2 size={14} className="animate-spin text-brand" />
+            </div>
+          </div>
+        )}
         <div ref={bottomRef} />
       </div>
 
@@ -159,7 +176,7 @@ export const AgentChat: React.FC = () => {
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                sendMessage();
+                void sendMessage();
               }
             }}
             className="flex-1 resize-none bg-transparent text-sm text-text outline-none placeholder:text-text-3"
@@ -169,8 +186,8 @@ export const AgentChat: React.FC = () => {
           />
           <button
             type="button"
-            onClick={sendMessage}
-            disabled={!input.trim()}
+            onClick={() => void sendMessage()}
+            disabled={!input.trim() || isLoading}
             title={zh ? '发送' : 'Send'}
             className="rounded-xl bg-brand p-2.5 text-white disabled:opacity-40"
             data-testid="agent-chat-send"
@@ -179,7 +196,7 @@ export const AgentChat: React.FC = () => {
           </button>
         </div>
         <div className="mt-2 text-[10px] text-text-3">
-          {zh ? `模式：${modes.find((m) => m.id === mode)?.labelZh} · Agent：${MODE_AGENT_MAP[mode]}` : `Mode: ${mode} · Agent: ${MODE_AGENT_MAP[mode]}`}
+          {zh ? `模式：${modes.find((m) => m.id === agentChatMode)?.labelZh} · Agent：${MODE_AGENT_MAP[agentChatMode]}` : `Mode: ${agentChatMode} · Agent: ${MODE_AGENT_MAP[agentChatMode]}`}
         </div>
       </div>
     </div>

@@ -1,14 +1,17 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useLocation, useSearchParams } from 'react-router-dom';
-import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, Eye, PanelLeft, PanelRight, Plus, Search, Sparkles } from 'lucide-react';
+import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, Eye, PanelLeft, PanelRight, Plus, RefreshCw, Search, Sparkles, Upload } from 'lucide-react';
 import { useProjectStore, useUIStore } from '../store';
 import { PaneResizeHandle } from './PaneResizeHandle';
 import { cn } from '../utils';
 import { useI18n } from '../i18n';
 import { NarrativeEditor } from './editor';
+import type { NarrativeEditorHandle } from './editor/NarrativeEditor';
+import { WritingAssistantPanel } from './editor/WritingAssistantPanel';
 import { ManuscriptWorkspace } from './ManuscriptWorkspace';
 import { AIWritingModal } from './ai/AIWritingModal';
 import { ChapterPreviewModal } from './ChapterPreviewModal';
+import { ImportWorkflow } from './ImportWorkflow';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -73,12 +76,13 @@ export const WritingWorkspace = () => {
 
 const ChapterEditor = () => {
   const { t } = useI18n();
-  const { chapters, scenes, selectedEntity, addChapter, updateChapter, addScene, setSelectedEntity } = useProjectStore();
+  const { chapters, scenes, selectedEntity, addChapter, updateChapter, addScene, setSelectedEntity, startManuscriptSync, projectRoot } = useProjectStore();
   const { setLastActionStatus } = useUIStore();
   const activeId = selectedEntity.type === 'chapter' ? selectedEntity.id : chapters[0]?.id || null;
   const chapter = chapters.find((entry) => entry.id === activeId) || chapters[0] || null;
   const [draft, setDraft] = useState(chapter);
   const [previewingChapterId, setPreviewingChapterId] = useState<string | null>(null);
+  const [isImportOpen, setIsImportOpen] = useState(false);
 
   useEffect(() => setDraft(chapter), [chapter]);
 
@@ -92,6 +96,7 @@ const ChapterEditor = () => {
 
   return (
     <div className="flex h-full overflow-hidden bg-bg">
+      {isImportOpen && <ImportWorkflow onClose={() => setIsImportOpen(false)} />}
       <aside className="w-80 border-r border-border bg-bg-elev-1" data-testid="writing-chapters-sidebar">
         <div className="border-b border-border bg-bg-elev-2 p-4">
           <div className="mb-3 flex items-center justify-between">
@@ -99,14 +104,25 @@ const ChapterEditor = () => {
               <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('writing.chapters.title')}</div>
               <div className="text-sm font-black text-text">{t('writing.chapters.subtitle')}</div>
             </div>
-            <button type="button" className="rounded-xl border border-border p-2 text-brand hover:border-brand" data-testid="add-chapter-btn" onClick={() => {
-              const id = `chap_${Date.now()}`;
-              addChapter({ id, title: `Chapter ${chapters.length + 1}`, summary: '', goal: '', notes: '', sceneIds: [], orderIndex: chapters.length, status: 'draft' });
-              setSelectedEntity('chapter', id);
-              setLastActionStatus('Chapter created');
-            }}>
-              <Plus size={16} />
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                className="rounded-xl border border-border p-2 text-text-2 hover:border-brand hover:text-brand"
+                data-testid="import-novel-btn"
+                title="Import novel file"
+                onClick={() => setIsImportOpen(true)}
+              >
+                <Upload size={16} />
+              </button>
+              <button type="button" className="rounded-xl border border-border p-2 text-brand hover:border-brand" data-testid="add-chapter-btn" onClick={() => {
+                const id = `chap_${Date.now()}`;
+                addChapter({ id, title: `Chapter ${chapters.length + 1}`, summary: '', goal: '', notes: '', sceneIds: [], orderIndex: chapters.length, status: 'draft' });
+                setSelectedEntity('chapter', id);
+                setLastActionStatus('Chapter created');
+              }}>
+                <Plus size={16} />
+              </button>
+            </div>
           </div>
         </div>
         <div className="h-full overflow-y-auto custom-scrollbar p-3">
@@ -119,15 +135,30 @@ const ChapterEditor = () => {
                     <div className={cn('text-sm font-black', item.id === chapter?.id ? 'text-text' : 'text-text-2')}>{item.title}</div>
                     <div className="mt-1 line-clamp-1 text-xs text-text-3">{item.summary || t('writing.noSummary')}</div>
                   </button>
-                  <button
-                    type="button"
-                    data-testid={`chapter-preview-btn-${item.id}`}
-                    className="mr-3 rounded-lg border border-border p-1.5 text-text-3 hover:border-brand hover:text-brand"
-                    onClick={(e) => { e.stopPropagation(); setPreviewingChapterId(item.id); }}
-                    title="Preview chapter"
-                  >
-                    <Eye size={12} />
-                  </button>
+                  <div className="mr-3 flex items-center gap-1">
+                    <button
+                      type="button"
+                      data-testid={`chapter-sync-btn-${item.id}`}
+                      className="rounded-lg border border-border p-1.5 text-text-3 hover:border-green-400 hover:text-green-400"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        startManuscriptSync({ projectRoot: projectRoot || '', mode: 'single_chapter', target_chapter_id: item.id });
+                        setLastActionStatus('Syncing chapter…');
+                      }}
+                      title="Sync chapter with project data"
+                    >
+                      <RefreshCw size={12} />
+                    </button>
+                    <button
+                      type="button"
+                      data-testid={`chapter-preview-btn-${item.id}`}
+                      className="rounded-lg border border-border p-1.5 text-text-3 hover:border-brand hover:text-brand"
+                      onClick={(e) => { e.stopPropagation(); setPreviewingChapterId(item.id); }}
+                      title="Preview chapter"
+                    >
+                      <Eye size={12} />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -199,6 +230,10 @@ const SceneEditor = ({ query, setQuery }: { query: string; setQuery: (value: str
   const [content, setContent] = useState(activeScene?.content || '');
   const saveRef = useRef<NodeJS.Timeout | null>(null);
   const [aiMode, setAiMode] = useState<'continue' | 'polish' | null>(null);
+  const editorRef = useRef<NarrativeEditorHandle>(null);
+  const [isW3PanelOpen, setIsW3PanelOpen] = useState(false);
+  const [w3Task, setW3Task] = useState('continue');
+  const { w3Status, w3Options, w3Output, w3Progress, w3Error, startW3, selectW3Option, resetW3 } = useProjectStore();
 
   useEffect(() => {
     if (activeScene) return;
@@ -332,8 +367,19 @@ const SceneEditor = ({ query, setQuery }: { query: string; setQuery: (value: str
                   <Sparkles size={13} />
                   {t('aiWriting.polishTitle')}
                 </button>
+                <button
+                  type="button"
+                  data-testid="writing-w3-toggle-btn"
+                  onClick={() => setIsW3PanelOpen((v) => !v)}
+                  className={`ml-auto flex items-center gap-1.5 rounded-xl border px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] ${isW3PanelOpen ? 'border-brand text-brand' : 'border-border text-text-2 hover:border-brand'}`}
+                >
+                  <Sparkles size={13} />
+                  W3
+                </button>
               </div>
+              <div className="flex flex-1 gap-0 overflow-hidden">
               <NarrativeEditor
+                ref={editorRef}
                 content={content}
                 onUpdate={(html) => {
                   setContent(html);
@@ -346,6 +392,28 @@ const SceneEditor = ({ query, setQuery }: { query: string; setQuery: (value: str
                 placeholder={t('writing.scene.placeholder')}
                 testId="writing-editor"
               />
+              {isW3PanelOpen && (
+                <WritingAssistantPanel
+                  w3Status={w3Status}
+                  w3Options={w3Options}
+                  w3Output={w3Output}
+                  w3Progress={w3Progress}
+                  w3Error={w3Error}
+                  task={w3Task}
+                  onTaskChange={setW3Task}
+                  onGenerate={() => {
+                    if (!activeScene) return;
+                    startW3({ scene_id: activeScene.id, task: w3Task, hitl_mode: 'direct_output' });
+                  }}
+                  onSelectOption={(index) => selectW3Option(index)}
+                  onInsert={(text) => {
+                    editorRef.current?.insertAtCursor(text);
+                    resetW3();
+                  }}
+                  onRetry={() => resetW3()}
+                />
+              )}
+              </div>
               {aiMode && (
                 <AIWritingModal
                   mode={aiMode}

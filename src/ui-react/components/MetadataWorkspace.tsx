@@ -24,7 +24,7 @@ const STATUS_DOT: Record<string, string> = {
 
 export const MetadataWorkspace: React.FC = () => {
   const { t } = useI18n();
-  const { metadataFiles, projectRoot, loadMetadata, importMetadataFile, deleteMetadataFile } = useProjectStore();
+  const { metadataFiles, projectRoot, loadMetadata, importMetadataFile, deleteMetadataFile, ingestMetadata } = useProjectStore();
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [chunks, setChunks] = useState<{ id: string; content: string; index: number; tokenCount: number }[]>([]);
 
@@ -51,6 +51,7 @@ export const MetadataWorkspace: React.FC = () => {
       if (!paths.length || !projectRoot) return;
       for (const path of paths) {
         importMetadataFile(projectRoot, path, { type: 'other', tags: [], description: '' });
+        void ingestMetadata({ projectRoot, source_file_path: path, file_type: 'other' });
       }
     } catch (err) {
       console.error('[MetadataWorkspace] import failed:', err);

@@ -14,25 +14,18 @@
     "path": "system/prompts/templates/metadata-extraction-agent.json"
   },
   {
-    "id": "novel-writing-agent",
-    "name": "Novel Writing Agent",
-    "agentType": "novel-writing-agent",
-    "version": 1,
-    "path": "system/prompts/templates/novel-writing-agent.json"
-  },
-  {
-    "id": "qa-consistency-agent",
-    "name": "QA / Consistency Agent",
-    "agentType": "qa-consistency-agent",
-    "version": 1,
-    "path": "system/prompts/templates/qa-consistency-agent.json"
-  },
-  {
     "id": "retrieval-agent",
     "name": "Retrieval Agent",
     "agentType": "retrieval-agent",
     "version": 1,
     "path": "system/prompts/templates/retrieval-agent.json"
+  },
+  {
+    "id": "novel-writing-agent",
+    "name": "Novel Writing Agent",
+    "agentType": "novel-writing-agent",
+    "version": 1,
+    "path": "system/prompts/templates/novel-writing-agent.json"
   },
   {
     "id": "script-writing-agent",
@@ -54,5 +47,12 @@
     "agentType": "video-generation-orchestration-agent",
     "version": 1,
     "path": "system/prompts/templates/video-generation-orchestration-agent.json"
+  },
+  {
+    "id": "qa-consistency-agent",
+    "name": "QA / Consistency Agent",
+    "agentType": "qa-consistency-agent",
+    "version": 1,
+    "path": "system/prompts/templates/qa-consistency-agent.json"
   }
 ]

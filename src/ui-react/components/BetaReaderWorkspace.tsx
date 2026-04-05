@@ -5,10 +5,11 @@ import { cn } from '../utils';
 import { useI18n } from '../i18n';
 
 export const BetaReaderWorkspace = () => {
-  const { betaPersonas, betaRuns, addBetaPersona, deleteBetaPersona, runBetaPersona } = useProjectStore();
+  const { betaPersonas, betaRuns, chapters, addBetaPersona, deleteBetaPersona, runBetaPersona, runBetaReader, w6Status, projectRoot } = useProjectStore();
   const { setLastActionStatus } = useUIStore();
   const { locale } = useI18n();
   const zh = locale === 'zh-CN';
+  const isRunning = w6Status === 'running';
   const [activePersonaId, setActivePersonaId] = useState<string | null>(betaPersonas[0]?.id || null);
   const [draft, setDraft] = useState({ name: '', profile: '' });
 
@@ -97,7 +98,7 @@ export const BetaReaderWorkspace = () => {
                 <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{zh ? '当前画像' : 'Current Persona'}</div>
                 <div className="mt-2 text-3xl font-black text-text">{activePersona?.name || (zh ? '未选择画像' : 'No persona selected')}</div>
               </div>
-              <button type="button" className="rounded-2xl bg-brand px-8 py-3 text-[11px] font-black uppercase tracking-[0.25em] text-white" onClick={() => { if (activePersona) { runBetaPersona(activePersona.id); setLastActionStatus(zh ? '读者模拟已运行' : 'Reader simulation complete'); } }} data-testid="run-beta-reader-btn">
+              <button type="button" className="rounded-2xl bg-brand px-8 py-3 text-[11px] font-black uppercase tracking-[0.25em] text-white" disabled={isRunning || !activePersona} onClick={() => { if (activePersona) { void runBetaReader({ projectRoot, persona_id: activePersona.id, target_chapter_ids: chapters.map((c) => c.id) }).then(() => setLastActionStatus(zh ? '读者模拟已完成' : 'Reader simulation complete')); } }} data-testid="run-beta-reader-btn">
                 <Sparkles size={14} className="mr-2 inline" />
                 {zh ? '运行画像' : 'Run Persona'}
               </button>

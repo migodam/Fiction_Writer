@@ -1,10 +1,100 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useImperativeHandle } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import CharacterCount from '@tiptap/extension-character-count';
 import Placeholder from '@tiptap/extension-placeholder';
+import { Mark, mergeAttributes } from '@tiptap/core';
+import { Plugin } from 'prosemirror-state';
 import { Bold, Italic, Strikethrough, List, ListOrdered, Heading1, Heading2, Heading3, Minus } from 'lucide-react';
 import { cn } from '../../utils';
+import { useProjectStore } from '../../store';
+
+// ── Narrative annotation marks ─────────────────────────────────────────────────
+
+interface NarrativeMarkAttrs {
+  entityId: string;
+  entityType: 'character' | 'location' | 'item' | 'todo';
+  conflictDetail?: string;
+}
+
+function makeNarrativeMark(
+  name: string,
+  colorClass: string,
+  extraAttrs?: Record<string, { default: string | null }>,
+) {
+  return Mark.create({
+    name,
+    addAttributes() {
+      return {
+        entityId: { default: null },
+        entityType: { default: null },
+        conflictDetail: { default: null },
+        ...extraAttrs,
+      };
+    },
+    parseHTML() {
+      return [{ tag: `span[data-mark-type="${name}"]` }];
+    },
+    renderHTML({ HTMLAttributes }) {
+      return [
+        'span',
+        mergeAttributes(HTMLAttributes, {
+          'data-mark-type': name,
+          class: colorClass,
+          ...(HTMLAttributes.conflictDetail ? { title: HTMLAttributes.conflictDetail } : {}),
+        }),
+        0,
+      ];
+    },
+    addProseMirrorPlugins() {
+      return [
+        new Plugin({
+          props: {
+            handleClick(view, pos) {
+              const { state } = view;
+              const $pos = state.doc.resolve(pos);
+              const marks = $pos.marks();
+              for (const mark of marks) {
+                if (mark.type.name === name) {
+                  const { entityType, entityId } = mark.attrs as NarrativeMarkAttrs;
+                  if (entityType && entityId) {
+                    useProjectStore.getState().focusEntity(entityType, entityId);
+                    return true;
+                  }
+                }
+              }
+              return false;
+            },
+          },
+        }),
+      ];
+    },
+  });
+}
+
+const CharacterKnownMark = makeNarrativeMark(
+  'character_known',
+  'underline decoration-blue-400 cursor-pointer',
+);
+
+const LocationKnownMark = makeNarrativeMark(
+  'location_known',
+  'underline decoration-green-400 cursor-pointer',
+);
+
+const TodoMarkerMark = makeNarrativeMark(
+  'todo_marker',
+  'underline decoration-orange-400 cursor-pointer',
+);
+
+const ConflictMarkerMark = makeNarrativeMark(
+  'conflict_marker',
+  'underline decoration-red-400 cursor-pointer',
+);
+
+export interface NarrativeEditorHandle {
+  insertAtCursor: (text: string) => void;
+}
 
 interface NarrativeEditorProps {
   content: string;
@@ -15,19 +105,23 @@ interface NarrativeEditorProps {
   testId?: string;
 }
 
-export const NarrativeEditor: React.FC<NarrativeEditorProps> = ({
+export const NarrativeEditor = React.forwardRef<NarrativeEditorHandle, NarrativeEditorProps>(({
   content,
   onUpdate,
   placeholder = 'Start writing...',
   className,
   mono = false,
   testId,
-}) => {
+}, ref) => {
   const editor = useEditor({
     extensions: [
       StarterKit,
       CharacterCount,
       Placeholder.configure({ placeholder }),
+      CharacterKnownMark,
+      LocationKnownMark,
+      TodoMarkerMark,
+      ConflictMarkerMark,
     ],
     content: content.startsWith('<') ? content : content ? `<p>${content.replace(/\n/g, '</p><p>')}</p>` : '',
     onUpdate: ({ editor }) => {
@@ -43,6 +137,13 @@ export const NarrativeEditor: React.FC<NarrativeEditorProps> = ({
       },
     },
   });
+
+  useImperativeHandle(ref, () => ({
+    insertAtCursor: (text: string) => {
+      if (!editor) return;
+      editor.chain().focus().insertContent(text).run();
+    },
+  }), [editor]);
 
   // Sync external content changes (e.g., when switching scenes)
   useEffect(() => {
@@ -135,7 +236,9 @@ export const NarrativeEditor: React.FC<NarrativeEditorProps> = ({
       <EditorContent editor={editor} />
     </div>
   );
-};
+});
+
+NarrativeEditor.displayName = 'NarrativeEditor';
 
 const ToolbarBtn: React.FC<{ onClick: () => void; active: boolean; title: string; children: React.ReactNode }> = ({
   onClick, active, title, children,
