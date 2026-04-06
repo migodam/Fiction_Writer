@@ -26,6 +26,7 @@ interface ChatMessage {
 
 export const AgentChat: React.FC = () => {
   const store = useProjectStore();
+  const { updateTaskRun } = store;
   const { setLastActionStatus, agentChatMode, agentChatMessages, setAgentChatMode, addAgentChatMessage } = useUIStore();
   const { locale } = useI18n();
   const zh = locale === 'zh-CN';
@@ -96,6 +97,12 @@ export const AgentChat: React.FC = () => {
 
       const aiResponse = await electronApi.aiChat(history);
 
+      updateTaskRun(runId, {
+        status: 'completed',
+        summary: aiResponse.slice(0, 120),
+        finishedAt: new Date().toISOString(),
+      });
+
       const assistantMsg: ChatMessage = {
         id: `msg_${Date.now() + 1}`,
         role: 'assistant',
@@ -106,6 +113,11 @@ export const AgentChat: React.FC = () => {
       addAgentChatMessage(assistantMsg);
       setLastActionStatus(zh ? '已收到回复' : 'Response received');
     } catch (err) {
+      updateTaskRun(runId, {
+        status: 'failed',
+        summary: String(err).slice(0, 120),
+        finishedAt: new Date().toISOString(),
+      });
       const errorContent = zh
         ? `抱歉，出现了错误：${String(err)}`
         : `Sorry, an error occurred: ${String(err)}`;

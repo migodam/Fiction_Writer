@@ -690,6 +690,7 @@ async def run(project_path: str, config: dict) -> dict:
         "project_path": project_path,
         "workflow_id": "W1",
         "source_file_path": config.get("source_file_path", ""),
+        "context": config.get("context", {}),
         "chunks": [],
         "entity_registry": {},
         "chunk_extractions": [],

@@ -29,6 +29,7 @@ class OrchestratorStartPayload(BaseModel):
     project_path: str
     goal: str
     auto_apply_threshold: float = 0.85
+    auto_approve_all: bool = False
     api_key: str = ""
     model: str = "claude-sonnet-4-6"
     endpoint: str = "https://api.anthropic.com"
@@ -79,11 +80,25 @@ def _update_session_from_result(session_id: str, result: dict) -> None:
 async def _run_orchestrator(session_id: str, initial_state: dict, thread_id: str) -> None:
     """Run W0 graph until completion or interrupt."""
     from sidecar.workflows.w0_orchestrator import get_graph
+    from langgraph.errors import GraphInterrupt
     config = {"configurable": {"thread_id": thread_id}}
     graph = get_graph()
     try:
         result = await graph.ainvoke(initial_state, config)
         _update_session_from_result(session_id, result)
+    except GraphInterrupt as gi:
+        # Graph paused waiting for permission — update session to waiting state
+        session = _sessions.get(session_id, {})
+        interrupts = gi.args[0] if gi.args else []
+        perm_data = None
+        if interrupts:
+            iv = interrupts[0].value if hasattr(interrupts[0], 'value') else {}
+            perm_data = iv.get("permission_request") if isinstance(iv, dict) else None
+        session.update({
+            "status": "waiting_permission",
+            "pending_permission": perm_data,
+        })
+        _sessions[session_id] = session
     except Exception as e:
         session = _sessions.get(session_id, {})
         session.update({"status": "error", "errors": [str(e)], "progress": 0.0})
@@ -94,12 +109,25 @@ async def _resume_orchestrator(session_id: str, thread_id: str) -> None:
     """Resume an interrupted W0 graph after permission grant."""
     from sidecar.workflows.w0_orchestrator import get_graph
     from langgraph.types import Command
+    from langgraph.errors import GraphInterrupt
     config = {"configurable": {"thread_id": thread_id}}
     graph = get_graph()
     _sessions[session_id]["status"] = "executing"
     try:
         result = await graph.ainvoke(Command(resume=True), config)
         _update_session_from_result(session_id, result)
+    except GraphInterrupt as gi:
+        session = _sessions.get(session_id, {})
+        interrupts = gi.args[0] if gi.args else []
+        perm_data = None
+        if interrupts:
+            iv = interrupts[0].value if hasattr(interrupts[0], 'value') else {}
+            perm_data = iv.get("permission_request") if isinstance(iv, dict) else None
+        session.update({
+            "status": "waiting_permission",
+            "pending_permission": perm_data,
+        })
+        _sessions[session_id] = session
     except Exception as e:
         session = _sessions.get(session_id, {})
         session.update({"status": "error", "errors": [str(e)]})
@@ -139,6 +167,7 @@ async def start_orchestrator(body: OrchestratorStartPayload) -> OrchestratorStar
             "model": body.model,
             "endpoint": body.endpoint,
             "sidecar_port": body.sidecar_port,
+            "auto_approve_all": body.auto_approve_all,
         },
     }
     asyncio.create_task(_run_orchestrator(session_id, initial_state, thread_id))

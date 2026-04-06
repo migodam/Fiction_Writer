@@ -28,7 +28,7 @@ import uuid
 from pathlib import Path
 
 import httpx
-from langchain_anthropic import ChatAnthropic
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, END
@@ -75,12 +75,15 @@ _AVAILABLE_WORKFLOWS = {
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _get_model(state: dict) -> ChatAnthropic:
+def _get_model(state: dict) -> ChatOpenAI:
     ctx = state.get("context", {})
-    return ChatAnthropic(
-        model=ctx.get("model", "claude-sonnet-4-6"),
-        api_key=ctx.get("api_key", ""),
-        base_url=ctx.get("endpoint", "https://api.anthropic.com"),  # type: ignore[call-arg]
+    import os
+    api_key = ctx.get("api_key", "") or os.environ.get("DEEPSEEK_API_KEY", "")
+    return ChatOpenAI(
+        model=ctx.get("model", "deepseek-chat"),
+        api_key=api_key,
+        base_url=ctx.get("endpoint", "https://api.deepseek.com/v1"),
+        max_tokens=4096,
     )
 
 
@@ -122,10 +125,8 @@ def _needs_permission(step: dict, step_results: list[dict]) -> bool:
 # ── Graph nodes ───────────────────────────────────────────────────────────────
 
 async def node_acquire_lock(state: dict) -> dict:
-    try:
-        await acquire_lock(state["project_path"], "W0")
-    except WorkflowBusyError as e:
-        return {"status": "error", "errors": [str(e)]}
+    # W0 does not acquire the project lock — child workflows manage their own locks.
+    # Acquiring here would block all child workflow POSTs since they also acquire the lock.
     return {}
 
 
@@ -198,6 +199,11 @@ async def node_check_permission(state: dict) -> dict:
     if not _needs_permission(step, step_results):
         return {}  # No permission needed — proceed to execute_step
 
+    # Auto-approve bypass for testing / headless operation
+    ctx = state.get("context", {})
+    if ctx.get("auto_approve_all"):
+        return {}  # Skip permission gate
+
     # Build permission request
     perm = PermissionRequest(
         step_id=step["step_id"],
@@ -233,8 +239,16 @@ async def node_execute_step(state: dict) -> dict:
     updated_plan = list(plan)
     updated_plan[current] = {**step, "status": "running"}
 
-    payload = {"project_path": state["project_path"], **config,
-                "context": state.get("context", {})}
+    ctx = state.get("context", {})
+    payload = {
+        "project_path": state["project_path"],
+        **config,
+        "context": ctx,
+        # Flatten LLM credentials for workflow start endpoints (top-level fields)
+        "api_key": ctx.get("api_key", ""),
+        "model": ctx.get("model", "deepseek-chat"),
+        "endpoint": ctx.get("endpoint", "https://api.deepseek.com/v1"),
+    }
     step_result: dict = {"workflow": workflow, "step_id": step["step_id"]}
 
     try:
@@ -351,10 +365,7 @@ async def node_done(state: dict) -> dict:
 
 
 async def node_release_lock(state: dict) -> dict:
-    try:
-        await release_lock(state["project_path"])
-    except Exception:
-        pass
+    # W0 does not hold the project lock
     return {}
 
 
@@ -368,7 +379,7 @@ def get_graph():
     if _graph is not None:
         return _graph
 
-    builder = StateGraph(dict)
+    builder = StateGraph(OrchestratorState)
 
     builder.add_node("acquire_lock", node_acquire_lock)
     builder.add_node("parse_goal", node_parse_goal)
@@ -406,10 +417,7 @@ def get_graph():
     builder.add_edge("release_lock", END)
 
     memory = MemorySaver()
-    _graph = builder.compile(
-        checkpointer=memory,
-        interrupt_before=["execute_step"],  # Graph pauses here when permission is needed
-    )
+    _graph = builder.compile(checkpointer=memory)
     return _graph
 
 

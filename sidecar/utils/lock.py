@@ -28,32 +28,21 @@ def _lock_path(project_path: str) -> pathlib.Path:
     return pathlib.Path(project_path) / LOCK_FILENAME
 
 
+
 def _pid_alive(pid: int) -> bool:
-    """Return True if the process with the given PID is alive."""
     try:
-        os.kill(pid, 0)
-        return True
-    except (ProcessLookupError, PermissionError):
-        # ProcessLookupError → PID gone
-        # PermissionError → PID exists but not owned by us (treat as alive)
-        return isinstance(
-            SystemError if False else PermissionError,
-            PermissionError,
-        )
-    except OSError:
-        return False
-
-
-def _pid_alive(pid: int) -> bool:
+        import psutil
+        return psutil.pid_exists(pid)
+    except ImportError:
+        pass
     try:
         os.kill(pid, 0)
         return True
     except ProcessLookupError:
         return False
     except PermissionError:
-        # Process exists but owned by another user — treat as alive
         return True
-    except OSError:
+    except (OSError, SystemError):
         return False
 
 

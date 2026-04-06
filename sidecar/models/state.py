@@ -19,10 +19,11 @@ class PermissionRequest(TypedDict):
     affected_entities: List[str]
 
 
-class OrchestratorState(TypedDict):
+class OrchestratorState(TypedDict, total=False):
     project_path: str
     workflow_id: str
     goal: str
+    context: dict
     plan: List[OrchestratorStep]
     current_step: int
     step_results: List[dict]
@@ -67,10 +68,11 @@ class ImportCheckpoint(TypedDict):
     last_updated: str
 
 
-class ImportState(TypedDict):
+class ImportState(TypedDict, total=False):
     project_path: str
     workflow_id: str
     source_file_path: str
+    context: dict
     chunks: List["Chunk"]
     entity_registry: dict
     chunk_extractions: List[ChunkExtraction]
@@ -91,11 +93,12 @@ class DiffItem(TypedDict):
     change_type: Literal["create", "update", "delete"]
 
 
-class ManuscriptSyncState(TypedDict):
+class ManuscriptSyncState(TypedDict, total=False):
     project_path: str
     workflow_id: str
     mode: Literal["single_chapter", "post_import", "draft_only"]
     target_chapter_id: Optional[str]
+    context: dict
     extracted_entities: List[dict]
     diff: List[dict]
     proposals: List[dict]
@@ -190,9 +193,10 @@ class FeedbackItem(TypedDict):
     excerpt_reference: Optional[str]
 
 
-class BetaReaderState(TypedDict):
+class BetaReaderState(TypedDict, total=False):
     project_path: str
     workflow_id: str
+    persona_id: str
     persona: PersonaProfile
     target_chapter_ids: List[str]
     chunks: List["Chunk"]
@@ -201,6 +205,11 @@ class BetaReaderState(TypedDict):
     progress: float
     errors: List[str]
     status: Literal["running", "done", "error"]
+    context: dict
+    # Internal pipeline state
+    _chapter_text: str
+    _style_context: str
+    _avg_scores: Dict[str, float]
 
 
 class StyleProfile(TypedDict):
@@ -217,12 +226,13 @@ class KnowledgeProfile(TypedDict):
     domain_tags: List[str]
 
 
-class MetadataIngestionState(TypedDict):
+class MetadataIngestionState(TypedDict, total=False):
     project_path: str
     workflow_id: str
     source_file_path: str
     file_type: Literal["novel", "script", "news", "essay", "draft", "other"]
     file_id: str
+    context: dict
     chunks: List["Chunk"]
     style_profile: StyleProfile
     knowledge_profile: KnowledgeProfile

@@ -124,8 +124,17 @@ async def node_load_target_chapters(state: dict) -> dict:
         if chapter_file.exists():
             try:
                 data = json.loads(chapter_file.read_text(encoding="utf-8"))
-                combined += data.get("content", "") + "\n\n"
-                continue
+                content = data.get("content", "")
+                if content:
+                    combined += content + "\n\n"
+                    continue
+                # No inline content — load scenes via sceneIds
+                for sid in data.get("sceneIds", []):
+                    scene_md = root / "writing" / "scenes" / f"{sid}.md"
+                    if scene_md.exists():
+                        combined += scene_md.read_text(encoding="utf-8") + "\n\n"
+                if data.get("sceneIds"):
+                    continue
             except Exception:
                 pass
         # Fallback: scene .md files with matching prefix
@@ -298,7 +307,7 @@ def get_graph():
     if _graph is not None:
         return _graph
 
-    builder = StateGraph(dict)
+    builder = StateGraph(BetaReaderState)
     nodes = [
         ("acquire_lock", node_acquire_lock),
         ("select_persona", node_select_persona),

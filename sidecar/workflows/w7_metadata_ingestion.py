@@ -272,7 +272,7 @@ def get_graph():
     if _graph is not None:
         return _graph
 
-    builder = StateGraph(dict)
+    builder = StateGraph(MetadataIngestionState)
 
     for name, fn in [
         ("acquire_lock", node_acquire_lock),

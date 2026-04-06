@@ -118,7 +118,11 @@ async def node_load_affected_context(state: dict) -> dict:
     anchor: dict[str, str] = {}
     if chapter_ids:
         anchor["chapter_id"] = chapter_ids[0]
+    orig_ctx = state.get("context") or {}
     ctx = await s1_context_builder.build_context(state["project_path"], "simulation", anchor)
+    ctx["api_key"] = orig_ctx.get("api_key", "")
+    ctx["model"] = orig_ctx.get("model", "deepseek-chat")
+    ctx["endpoint"] = orig_ctx.get("endpoint", "https://api.deepseek.com/v1")
     return {"context": dict(ctx), "progress": 0.1}
 
 
@@ -323,7 +327,7 @@ def get_graph():
     if _graph is not None:
         return _graph
 
-    builder = StateGraph(dict)
+    builder = StateGraph(SimulationState)
     nodes = [
         ("acquire_lock", node_acquire_lock),
         ("setup_scenario", node_setup_scenario),

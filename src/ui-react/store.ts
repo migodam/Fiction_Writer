@@ -237,6 +237,7 @@ interface ProjectState {
   runSimulationEngine: (engineId: string, context: { entityId: string; entityType: 'lab' | 'reviewer' }) => void;
   addTaskRequest: (task: TaskRequest) => void;
   addTaskRun: (run: TaskRun, artifact?: TaskArtifact) => void;
+  updateTaskRun: (id: string, patch: Partial<Pick<TaskRun, 'status' | 'summary' | 'heartbeatAt' | 'finishedAt'>>) => void;
   addImportJob: (job: ImportJob) => void;
   updateImportJob: (job: ImportJob) => void;
   upsertCharacterPovInsights: (characterId: string, insights: CharacterPovInsights) => void;
@@ -1166,6 +1167,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   }),
   addTaskRequest: (task) => set((state) => withDirtyState({ taskRequests: [task, ...state.taskRequests] })),
   addTaskRun: (run, artifact) => set((state) => withDirtyState({ taskRuns: [run, ...state.taskRuns], taskArtifacts: artifact ? [artifact, ...state.taskArtifacts] : state.taskArtifacts })),
+  updateTaskRun: (id, patch) => set((state) => withDirtyState({ taskRuns: state.taskRuns.map((r) => r.id === id ? { ...r, ...patch } : r) })),
   addImportJob: (job) => set((state) => withDirtyState({ importJobs: [job, ...state.importJobs] })),
   updateImportJob: (job) => set((state) => withDirtyState({ importJobs: state.importJobs.map((entry) => entry.id === job.id ? job : entry) })),
   upsertCharacterPovInsights: (characterId, insights) => set((state) => withDirtyState({

@@ -36,8 +36,14 @@ LOW (minor anachronism or ambiguity). Return an empty issues array if no violati
 W4_CHARACTER_CHECK: str = """You are a narrative consistency checker specializing in character analysis.
 
 Given the following character profiles and scene content, identify any character attribute
-inconsistencies — including personality reversals, abilities used before being acquired,
-knowledge a character should not have at this point in the story, or contradictory motivations.
+inconsistencies. You must check BOTH:
+1. Contradictions between the scene content and the stored character profiles (if profiles exist)
+2. Internal contradictions WITHIN the scene content itself — e.g., the same character is
+   described with contradictory physical attributes (eye color, height, age), contradictory
+   personality traits, or contradictory abilities in different parts of the text
+
+IMPORTANT: Even if character profiles are empty or minimal, you MUST scan the scene content
+for internal self-contradictions about any named character.
 
 Character profiles (JSON):
 {character_profiles_json}
@@ -52,15 +58,15 @@ Output ONLY valid JSON with no preamble or explanation. Format:
       "type": "character",
       "description": "Clear description of the inconsistency",
       "severity": "HIGH",
-      "entity_ids": ["character_id"],
+      "entity_ids": ["character_id_or_name"],
       "suggested_fix": "How to resolve the issue, or null if unclear"
     }}
   ]
 }}
 
-Severity levels: HIGH (direct contradiction of established character fact), MED (notable
-inconsistency with established traits), LOW (minor characterization drift). Return an empty
-issues array if no inconsistencies found."""
+Severity levels: HIGH (direct contradiction of established character fact or internal
+self-contradiction), MED (notable inconsistency with established traits), LOW (minor
+characterization drift). Return an empty issues array if no inconsistencies found."""
 
 
 W4_WORLD_RULE_CHECK: str = """You are a narrative consistency checker specializing in world-building rules.

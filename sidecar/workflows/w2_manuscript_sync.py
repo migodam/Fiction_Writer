@@ -222,6 +222,11 @@ async def node_extract_entities_from_chapter(state: ManuscriptSyncState) -> dict
 async def node_diff_with_project_data(state: ManuscriptSyncState) -> dict:
     """single_chapter mode: compare extracted entities against project data."""
     extracted = state.get("extracted_entities", {})
+    # Normalize: if LLM returned a list instead of a dict, wrap it
+    if isinstance(extracted, list):
+        extracted = {"characters_found": extracted}
+    if not isinstance(extracted, dict):
+        extracted = {}
     diff_items: list[dict] = []
 
     # Check character conflicts
@@ -394,6 +399,7 @@ async def run(project_path: str, config: dict) -> dict:
         "workflow_id": config.get("workflow_id", "W2"),
         "mode": config.get("mode", "single_chapter"),
         "target_chapter_id": config.get("target_chapter_id"),
+        "context": config.get("context", {}),
         "extracted_entities": [],
         "diff": [],
         "proposals": [],

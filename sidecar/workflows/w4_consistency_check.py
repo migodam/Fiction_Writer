@@ -104,9 +104,15 @@ async def node_build_context(state: ConsistencyState) -> dict:
     elif scope == "chapter":
         anchor["chapter_id"] = target_id
 
+    orig_ctx = state.get("context") or {}
     ctx = await s1_context_builder.build_context(
         state["project_path"], "consistency", anchor
     )
+
+    # Preserve LLM credentials from original context
+    ctx["api_key"] = orig_ctx.get("api_key", "")
+    ctx["model"] = orig_ctx.get("model", "deepseek-chat")
+    ctx["endpoint"] = orig_ctx.get("endpoint", "https://api.deepseek.com/v1")
 
     # Load scene/chapter content for checker prompts
     content_lines: list[str] = []
@@ -131,7 +137,9 @@ async def node_build_context(state: ConsistencyState) -> dict:
 
     scene_content = "\n\n---\n\n".join(content_lines) if content_lines else "(no content loaded)"
 
-    return {"context": dict(ctx), "scene_content": scene_content, "progress": 0.1}
+    # Store scene_content inside context dict (ConsistencyState has no top-level scene_content field)
+    ctx["scene_content"] = scene_content
+    return {"context": dict(ctx), "progress": 0.1}
 
 
 async def node_acquire_lock(state: ConsistencyState) -> dict:
@@ -320,7 +328,7 @@ def get_graph():
     if _graph is not None:
         return _graph
 
-    builder = StateGraph(dict)
+    builder = StateGraph(ConsistencyState)
 
     builder.add_node("build_context", node_build_context)
     builder.add_node("acquire_lock", node_acquire_lock)
