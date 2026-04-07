@@ -160,6 +160,14 @@ def _map_source(workflow_name: str) -> str:
 async def _apply_to_file(proposal: dict, project_path: str) -> None:
     """Route the proposal to the correct project file and apply the write."""
     root = pathlib.Path(project_path)
+
+    # Check if any operation is array/singleton-backed first
+    for op in proposal.get("operations", []):
+        entity_type = op.get("entityType", "")
+        if entity_type in _ARRAY_ENTITY_PATHS or entity_type in _SINGLETON_ENTITY_PATHS:
+            await _apply_to_array_file(proposal, project_path)
+            return
+
     for op in proposal.get("operations", []):
         entity_type = op.get("entityType", "")
         entity_id = op.get("entityId")
@@ -185,7 +193,12 @@ async def _apply_to_file(proposal: dict, project_path: str) -> None:
 def _resolve_entity_path(
     root: pathlib.Path, entity_type: str, entity_id: str | None
 ) -> pathlib.Path | None:
-    """Map entity_type → actual filesystem path."""
+    """Map entity_type → actual filesystem path.
+
+    Returns None for array-backed entity types (relationship, character_tag,
+    world_container, world_settings, timeline_branch) — those go through
+    _apply_to_array_file instead.
+    """
     if not entity_id:
         return None
     paths = {
@@ -197,6 +210,72 @@ def _resolve_entity_path(
         "graph_board": root / "entities" / "graph" / f"{entity_id}.json",
     }
     return paths.get(entity_type)
+
+
+# ── Array-backed entity types ─────────────────────────────────────────────────
+
+# entity_type → path within project root (array-backed JSON files)
+_ARRAY_ENTITY_PATHS: dict[str, str] = {
+    "relationship": "entities/relationships.json",
+    "character_tag": "entities/character-tags.json",
+    "world_container": "entities/world/containers.json",
+    "timeline_branch": "entities/timeline/branches.json",
+}
+
+# Singleton file (not an array, just a single JSON object)
+_SINGLETON_ENTITY_PATHS: dict[str, str] = {
+    "world_settings": "entities/world/settings.json",
+}
+
+
+async def _apply_to_array_file(proposal: dict, project_path: str) -> None:
+    """Apply a proposal whose entity type is array-backed.
+
+    For array types: appends or updates (by id) the entry in the array file.
+    For singleton types (world_settings): merges fields into the single object.
+    """
+    root = pathlib.Path(project_path)
+    for op in proposal.get("operations", []):
+        entity_type = op.get("entityType", "")
+        entity_id = op.get("entityId")
+        fields = op.get("fields", {})
+        op_type = op.get("op", "create")
+
+        if entity_type in _ARRAY_ENTITY_PATHS:
+            file_path = root / _ARRAY_ENTITY_PATHS[entity_type]
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            arr: list = _read_json_sync(file_path) or []
+            if op_type == "delete":
+                arr = [e for e in arr if e.get("id") != entity_id]
+            elif op_type == "create":
+                # Avoid duplicates by id
+                if entity_id and any(e.get("id") == entity_id for e in arr):
+                    arr = [
+                        {**e, **fields} if e.get("id") == entity_id else e
+                        for e in arr
+                    ]
+                else:
+                    arr.append(fields)
+            else:  # update
+                found = False
+                for i, e in enumerate(arr):
+                    if e.get("id") == entity_id:
+                        arr[i] = {**e, **fields}
+                        found = True
+                        break
+                if not found:
+                    arr.append(fields)
+            _write_json_sync(file_path, arr)
+
+        elif entity_type in _SINGLETON_ENTITY_PATHS:
+            file_path = root / _SINGLETON_ENTITY_PATHS[entity_type]
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            if op_type == "delete":
+                file_path.unlink(missing_ok=True)
+            else:
+                existing: dict = _read_json_sync(file_path) or {}  # type: ignore[assignment]
+                existing.update(fields)
+                _write_json_sync(file_path, existing)
 
 
 async def _append_to_history(proposal: dict, project_path: str) -> None:

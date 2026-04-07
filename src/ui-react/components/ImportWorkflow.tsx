@@ -12,6 +12,8 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
   const w1CompletedChunks = useProjectStore((s) => s.w1CompletedChunks);
   const w1TotalChunks = useProjectStore((s) => s.w1TotalChunks);
   const w1Errors = useProjectStore((s) => s.w1Errors);
+  const w1ImportMode = useProjectStore((s) => s.w1ImportMode);
+  const setW1ImportMode = useProjectStore((s) => s.setW1ImportMode);
   const startImport = useProjectStore((s) => s.startImport);
   const cancelImport = useProjectStore((s) => s.cancelImport);
 
@@ -28,13 +30,61 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
     }
   }, [startImport]);
 
+  const isIdle = w1Status === 'idle' || w1Status === 'error' || w1Status === 'cancelled';
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div className="w-full max-w-lg rounded-2xl border border-border bg-surface p-6 shadow-xl">
         <h2 className="mb-4 text-lg font-semibold text-text-1">Import Novel</h2>
 
+        {/* Mode selector — visible when idle */}
+        {isIdle && (
+          <div className="mb-4 space-y-2">
+            <p className="text-sm font-medium text-text-2">Import mode</p>
+            <label
+              data-testid="w1-mode-content-only"
+              className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3 hover:bg-surface-2"
+            >
+              <input
+                type="radio"
+                name="importMode"
+                value="import_content_only"
+                checked={w1ImportMode === 'import_content_only'}
+                onChange={() => setW1ImportMode('import_content_only')}
+                className="mt-0.5 accent-accent"
+              />
+              <span>
+                <span className="block text-sm font-medium text-text-1">Import Content Only</span>
+                <span className="block text-xs text-text-3">
+                  Fast — splits novel into chapters and scenes, no AI extraction. ~5 seconds.
+                </span>
+              </span>
+            </label>
+            <label
+              data-testid="w1-mode-import-all"
+              className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3 hover:bg-surface-2"
+            >
+              <input
+                type="radio"
+                name="importMode"
+                value="import_all"
+                checked={w1ImportMode === 'import_all'}
+                onChange={() => setW1ImportMode('import_all')}
+                className="mt-0.5 accent-accent"
+              />
+              <span>
+                <span className="block text-sm font-medium text-text-1">Import All</span>
+                <span className="block text-xs text-text-3">
+                  Full AI extraction — characters, relationships, world, timeline, settings.
+                  10–60 min for a full novel.
+                </span>
+              </span>
+            </label>
+          </div>
+        )}
+
         {/* File picker — visible when idle */}
-        {(w1Status === 'idle' || w1Status === 'error' || w1Status === 'cancelled') && (
+        {isIdle && (
           <button
             data-testid="w1-file-picker-btn"
             onClick={handlePickFile}

@@ -72,10 +72,19 @@ class ImportState(TypedDict, total=False):
     project_path: str
     workflow_id: str
     source_file_path: str
+    import_mode: Literal["import_content_only", "import_all"]
     context: dict
     chunks: List["Chunk"]
     entity_registry: dict
     chunk_extractions: List[ChunkExtraction]
+    # Per-chunk raw relationship candidates (resolved post-loop)
+    raw_relationships: List[dict]
+    # Post-synthesis entities
+    relationships: List[dict]
+    character_tags: List[dict]
+    world_settings: dict
+    timeline_branches: List[dict]
+    world_containers: List[dict]
     manuscript_chapters: List[ManuscriptChapter]
     proposals: List[dict]
     checkpoint_path: str

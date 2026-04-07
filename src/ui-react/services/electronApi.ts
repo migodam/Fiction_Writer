@@ -50,6 +50,7 @@ export interface W3ProgressEvent {
 export interface W1StartPayload {
   projectRoot: string;
   source_file_path: string;
+  import_mode?: 'import_content_only' | 'import_all';
 }
 
 export interface W1StartResult {

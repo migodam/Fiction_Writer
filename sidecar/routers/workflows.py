@@ -189,6 +189,7 @@ async def w3_status() -> W3StatusResponse:
 class W1StartRequest(BaseModel):
     project_path: str
     source_file_path: str
+    import_mode: str = "import_all"
     api_key: str = ""
     model: str = "deepseek-chat"
     endpoint: str = "https://api.deepseek.com/v1"
@@ -290,6 +291,7 @@ async def w1_start(body: W1StartRequest) -> W1StartResponse:
     config = {
         "project_path": body.project_path,
         "source_file_path": body.source_file_path,
+        "import_mode": body.import_mode,
         "context": {"api_key": body.api_key, "model": body.model, "endpoint": body.endpoint},
     }
     asyncio.create_task(_run_w1(session_id, config))

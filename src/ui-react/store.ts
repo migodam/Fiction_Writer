@@ -278,7 +278,9 @@ interface ProjectState {
   w1TotalChunks: number;
   w1Errors: string[];
   w1SessionId: string | null;
-  startImport: (payload: { projectRoot: string; sourceFilePath: string }) => Promise<void>;
+  w1ImportMode: 'import_content_only' | 'import_all';
+  setW1ImportMode: (mode: 'import_content_only' | 'import_all') => void;
+  startImport: (payload: { projectRoot: string; sourceFilePath: string; importMode?: 'import_content_only' | 'import_all' }) => Promise<void>;
   cancelImport: () => Promise<void>;
   resetImport: () => void;
 
@@ -1399,13 +1401,17 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   w1TotalChunks: 0,
   w1Errors: [],
   w1SessionId: null,
+  w1ImportMode: 'import_all',
+  setW1ImportMode: (mode) => set({ w1ImportMode: mode }),
   startImport: async (payload) => {
-    const { projectRoot } = get();
+    const { projectRoot, w1ImportMode } = get();
+    const mode = payload.importMode ?? w1ImportMode;
     set({ w1Status: 'running', w1Progress: 0, w1Errors: [], w1SessionId: null });
     try {
       const result = await electronApi.w1Start({
         projectRoot: projectRoot || payload.projectRoot,
         source_file_path: payload.sourceFilePath,
+        import_mode: mode,
       });
       set({ w1SessionId: result.session_id });
       if (result.status === 'error') {
