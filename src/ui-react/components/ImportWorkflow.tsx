@@ -34,8 +34,8 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="w-full max-w-lg rounded-2xl border border-border bg-surface p-6 shadow-xl">
-        <h2 className="mb-4 text-lg font-semibold text-text-1">Import Novel</h2>
+      <div className="w-full max-w-lg rounded-2xl border border-border bg-card p-6 shadow-xl">
+        <h2 className="mb-4 text-lg font-semibold text-text">Import Novel</h2>
 
         {/* Mode selector — visible when idle */}
         {isIdle && (
@@ -43,7 +43,7 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
             <p className="text-sm font-medium text-text-2">Import mode</p>
             <label
               data-testid="w1-mode-content-only"
-              className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3 hover:bg-surface-2"
+              className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3 hover:bg-hover"
             >
               <input
                 type="radio"
@@ -51,10 +51,10 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
                 value="import_content_only"
                 checked={w1ImportMode === 'import_content_only'}
                 onChange={() => setW1ImportMode('import_content_only')}
-                className="mt-0.5 accent-accent"
+                className="mt-0.5 accent-brand"
               />
               <span>
-                <span className="block text-sm font-medium text-text-1">Import Content Only</span>
+                <span className="block text-sm font-medium text-text">Import Content Only</span>
                 <span className="block text-xs text-text-3">
                   Fast — splits novel into chapters and scenes, no AI extraction. ~5 seconds.
                 </span>
@@ -62,7 +62,7 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
             </label>
             <label
               data-testid="w1-mode-import-all"
-              className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3 hover:bg-surface-2"
+              className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3 hover:bg-hover"
             >
               <input
                 type="radio"
@@ -70,10 +70,10 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
                 value="import_all"
                 checked={w1ImportMode === 'import_all'}
                 onChange={() => setW1ImportMode('import_all')}
-                className="mt-0.5 accent-accent"
+                className="mt-0.5 accent-brand"
               />
               <span>
-                <span className="block text-sm font-medium text-text-1">Import All</span>
+                <span className="block text-sm font-medium text-text">Import All</span>
                 <span className="block text-xs text-text-3">
                   Full AI extraction — characters, relationships, world, timeline, settings.
                   10–60 min for a full novel.
@@ -88,7 +88,7 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
           <button
             data-testid="w1-file-picker-btn"
             onClick={handlePickFile}
-            className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent/90"
+            className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand/90"
           >
             Select File
           </button>
@@ -97,10 +97,10 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
         {/* Progress — visible when running */}
         {w1Status === 'running' && (
           <div className="space-y-3">
-            <div className="h-3 w-full overflow-hidden rounded-full bg-surface-2">
+            <div className="h-3 w-full overflow-hidden rounded-full bg-bg-elev-1">
               <div
                 data-testid="w1-progress-bar"
-                className="h-full rounded-full bg-accent transition-all duration-300"
+                className="h-full rounded-full bg-brand transition-all duration-300"
                 style={{ width: `${w1Progress * 100}%` }}
               />
             </div>
@@ -110,7 +110,7 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
             <button
               data-testid="w1-cancel-btn"
               onClick={cancelImport}
-              className="rounded-lg border border-border px-4 py-1.5 text-sm text-text-2 hover:bg-surface-2"
+              className="rounded-lg border border-border px-4 py-1.5 text-sm text-text-2 hover:bg-hover"
             >
               Cancel
             </button>
@@ -144,7 +144,7 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
           <button
             data-testid="w1-close-btn"
             onClick={onClose}
-            className="rounded-lg border border-border px-4 py-1.5 text-sm text-text-2 hover:bg-surface-2"
+            className="rounded-lg border border-border px-4 py-1.5 text-sm text-text-2 hover:bg-hover"
           >
             Close
           </button>

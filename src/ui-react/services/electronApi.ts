@@ -421,6 +421,12 @@ export const electronApi = {
     return (await ipcRenderer.invoke('w1:status', { projectRoot })) as W1StatusResult;
   },
 
+  async sidecarSpawn(projectRoot: string): Promise<{ ok: boolean; port: number }> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return { ok: false, port: 0 };
+    return (await ipcRenderer.invoke('sidecar:spawn', { projectRoot })) as { ok: boolean; port: number };
+  },
+
   // ── W2 Manuscript Sync ────────────────────────────────────────────────────
 
   async w2Start(payload: W2StartPayload): Promise<W2StartResult> {

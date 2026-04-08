@@ -81,19 +81,24 @@ def _alias_resolver(name: str, registry: dict) -> str | None:
     return None
 
 
-def _registry_summary(registry: dict) -> str:
-    """Build a human-readable summary of the entity registry for prompts."""
+def _registry_summary(registry: dict, max_chars: int = 3000) -> str:
+    """Build a human-readable summary of the entity registry for prompts.
+
+    Capped at max_chars to prevent prompt bloat on large registries.
+    """
     lines: list[str] = []
     for cid, entry in registry.get("characters", {}).items():
-        aliases = ", ".join(entry.get("aliases", []))
+        aliases = ", ".join(entry.get("aliases", [])[:3])  # limit aliases
         lines.append(
             f"- [{cid}] {entry.get('canonical_name', 'Unknown')}"
             f" (aliases: {aliases})"
-            f" [first seen chunk {entry.get('first_seen_chunk', '?')}]"
         )
     if not lines:
         return "(empty — no characters identified yet)"
-    return "\n".join(lines)
+    summary = "\n".join(lines)
+    if len(summary) > max_chars:
+        summary = summary[:max_chars] + "\n...(truncated)"
+    return summary
 
 
 def _world_summary(registry: dict) -> str:
