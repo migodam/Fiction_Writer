@@ -1459,7 +1459,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       event: 'timeline',
     };
     const activity = activityMap[entityType] || 'workbench';
-    set({ currentActivity: activity, selectedEntity: { type: entityType as any, id: entityId } });
+    useUIStore.getState().setActivity(activity);
+    set({ selectedEntity: { type: entityType as any, id: entityId } });
   },
 
   // ── W4 Consistency Check ──────────────────────────────────────────────────
