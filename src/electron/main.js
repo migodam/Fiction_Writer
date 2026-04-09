@@ -497,9 +497,10 @@ ipcMain.handle('w1:cancel', async (_event, payload) => {
   }
 });
 
-ipcMain.handle('w1:status', async (_event, { projectRoot }) => {
+ipcMain.handle('w1:status', async (_event, { projectRoot, session_id }) => {
   try {
-    return await proxyToSidecar(projectRoot, '/workflow/w1/status', 'GET');
+    const qs = session_id ? `?session_id=${session_id}` : '';
+    return await proxyToSidecar(projectRoot, `/workflow/w1/status${qs}`, 'GET');
   } catch {
     return { status: 'offline', progress: 0, errors: [], completed_chunks: 0, total_chunks: 0 };
   }

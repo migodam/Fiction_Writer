@@ -415,10 +415,10 @@ export const electronApi = {
     return (await ipcRenderer.invoke('w1:cancel', payload)) as { status: string };
   },
 
-  async w1Status(projectRoot: string): Promise<W1StatusResult> {
+  async w1Status(projectRoot: string, sessionId?: string): Promise<W1StatusResult> {
     const ipcRenderer = getIpcRenderer();
     if (!ipcRenderer) return { status: 'offline', progress: 0, errors: [], completed_chunks: 0, total_chunks: 0 };
-    return (await ipcRenderer.invoke('w1:status', { projectRoot })) as W1StatusResult;
+    return (await ipcRenderer.invoke('w1:status', { projectRoot, session_id: sessionId })) as W1StatusResult;
   },
 
   async sidecarSpawn(projectRoot: string): Promise<{ ok: boolean; port: number }> {

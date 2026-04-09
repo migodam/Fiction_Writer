@@ -777,6 +777,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     if (rootPath) get().loadMetadata(rootPath);
     // Open/migrate SQLite DB (fire-and-forget; JSON store still drives memory)
     electronApi.dbOpen(rootPath ?? project.metadata.rootPath, project).catch(() => {});
+    electronApi.sidecarSpawn(rootPath ?? project.metadata.rootPath).catch(() => {});
     setTimeout(() => get().saveStatus === 'Saved' && set({ saveStatus: 'Idle' }), 1200);
   },
   saveProject: async () => {
@@ -1406,20 +1407,44 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   startImport: async (payload) => {
     const { projectRoot, w1ImportMode } = get();
     const mode = payload.importMode ?? w1ImportMode;
+    const effectiveRoot = projectRoot || payload.projectRoot;
     set({ w1Status: 'running', w1Progress: 0, w1Errors: [], w1SessionId: null });
+    let sessionId: string | null = null;
     try {
       const result = await electronApi.w1Start({
-        projectRoot: projectRoot || payload.projectRoot,
+        projectRoot: effectiveRoot,
         source_file_path: payload.sourceFilePath,
         import_mode: mode,
       });
-      set({ w1SessionId: result.session_id });
+      sessionId = result.session_id || null;
+      set({ w1SessionId: sessionId });
       if (result.status === 'error') {
         set({ w1Status: 'error', w1Errors: ['Import failed to start'] });
+        return;
       }
     } catch (e) {
       set({ w1Status: 'error', w1Errors: [String(e)] });
+      return;
     }
+    // Poll sidecar for progress
+    for (let i = 0; i < 600; i++) {
+      await new Promise(r => setTimeout(r, 3000));
+      const { w1Status: cur } = get();
+      if (cur === 'cancelled') return;
+      try {
+        const s = await electronApi.w1Status(effectiveRoot, sessionId ?? undefined);
+        set({
+          w1Progress: s.progress ?? 0,
+          w1CompletedChunks: s.completed_chunks ?? 0,
+          w1TotalChunks: s.total_chunks ?? 0,
+          w1Errors: s.errors ?? [],
+        });
+        if (s.status === 'done') { set({ w1Status: 'done' }); return; }
+        if (s.status === 'error') { set({ w1Status: 'error' }); return; }
+        if (s.status === 'cancelled') { set({ w1Status: 'cancelled' }); return; }
+      } catch { /* sidecar temporarily unreachable — keep polling */ }
+    }
+    set({ w1Status: 'error', w1Errors: ['Import timed out after 30 minutes'] });
   },
   cancelImport: async () => {
     const { w1SessionId } = get();
