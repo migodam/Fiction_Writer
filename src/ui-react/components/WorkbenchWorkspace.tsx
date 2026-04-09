@@ -1,6 +1,7 @@
 import React, { useRef, useMemo, useState } from 'react';
 import { CheckCircle2, FileUp, Inbox, RefreshCw, ShieldAlert, Sparkles, UploadCloud, XCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { ImportWorkflow } from './ImportWorkflow';
 import { useProjectStore, useUIStore } from '../store';
 import { useI18n } from '../i18n';
 import type { Chapter, ImportJob, Proposal, Scene, TodoItem, TodoPriority, TodoStatus } from '../models/project';
@@ -294,13 +295,7 @@ export const WorkbenchWorkspace = () => {
       </div>
 
       {importState.open && (
-        <ImportModal
-          state={importState}
-          setState={setImportState}
-          fileRef={fileRef}
-          onConfirm={confirmImport}
-          zh={zh}
-        />
+        <ImportWorkflow onClose={() => setImportState((current) => ({ ...current, open: false }))} />
       )}
     </div>
   );

@@ -1,0 +1,12 @@
+{
+  "id": "w1-quality-test",
+  "metadata": {
+    "title": "W1 Quality Test",
+    "genre": "xianxia"
+  },
+  "entityRegistry": {
+    "characters": {},
+    "events": {},
+    "world": {}
+  }
+}
