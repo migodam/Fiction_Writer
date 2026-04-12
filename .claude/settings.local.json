@@ -8,5 +8,6 @@
       "Bash(grep -l \"CharacterRelationshipFlow\\\\|GraphBoardFlow\\\\|@xyflow/react\" src/ui-react/components/graph/*.tsx src/ui-react/components/CharactersWorkspace.tsx src/ui-react/components/GraphWorkspace.tsx)"
     ]
   },
-  "outputStyle": "default"
+  "outputStyle": "default",
+  "spinnerTipsEnabled": false
 }

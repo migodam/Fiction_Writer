@@ -9,8 +9,7 @@ export const AgentDock = () => {
     taskRequests,
     taskRuns,
   } = useProjectStore();
-  const { t, locale } = useI18n();
-  const zh = locale === 'zh-CN';
+  const { t } = useI18n();
 
   if (!isAgentDockOpen) {
     return (
@@ -60,8 +59,8 @@ export const AgentDock = () => {
         <section className="rounded-2xl border border-border bg-card p-4 shadow-1">
           <div className="text-[10px] font-black uppercase tracking-[0.2em] text-text-3">{t('agentDock.liveQueue')}</div>
           <div className="mt-3 grid grid-cols-2 gap-2">
-            <Metric label={zh ? '排队' : 'Queued'} value={String(taskRequests.filter((r) => r.status === 'queued').length)} />
-            <Metric label={zh ? '运行中' : 'Running'} value={String(taskRuns.filter((r) => r.status === 'running').length)} />
+            <Metric label={t('agentDock.queued')} value={String(taskRequests.filter((r) => r.status === 'queued').length)} />
+            <Metric label={t('agentDock.running')} value={String(taskRuns.filter((r) => r.status === 'running').length)} />
           </div>
           {taskRuns.length > 0 && (
             <div className="mt-3 space-y-2">
@@ -77,7 +76,7 @@ export const AgentDock = () => {
 
         {/* Quick link to agents */}
         <section className="rounded-2xl border border-dashed border-border bg-bg p-4 text-sm text-text-2">
-          {zh ? '在 /agents 页面可查看完整对话历史。' : 'View full chat history in the /agents page.'}
+          {t('agentDock.viewHistory')}
         </section>
       </div>
     </aside>

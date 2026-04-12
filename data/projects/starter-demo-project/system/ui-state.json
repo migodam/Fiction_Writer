@@ -1,12 +1,12 @@
 {
   "panes": {
-    "sidebarWidth": 280,
+    "sidebarWidth": 148,
     "inspectorWidth": 360,
     "agentDockWidth": 320,
-    "writingOutlineWidth": 320,
+    "writingOutlineWidth": 285,
     "writingContextWidth": 340,
     "isSidebarCollapsed": false,
-    "isAgentDockOpen": true,
+    "isAgentDockOpen": false,
     "isWritingOutlineCollapsed": false,
     "isWritingContextCollapsed": false
   },

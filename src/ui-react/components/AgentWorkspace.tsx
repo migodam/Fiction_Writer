@@ -18,18 +18,17 @@ export const AgentWorkspace = () => {
 // Right panel showing recent task requests and runs
 const AgentRunsPanel: React.FC = () => {
   const { taskRequests, taskRuns, proposals } = useProjectStore();
-  const { locale } = useI18n();
-  const zh = locale === 'zh-CN';
+  const { t } = useI18n();
 
   return (
     <aside className="w-80 border-l border-border bg-bg-elev-1 overflow-y-auto custom-scrollbar p-5" data-testid="agent-runs-panel">
       <div className="mb-4 grid grid-cols-3 gap-2">
-        <MetricCard label={zh ? '请求' : 'Requests'} value={String(taskRequests.length)} icon={<Layers3 size={12} />} />
-        <MetricCard label={zh ? '运行' : 'Runs'} value={String(taskRuns.length)} icon={<CornerDownLeft size={12} />} />
-        <MetricCard label={zh ? '提案' : 'Proposals'} value={String(proposals.length)} icon={<FileSearch size={12} />} />
+        <MetricCard label={t('agent.requests')} value={String(taskRequests.length)} icon={<Layers3 size={12} />} />
+        <MetricCard label={t('agent.runs.title')} value={String(taskRuns.length)} icon={<CornerDownLeft size={12} />} />
+        <MetricCard label={t('agent.proposals')} value={String(proposals.length)} icon={<FileSearch size={12} />} />
       </div>
 
-      <div className="mb-3 text-[10px] font-black uppercase tracking-[0.2em] text-text-3">{zh ? '最近任务' : 'Recent Tasks'}</div>
+      <div className="mb-3 text-[10px] font-black uppercase tracking-[0.2em] text-text-3">{t('agent.runs.title')}</div>
       <div className="space-y-2">
         {taskRequests.slice(0, 12).map((task) => (
           <div key={task.id} className="rounded-2xl border border-border bg-card p-3" data-testid={`agent-request-${task.id}`}>

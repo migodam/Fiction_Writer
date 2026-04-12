@@ -42,8 +42,9 @@ function isPidAlive(pid) {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    // EPERM: process exists but we lack permission (common on macOS for same-user)
+    return err.code === 'EPERM';
   }
 }
 
@@ -66,7 +67,11 @@ async function spawnSidecar(projectRoot) {
   const port = await findFreePort();
   const sidecarEntry = path.resolve(__dirname, '../../sidecar/main.py');
 
-  const proc = spawn('python', [sidecarEntry, '--port', String(port), '--project-path', projectRoot], {
+  // Resolve Python: prefer venv at sidecar/.venv, then python3 (macOS/Linux), then python (Windows)
+  const venvPython = path.resolve(__dirname, '../../sidecar/.venv/bin/python');
+  const pythonCmd = fs.existsSync(venvPython) ? venvPython : (process.platform === 'win32' ? 'python' : 'python3');
+
+  const proc = spawn(pythonCmd, [sidecarEntry, '--port', String(port), '--project-path', projectRoot], {
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: false,
   });
@@ -288,7 +293,7 @@ ipcMain.handle('portrait:save', async (_event, { projectRoot, characterId, image
     const buffer = Buffer.from(await response.arrayBuffer());
     await fsPromises.writeFile(filePath, buffer);
   } else if (imageData.startsWith('file://')) {
-    const srcPath = imageData.replace(/^file:\/\//, '');
+    const srcPath = fileURLToPath(imageData);
     await fsPromises.copyFile(srcPath, filePath);
   } else if (imageData.startsWith('/') || /^[A-Za-z]:\\/.test(imageData)) {
     await fsPromises.copyFile(imageData, filePath);

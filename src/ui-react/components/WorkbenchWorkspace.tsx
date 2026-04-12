@@ -29,8 +29,7 @@ export const WorkbenchWorkspace = () => {
     deleteTodo,
     setSelectedEntity,
   } = useProjectStore();
-  const { locale } = useI18n();
-  const zh = locale === 'zh-CN';
+  const { t } = useI18n();
   const [importState, setImportState] = useState<{
     open: boolean;
     fileName: string;
@@ -94,10 +93,10 @@ export const WorkbenchWorkspace = () => {
         addScene(scene);
         newProposals.push({
           id: `proposal_import_${sceneId}`,
-          title: `${zh ? '导入元数据待审' : 'Import metadata review'}: ${sceneDraft.title}`,
+          title: `${t('workbench.importMetadataReview')}: ${sceneDraft.title}`,
           source: 'import',
           kind: 'import_review',
-          description: zh ? '请审阅角色、地点和世界设定抽取建议。' : 'Review extracted characters, locations, and world details.',
+          description: t('workbench.importMetadataDesc'),
           targetEntityType: 'scene',
           targetEntityId: sceneId,
           preview: sceneDraft.content.slice(0, 240),
@@ -130,13 +129,13 @@ export const WorkbenchWorkspace = () => {
       proposalIds: newProposals.map((proposal) => proposal.id),
       issueIds: [],
       notes: [
-        zh ? '章节和场景骨架已写入 canonical。' : 'Deterministic chapter/scene skeleton written to canonical project data.',
-        zh ? '推断性元数据已送入 Workbench 审核。' : 'Inferred metadata was routed to Workbench proposals.',
+        t('workbench.skeletonWritten'),
+        t('workbench.inferredRouted'),
       ],
     };
     addImportJob(job);
     setImportState({ open: false, fileName: '', sourceFormat: 'md', text: '', previewChapters: [], error: null });
-    setLastActionStatus(zh ? '导入已完成并生成待审提案' : 'Import completed with review proposals');
+    setLastActionStatus(t('workbench.importCompleted'));
   };
 
   return (
@@ -146,25 +145,25 @@ export const WorkbenchWorkspace = () => {
           <div>
             <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-border bg-bg-elev-1 px-3 py-1 text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">
               <Sparkles size={12} />
-              {zh ? '工作台' : 'Workbench'}
+              {t('workbench.title')}
             </div>
-            <h1 className="text-4xl font-black tracking-tight text-text">{zh ? '审核与运行中心' : 'Review and Runtime Center'}</h1>
+            <h1 className="text-4xl font-black tracking-tight text-text">{t('workbench.reviewCenter')}</h1>
             <p className="mt-3 max-w-2xl text-sm leading-relaxed text-text-2">
-              {zh ? '所有导入、提案、运行日志和提示模板都在这里汇总。' : 'Imports, proposals, runtime logs, and prompt templates converge here.'}
+              {t('workbench.reviewCenterBody')}
             </p>
           </div>
           <button type="button" className="rounded-2xl bg-brand px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-white" onClick={() => setImportState((current) => ({ ...current, open: true }))}>
             <FileUp size={14} className="mr-2 inline" />
-            {zh ? '导入小说' : 'Import Novel'}
+            {t('import.title')}
           </button>
         </div>
 
         <div className="mb-8 grid gap-4 md:grid-cols-5">
-          <SummaryCard label={zh ? '待审提案' : 'Inbox'} value={String(summary.proposals)} />
-          <SummaryCard label={zh ? '开放问题' : 'Open Issues'} value={String(summary.issues)} />
-          <SummaryCard label={zh ? '导入任务' : 'Imports'} value={String(summary.imports)} />
-          <SummaryCard label={zh ? '活跃运行' : 'Active Runs'} value={String(summary.runs)} />
-          <SummaryCard label={zh ? '提示模板' : 'Prompt Templates'} value={String(summary.prompts)} />
+          <SummaryCard label={t('workbench.inbox')} value={String(summary.proposals)} />
+          <SummaryCard label={t('workbench.openIssues')} value={String(summary.issues)} />
+          <SummaryCard label={t('workbench.importJobs')} value={String(summary.imports)} />
+          <SummaryCard label={t('workbench.activeRuns')} value={String(summary.runs)} />
+          <SummaryCard label={t('workbench.promptTemplates')} value={String(summary.prompts)} />
         </div>
 
         {sidebarSection === 'inbox' && (
@@ -176,23 +175,23 @@ export const WorkbenchWorkspace = () => {
                     <div className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-2">{proposal.source}</div>
                     <h2 className="mt-2 text-xl font-black text-text">{proposal.title}</h2>
                   </div>
-                  <div className="rounded-full border border-amber/30 bg-amber/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-amber">{zh ? '待处理' : 'Pending'}</div>
+                  <div className="rounded-full border border-amber/30 bg-amber/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-amber">{t('workbench.pending')}</div>
                 </div>
                 <p className="text-sm leading-relaxed text-text-2">{proposal.description}</p>
                 <div className="mt-4 rounded-xl border border-border bg-bg-elev-1 p-4 text-sm text-text-2">{proposal.preview}</div>
                 <div className="mt-5 flex items-center gap-3">
                   <button type="button" data-testid="proposal-accept-btn" className="inline-flex items-center gap-2 rounded-lg bg-green px-4 py-2 text-[11px] font-black uppercase tracking-widest text-text-invert" onClick={() => resolveProposal(proposal.id, 'accepted')}>
                     <CheckCircle2 size={14} />
-                    {zh ? '接受' : 'Accept'}
+                    {t('workbench.accept')}
                   </button>
                   <button type="button" data-testid="proposal-reject-btn" className="inline-flex items-center gap-2 rounded-lg border border-red/40 px-4 py-2 text-[11px] font-black uppercase tracking-widest text-red" onClick={() => resolveProposal(proposal.id, 'rejected')}>
                     <XCircle size={14} />
-                    {zh ? '拒绝' : 'Reject'}
+                    {t('workbench.reject')}
                   </button>
                 </div>
               </div>
             ))}
-            {proposals.length === 0 && <EmptyState icon={<Inbox size={56} />} title={zh ? '收件箱为空' : 'Inbox Clear'} description={zh ? '当前没有待审提案。' : 'There are no pending proposals.'} />}
+            {proposals.length === 0 && <EmptyState icon={<Inbox size={56} />} title={t('workbench.inboxClear')} description={t('workbench.noPendingBody')} />}
           </div>
         )}
 
@@ -227,11 +226,11 @@ export const WorkbenchWorkspace = () => {
                 <p className="text-sm text-text-2">{issue.description}</p>
               </button>
             ))}
-            {openIssues.length === 0 && <EmptyState icon={<ShieldAlert size={56} />} title={zh ? '没有开放问题' : 'No Open Issues'} description={zh ? '已修复或已忽略的问题会自动移出默认视图。' : 'Resolved or dismissed issues are removed from the default view.'} />}
+            {openIssues.length === 0 && <EmptyState icon={<ShieldAlert size={56} />} title={t('workbench.noIssues')} description={t('workbench.noIssuesBody2')} />}
           </div>
         )}
 
-        {sidebarSection === 'imports' && <ImportsPanel importJobs={importJobs} onSelect={(id) => setSelectedEntity('import_job', id)} zh={zh} onOpenImport={() => setImportState((current) => ({ ...current, open: true }))} />}
+        {sidebarSection === 'imports' && <ImportsPanel importJobs={importJobs} onSelect={(id) => setSelectedEntity('import_job', id)} onOpenImport={() => setImportState((current) => ({ ...current, open: true }))} />}
 
         {sidebarSection === 'runs' && (
           <div className="space-y-4">
@@ -635,20 +634,20 @@ const ImportsPanel = ({
   importJobs,
   onSelect,
   onOpenImport,
-  zh,
 }: {
   importJobs: ImportJob[];
   onSelect: (id: string) => void;
   onOpenImport: () => void;
-  zh: boolean;
-}) => (
+}) => {
+  const { t } = useI18n();
+  return (
   <div className="space-y-4" data-testid="workbench-imports-list">
     <button type="button" className="w-full rounded-3xl border border-dashed border-brand/40 bg-bg-elev-1 p-8 text-left" onClick={onOpenImport}>
       <div className="flex items-center gap-4">
         <UploadCloud size={36} className="text-brand" />
         <div>
-          <div className="text-lg font-black text-text">{zh ? '从 txt / md 导入小说' : 'Import Novel from txt / md'}</div>
-          <div className="mt-2 text-sm text-text-2">{zh ? '导入向导会先预览章节/场景切分，再将元数据抽取送入 Workbench 审核。' : 'The import wizard previews chapter/scene segmentation before routing inferred metadata to Workbench review.'}</div>
+          <div className="text-lg font-black text-text">{t('workbench.importNovelFromFile')}</div>
+          <div className="mt-2 text-sm text-text-2">{t('workbench.importNovelDesc')}</div>
         </div>
       </div>
     </button>
@@ -656,27 +655,29 @@ const ImportsPanel = ({
       <button key={job.id} type="button" className="w-full rounded-2xl border border-border bg-card p-6 text-left shadow-1" onClick={() => onSelect(job.id)}>
         <div className="mb-3 flex items-center justify-between gap-3">
           <div>
-            <div className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-2">{zh ? '导入任务' : 'Import Job'}</div>
+            <div className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-2">{t('workbench.importJob')}</div>
             <h2 className="mt-2 text-xl font-black text-text">{job.sourceFileName}</h2>
           </div>
           <div className="rounded-full border border-border px-3 py-1 text-[10px] font-black uppercase tracking-widest text-text-2">{job.stage}</div>
         </div>
         <p className="text-sm leading-relaxed text-text-2">
-          {zh
-            ? `切分置信度 ${job.segmentationConfidence}，章节 ${job.chapterCandidates.length}，场景 ${job.sceneCandidates.length}，待审提案 ${job.proposalIds.length}。`
-            : `Segmentation ${job.segmentationConfidence}, chapters ${job.chapterCandidates.length}, scenes ${job.sceneCandidates.length}, proposals ${job.proposalIds.length}.`}
+          {t('workbench.segmentationInfo')
+            .replace('{confidence}', job.segmentationConfidence)
+            .replace('{chapters}', String(job.chapterCandidates.length))
+            .replace('{scenes}', String(job.sceneCandidates.length))
+            .replace('{proposals}', String(job.proposalIds.length))}
         </p>
       </button>
     ))}
   </div>
-);
+  );
+};
 
 const ImportModal = ({
   state,
   setState,
   fileRef,
   onConfirm,
-  zh,
 }: {
   state: {
     open: boolean;
@@ -696,14 +697,15 @@ const ImportModal = ({
   }>>;
   fileRef: React.RefObject<HTMLInputElement>;
   onConfirm: () => void;
-  zh: boolean;
-}) => (
+}) => {
+  const { t } = useI18n();
+  return (
   <div className="fixed inset-0 z-[140] flex items-center justify-center bg-black/60 p-6">
     <div className="max-h-[90vh] w-full max-w-5xl overflow-hidden rounded-[32px] border border-border bg-bg-elev-1 shadow-2">
       <div className="flex items-center justify-between border-b border-border px-6 py-4">
         <div>
-          <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{zh ? '导入向导' : 'Import Wizard'}</div>
-          <div className="mt-1 text-lg font-black text-text">{zh ? '小说导入预览' : 'Novel Import Preview'}</div>
+          <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('workbench.importWizard')}</div>
+          <div className="mt-1 text-lg font-black text-text">{t('workbench.novelImportPreview')}</div>
         </div>
         <button type="button" className="rounded p-2 text-text-3 hover:bg-hover hover:text-text" onClick={() => setState((current) => ({ ...current, open: false }))}>×</button>
       </div>
@@ -720,30 +722,30 @@ const ImportModal = ({
               const text = await file.text();
               const sourceFormat = file.name.endsWith('.txt') ? 'txt' : file.name.endsWith('.md') || file.name.endsWith('.markdown') ? 'md' : 'docx';
               const previewChapters = parseImportPreview(text, sourceFormat);
-              setState((current) => ({ ...current, fileName: file.name, sourceFormat, text, previewChapters, error: previewChapters.length ? null : (zh ? '无法解析章节结构。' : 'Unable to parse chapter structure.') }));
+              setState((current) => ({ ...current, fileName: file.name, sourceFormat, text, previewChapters, error: previewChapters.length ? null : t('workbench.unableToParse') }));
             }}
           />
           <button type="button" className="w-full rounded-2xl border border-brand/40 bg-brand/10 px-4 py-4 text-left text-text" onClick={() => fileRef.current?.click()}>
-            <div className="text-sm font-black">{zh ? '选择文件' : 'Choose File'}</div>
-            <div className="mt-2 text-xs text-text-2">{zh ? '支持 .txt / .md' : 'Supports .txt / .md'}</div>
+            <div className="text-sm font-black">{t('workbench.chooseFile')}</div>
+            <div className="mt-2 text-xs text-text-2">{t('workbench.supportsTxtMd')}</div>
           </button>
           <div className="mt-4 rounded-2xl border border-border bg-bg p-4">
-            <div className="text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{zh ? '文件' : 'File'}</div>
-            <div className="mt-2 text-sm text-text-2">{state.fileName || (zh ? '尚未选择文件' : 'No file selected')}</div>
+            <div className="text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{t('workbench.file')}</div>
+            <div className="mt-2 text-sm text-text-2">{state.fileName || t('workbench.noFileSelected')}</div>
           </div>
           <div className="mt-4 rounded-2xl border border-border bg-bg p-4 text-sm text-text-2">
-            {zh ? '导入逻辑：确定性的章节/场景骨架直接进入 canonical，角色/地点/组织等推断信息进入 Workbench 提案。' : 'Deterministic chapter/scene skeletons write to canonical storage; inferred metadata goes to Workbench proposals.'}
+            {t('workbench.importLogic')}
           </div>
           {state.error && <div className="mt-4 rounded-2xl border border-red/30 bg-red/10 p-4 text-sm text-red">{state.error}</div>}
           <button type="button" className="mt-6 w-full rounded-2xl bg-brand px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-white" onClick={onConfirm} disabled={!state.previewChapters.length}>
-            {zh ? '确认导入' : 'Confirm Import'}
+            {t('workbench.confirmImport')}
           </button>
         </div>
         <div className="overflow-y-auto custom-scrollbar p-6">
           <div className="space-y-4">
             {state.previewChapters.map((chapter, chapterIndex) => (
               <div key={`${chapter.title}-${chapterIndex}`} className="rounded-3xl border border-border bg-card p-5">
-                <div className="text-[10px] font-black uppercase tracking-[0.18em] text-brand-2">{zh ? '章节预览' : 'Chapter Preview'}</div>
+                <div className="text-[10px] font-black uppercase tracking-[0.18em] text-brand-2">{t('workbench.chapterPreview')}</div>
                 <div className="mt-2 text-xl font-black text-text">{chapter.title}</div>
                 <div className="mt-4 space-y-3">
                   {chapter.scenes.map((scene, sceneIndex) => (
@@ -756,14 +758,15 @@ const ImportModal = ({
               </div>
             ))}
             {!state.previewChapters.length && (
-              <EmptyState icon={<UploadCloud size={56} />} title={zh ? '等待导入文件' : 'Awaiting import file'} description={zh ? '选择 txt 或 md 文件后，这里会显示章节和场景预览。' : 'Choose a txt or md file to preview chapters and scenes here.'} />
+              <EmptyState icon={<UploadCloud size={56} />} title={t('workbench.awaitingImportFile')} description={t('workbench.awaitingImportFileDesc')} />
             )}
           </div>
         </div>
       </div>
     </div>
   </div>
-);
+  );
+};
 
 const parseImportPreview = (text: string, format: 'txt' | 'md' | 'docx') => {
   if (!text.trim()) return [];

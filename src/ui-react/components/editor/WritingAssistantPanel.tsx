@@ -1,4 +1,5 @@
 import React from 'react';
+import { useI18n } from '../../i18n';
 
 interface WritingAssistantPanelProps {
   w3Status: 'idle' | 'running' | 'waiting_selection' | 'done' | 'error';
@@ -27,23 +28,25 @@ export const WritingAssistantPanel: React.FC<WritingAssistantPanelProps> = ({
   onInsert,
   onRetry,
 }) => {
+  const { t } = useI18n();
+
   return (
     <div className="flex flex-col gap-3 p-4 border-l border-border bg-bg-elev-1 w-72 overflow-y-auto">
-      <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">AI Assistant</div>
+      <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('aiWriting.assistantTitle')}</div>
 
       {/* Task selector */}
       <div className="flex flex-col gap-1">
-        <label className="text-[11px] text-text-2">Task</label>
+        <label className="text-[11px] text-text-2">{t('aiWriting.taskLabel')}</label>
         <select
           data-testid="w3-task-select"
           value={task}
           onChange={(e) => onTaskChange(e.target.value)}
           className="rounded border border-border bg-bg px-2 py-1 text-sm text-text"
         >
-          <option value="continue">Continue</option>
-          <option value="rewrite">Rewrite</option>
-          <option value="expand">Expand</option>
-          <option value="improve_dialogue">Improve Dialogue</option>
+          <option value="continue">{t('aiWriting.continueTitle')}</option>
+          <option value="rewrite">{t('aiWriting.polishTitle')}</option>
+          <option value="expand">{t('aiWriting.expandTitle')}</option>
+          <option value="improve_dialogue">{t('aiWriting.improveDialogue')}</option>
         </select>
       </div>
 
@@ -54,7 +57,7 @@ export const WritingAssistantPanel: React.FC<WritingAssistantPanelProps> = ({
         disabled={w3Status === 'running'}
         className="rounded bg-brand px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
       >
-        {w3Status === 'running' ? 'Generating…' : 'Generate'}
+        {w3Status === 'running' ? t('aiWriting.generating') : t('aiWriting.generate')}
       </button>
 
       {/* Progress bar */}
@@ -71,7 +74,7 @@ export const WritingAssistantPanel: React.FC<WritingAssistantPanelProps> = ({
       {/* Three option cards */}
       {w3Status === 'waiting_selection' && (
         <div className="flex flex-col gap-2">
-          <div className="text-[11px] text-text-2">Choose a direction:</div>
+          <div className="text-[11px] text-text-2">{t('aiWriting.chooseDirection')}</div>
           {w3Options.map((opt, i) => (
             <div
               key={i}
@@ -86,7 +89,7 @@ export const WritingAssistantPanel: React.FC<WritingAssistantPanelProps> = ({
                 onClick={() => onSelectOption(i)}
                 className="rounded bg-bg-elev-2 px-2 py-1 text-xs text-text hover:bg-hover"
               >
-                Select
+                {t('aiWriting.selectOption')}
               </button>
             </div>
           ))}
@@ -96,7 +99,7 @@ export const WritingAssistantPanel: React.FC<WritingAssistantPanelProps> = ({
       {/* Output section */}
       {w3Status === 'done' && (
         <div data-testid="w3-output" className="flex flex-col gap-2">
-          <div className="text-[11px] text-text-2">Generated output:</div>
+          <div className="text-[11px] text-text-2">{t('aiWriting.generatedOutput')}</div>
           <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap rounded border border-border bg-bg p-2 text-xs text-text-2 leading-relaxed">
             {w3Output.slice(0, 400)}{w3Output.length > 400 ? '…' : ''}
           </pre>
@@ -106,14 +109,14 @@ export const WritingAssistantPanel: React.FC<WritingAssistantPanelProps> = ({
               onClick={() => onInsert(w3Output)}
               className="flex-1 rounded bg-brand px-2 py-1.5 text-xs font-medium text-white"
             >
-              Insert at cursor
+              {t('aiWriting.insertAtCursor')}
             </button>
             <button
               data-testid="w3-retry-btn"
               onClick={onRetry}
               className="rounded border border-border px-2 py-1.5 text-xs text-text-2 hover:bg-hover"
             >
-              Retry
+              {t('aiWriting.retry')}
             </button>
           </div>
         </div>
@@ -122,13 +125,13 @@ export const WritingAssistantPanel: React.FC<WritingAssistantPanelProps> = ({
       {/* Error section */}
       {w3Status === 'error' && (
         <div data-testid="w3-error" className="flex flex-col gap-2">
-          <p className="text-xs text-red-400">{w3Error ?? 'An error occurred'}</p>
+          <p className="text-xs text-red-400">{w3Error ?? t('aiWriting.errorOccurred')}</p>
           <button
             data-testid="w3-retry-btn"
             onClick={onRetry}
             className="rounded border border-border px-2 py-1.5 text-xs text-text-2 hover:bg-hover"
           >
-            Retry
+            {t('aiWriting.retry')}
           </button>
         </div>
       )}

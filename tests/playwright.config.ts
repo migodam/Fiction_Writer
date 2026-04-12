@@ -17,7 +17,7 @@ export default defineConfig({
         ignoreHTTPSErrors: true,
     },
     webServer: {
-        command: 'cmd /c npm run dev',
+        command: 'npm run ui:dev',
         cwd: repoRoot,
         url: 'http://localhost:3000',
         reuseExistingServer: true,

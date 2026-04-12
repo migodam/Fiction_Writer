@@ -20,8 +20,7 @@ export const TimelineWorkspace = () => {
     moveTimelineEvent,
   } = useProjectStore();
   const { setLastActionStatus } = useUIStore();
-  const { locale } = useI18n();
-  const zh = locale === 'zh-CN';
+  const { t } = useI18n();
   const [searchParams] = useSearchParams();
   const [activeBranchId, setActiveBranchId] = useState<string>(timelineBranches[0]?.id || MAIN_BRANCH_ID);
   const [activeEventId, setActiveEventId] = useState<string | null>(timelineEvents[0]?.id || null);
@@ -69,14 +68,14 @@ export const TimelineWorkspace = () => {
     const branchId = createTimelineBranch('forked', { branchId: activeEvent.branchId, eventId: activeEvent.id });
     if (!branchId) return;
     setActiveBranchId(branchId);
-    setLastActionStatus(zh ? '已从当前事件分叉' : 'Branch forked from selected event');
+    setLastActionStatus(t('timeline.branchForked', 'Branch forked from selected event'));
   };
 
   const addIndependentBranch = () => {
     const branchId = createTimelineBranch('independent', null);
     if (!branchId) return;
     setActiveBranchId(branchId);
-    setLastActionStatus(zh ? '已创建独立分支' : 'Independent branch created');
+    setLastActionStatus(t('timeline.independentBranch', 'Independent branch created'));
   };
 
   const handleSynchronizeAnalysis = () => {
@@ -84,7 +83,7 @@ export const TimelineWorkspace = () => {
     const loader = scope.require;
     if (!loader) {
       console.warn('[Timeline Synchronize] Node file access is unavailable in this environment.');
-      setLastActionStatus('Synchronize analysis unavailable');
+      setLastActionStatus(t('timeline.syncUnavailable', 'Synchronize analysis unavailable'));
       return;
     }
 
@@ -206,10 +205,10 @@ export const TimelineWorkspace = () => {
         console.warn('Timeline entity value mismatches:', report.fieldMismatches.entityTimelineValueMismatches);
       }
       console.groupEnd();
-      setLastActionStatus('Synchronize analysis written to console');
+      setLastActionStatus(t('timeline.syncWritten', 'Synchronize analysis written to console'));
     } catch (error) {
       console.error('[Timeline Synchronize] Analysis failed:', error);
-      setLastActionStatus('Synchronize analysis failed');
+      setLastActionStatus(t('timeline.syncFailed', 'Synchronize analysis failed'));
     }
   };
 
@@ -223,7 +222,7 @@ export const TimelineWorkspace = () => {
           onClick={() => setCreateModalOpen(true)}
         >
           <Plus size={13} className="mr-2 inline" />
-          {zh ? '新增事件' : 'Add Event'}
+          {t('timeline.addEvent', 'Add Event')}
         </button>
         <button
           type="button"
@@ -232,7 +231,7 @@ export const TimelineWorkspace = () => {
           onClick={addIndependentBranch}
         >
           <Route size={13} className="mr-2 inline" />
-          {zh ? '独立分支' : 'New Branch'}
+          {t('timeline.newBranch', 'New Branch')}
         </button>
         <button
           type="button"
@@ -242,7 +241,7 @@ export const TimelineWorkspace = () => {
           disabled={!activeEvent}
         >
           <GitBranchPlus size={13} className="mr-2 inline" />
-          {zh ? '从当前事件分叉' : 'Fork from Event'}
+          {t('timeline.forkFromEvent', 'Fork from Event')}
         </button>
         <button
           type="button"
@@ -250,18 +249,18 @@ export const TimelineWorkspace = () => {
           className="rounded-xl border border-border px-4 py-2 text-[11px] font-black uppercase tracking-[0.25em] text-text-2"
           onClick={handleSynchronizeAnalysis}
         >
-          Synchronize
+          {t('timeline.synchronize', 'Synchronize')}
         </button>
         {drawModeBranchId && (
           <span className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.18em] text-brand">
-            Drawing: {timelineBranches.find(b => b.id === drawModeBranchId)?.name || drawModeBranchId}
+            {t('timeline.drawing', 'Drawing: {name}').replace('{name}', timelineBranches.find(b => b.id === drawModeBranchId)?.name || drawModeBranchId || '')}
             <button
               type="button"
               data-testid="timeline-draw-cancel-btn"
               className="ml-2 rounded px-2 py-0.5 text-[10px] text-text-3 hover:bg-hover"
               onClick={() => setDrawModeBranchId(null)}
             >
-              {zh ? '取消' : 'Cancel'}
+              {t('common.cancel', 'Cancel')}
             </button>
           </span>
         )}
@@ -281,7 +280,7 @@ export const TimelineWorkspace = () => {
           value={characterFilter}
           onChange={(e) => setCharacterFilter(e.target.value)}
         >
-          <option value="">{zh ? '全部人物' : 'All Characters'}</option>
+          <option value="">{t('timeline.allCharacters', 'All Characters')}</option>
           {characters.map((character) => (
             <option key={character.id} value={character.id}>{character.name}</option>
           ))}
@@ -292,7 +291,7 @@ export const TimelineWorkspace = () => {
           value={locationFilter}
           onChange={(e) => setLocationFilter(e.target.value)}
         >
-          <option value="">{zh ? '全部地点' : 'All Locations'}</option>
+          <option value="">{t('timeline.allLocations', 'All Locations')}</option>
           {worldItems.filter((entry) => entry.type === 'location').map((location) => (
             <option key={location.id} value={location.id}>{location.name}</option>
           ))}
@@ -323,10 +322,10 @@ export const TimelineWorkspace = () => {
           moveEvent={moveTimelineEvent}
           onCreated={(id) => {
             setActiveEventId(id);
-            setLastActionStatus(zh ? '事件已创建' : 'Event created');
+            setLastActionStatus(t('timeline.eventCreated', 'Event created'));
           }}
           close={() => setCreateModalOpen(false)}
-          zh={zh}
+          t={t}
         />
       )}
     </div>
@@ -448,7 +447,7 @@ const CreateEventModal = ({
   moveEvent,
   onCreated,
   close,
-  zh,
+  t,
 }: {
   defaultBranchId: string;
   defaultSlot: number;
@@ -456,11 +455,11 @@ const CreateEventModal = ({
   moveEvent: (eventId: string, branchId: string, slot: number) => void;
   onCreated: (id: string) => void;
   close: () => void;
-  zh: boolean;
+  t: (key: string, fallback?: string) => string;
 }) => {
-  const [title, setTitle] = useState(zh ? '新事件' : 'New Event');
+  const [title, setTitle] = useState(t('timeline.newEvent', 'New Event'));
   const [summary, setSummary] = useState('');
-  const [time, setTime] = useState(zh ? '待定' : 'TBD');
+  const [time, setTime] = useState(t('timeline.timeTbd', 'TBD'));
   const [importance, setImportance] = useState<TimelineEvent['importance']>('medium');
 
   const handleSave = () => {
@@ -493,8 +492,8 @@ const CreateEventModal = ({
       <div className="w-full max-w-lg overflow-hidden rounded-[32px] border border-border bg-bg-elev-1 shadow-2">
         <div className="flex items-center justify-between border-b border-border bg-bg-elev-2 px-6 py-4">
           <div>
-            <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{zh ? '新增事件' : 'New Event'}</div>
-            <div className="mt-1 text-lg font-black text-text">{zh ? '配置事件' : 'Configure Event'}</div>
+            <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('timeline.addEvent', 'New Event')}</div>
+            <div className="mt-1 text-lg font-black text-text">{t('timeline.configureEvent', 'Configure Event')}</div>
           </div>
           <button
             type="button"
@@ -512,21 +511,21 @@ const CreateEventModal = ({
               className="rounded-2xl border border-border bg-bg px-4 py-3 text-lg font-black outline-none"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder={zh ? '事件标题' : 'Event title'}
+              placeholder={t('timeline.eventTitlePlaceholder', 'Event title')}
             />
             <textarea
               data-testid="create-event-summary-input"
               className="h-28 rounded-3xl border border-border bg-bg px-4 py-4 text-sm leading-relaxed text-text-2 outline-none"
               value={summary}
               onChange={(e) => setSummary(e.target.value)}
-              placeholder={zh ? '填写事件概览...' : 'Describe the event...'}
+              placeholder={t('timeline.describeEventPlaceholder', 'Describe the event...')}
             />
             <input
               data-testid="create-event-time-input"
               className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none"
               value={time}
               onChange={(e) => setTime(e.target.value)}
-              placeholder={zh ? '时间标签' : 'Time label'}
+              placeholder={t('timeline.timeLabelPlaceholder', 'Time label')}
             />
             <select
               data-testid="create-event-importance-select"
@@ -534,10 +533,10 @@ const CreateEventModal = ({
               value={importance}
               onChange={(e) => setImportance(e.target.value as TimelineEvent['importance'])}
             >
-              <option value="low">{zh ? '低' : 'Low'}</option>
-              <option value="medium">{zh ? '中' : 'Medium'}</option>
-              <option value="high">{zh ? '高' : 'High'}</option>
-              <option value="critical">{zh ? '关键' : 'Critical'}</option>
+              <option value="low">{t('timeline.importanceLow', 'Low')}</option>
+              <option value="medium">{t('timeline.importanceMedium', 'Medium')}</option>
+              <option value="high">{t('timeline.importanceHigh', 'High')}</option>
+              <option value="critical">{t('timeline.importanceCritical', 'Critical')}</option>
             </select>
             <div className="flex justify-end gap-3">
               <button
@@ -546,7 +545,7 @@ const CreateEventModal = ({
                 className="rounded-xl border border-border px-5 py-3 text-sm text-text-2"
                 onClick={close}
               >
-                {zh ? '取消' : 'Cancel'}
+                {t('common.cancel', 'Cancel')}
               </button>
               <button
                 type="button"
@@ -554,7 +553,7 @@ const CreateEventModal = ({
                 className="rounded-xl bg-brand px-5 py-3 text-sm font-black text-white"
                 onClick={handleSave}
               >
-                {zh ? '创建事件' : 'Create Event'}
+                {t('timeline.createEventBtn', 'Create Event')}
               </button>
             </div>
           </div>

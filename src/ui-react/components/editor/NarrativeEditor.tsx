@@ -8,6 +8,7 @@ import { Plugin } from 'prosemirror-state';
 import { Bold, Italic, Strikethrough, List, ListOrdered, Heading1, Heading2, Heading3, Minus } from 'lucide-react';
 import { cn } from '../../utils';
 import { useProjectStore } from '../../store';
+import { useI18n } from '../../i18n';
 
 // ── Narrative annotation marks ─────────────────────────────────────────────────
 
@@ -108,16 +109,17 @@ interface NarrativeEditorProps {
 export const NarrativeEditor = React.forwardRef<NarrativeEditorHandle, NarrativeEditorProps>(({
   content,
   onUpdate,
-  placeholder = 'Start writing...',
+  placeholder: placeholderProp = 'Start writing...',
   className,
   mono = false,
   testId,
 }, ref) => {
+  const { t } = useI18n();
   const editor = useEditor({
     extensions: [
       StarterKit,
       CharacterCount,
-      Placeholder.configure({ placeholder }),
+      Placeholder.configure({ placeholder: placeholderProp }),
       CharacterKnownMark,
       LocationKnownMark,
       TodoMarkerMark,
@@ -166,21 +168,21 @@ export const NarrativeEditor = React.forwardRef<NarrativeEditorHandle, Narrative
         <ToolbarBtn
           onClick={() => editor.chain().focus().toggleBold().run()}
           active={editor.isActive('bold')}
-          title="Bold"
+          title={t('editor.bold', 'Bold')}
         >
           <Bold size={13} />
         </ToolbarBtn>
         <ToolbarBtn
           onClick={() => editor.chain().focus().toggleItalic().run()}
           active={editor.isActive('italic')}
-          title="Italic"
+          title={t('editor.italic', 'Italic')}
         >
           <Italic size={13} />
         </ToolbarBtn>
         <ToolbarBtn
           onClick={() => editor.chain().focus().toggleStrike().run()}
           active={editor.isActive('strike')}
-          title="Strike"
+          title={t('editor.strike', 'Strike')}
         >
           <Strikethrough size={13} />
         </ToolbarBtn>
@@ -188,21 +190,21 @@ export const NarrativeEditor = React.forwardRef<NarrativeEditorHandle, Narrative
         <ToolbarBtn
           onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
           active={editor.isActive('heading', { level: 1 })}
-          title="H1"
+          title={t('editor.h1', 'H1')}
         >
           <Heading1 size={13} />
         </ToolbarBtn>
         <ToolbarBtn
           onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
           active={editor.isActive('heading', { level: 2 })}
-          title="H2"
+          title={t('editor.h2', 'H2')}
         >
           <Heading2 size={13} />
         </ToolbarBtn>
         <ToolbarBtn
           onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
           active={editor.isActive('heading', { level: 3 })}
-          title="H3"
+          title={t('editor.h3', 'H3')}
         >
           <Heading3 size={13} />
         </ToolbarBtn>
@@ -210,26 +212,26 @@ export const NarrativeEditor = React.forwardRef<NarrativeEditorHandle, Narrative
         <ToolbarBtn
           onClick={() => editor.chain().focus().toggleBulletList().run()}
           active={editor.isActive('bulletList')}
-          title="Bullet List"
+          title={t('editor.bulletList', 'Bullet List')}
         >
           <List size={13} />
         </ToolbarBtn>
         <ToolbarBtn
           onClick={() => editor.chain().focus().toggleOrderedList().run()}
           active={editor.isActive('orderedList')}
-          title="Ordered List"
+          title={t('editor.orderedList', 'Ordered List')}
         >
           <ListOrdered size={13} />
         </ToolbarBtn>
         <ToolbarBtn
           onClick={() => editor.chain().focus().setHorizontalRule().run()}
           active={false}
-          title="Divider"
+          title={t('editor.divider', 'Divider')}
         >
           <Minus size={13} />
         </ToolbarBtn>
         <div className="ml-auto text-[10px] font-medium text-text-3">
-          {wordCount} words · {charCount} chars
+          {t('editor.wordCount', `${wordCount} words · ${charCount} chars`).replace('{words}', String(wordCount)).replace('{chars}', String(charCount))}
         </div>
       </div>
       {/* Editor */}

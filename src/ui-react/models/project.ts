@@ -889,6 +889,7 @@ export interface NarrativeProject {
   metadata: ProjectMetadata;
   characters: Character[];
   characterTags: CharacterTag[];
+  characterPartitions?: string[];
   candidates: Candidate[];
   timelineBranches: TimelineBranch[];
   timelineEvents: TimelineEvent[];

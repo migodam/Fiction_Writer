@@ -1,6 +1,6 @@
 import React, { useCallback } from 'react';
 import type { TimelineBranch } from '../../models/project';
-import { buildSVGPath, nearestTOnCurve } from './bezierMath';
+import { buildSVGPath, cubicBezierPoint, nearestTOnCurve } from './bezierMath';
 import type { Point } from './bezierMath';
 
 interface BranchEdgeProps {
@@ -80,10 +80,8 @@ export function BranchEdge({
     [controlPoints, branch.id, onPointerMove]
   );
 
-  const midPt = {
-    x: (controlPoints.p0.x + controlPoints.p3.x) / 2,
-    y: (controlPoints.p0.y + controlPoints.p3.y) / 2,
-  };
+  // Use the actual curve midpoint (t=0.5) so the label follows the curve
+  const midPt = cubicBezierPoint(controlPoints.p0, controlPoints.p1, controlPoints.p2, controlPoints.p3, 0.5);
 
   return (
     <g

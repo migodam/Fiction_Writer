@@ -47,8 +47,8 @@ export const GraphWorkspace = () => {
         <div className="border-b border-border bg-bg-elev-2 p-4">
           <div className="mb-3 flex items-center justify-between">
             <div>
-              <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">Boards</div>
-              <div className="text-sm font-black text-text">Graph Navigator</div>
+              <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('graph.boards')}</div>
+              <div className="text-sm font-black text-text">{t('graph.navigator')}</div>
             </div>
             <button
               type="button"
@@ -57,8 +57,8 @@ export const GraphWorkspace = () => {
               onClick={() => {
                 const newBoard: GraphBoard = {
                   id: `board_${Date.now()}`,
-                  name: 'Untitled Board',
-                  description: 'New mixed-mode board.',
+                  name: t('graph.untitledBoard'),
+                  description: t('graph.newBoardDesc'),
                   nodes: [],
                   edges: [],
                   view: { zoom: 1, panX: 0, panY: 0 },
@@ -66,7 +66,7 @@ export const GraphWorkspace = () => {
                   sortOrder: graphBoards.length,
                 };
                 addGraphBoard(newBoard);
-                setLastActionStatus('Board created');
+                setLastActionStatus(t('graph.boardCreated'));
               }}
             >
               <Plus size={16} />
@@ -92,15 +92,15 @@ export const GraphWorkspace = () => {
                     x: event.clientX,
                     y: event.clientY,
                     items: [
-                      { id: 'rename-board', label: 'Rename Board', action: () => updateGraphBoard({ ...entry, name: `${entry.name}*` }) },
-                      { id: 'delete-board', label: 'Delete Board', action: () => deleteGraphBoard(entry.id), destructive: graphBoards.length > 1 },
+                      { id: 'rename-board', label: t('graph.renameBoard'), action: () => updateGraphBoard({ ...entry, name: `${entry.name}*` }) },
+                      { id: 'delete-board', label: t('graph.deleteBoard'), action: () => deleteGraphBoard(entry.id), destructive: graphBoards.length > 1 },
                     ],
                   });
                 }}
               >
                 <div className="text-sm font-black">{entry.name}</div>
                 <div className="mt-1 text-xs text-text-3">
-                  {entry.nodes.length} nodes / {entry.edges.length} edges
+                  {t('graph.boardStats', `${entry.nodes.length} nodes / ${entry.edges.length} edges`).replace('{nodes}', String(entry.nodes.length)).replace('{edges}', String(entry.edges.length))}
                 </div>
               </button>
             ))}
@@ -119,7 +119,7 @@ export const GraphWorkspace = () => {
               addGraphNode(activeBoard.id, {
                 id: `node_${Date.now()}`,
                 kind: 'free_note',
-                label: 'New Note',
+                label: t('graph.newNote'),
                 description: '',
                 x: 100 + Math.random() * 200,
                 y: 100 + Math.random() * 200,
@@ -129,7 +129,7 @@ export const GraphWorkspace = () => {
                 linkedEntityType: null,
                 imageAssetId: null,
               });
-              setLastActionStatus('Node created');
+              setLastActionStatus(t('graph.nodeCreated'));
             }}
           >
             <Plus size={13} className="mr-2 inline" />
@@ -149,7 +149,7 @@ export const GraphWorkspace = () => {
                 y: 140 + Math.floor(index / 3) * 240,
               }));
               updateGraphBoard({ ...activeBoard, nodes: nextNodes });
-              setLastActionStatus('Layout updated');
+              setLastActionStatus(t('graph.layoutUpdated'));
               setTimeout(() => setIsAutoLayoutRunning(false), 500);
             }}
           >
@@ -188,8 +188,8 @@ export const GraphWorkspace = () => {
           <div className="flex flex-1 items-center justify-center text-text-3">
             <div className="text-center">
               <Network size={72} className="mx-auto mb-4 opacity-30" />
-              <div className="text-lg font-black">No board selected</div>
-              <div className="mt-2 text-sm">Create a new board to start.</div>
+              <div className="text-lg font-black">{t('graph.noBoardSelected')}</div>
+              <div className="mt-2 text-sm">{t('graph.createBoardHint')}</div>
             </div>
           </div>
         )}

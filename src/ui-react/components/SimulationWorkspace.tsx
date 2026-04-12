@@ -1,22 +1,21 @@
 import React, { useState } from 'react';
-import { PlayCircle, Plus, Sparkles } from 'lucide-react';
+import { PlayCircle, Plus, Sparkles, Trash2, X } from 'lucide-react';
 import { useProjectStore, useUIStore } from '../store';
 import { useI18n } from '../i18n';
 import { cn } from '../utils';
 
 const ENGINE_PRESETS = [
-  { type: 'scenario', en: 'Scenario Engine', zh: '情景引擎' },
-  { type: 'character', en: 'Character Engine', zh: '角色引擎' },
-  { type: 'author', en: 'Author Engine', zh: '作者引擎' },
-  { type: 'reader', en: 'Reader Engine', zh: '读者引擎' },
-  { type: 'logic', en: 'Logic Engine', zh: '逻辑引擎' },
-  { type: 'custom', en: 'Custom Engine', zh: '自定义引擎' },
+  { type: 'scenario', labelKey: 'simulation.engineScenario' },
+  { type: 'character', labelKey: 'simulation.engineCharacter' },
+  { type: 'author', labelKey: 'simulation.engineAuthor' },
+  { type: 'reader', labelKey: 'simulation.engineReader' },
+  { type: 'logic', labelKey: 'simulation.engineLogic' },
+  { type: 'custom', labelKey: 'simulation.engineCustom' },
 ] as const;
 
 export const SimulationWorkspace = () => {
   const { sidebarSection } = useUIStore();
-  const { locale } = useI18n();
-  const zh = locale === 'zh-CN';
+  const { t } = useI18n();
   const {
     simulationEngines,
     simulationLabs,
@@ -30,6 +29,9 @@ export const SimulationWorkspace = () => {
     updateSimulationReviewer,
     addSimulationEngine,
     updateSimulationEngine,
+    deleteSimulationLab,
+    deleteSimulationReviewer,
+    removeSimulationEngine,
     runSimulation,
     w5Status,
   } = useProjectStore();
@@ -47,7 +49,7 @@ export const SimulationWorkspace = () => {
     const id = `${isReviewerMode ? 'reviewer' : 'lab'}_${Date.now()}`;
     const base = {
       id,
-      name: `${isReviewerMode ? (zh ? '新 Reviewer' : 'New Reviewer') : (zh ? '新 Lab' : 'New Lab')} ${collections.length + 1}`,
+      name: `${isReviewerMode ? t('simulation.newReviewer') : t('simulation.newLab')} ${collections.length + 1}`,
       description: '',
       engineIds: [],
     };
@@ -59,15 +61,43 @@ export const SimulationWorkspace = () => {
     setActiveId(id);
   };
 
+  const handleDeleteContainer = (entryId: string) => {
+    if (isReviewerMode) {
+      if (window.confirm(t('simulation.confirmDeleteReviewer'))) {
+        deleteSimulationReviewer(entryId);
+        if (active?.id === entryId) setActiveId(null);
+        setLastActionStatus(t('simulation.reviewerDeleted'));
+      }
+    } else {
+      if (window.confirm(t('simulation.confirmDeleteLab'))) {
+        deleteSimulationLab(entryId);
+        if (active?.id === entryId) setActiveId(null);
+        setLastActionStatus(t('simulation.labDeleted'));
+      }
+    }
+  };
+
+  const handleRemoveEngine = (engineId: string) => {
+    if (window.confirm(t('simulation.confirmRemoveEngine'))) {
+      removeSimulationEngine(engineId);
+      if (isReviewerMode && active) {
+        updateSimulationReviewer({ ...(active as any), engineIds: active.engineIds.filter((eid: string) => eid !== engineId) });
+      } else if (active) {
+        updateSimulationLab({ ...(active as any), engineIds: active.engineIds.filter((eid: string) => eid !== engineId) });
+      }
+      setLastActionStatus(t('simulation.engineRemoved'));
+    }
+  };
+
   const addPresetEngine = (type: typeof ENGINE_PRESETS[number]['type']) => {
     if (!active) return;
     const preset = ENGINE_PRESETS.find((entry) => entry.type === type)!;
     const id = `sim_engine_${Date.now()}`;
     addSimulationEngine({
       id,
-      name: zh ? preset.zh : preset.en,
+      name: t(preset.labelKey),
       type,
-      summary: zh ? '占位结果容器，等待后续真实执行器接入。' : 'Placeholder result container for future executors.',
+      summary: t('simulation.placeholderResult'),
       promptOverride: '',
       enabled: true,
       inputNotes: '',
@@ -86,8 +116,8 @@ export const SimulationWorkspace = () => {
         <div className="border-b border-border bg-bg-elev-2 p-4">
           <div className="mb-3 flex items-center justify-between">
             <div>
-              <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{isReviewerMode ? (zh ? 'Reviewers' : 'Reviewers') : (zh ? 'Labs' : 'Labs')}</div>
-              <div className="text-sm font-black text-text">{isReviewerMode ? (zh ? '检查与评分容器' : 'Review containers') : (zh ? '剧情推演容器' : 'Simulation containers')}</div>
+              <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{isReviewerMode ? t('simulation.reviewers') : t('simulation.labs')}</div>
+              <div className="text-sm font-black text-text">{isReviewerMode ? t('simulation.reviewContainers') : t('simulation.simulationContainers')}</div>
             </div>
             <button type="button" className="rounded-xl border border-border p-2 text-brand hover:border-brand" onClick={createContainer}>
               <Plus size={16} />
@@ -96,10 +126,16 @@ export const SimulationWorkspace = () => {
         </div>
         <div className="h-full overflow-y-auto custom-scrollbar p-2">
           {collections.map((entry) => (
-            <button key={entry.id} type="button" className={cn('mb-2 w-full rounded-2xl border px-4 py-4 text-left', active?.id === entry.id ? 'border-brand bg-selected' : 'border-border bg-card')} onClick={() => setActiveId(entry.id)}>
-              <div className="text-sm font-black text-text">{entry.name}</div>
-              <div className="mt-2 text-xs text-text-2">{entry.description || (isReviewerMode ? (zh ? '暂无说明' : 'No description') : (zh ? '暂无摘要' : 'No summary'))}</div>
-            </button>
+            <div key={entry.id} className={cn('mb-2 w-full rounded-2xl border px-4 py-4 text-left', active?.id === entry.id ? 'border-brand bg-selected' : 'border-border bg-card')}>
+              <button type="button" className="w-full text-left" onClick={() => setActiveId(entry.id)}>
+                <div className="text-sm font-black text-text">{entry.name}</div>
+                <div className="mt-2 text-xs text-text-2">{entry.description || (isReviewerMode ? t('simulation.noDescription') : t('simulation.noSummary'))}</div>
+              </button>
+              <button type="button" className="mt-2 flex items-center gap-1 text-xs text-red/70 hover:text-red" onClick={() => handleDeleteContainer(entry.id)}>
+                <Trash2 size={12} />
+                {isReviewerMode ? t('simulation.deleteReviewer') : t('simulation.deleteLab')}
+              </button>
+            </div>
           ))}
         </div>
       </aside>
@@ -109,24 +145,24 @@ export const SimulationWorkspace = () => {
           <div className="mx-auto max-w-6xl space-y-6">
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{isReviewerMode ? (zh ? 'Reviewer 总览' : 'Reviewer Overview') : (zh ? 'Lab 总览' : 'Lab Overview')}</div>
+                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{isReviewerMode ? t('simulation.reviewerOverview') : t('simulation.labOverview')}</div>
                 <div className="mt-2 text-3xl font-black text-text">{active.name}</div>
               </div>
-              <button type="button" className="rounded-xl bg-brand px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-white" disabled={isRunning} onClick={() => { void runSimulation({ projectRoot, scenario_variable: active.description || active.name, affected_chapter_ids: chapters.map((c) => c.id), engines_selected: engineList.map((e) => e.type) }).then(() => setLastActionStatus(zh ? '推演完成' : 'Simulation complete')); }}>
+              <button type="button" className="rounded-xl bg-brand px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-white" disabled={isRunning} onClick={() => { void runSimulation({ projectRoot, scenario_variable: active.description || active.name, affected_chapter_ids: chapters.map((c) => c.id), engines_selected: engineList.map((e) => e.type) }).then(() => setLastActionStatus(t('simulation.simulationComplete'))); }}>
                 <PlayCircle size={14} className="mr-2 inline" />
-                {isReviewerMode ? (zh ? '运行当前 Reviewer' : 'Run Reviewer') : (zh ? '运行当前 Lab' : 'Run Lab')}
+                {isReviewerMode ? t('simulation.runReviewer') : t('simulation.runLab')}
               </button>
             </div>
 
             <div className="grid gap-4 md:grid-cols-3">
-              <Stat label={zh ? '引擎数量' : 'Engines'} value={String(active.engineIds.length)} />
-              <Stat label={zh ? '运行记录' : 'Runs'} value={String(relatedRuns.length)} />
-              <Stat label={zh ? '类型' : 'Mode'} value={isReviewerMode ? (zh ? '检查/评分' : 'Review') : (zh ? '预测/推演' : 'Projection')} />
+              <Stat label={t('simulation.engines')} value={String(active.engineIds.length)} />
+              <Stat label={t('simulation.runs')} value={String(relatedRuns.length)} />
+              <Stat label={t('simulation.mode')} value={isReviewerMode ? t('simulation.review') : t('simulation.projection')} />
             </div>
 
             <div className="rounded-3xl border border-border bg-card p-6">
               <div className="mb-4 flex items-center justify-between">
-                <div className="text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{zh ? '基础信息' : 'Basics'}</div>
+                <div className="text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{t('simulation.basics')}</div>
               </div>
               <div className="grid gap-4 lg:grid-cols-2">
                 <input value={active.name} onChange={(event) => isReviewerMode ? updateSimulationReviewer({ ...(active as any), name: event.target.value }) : updateSimulationLab({ ...(active as any), name: event.target.value })} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none" />
@@ -136,26 +172,26 @@ export const SimulationWorkspace = () => {
 
             <div className="rounded-3xl border border-border bg-card p-6">
               <div className="mb-4 flex items-center justify-between">
-                <div className="text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{zh ? '引擎' : 'Engines'}</div>
+                <div className="text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{t('simulation.engines')}</div>
                 <div className="flex flex-wrap gap-2">
                   {ENGINE_PRESETS.map((preset) => (
                     <button key={preset.type} type="button" className="rounded-full border border-border px-3 py-2 text-[10px] font-black uppercase tracking-[0.16em] text-text-2 hover:border-brand" onClick={() => addPresetEngine(preset.type)}>
                       <Plus size={10} className="mr-1 inline" />
-                      {zh ? preset.zh : preset.en}
+                      {t(preset.labelKey)}
                     </button>
                   ))}
                 </div>
               </div>
               <div className="space-y-4">
                 {engineList.map((engine) => (
-                  <EngineCard key={engine.id} engine={engine} onChange={updateSimulationEngine} onRun={() => { void runSimulation({ projectRoot, scenario_variable: active.description || active.name, affected_chapter_ids: chapters.map((c) => c.id), engines_selected: [engine.type] }).then(() => setLastActionStatus(zh ? '引擎运行完成' : 'Engine run complete')); }} zh={zh} />
+                  <EngineCard key={engine.id} engine={engine} onChange={updateSimulationEngine} onRun={() => { void runSimulation({ projectRoot, scenario_variable: active.description || active.name, affected_chapter_ids: chapters.map((c) => c.id), engines_selected: [engine.type] }).then(() => setLastActionStatus(t('simulation.engineRunComplete'))); }} onRemove={() => handleRemoveEngine(engine.id)} t={t} />
                 ))}
-                {!engineList.length && <div className="rounded-2xl border border-dashed border-border bg-bg p-6 text-sm text-text-3">{zh ? '还没有引擎，先添加一个预设。' : 'No engines yet. Add a preset first.'}</div>}
+                {!engineList.length && <div className="rounded-2xl border border-dashed border-border bg-bg p-6 text-sm text-text-3">{t('simulation.noEnginesYet')}</div>}
               </div>
             </div>
 
             <div className="rounded-3xl border border-border bg-card p-6">
-              <div className="mb-4 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{zh ? '最近运行结果' : 'Recent Runs'}</div>
+              <div className="mb-4 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{t('simulation.recentRuns')}</div>
               <div className="space-y-3">
                 {relatedRuns.map((run) => (
                   <div key={run.id} className="rounded-2xl border border-border bg-bg p-4">
@@ -164,7 +200,7 @@ export const SimulationWorkspace = () => {
                     <div className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-text-2">{run.output}</div>
                   </div>
                 ))}
-                {!relatedRuns.length && <div className="rounded-2xl border border-dashed border-border bg-bg p-6 text-sm text-text-3">{zh ? '暂无运行记录。' : 'No runs yet.'}</div>}
+                {!relatedRuns.length && <div className="rounded-2xl border border-dashed border-border bg-bg p-6 text-sm text-text-3">{t('simulation.noRunsYet')}</div>}
               </div>
             </div>
           </div>
@@ -172,7 +208,7 @@ export const SimulationWorkspace = () => {
           <div className="flex h-full items-center justify-center text-text-3">
             <div className="text-center">
               <Sparkles size={96} className="mx-auto mb-6 opacity-10" />
-              <div className="text-lg font-black text-text">{isReviewerMode ? (zh ? '先创建一个 Reviewer' : 'Create a reviewer first') : (zh ? '先创建一个 Lab' : 'Create a lab first')}</div>
+              <div className="text-lg font-black text-text">{isReviewerMode ? t('simulation.createReviewerFirst') : t('simulation.createLabFirst')}</div>
             </div>
           </div>
         )}
@@ -181,23 +217,28 @@ export const SimulationWorkspace = () => {
   );
 };
 
-const EngineCard = ({ engine, onChange, onRun, zh }: any) => (
+const EngineCard = ({ engine, onChange, onRun, onRemove, t }: any) => (
   <div className="rounded-3xl border border-border bg-bg-elev-1 p-5">
     <div className="mb-4 flex items-center justify-between">
       <div>
         <div className="text-sm font-black text-text">{engine.name}</div>
         <div className="mt-1 text-[10px] uppercase tracking-[0.18em] text-text-3">{engine.type}</div>
       </div>
-      <button type="button" className="rounded-xl bg-brand px-4 py-2 text-[10px] font-black uppercase tracking-[0.16em] text-white" onClick={onRun}>
-        {zh ? '单独运行' : 'Run'}
-      </button>
+      <div className="flex items-center gap-2">
+        <button type="button" className="rounded-xl bg-brand px-4 py-2 text-[10px] font-black uppercase tracking-[0.16em] text-white" onClick={onRun}>
+          {t('simulation.engineRun')}
+        </button>
+        <button type="button" className="rounded-xl border border-red/40 px-2 py-2 text-red hover:bg-red/10" onClick={onRemove} title={t('simulation.removeEngine')}>
+          <X size={14} />
+        </button>
+      </div>
     </div>
     <div className="grid gap-4 lg:grid-cols-2">
-      <input value={engine.name} onChange={(event) => onChange({ ...engine, name: event.target.value })} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none" />
-      <input value={engine.summary} onChange={(event) => onChange({ ...engine, summary: event.target.value })} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={zh ? '用途摘要' : 'Summary'} />
+      <input value={engine.name} onChange={(event: any) => onChange({ ...engine, name: event.target.value })} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none" />
+      <input value={engine.summary} onChange={(event: any) => onChange({ ...engine, summary: event.target.value })} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('simulation.summary')} />
     </div>
-    <textarea value={engine.promptOverride || ''} onChange={(event) => onChange({ ...engine, promptOverride: event.target.value })} className="mt-4 h-28 w-full rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={zh ? 'Prompt 覆盖' : 'Prompt override'} />
-    <textarea value={engine.inputNotes || ''} onChange={(event) => onChange({ ...engine, inputNotes: event.target.value })} className="mt-4 h-24 w-full rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={zh ? '输入备注' : 'Input notes'} />
+    <textarea value={engine.promptOverride || ''} onChange={(event: any) => onChange({ ...engine, promptOverride: event.target.value })} className="mt-4 h-28 w-full rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('simulation.promptOverride')} />
+    <textarea value={engine.inputNotes || ''} onChange={(event: any) => onChange({ ...engine, inputNotes: event.target.value })} className="mt-4 h-24 w-full rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('simulation.inputNotes')} />
   </div>
 );
 

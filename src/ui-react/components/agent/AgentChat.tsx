@@ -28,8 +28,7 @@ export const AgentChat: React.FC = () => {
   const store = useProjectStore();
   const { updateTaskRun } = store;
   const { setLastActionStatus, agentChatMode, agentChatMessages, setAgentChatMode, addAgentChatMessage } = useUIStore();
-  const { locale } = useI18n();
-  const zh = locale === 'zh-CN';
+  const { t } = useI18n();
 
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -83,7 +82,7 @@ export const AgentChat: React.FC = () => {
       attempt: 1,
       startedAt: createdAt,
       heartbeatAt: createdAt,
-      summary: zh ? '正在处理...' : 'Processing...',
+      summary: t('agent.chat.processing'),
       artifactIds: [],
     });
 
@@ -111,16 +110,14 @@ export const AgentChat: React.FC = () => {
         timestamp: new Date().toISOString(),
       };
       addAgentChatMessage(assistantMsg);
-      setLastActionStatus(zh ? '已收到回复' : 'Response received');
+      setLastActionStatus(t('agent.chat.responseReceived'));
     } catch (err) {
       updateTaskRun(runId, {
         status: 'failed',
         summary: String(err).slice(0, 120),
         finishedAt: new Date().toISOString(),
       });
-      const errorContent = zh
-        ? `抱歉，出现了错误：${String(err)}`
-        : `Sorry, an error occurred: ${String(err)}`;
+      const errorContent = t('agent.chat.errorMessage').replace('{error}', String(err));
       addAgentChatMessage({
         id: `msg_${Date.now() + 1}`,
         role: 'assistant',
@@ -128,18 +125,18 @@ export const AgentChat: React.FC = () => {
         taskRunId: runId,
         timestamp: new Date().toISOString(),
       });
-      setLastActionStatus(zh ? '发送失败' : 'Send failed');
+      setLastActionStatus(t('agent.chat.sendFailed'));
     } finally {
       setIsLoading(false);
     }
   };
 
-  const modes: { id: ChatMode; label: string; labelZh: string }[] = [
-    { id: 'writing', label: 'Writing', labelZh: '写作' },
-    { id: 'consistency', label: 'Consistency', labelZh: '一致性' },
-    { id: 'simulation', label: 'Simulation', labelZh: '推演' },
-    { id: 'retrieval', label: 'Retrieval', labelZh: '检索' },
-    { id: 'general', label: 'General', labelZh: '通用' },
+  const modes: { id: ChatMode; i18nKey: string }[] = [
+    { id: 'writing', i18nKey: 'agent.chat.mode.writing' },
+    { id: 'consistency', i18nKey: 'agent.chat.mode.consistency' },
+    { id: 'simulation', i18nKey: 'agent.chat.mode.simulation' },
+    { id: 'retrieval', i18nKey: 'agent.chat.mode.retrieval' },
+    { id: 'general', i18nKey: 'agent.chat.mode.general' },
   ];
 
   return (
@@ -156,7 +153,7 @@ export const AgentChat: React.FC = () => {
               agentChatMode === m.id ? 'bg-brand text-white' : 'text-text-2 hover:bg-hover',
             )}
           >
-            {zh ? m.labelZh : m.label}
+            {t(m.i18nKey)}
           </button>
         ))}
       </div>
@@ -164,7 +161,7 @@ export const AgentChat: React.FC = () => {
       {/* Messages */}
       <div className="flex-1 overflow-y-auto custom-scrollbar px-4 py-6 space-y-4">
         {agentChatMessages.map((msg) => (
-          <ChatBubble key={msg.id} message={msg} zh={zh} taskRuns={store.taskRuns} />
+          <ChatBubble key={msg.id} message={msg} taskRuns={store.taskRuns} />
         ))}
         {isLoading && (
           <div className="flex gap-3">
@@ -192,7 +189,7 @@ export const AgentChat: React.FC = () => {
               }
             }}
             className="flex-1 resize-none bg-transparent text-sm text-text outline-none placeholder:text-text-3"
-            placeholder={zh ? '告诉我你想做什么... (Enter 发送, Shift+Enter 换行)' : 'Tell me what you want to do... (Enter to send, Shift+Enter for newline)'}
+            placeholder={t('agent.chat.placeholderExtended')}
             rows={2}
             data-testid="agent-chat-input"
           />
@@ -200,7 +197,7 @@ export const AgentChat: React.FC = () => {
             type="button"
             onClick={() => void sendMessage()}
             disabled={!input.trim() || isLoading}
-            title={zh ? '发送' : 'Send'}
+            title={t('agent.chat.send')}
             className="rounded-xl bg-brand p-2.5 text-white disabled:opacity-40"
             data-testid="agent-chat-send"
           >
@@ -208,14 +205,14 @@ export const AgentChat: React.FC = () => {
           </button>
         </div>
         <div className="mt-2 text-[10px] text-text-3">
-          {zh ? `模式：${modes.find((m) => m.id === agentChatMode)?.labelZh} · Agent：${MODE_AGENT_MAP[agentChatMode]}` : `Mode: ${agentChatMode} · Agent: ${MODE_AGENT_MAP[agentChatMode]}`}
+          {t('agent.chat.modeInfo').replace('{mode}', t(modes.find((m) => m.id === agentChatMode)?.i18nKey || '')).replace('{agent}', MODE_AGENT_MAP[agentChatMode])}
         </div>
       </div>
     </div>
   );
 };
 
-const ChatBubble: React.FC<{ message: ChatMessage; zh: boolean; taskRuns: ReturnType<typeof useProjectStore.getState>['taskRuns'] }> = ({ message, zh, taskRuns }) => {
+const ChatBubble: React.FC<{ message: ChatMessage; taskRuns: ReturnType<typeof useProjectStore.getState>['taskRuns'] }> = ({ message, taskRuns }) => {
   const isUser = message.role === 'user';
   const taskRun = message.taskRunId ? taskRuns.find((r) => r.id === message.taskRunId) : null;
 
@@ -231,7 +228,7 @@ const ChatBubble: React.FC<{ message: ChatMessage; zh: boolean; taskRuns: Return
           ))}
         </div>
         {taskRun && (
-          <TaskRunCard run={taskRun} zh={zh} />
+          <TaskRunCard run={taskRun} />
         )}
         <div className="text-[10px] text-text-3">
           {new Date(message.timestamp).toLocaleTimeString()}
@@ -241,7 +238,8 @@ const ChatBubble: React.FC<{ message: ChatMessage; zh: boolean; taskRuns: Return
   );
 };
 
-const TaskRunCard: React.FC<{ run: ReturnType<typeof useProjectStore.getState>['taskRuns'][number]; zh: boolean }> = ({ run }) => {
+const TaskRunCard: React.FC<{ run: ReturnType<typeof useProjectStore.getState>['taskRuns'][number] }> = ({ run }) => {
+  const { t } = useI18n();
   const statusIconMap: Record<string, React.ReactNode> = {
     queued: <Clock size={12} className="text-amber-400" />,
     running: <Loader2 size={12} className="text-brand animate-spin" />,
@@ -256,7 +254,7 @@ const TaskRunCard: React.FC<{ run: ReturnType<typeof useProjectStore.getState>['
     <div className="rounded-2xl border border-border bg-bg-elev-1 px-4 py-3">
       <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">
         {statusIcon}
-        <span>Task · {run.status}</span>
+        <span>{t('agent.chat.taskStatus').replace('{status}', run.status)}</span>
       </div>
       <div className="mt-1 text-sm text-text-2">{run.summary}</div>
     </div>

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useProjectStore, useUIStore } from '../../store';
+import { useI18n } from '../../i18n';
 import type { TimelineEvent, TimelineBranch } from '../../models/project';
 import {
   buildBranchControlPoints,
@@ -108,6 +109,7 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
     setTimelineBranchGeometry,
   } = useProjectStore();
   const { setLastActionStatus } = useUIStore();
+  const { t } = useI18n();
 
   // Viewport
   const [panX, setPanX] = useState(0);
@@ -521,7 +523,7 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
       if (selectedBranchId === branchId) {
         setSelectedEntity(null, null);
       }
-      setLastActionStatus('Timeline deleted');
+      setLastActionStatus(t('timeline.deleted'));
     },
     [deleteTimelineBranch, selectedBranchId, setLastActionStatus, setSelectedEntity]
   );
@@ -531,8 +533,8 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
       setBranchContextMenu(null);
       const branchEventCount = branchEventCounts.get(branchId) || 0;
       if (branchEventCount > 0) {
-        window.alert('This timeline still contains events. Move or delete its events before deleting the timeline.');
-        setLastActionStatus('Timeline deletion blocked: move or delete its events first');
+        window.alert(t('timeline.deleteBlocked'));
+        setLastActionStatus(t('timeline.deleteBlockedStatus'));
         return;
       }
       setDeleteConfirmBranchId(branchId);
@@ -728,6 +730,18 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
     };
 
     const onUp = () => {
+      // Propagate shared anchor positions to ALL attached branches
+      if (branchDragState) {
+        const anchorEventId = branchDragState.handle === 'start'
+          ? branchDragState.origStartAnchor?.eventId
+          : branchDragState.origEndAnchor?.eventId;
+        if (anchorEventId) {
+          const evt = events.find(e => e.id === anchorEventId);
+          if (evt?.position) {
+            updateTimelineEventPosition(evt.id, evt.position);
+          }
+        }
+      }
       branchDragStateRef.current = null;
       setBranchDragState(null);
       setMode('idle');
@@ -739,7 +753,7 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
     };
-  }, [mode, branchDragState, branches, branchCPMap, zoom, panX, panY, setTimelineBranchAnchors, setTimelineBranchGeometry, findNearestSnapTarget]);
+  }, [mode, branchDragState, branches, branchCPMap, zoom, panX, panY, setTimelineBranchAnchors, setTimelineBranchGeometry, findNearestSnapTarget, events, updateTimelineEventPosition]);
 
   // Branch handle pointer-down
   const handleBranchHandlePointerDown = useCallback(
@@ -764,7 +778,7 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
           const existingOnBranch = branchEventsMap.get(drawModeBranchId) || [];
           const newEvent: TimelineEvent = {
             id: `event_${Date.now()}`,
-            title: 'New Event',
+            title: t('timeline.newEvent'),
             summary: '',
             branchId: drawModeBranchId,
             orderIndex: existingOnBranch.length,
@@ -1196,11 +1210,11 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
         >
           <button
             type="button"
-            className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm text-red-300 transition-colors hover:bg-red-500/10"
+            className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm text-red transition-colors hover:bg-red/10"
             onClick={() => handleRequestDeleteBranch(branchContextMenu.branchId)}
             data-testid={`timeline-branch-context-delete-${branchContextMenu.branchId}`}
           >
-            Delete
+            {t('timeline.delete')}
           </button>
         </div>
       )}
@@ -1218,13 +1232,13 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
             data-testid="timeline-delete-confirm-dialog"
           >
             <div className="border-b border-border bg-bg-elev-2 px-6 py-4">
-              <div className="text-[10px] font-black uppercase tracking-[0.25em] text-red-400">Confirm Delete</div>
+              <div className="text-[10px] font-black uppercase tracking-[0.25em] text-red">{t('timeline.confirmDelete')}</div>
             <div className="mt-1 text-sm font-semibold text-text">
-              Delete timeline &ldquo;{branches.find(b => b.id === deleteConfirmBranchId)?.name ?? deleteConfirmBranchId}&rdquo;?
+              {t('timeline.confirmDeleteTitle', `Delete timeline "${branches.find(b => b.id === deleteConfirmBranchId)?.name ?? deleteConfirmBranchId}"?`).replace('{name}', branches.find(b => b.id === deleteConfirmBranchId)?.name ?? deleteConfirmBranchId)}
             </div>
           </div>
           <div className="p-4 text-sm text-text-2">
-              This permanently removes the empty timeline. Deletion is blocked when events are still attached.
+              {t('timeline.confirmDeleteBody')}
           </div>
             <div className="flex items-center justify-end gap-2 border-t border-border p-4">
               <button
@@ -1233,15 +1247,15 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
                 onClick={() => setDeleteConfirmBranchId(null)}
                 data-testid="timeline-delete-confirm-cancel"
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button
                 type="button"
-                className="rounded-xl bg-red-600 px-4 py-2 text-xs font-black text-white hover:bg-red-500"
+                className="rounded-xl bg-red px-4 py-2 text-xs font-black text-text-invert hover:brightness-110"
                 onClick={() => handleDeleteBranch(deleteConfirmBranchId)}
                 data-testid="timeline-delete-confirm-ok"
               >
-                Delete
+                {t('timeline.delete')}
               </button>
             </div>
           </div>

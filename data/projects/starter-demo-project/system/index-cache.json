@@ -5,8 +5,8 @@
       "graph": true,
       "consistency": true,
       "beta-reader": true,
-      "writing": false,
-      "agents": false
+      "characters": false,
+      "writing": false
     },
     "sections": {
       "workbench.inbox": true,

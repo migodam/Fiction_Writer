@@ -8,8 +8,7 @@ import { useI18n } from '../i18n';
 export const WorldWorkspace = () => {
   const navigate = useNavigate();
   const { sidebarSection, openContextMenu, setLastActionStatus } = useUIStore();
-  const { locale, t } = useI18n();
-  const zh = locale === 'zh-CN';
+  const { t } = useI18n();
   const {
     worldContainers,
     worldItems,
@@ -46,18 +45,18 @@ export const WorldWorkspace = () => {
       <div className="h-full overflow-y-auto custom-scrollbar bg-bg p-10">
         <div className="mx-auto max-w-5xl rounded-[32px] border border-border bg-card p-8">
           <div className="mb-8">
-            <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{zh ? '世界设置' : 'World Settings'}</div>
-            <div className="mt-2 text-3xl font-black text-text">{zh ? '作品基础设定' : 'Project Foundations'}</div>
+            <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('world.settings', 'World Settings')}</div>
+            <div className="mt-2 text-3xl font-black text-text">{t('world.projectFoundations', 'Project Foundations')}</div>
           </div>
           <div className="grid gap-4 md:grid-cols-2">
-            <Field label={zh ? '作品类型' : 'Project Type'} value={worldSettings.projectType} onChange={(value) => updateWorldSettings({ ...worldSettings, projectType: value })} />
-            <Field label={zh ? '叙事节奏' : 'Narrative Pacing'} value={worldSettings.narrativePacing} onChange={(value) => updateWorldSettings({ ...worldSettings, narrativePacing: value })} />
-            <Field label={zh ? '语言风格' : 'Language Style'} value={worldSettings.languageStyle} onChange={(value) => updateWorldSettings({ ...worldSettings, languageStyle: value })} />
-            <Field label={zh ? '叙事视角' : 'Narrative Perspective'} value={worldSettings.narrativePerspective} onChange={(value) => updateWorldSettings({ ...worldSettings, narrativePerspective: value })} />
-            <Field label={zh ? '篇幅策略' : 'Length Strategy'} value={worldSettings.lengthStrategy} onChange={(value) => updateWorldSettings({ ...worldSettings, lengthStrategy: value })} />
+            <Field label={t('world.projectType', 'Project Type')} value={worldSettings.projectType} onChange={(value) => updateWorldSettings({ ...worldSettings, projectType: value })} />
+            <Field label={t('world.narrativePacing', 'Narrative Pacing')} value={worldSettings.narrativePacing} onChange={(value) => updateWorldSettings({ ...worldSettings, narrativePacing: value })} />
+            <Field label={t('world.languageStyle', 'Language Style')} value={worldSettings.languageStyle} onChange={(value) => updateWorldSettings({ ...worldSettings, languageStyle: value })} />
+            <Field label={t('world.narrativePerspective', 'Narrative Perspective')} value={worldSettings.narrativePerspective} onChange={(value) => updateWorldSettings({ ...worldSettings, narrativePerspective: value })} />
+            <Field label={t('world.lengthStrategy', 'Length Strategy')} value={worldSettings.lengthStrategy} onChange={(value) => updateWorldSettings({ ...worldSettings, lengthStrategy: value })} />
           </div>
           <div className="mt-6">
-            <div className="mb-2 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{zh ? '世界规则摘要' : 'World Rules Summary'}</div>
+            <div className="mb-2 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{t('world.worldRulesSummary', 'World Rules Summary')}</div>
             <textarea value={worldSettings.worldRulesSummary} onChange={(event) => updateWorldSettings({ ...worldSettings, worldRulesSummary: event.target.value })} className="h-52 w-full rounded-3xl border border-border bg-bg p-5 text-sm leading-relaxed text-text-2 outline-none" />
           </div>
         </div>
@@ -72,10 +71,10 @@ export const WorldWorkspace = () => {
           <div className="border-b border-border bg-bg-elev-2 p-4">
             <div className="mb-3 flex items-center justify-between">
               <div>
-                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{zh ? '地图' : 'Maps'}</div>
-                <div className="text-sm font-black text-text">{zh ? '多地图管理' : 'Multiple Maps'}</div>
+                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('world.maps', 'Maps')}</div>
+                <div className="text-sm font-black text-text">{t('world.multipleMaps', 'Multiple Maps')}</div>
               </div>
-              <button type="button" className="rounded-xl border border-border p-2 text-brand hover:border-brand" onClick={() => createWorldMap({ id: `map_${Date.now()}`, title: zh ? '新地图' : 'New Map', description: '', assetPath: activeMap?.assetPath || null, markerIds: [], sortOrder: worldMaps.length })}>
+              <button type="button" className="rounded-xl border border-border p-2 text-brand hover:border-brand" onClick={() => createWorldMap({ id: `map_${Date.now()}`, title: t('world.newMap', 'New Map'), description: '', assetPath: activeMap?.assetPath || null, markerIds: [], sortOrder: worldMaps.length })}>
                 <Plus size={16} />
               </button>
             </div>
@@ -84,7 +83,7 @@ export const WorldWorkspace = () => {
             {worldMaps.map((map) => (
               <button key={map.id} type="button" className={cn('mb-2 w-full rounded-2xl border px-4 py-4 text-left', activeMapId === map.id ? 'border-brand bg-selected' : 'border-border bg-card')} onClick={() => setActiveMapId(map.id)}>
                 <div className="text-sm font-black text-text">{map.title}</div>
-                <div className="mt-2 text-xs text-text-2">{map.description || (zh ? '暂无说明' : 'No description')}</div>
+                <div className="mt-2 text-xs text-text-2">{map.description || t('world.noDescription', 'No description')}</div>
               </button>
             ))}
           </div>
@@ -94,7 +93,7 @@ export const WorldWorkspace = () => {
             <div className="mx-auto max-w-6xl">
               <div className="mb-8 flex items-center justify-between">
                 <div>
-                  <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{zh ? '当前地图' : 'Current Map'}</div>
+                  <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('world.currentMap', 'Current Map')}</div>
                   <div className="mt-2 text-3xl font-black text-text">{activeMap.title}</div>
                 </div>
                 <MapIcon size={24} className="text-brand" />
@@ -104,7 +103,7 @@ export const WorldWorkspace = () => {
                   {activeMap.assetPath ? (
                     <img src={activeMap.assetPath} alt={activeMap.title} className="h-[560px] w-full object-cover" data-testid="world-map-image" />
                   ) : (
-                    <div className="flex h-[560px] items-center justify-center text-text-3">{zh ? '暂无地图资源' : 'No map asset'}</div>
+                    <div className="flex h-[560px] items-center justify-center text-text-3">{t('world.noMapAsset', 'No map asset')}</div>
                   )}
                   {activeMapMarkers.map((marker) => (
                     <button key={marker.id} type="button" className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/20 bg-brand px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-white shadow-2" style={{ left: `${marker.x * 100}%`, top: `${marker.y * 100}%` }} onClick={() => marker.linkedEntityId && navigate(`/timeline/timeline?location=${marker.linkedEntityId}`)}>
@@ -114,7 +113,7 @@ export const WorldWorkspace = () => {
                 </div>
                 <div className="mt-4 grid gap-3 md:grid-cols-2">
                   <input value={activeMap.title} onChange={(event) => updateWorldMap({ ...activeMap, title: event.target.value })} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none" />
-                  <input value={activeMap.description} onChange={(event) => updateWorldMap({ ...activeMap, description: event.target.value })} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={zh ? '地图说明' : 'Map description'} />
+                  <input value={activeMap.description} onChange={(event) => updateWorldMap({ ...activeMap, description: event.target.value })} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('world.mapDescription', 'Map description')} />
                 </div>
               </div>
             </div>
@@ -130,10 +129,10 @@ export const WorldWorkspace = () => {
         <div className="border-b border-border bg-bg-elev-2 p-4">
           <div className="mb-3 flex items-center justify-between">
             <div>
-              <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{zh ? '世界条目' : 'World Entries'}</div>
-              <div className="text-sm font-black text-text">{zh ? '容器与设定' : 'Containers and Entries'}</div>
+              <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('world.entries', 'World Entries')}</div>
+              <div className="text-sm font-black text-text">{t('world.containersAndEntries', 'Containers and Entries')}</div>
             </div>
-            <button type="button" className="rounded-xl border border-border p-2 text-brand hover:border-brand" onClick={() => addWorldContainer({ id: `cont_${Date.now()}`, name: zh ? '新容器' : 'New Container', type: 'notebook', sortOrder: worldContainers.length, isCollapsed: false })}>
+            <button type="button" className="rounded-xl border border-border p-2 text-brand hover:border-brand" onClick={() => addWorldContainer({ id: `cont_${Date.now()}`, name: t('world.newContainer', 'New Container'), type: 'notebook', sortOrder: worldContainers.length, isCollapsed: false })}>
               <Plus size={16} />
             </button>
           </div>
@@ -208,7 +207,7 @@ export const WorldWorkspace = () => {
             <button type="button" className="rounded-xl border border-border p-2 text-brand hover:border-brand" onClick={() => {
               if (!activeContainer) return;
               const itemId = `item_${Date.now()}`;
-              addWorldItem({ id: itemId, containerId: activeContainer.id, type: activeContainer.id.includes('location') ? 'location' : 'note', name: zh ? '新条目' : 'New Entry', description: '', attributes: [], linkedCharacterIds: [], linkedEventIds: [], linkedSceneIds: [], mapMarkers: [], assetPath: null, tagIds: [] });
+              addWorldItem({ id: itemId, containerId: activeContainer.id, type: activeContainer.id.includes('location') ? 'location' : 'note', name: t('world.newEntry', 'New Entry'), description: '', attributes: [], linkedCharacterIds: [], linkedEventIds: [], linkedSceneIds: [], mapMarkers: [], assetPath: null, tagIds: [] });
               setActiveItemId(itemId);
             }}>
               <Plus size={16} />
@@ -217,7 +216,7 @@ export const WorldWorkspace = () => {
         </div>
         <div className="h-full overflow-y-auto custom-scrollbar">
           {containerItems.map((item) => (
-            <button key={item.id} type="button" className={cn('w-full border-b border-divider px-4 py-4 text-left transition-colors', activeItemId === item.id ? 'bg-selected' : 'hover:bg-hover')} onClick={() => setActiveItemId(item.id)} onContextMenu={(e) => { e.preventDefault(); openContextMenu({ x: e.clientX, y: e.clientY, items: [{ id: 'delete', label: t('common.delete'), action: () => { deleteWorldItem(item.id); if (activeItemId === item.id) setActiveItemId(null); setLastActionStatus('World item deleted'); }, destructive: true }] }); }}>
+            <button key={item.id} type="button" className={cn('w-full border-b border-divider px-4 py-4 text-left transition-colors', activeItemId === item.id ? 'bg-selected' : 'hover:bg-hover')} onClick={() => setActiveItemId(item.id)} onContextMenu={(e) => { e.preventDefault(); openContextMenu({ x: e.clientX, y: e.clientY, items: [{ id: 'delete', label: t('common.delete'), action: () => { deleteWorldItem(item.id); if (activeItemId === item.id) setActiveItemId(null); setLastActionStatus(t('world.itemDeleted', 'World item deleted')); }, destructive: true }] }); }}>
               <div className="text-sm font-black text-text">{item.name}</div>
               <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-text-3">{item.description}</div>
             </button>
@@ -229,25 +228,25 @@ export const WorldWorkspace = () => {
         {activeItem ? (
           <div className="mx-auto max-w-5xl space-y-8">
             <div>
-              <div className="mb-2 text-[10px] font-black uppercase tracking-[0.3em] text-text-3">{zh ? '条目名称' : 'Entry Name'}</div>
+              <div className="mb-2 text-[10px] font-black uppercase tracking-[0.3em] text-text-3">{t('world.entryName', 'Entry Name')}</div>
               <input value={activeItem.name} onChange={(event) => updateWorldItem({ ...activeItem, name: event.target.value })} className="w-full bg-transparent text-5xl font-black tracking-tight outline-none" />
             </div>
             <div>
-              <div className="mb-2 text-[10px] font-black uppercase tracking-[0.3em] text-text-3">{zh ? '描述' : 'Description'}</div>
+              <div className="mb-2 text-[10px] font-black uppercase tracking-[0.3em] text-text-3">{t('world.descriptionLabel', 'Description')}</div>
               <textarea value={activeItem.description} onChange={(event) => updateWorldItem({ ...activeItem, description: event.target.value })} className="h-40 w-full rounded-3xl border border-border bg-bg p-5 font-serif text-sm leading-relaxed text-text-2 outline-none" />
             </div>
             <div className="rounded-3xl border border-border bg-card p-6">
               <div className="mb-4 flex items-center justify-between">
-                <div className="text-[10px] font-black uppercase tracking-[0.3em] text-text-3">{zh ? '扩展属性' : 'Attributes'}</div>
+                <div className="text-[10px] font-black uppercase tracking-[0.3em] text-text-3">{t('world.attributes', 'Attributes')}</div>
                 <button type="button" className="rounded-xl border border-border px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-text-2 hover:border-brand" onClick={() => updateWorldItem({ ...activeItem, attributes: [...activeItem.attributes, { key: '', value: '' }] })}>
-                  {zh ? '新增一行' : 'Add Row'}
+                  {t('world.addRow', 'Add Row')}
                 </button>
               </div>
               <div className="space-y-3">
                 {activeItem.attributes.map((attribute, index) => (
                   <div key={`${attribute.key}-${index}`} className="flex gap-3">
-                    <input value={attribute.key} onChange={(event) => updateWorldItem({ ...activeItem, attributes: activeItem.attributes.map((entry, entryIndex) => entryIndex === index ? { ...entry, key: event.target.value } : entry) })} className="flex-1 rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={zh ? '属性' : 'Attribute'} />
-                    <input value={attribute.value} onChange={(event) => updateWorldItem({ ...activeItem, attributes: activeItem.attributes.map((entry, entryIndex) => entryIndex === index ? { ...entry, value: event.target.value } : entry) })} className="flex-[1.4] rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={zh ? '值' : 'Value'} />
+                    <input value={attribute.key} onChange={(event) => updateWorldItem({ ...activeItem, attributes: activeItem.attributes.map((entry, entryIndex) => entryIndex === index ? { ...entry, key: event.target.value } : entry) })} className="flex-1 rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('world.attribute', 'Attribute')} />
+                    <input value={attribute.value} onChange={(event) => updateWorldItem({ ...activeItem, attributes: activeItem.attributes.map((entry, entryIndex) => entryIndex === index ? { ...entry, value: event.target.value } : entry) })} className="flex-[1.4] rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('world.value', 'Value')} />
                     <button type="button" className="rounded-2xl border border-red/40 px-3 text-red" onClick={() => updateWorldItem({ ...activeItem, attributes: activeItem.attributes.filter((_, entryIndex) => entryIndex !== index) })}>
                       <Trash2 size={14} />
                     </button>
@@ -256,8 +255,8 @@ export const WorldWorkspace = () => {
               </div>
             </div>
             <div className="grid gap-6 lg:grid-cols-2">
-              <LinkPanel title={zh ? '关联时间线' : 'Linked Timeline'} items={timelineEvents.filter((event) => event.linkedWorldItemIds.includes(activeItem.id) || event.locationIds.includes(activeItem.id)).map((event) => ({ id: event.id, label: event.title, onClick: () => navigate(`/timeline/timeline?event=${event.id}`) }))} />
-              <LinkPanel title={zh ? '关联场景' : 'Linked Scenes'} items={scenes.filter((scene) => scene.linkedWorldItemIds.includes(activeItem.id)).map((scene) => ({ id: scene.id, label: scene.title, onClick: () => navigate(`/writing/scenes?scene=${scene.id}`) }))} />
+              <LinkPanel title={t('world.linkedTimeline', 'Linked Timeline')} items={timelineEvents.filter((event) => event.linkedWorldItemIds.includes(activeItem.id) || event.locationIds.includes(activeItem.id)).map((event) => ({ id: event.id, label: event.title, onClick: () => navigate(`/timeline/timeline?event=${event.id}`) }))} />
+              <LinkPanel title={t('world.linkedScenes', 'Linked Scenes')} items={scenes.filter((scene) => scene.linkedWorldItemIds.includes(activeItem.id)).map((scene) => ({ id: scene.id, label: scene.title, onClick: () => navigate(`/writing/scenes?scene=${scene.id}`) }))} />
             </div>
           </div>
         ) : (

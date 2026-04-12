@@ -114,6 +114,9 @@ interface ProjectState {
   selectedEntity: Selection;
   characters: Character[];
   characterTags: CharacterTag[];
+  characterPartitions: string[];
+  addCharacterPartition: (name: string) => void;
+  deleteCharacterPartition: (name: string) => void;
   candidates: Candidate[];
   timelineEvents: TimelineEvent[];
   timelineBranches: TimelineBranch[];
@@ -235,6 +238,9 @@ interface ProjectState {
   updateSimulationReviewer: (reviewer: SimulationReviewer) => void;
   runSimulationReviewer: (reviewerId: string) => void;
   runSimulationEngine: (engineId: string, context: { entityId: string; entityType: 'lab' | 'reviewer' }) => void;
+  deleteSimulationLab: (labId: string) => void;
+  deleteSimulationReviewer: (reviewerId: string) => void;
+  removeSimulationEngine: (engineId: string) => void;
   addTaskRequest: (task: TaskRequest) => void;
   addTaskRun: (run: TaskRun, artifact?: TaskArtifact) => void;
   updateTaskRun: (id: string, patch: Partial<Pick<TaskRun, 'status' | 'summary' | 'heartbeatAt' | 'finishedAt'>>) => void;
@@ -509,6 +515,7 @@ const deriveState = (project: NarrativeProject) => {
     projectRoot: hydratedProject.metadata.rootPath,
     characters: hydratedProject.characters,
     characterTags: hydratedProject.characterTags,
+    characterPartitions: hydratedProject.characterPartitions ?? ['core', 'major', 'supporting', 'minor', 'ungrouped'],
     candidates: hydratedProject.candidates,
     timelineEvents: hydratedProject.timelineEvents,
     timelineBranches: hydratedProject.timelineBranches,
@@ -568,6 +575,7 @@ const cloneProject = (state: ProjectState, locale?: Locale): NarrativeProject =>
   },
   characters: state.characters,
   characterTags: state.characterTags,
+  characterPartitions: state.characterPartitions,
   candidates: state.candidates,
   timelineBranches: state.timelineBranches,
   timelineEvents: state.timelineEvents,
@@ -826,6 +834,18 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     characterTags: state.characterTags.filter((tag) => tag.id !== tagId),
     characters: state.characters.map((character) => ({ ...character, tagIds: character.tagIds.filter((id) => id !== tagId) })),
   })),
+  addCharacterPartition: (name) => set((state) => withDirtyState({
+    characterPartitions: [...state.characterPartitions, name],
+  })),
+  deleteCharacterPartition: (name) => set((state) => {
+    const characters = state.characters.map(c =>
+      c.importance === name ? { ...c, importance: 'ungrouped' as const } : c
+    );
+    return withDirtyState({
+      characterPartitions: state.characterPartitions.filter(p => p !== name),
+      characters,
+    });
+  }),
   toggleCharacterTagMembership: (tagId, characterId) => set((state) => withDirtyState({
     characterTags: state.characterTags.map((tag) => tag.id !== tagId ? tag : { ...tag, characterIds: tag.characterIds.includes(characterId) ? tag.characterIds.filter((id) => id !== characterId) : [...tag.characterIds, characterId] }),
     characters: state.characters.map((character) => character.id !== characterId ? character : { ...character, tagIds: character.tagIds.includes(tagId) ? character.tagIds.filter((id) => id !== tagId) : [...character.tagIds, tagId] }),
@@ -1168,6 +1188,19 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     };
     return withDirtyState({ simulationRuns: [run, ...state.simulationRuns] });
   }),
+  deleteSimulationLab: (labId) => set((state) => withDirtyState({
+    simulationLabs: state.simulationLabs.filter(l => l.id !== labId),
+    simulationRuns: state.simulationRuns.filter(r => !(r.entityId === labId && r.entityType === 'lab')),
+  })),
+  deleteSimulationReviewer: (reviewerId) => set((state) => withDirtyState({
+    simulationReviewers: state.simulationReviewers.filter(r => r.id !== reviewerId),
+    simulationRuns: state.simulationRuns.filter(r => !(r.entityId === reviewerId && r.entityType === 'reviewer')),
+  })),
+  removeSimulationEngine: (engineId) => set((state) => withDirtyState({
+    simulationEngines: state.simulationEngines.filter(e => e.id !== engineId),
+    simulationLabs: state.simulationLabs.map(l => ({ ...l, engineIds: l.engineIds.filter(id => id !== engineId) })),
+    simulationReviewers: state.simulationReviewers.map(r => ({ ...r, engineIds: r.engineIds.filter(id => id !== engineId) })),
+  })),
   addTaskRequest: (task) => set((state) => withDirtyState({ taskRequests: [task, ...state.taskRequests] })),
   addTaskRun: (run, artifact) => set((state) => withDirtyState({ taskRuns: [run, ...state.taskRuns], taskArtifacts: artifact ? [artifact, ...state.taskArtifacts] : state.taskArtifacts })),
   updateTaskRun: (id, patch) => set((state) => withDirtyState({ taskRuns: state.taskRuns.map((r) => r.id === id ? { ...r, ...patch } : r) })),

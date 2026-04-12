@@ -1,6 +1,7 @@
 import React, { useCallback } from 'react';
 import { electronApi } from '../services/electronApi';
 import { useProjectStore } from '../store';
+import { useI18n } from '../i18n';
 
 interface ImportWorkflowProps {
   onClose: () => void;
@@ -16,6 +17,7 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
   const setW1ImportMode = useProjectStore((s) => s.setW1ImportMode);
   const startImport = useProjectStore((s) => s.startImport);
   const cancelImport = useProjectStore((s) => s.cancelImport);
+  const { t } = useI18n();
 
   const handlePickFile = useCallback(async () => {
     try {
@@ -35,12 +37,12 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div className="w-full max-w-lg rounded-2xl border border-border bg-card p-6 shadow-xl">
-        <h2 className="mb-4 text-lg font-semibold text-text">Import Novel</h2>
+        <h2 className="mb-4 text-lg font-semibold text-text">{t('import.title')}</h2>
 
         {/* Mode selector — visible when idle */}
         {isIdle && (
           <div className="mb-4 space-y-2">
-            <p className="text-sm font-medium text-text-2">Import mode</p>
+            <p className="text-sm font-medium text-text-2">{t('import.mode')}</p>
             <label
               data-testid="w1-mode-content-only"
               className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3 hover:bg-hover"
@@ -54,9 +56,9 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
                 className="mt-0.5 accent-brand"
               />
               <span>
-                <span className="block text-sm font-medium text-text">Import Content Only</span>
+                <span className="block text-sm font-medium text-text">{t('import.contentOnly')}</span>
                 <span className="block text-xs text-text-3">
-                  Fast — splits novel into chapters and scenes, no AI extraction. ~5 seconds.
+                  {t('import.contentOnlyDesc')}
                 </span>
               </span>
             </label>
@@ -73,10 +75,9 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
                 className="mt-0.5 accent-brand"
               />
               <span>
-                <span className="block text-sm font-medium text-text">Import All</span>
+                <span className="block text-sm font-medium text-text">{t('import.importAll')}</span>
                 <span className="block text-xs text-text-3">
-                  Full AI extraction — characters, relationships, world, timeline, settings.
-                  10–60 min for a full novel.
+                  {t('import.importAllDesc')}
                 </span>
               </span>
             </label>
@@ -90,7 +91,7 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
             onClick={handlePickFile}
             className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand/90"
           >
-            Select File
+            {t('import.selectFile')}
           </button>
         )}
 
@@ -105,14 +106,14 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
               />
             </div>
             <p className="text-sm text-text-2">
-              {w1CompletedChunks} / {w1TotalChunks} chunks processed
+              {w1CompletedChunks} / {w1TotalChunks} {t('import.chunksProcessed')}
             </p>
             <button
               data-testid="w1-cancel-btn"
               onClick={cancelImport}
               className="rounded-lg border border-border px-4 py-1.5 text-sm text-text-2 hover:bg-hover"
             >
-              Cancel
+              {t('import.cancel')}
             </button>
           </div>
         )}
@@ -124,7 +125,7 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
               <li
                 key={i}
                 data-testid="w1-error-item"
-                className="rounded bg-red-500/10 px-3 py-1.5 text-sm text-red-400"
+                className="rounded bg-red/10 px-3 py-1.5 text-sm text-red"
               >
                 {err}
               </li>
@@ -134,8 +135,8 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
 
         {/* Success */}
         {w1Status === 'done' && (
-          <p data-testid="w1-success-msg" className="mt-4 text-sm text-green-400">
-            Import complete.
+          <p data-testid="w1-success-msg" className="mt-4 text-sm text-green">
+            {t('import.complete')}
           </p>
         )}
 
@@ -146,7 +147,7 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
             onClick={onClose}
             className="rounded-lg border border-border px-4 py-1.5 text-sm text-text-2 hover:bg-hover"
           >
-            Close
+            {t('import.close')}
           </button>
         </div>
       </div>
