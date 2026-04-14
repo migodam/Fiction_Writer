@@ -152,7 +152,7 @@ export const WorkbenchWorkspace = () => {
               {t('workbench.reviewCenterBody')}
             </p>
           </div>
-          <button type="button" className="rounded-2xl bg-brand px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-white" onClick={() => setImportState((current) => ({ ...current, open: true }))}>
+          <button type="button" data-testid="open-import-btn" className="rounded-2xl bg-brand px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-white" onClick={() => setImportState((current) => ({ ...current, open: true }))}>
             <FileUp size={14} className="mr-2 inline" />
             {t('import.title')}
           </button>

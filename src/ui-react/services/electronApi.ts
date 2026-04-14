@@ -51,6 +51,9 @@ export interface W1StartPayload {
   projectRoot: string;
   source_file_path: string;
   import_mode?: 'import_content_only' | 'import_all';
+  api_key?: string;
+  model?: string;
+  endpoint?: string;
 }
 
 export interface W1StartResult {

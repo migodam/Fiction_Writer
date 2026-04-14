@@ -283,6 +283,7 @@ interface ProjectState {
   w1CompletedChunks: number;
   w1TotalChunks: number;
   w1Errors: string[];
+  w1CurrentStep: string;
   w1SessionId: string | null;
   w1ImportMode: 'import_content_only' | 'import_all';
   setW1ImportMode: (mode: 'import_content_only' | 'import_all') => void;
@@ -1434,6 +1435,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   w1CompletedChunks: 0,
   w1TotalChunks: 0,
   w1Errors: [],
+  w1CurrentStep: '',
   w1SessionId: null,
   w1ImportMode: 'import_all',
   setW1ImportMode: (mode) => set({ w1ImportMode: mode }),
@@ -1441,18 +1443,47 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const { projectRoot, w1ImportMode } = get();
     const mode = payload.importMode ?? w1ImportMode;
     const effectiveRoot = projectRoot || payload.projectRoot;
-    set({ w1Status: 'running', w1Progress: 0, w1Errors: [], w1SessionId: null });
+    if (!effectiveRoot) {
+      set({ w1Status: 'error', w1Errors: ['No project root — open a project first.'] });
+      return;
+    }
+    // Resolve the active provider/model credentials from settings (same pattern as startW3)
+    const appSettings = useUIStore.getState().appSettings;
+    const profiles = appSettings?.providerProfiles ?? [];
+    const modelProfiles = appSettings?.modelProfiles ?? [];
+    const providerProfile = profiles.find((p: { id: string }) => p.id === appSettings?.selectedProviderProfileId) ?? profiles[0] as { apiKey?: string; endpoint?: string } | undefined;
+    const modelProfile = modelProfiles.find((m: { id: string }) => m.id === appSettings?.selectedModelProfileId) ?? modelProfiles[0] as { model?: string } | undefined;
+    set({ w1Status: 'running', w1Progress: 0, w1Errors: [], w1SessionId: null, w1CurrentStep: '' });
+    // Ensure sidecar is alive before calling start
+    try { await electronApi.sidecarSpawn(effectiveRoot); } catch { /* best effort */ }
     let sessionId: string | null = null;
+    // Retry start up to 3 times with delay (sidecar may still be booting)
+    let result: any = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        result = await electronApi.w1Start({
+          projectRoot: effectiveRoot,
+          source_file_path: payload.sourceFilePath,
+          import_mode: mode,
+          api_key: providerProfile?.apiKey ?? '',
+          model: modelProfile?.model ?? 'deepseek-chat',
+          endpoint: providerProfile?.endpoint ?? 'https://api.deepseek.com/v1',
+        });
+        break;
+      } catch (e) {
+        if (attempt < 2) {
+          await new Promise(r => setTimeout(r, 2000));
+          continue;
+        }
+        set({ w1Status: 'error', w1Errors: [String(e)] });
+        return;
+      }
+    }
     try {
-      const result = await electronApi.w1Start({
-        projectRoot: effectiveRoot,
-        source_file_path: payload.sourceFilePath,
-        import_mode: mode,
-      });
       sessionId = result.session_id || null;
       set({ w1SessionId: sessionId });
       if (result.status === 'error') {
-        set({ w1Status: 'error', w1Errors: ['Import failed to start'] });
+        set({ w1Status: 'error', w1Errors: [result.error || 'Import failed to start'] });
         return;
       }
     } catch (e) {
@@ -1471,6 +1502,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           w1CompletedChunks: s.completed_chunks ?? 0,
           w1TotalChunks: s.total_chunks ?? 0,
           w1Errors: s.errors ?? [],
+          w1CurrentStep: (s as any).current_step ?? '',
         });
         if (s.status === 'done') { set({ w1Status: 'done' }); return; }
         if (s.status === 'error') { set({ w1Status: 'error' }); return; }
@@ -1486,7 +1518,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       try { await electronApi.w1Cancel({ session_id: w1SessionId }); } catch { /* already cancelled */ }
     }
   },
-  resetImport: () => set({ w1Status: 'idle', w1Progress: 0, w1CompletedChunks: 0, w1TotalChunks: 0, w1Errors: [], w1SessionId: null }),
+  resetImport: () => set({ w1Status: 'idle', w1Progress: 0, w1CompletedChunks: 0, w1TotalChunks: 0, w1Errors: [], w1CurrentStep: '', w1SessionId: null }),
 
   // ── W2 Manuscript Sync ────────────────────────────────────────────────────
   w2Status: 'idle',

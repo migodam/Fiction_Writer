@@ -329,5 +329,19 @@ ai-writing-modal
 ai-writing-close-btn
 
 ==================================================
+22 IMPORT WORKFLOW (W1)
+==================================================
+
+open-import-btn          (trigger button in Workbench review center)
+w1-mode-content-only     (radio label for content_only mode)
+w1-mode-import-all       (radio label for import_all mode)
+w1-file-picker-btn       (select file button)
+w1-progress-bar          (animated progress bar div)
+w1-cancel-btn            (cancel import button)
+w1-error-item            (each error list item)
+w1-success-msg           (completion success paragraph)
+w1-close-btn             (close modal button)
+
+==================================================
 END
 ==================================================
