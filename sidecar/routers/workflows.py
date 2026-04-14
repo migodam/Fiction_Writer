@@ -214,6 +214,7 @@ class W1StatusResponse(BaseModel):
     errors: List[str] = []
     completed_chunks: int = 0
     total_chunks: int = 0
+    current_step: str = ""
 
 
 # ── W2 Manuscript Sync models ────────────────────────────────────────────────
@@ -242,22 +243,57 @@ class W2StatusResult(BaseModel):
 # ── W1 background task ────────────────────────────────────────────────────────
 
 async def _run_w1(session_id: str, config: dict) -> None:
-    from sidecar.workflows.w1_import import run as w1_run
+    from sidecar.workflows.w1_import import run_streaming, _chunk_progress
+    project_path = config["project_path"]
+
+    # Poll _chunk_progress every second so that mid-node chunk updates
+    # (written by node_process_chunks after each individual chunk) are
+    # reflected in the status endpoint without waiting for the whole node.
+    ctrl: dict = {"active": True}
+
+    async def _poll_chunk_progress() -> None:
+        while ctrl["active"]:
+            await asyncio.sleep(1)
+            progress_data = _chunk_progress.get(project_path)
+            if progress_data:
+                current = _w1_sessions.get(session_id, {})
+                if current.get("status") == "running":
+                    c = progress_data.get("completed", 0)
+                    t = progress_data.get("total", 0)
+                    _w1_sessions[session_id] = {
+                        **current,
+                        "completed_chunks": c,
+                        "total_chunks": t,
+                        "progress": 0.1 + 0.7 * (c / max(t, 1)),
+                        "current_step": "process_chunks",
+                    }
+
+    poll_task = asyncio.create_task(_poll_chunk_progress())
+
     try:
-        result = await w1_run(config["project_path"], config)
-        chunks = result.get("chunks", [])
-        _w1_sessions[session_id] = {
-            "status": result.get("status", "done"),
-            "progress": result.get("progress", 1.0),
-            "errors": result.get("errors", []),
-            "completed_chunks": len(chunks),
-            "total_chunks": len(chunks),
-        }
+        async for state_update in run_streaming(project_path, config):
+            _w1_sessions[session_id] = {
+                "status": "running",
+                "progress": state_update.get("progress", 0.0),
+                "errors": state_update.get("errors", []),
+                "completed_chunks": state_update.get("completed_chunks", 0),
+                "total_chunks": state_update.get("total_chunks", 0),
+                "current_step": state_update.get("current_node", ""),
+            }
+        # Final state from the last update
+        final = _w1_sessions.get(session_id, {})
+        final["status"] = "done"
+        final["progress"] = 1.0
+        _w1_sessions[session_id] = final
     except Exception as e:
         _w1_sessions[session_id] = {
             "status": "error", "progress": 0.0, "errors": [str(e)],
             "completed_chunks": 0, "total_chunks": 0,
         }
+    finally:
+        ctrl["active"] = False
+        poll_task.cancel()
+        _chunk_progress.pop(project_path, None)
 
 
 # ── W2 background task ────────────────────────────────────────────────────────
@@ -317,6 +353,7 @@ async def w1_status(session_id: str = "") -> W1StatusResponse:
         errors=session.get("errors", []),
         completed_chunks=session.get("completed_chunks", 0),
         total_chunks=session.get("total_chunks", 0),
+        current_step=session.get("current_step", ""),
     )
 
 

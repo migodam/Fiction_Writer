@@ -48,6 +48,13 @@ from sidecar.prompts.w1_prompts import (
 # Deep extraction prompts (import_all only) — added in Step 3
 _HAS_DEEP_PROMPTS = True
 
+# Module-level per-project chunk progress tracker.
+# node_process_chunks updates this after each chunk so that the polling
+# coroutine in _run_w1 (workflows.py) can report real-time progress to
+# the status endpoint without waiting for the whole node to finish.
+# key: project_path  value: {"completed": int, "total": int}
+_chunk_progress: dict[str, dict] = {}
+
 
 # ── Alias resolver ──────────────────────────────────────────────────────────────
 
@@ -291,15 +298,33 @@ async def node_split_chunks(state: ImportState) -> dict:
     source_path = state["source_file_path"]
     errors: list[str] = list(state.get("errors", []))
 
-    try:
-        with open(source_path, "r", encoding="utf-8") as f:
-            text = f.read()
-    except UnicodeDecodeError:
+    # Try multiple encodings with charset detection as fallback
+    _ENCODING_TRIES = ["utf-8", "gb18030", "gbk", "big5", "shift_jis"]
+    text = None
+    last_err = None
+    for enc in _ENCODING_TRIES:
         try:
-            with open(source_path, "r", encoding="gbk") as f:
+            with open(source_path, "r", encoding=enc) as f:
                 text = f.read()
+            break
+        except (UnicodeDecodeError, UnicodeError) as exc:
+            last_err = exc
+            continue
+
+    if text is None:
+        # Last resort: use charset-normalizer for auto-detection
+        try:
+            from charset_normalizer import from_bytes
+            with open(source_path, "rb") as f:
+                raw = f.read()
+            result = from_bytes(raw).best()
+            if result:
+                text = str(result)
+            else:
+                # Absolute last resort: UTF-8 with replacement
+                text = raw.decode("utf-8", errors="replace")
         except Exception as e:
-            return {"status": "error", "errors": [f"Cannot read file: {e}"]}
+            return {"status": "error", "errors": [f"Cannot read file with any encoding: {last_err} / {e}"]}
 
     # Try chapter strategy first
     config = s3_chunk_manager.ChunkConfig(strategy="chapter", chunk_size=500_000, overlap=50_000)
@@ -1561,6 +1586,9 @@ async def node_process_chunks(state: ImportState) -> dict:
             })
 
         completed = len([e for e in extractions if e.get("chunk_id") is not None])
+        # Update mid-node progress so the polling coroutine in _run_w1 can
+        # report real-time chunk counts without waiting for the node to finish.
+        _chunk_progress[project_path] = {"completed": completed, "total": total}
         try:
             checkpoint = {
                 "project_path": project_path,
@@ -1695,3 +1723,71 @@ async def run(project_path: str, config: dict) -> dict:
     thread_id = config.get("thread_id", f"w1-{uuid.uuid4().hex[:8]}")
     compiled = get_graph()
     return await compiled.ainvoke(state, {"configurable": {"thread_id": thread_id}})
+
+
+async def run_streaming(project_path: str, config: dict):
+    """Streaming entry point — yields intermediate state dicts after each node.
+
+    Each yielded dict has: progress, errors, completed_chunks, total_chunks.
+    The caller can use these to update a status endpoint in real time.
+    """
+    import_mode = config.get("import_mode", "import_all")
+    initial_state: ImportState = {
+        "project_path": project_path,
+        "workflow_id": "W1",
+        "source_file_path": config.get("source_file_path", ""),
+        "import_mode": import_mode,
+        "context": config.get("context", {}),
+        "chunks": [],
+        "entity_registry": {},
+        "chunk_extractions": [],
+        "raw_relationships": [],
+        "relationships": [],
+        "character_tags": [],
+        "world_settings": {},
+        "timeline_branches": [],
+        "world_containers": [],
+        "manuscript_chapters": [],
+        "proposals": [],
+        "checkpoint_path": str(Path(project_path) / "import_progress.json"),
+        "progress": 0.0,
+        "errors": [],
+        "status": "running",
+    }
+    thread_id = config.get("thread_id", f"w1-{uuid.uuid4().hex[:8]}")
+    compiled = get_graph()
+
+    total_chunks = 0
+    completed_chunks = 0
+
+    async for event in compiled.astream(initial_state, {"configurable": {"thread_id": thread_id}}):
+        # astream yields {node_name: node_output} per node
+        for node_name, node_output in event.items():
+            if not isinstance(node_output, dict):
+                continue
+
+            # Track chunk counts from split_chunks and process_chunks
+            if node_name == "split_chunks":
+                chunks = node_output.get("chunks", [])
+                total_chunks = len(chunks)
+                completed_chunks = 0
+
+            if node_name in ("process_chunks",):
+                extractions = node_output.get("chunk_extractions", [])
+                completed_chunks = len(extractions)
+                total_chunks = max(total_chunks, completed_chunks)
+
+            if node_name == "build_manuscript":
+                chapters = node_output.get("manuscript_chapters", [])
+                completed_chunks = total_chunks  # All chunks processed
+
+            progress = node_output.get("progress", 0.0)
+            errors = node_output.get("errors", [])
+
+            yield {
+                "progress": progress,
+                "errors": errors if isinstance(errors, list) else [],
+                "completed_chunks": completed_chunks,
+                "total_chunks": total_chunks,
+                "current_node": node_name,
+            }
