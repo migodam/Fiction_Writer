@@ -130,11 +130,39 @@ def _parse_json_response(raw: str) -> dict:
 
 
 async def _invoke_json_prompt(llm: ChatOpenAI, prompt_template: str, **kwargs: Any) -> dict:
-    """Render a prompt template, invoke the LLM, and parse the JSON response."""
+    """Render a prompt template, invoke the LLM, and parse the JSON response.
+
+    Retries up to 4 times with exponential backoff for transient failures:
+    - Rate-limit / governor errors (429, 503, 'Authentication Fails (governor)')
+    - 'str' object has no attribute 'model_dump' — LangChain streaming parse error
+      when DeepSeek injects a governor error into an SSE stream.
+    - JSON parse failures (model returned prose instead of JSON).
+    """
     prompt = prompt_template.format(**kwargs)
-    response = await llm.ainvoke([HumanMessage(content=prompt)])
-    raw = response.content if isinstance(response.content, str) else str(response.content)
-    return _parse_json_response(raw)
+    max_attempts = 4
+    for attempt in range(max_attempts):
+        try:
+            async with _API_SEMAPHORE:
+                response = await llm.ainvoke([HumanMessage(content=prompt)])
+            raw = response.content if isinstance(response.content, str) else str(response.content)
+            return _parse_json_response(raw)
+        except Exception as exc:
+            err_str = str(exc).lower()
+            is_retryable = (
+                "model_dump" in err_str          # SSE governor parse error
+                or "rate limit" in err_str
+                or "governor" in err_str
+                or "too many requests" in err_str
+                or "503" in err_str
+                or "502" in err_str
+                or "timeout" in err_str
+                or isinstance(exc, (json.JSONDecodeError, ValueError))
+            )
+            if is_retryable and attempt < max_attempts - 1:
+                wait = 2 ** attempt  # 1s, 2s, 4s
+                await asyncio.sleep(wait)
+                continue
+            raise
 
 
 def _append_unique_strings(target: list[str], values: list[Any]) -> None:
@@ -227,12 +255,33 @@ def _tag_color(index: int) -> str:
 
 # ── LLM helper ──────────────────────────────────────────────────────────────────
 
+# Semaphore to cap the number of concurrent DeepSeek API calls.
+# DeepSeek's "governor" rate-limits sustained high concurrency; 3 concurrent
+# calls per chunk * N chunks in flight keeps us well under the threshold.
+_API_SEMAPHORE = asyncio.Semaphore(3)
+
+_ENDPOINT_CORRECTIONS: dict[str, str] = {
+    # Web console URL → actual API URL
+    "https://platform.deepseek.com": "https://api.deepseek.com/v1",
+    "https://platform.deepseek.com/": "https://api.deepseek.com/v1",
+    "https://api.deepseek.com": "https://api.deepseek.com/v1",
+    "https://api.deepseek.com/": "https://api.deepseek.com/v1",
+}
+
+
 def _get_llm(state: ImportState) -> ChatOpenAI:
     ctx = state.get("context", {})
     api_key = ctx.get("api_key", "") or os.environ.get("DEEPSEEK_API_KEY", "")
     model = ctx.get("model", "deepseek-chat")
-    base_url = ctx.get("endpoint", "https://api.deepseek.com/v1")
-    return ChatOpenAI(model=model, api_key=api_key, base_url=base_url, max_tokens=4096)
+    raw_endpoint = ctx.get("endpoint", "https://api.deepseek.com/v1") or "https://api.deepseek.com/v1"
+    # Correct common endpoint mistakes (e.g. web console URL instead of API URL)
+    base_url = _ENDPOINT_CORRECTIONS.get(raw_endpoint.rstrip("/"),
+               _ENDPOINT_CORRECTIONS.get(raw_endpoint, raw_endpoint))
+    # streaming=False: prevents the 'str' object has no attribute 'model_dump'
+    # error that occurs when DeepSeek's governor injects an error into an SSE
+    # stream and LangChain tries to parse it as a ChatCompletionChunk.
+    return ChatOpenAI(model=model, api_key=api_key, base_url=base_url,
+                      max_tokens=4096, streaming=False)
 
 
 # ── Graph nodes ─────────────────────────────────────────────────────────────────
