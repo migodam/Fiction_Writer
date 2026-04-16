@@ -1490,8 +1490,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       set({ w1Status: 'error', w1Errors: [String(e)] });
       return;
     }
-    // Poll sidecar for progress
-    for (let i = 0; i < 600; i++) {
+    // Poll sidecar for progress — up to 3 hours (3600 × 3s) for large novels
+    for (let i = 0; i < 3600; i++) {
       await new Promise(r => setTimeout(r, 3000));
       const { w1Status: cur } = get();
       if (cur === 'cancelled') return;
@@ -1509,7 +1509,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         if (s.status === 'cancelled') { set({ w1Status: 'cancelled' }); return; }
       } catch { /* sidecar temporarily unreachable — keep polling */ }
     }
-    set({ w1Status: 'error', w1Errors: ['Import timed out after 30 minutes'] });
+    set({ w1Status: 'error', w1Errors: ['Import timed out after 3 hours'] });
   },
   cancelImport: async () => {
     const { w1SessionId } = get();
