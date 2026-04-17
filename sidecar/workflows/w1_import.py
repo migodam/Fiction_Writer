@@ -156,10 +156,18 @@ async def _invoke_json_prompt(llm: ChatOpenAI, prompt_template: str, **kwargs: A
                 or "503" in err_str
                 or "502" in err_str
                 or "timeout" in err_str
+                or "401" in err_str              # transient DeepSeek auth blip
+                or "no api key" in err_str
+                or "didn't provide an api key" in err_str
                 or isinstance(exc, (json.JSONDecodeError, ValueError))
             )
             if is_retryable and attempt < max_attempts - 1:
-                wait = 2 ** attempt  # 1s, 2s, 4s
+                # Give 401 a longer backoff — DeepSeek occasionally has transient
+                # auth blips that resolve within a few seconds.
+                if "401" in err_str or "no api key" in err_str or "didn't provide an api key" in err_str:
+                    wait = 5 * (attempt + 1)  # 5s, 10s, 15s
+                else:
+                    wait = 2 ** attempt  # 1s, 2s, 4s
                 await asyncio.sleep(wait)
                 continue
             raise
@@ -280,8 +288,10 @@ def _get_llm(state: ImportState) -> ChatOpenAI:
     # streaming=False: prevents the 'str' object has no attribute 'model_dump'
     # error that occurs when DeepSeek's governor injects an error into an SSE
     # stream and LangChain tries to parse it as a ChatCompletionChunk.
+    # timeout=120: prevent hung requests when DeepSeek accepts the TCP connection
+    # but stops sending data mid-response (seen as ESTABLISHED socket with no progress).
     return ChatOpenAI(model=model, api_key=api_key, base_url=base_url,
-                      max_tokens=4096, streaming=False)
+                      max_tokens=4096, streaming=False, timeout=120)
 
 
 # ── Graph nodes ─────────────────────────────────────────────────────────────────
@@ -303,6 +313,15 @@ async def node_validate_file(state: ImportState) -> dict:
     ext = path.suffix.lower()
     if ext not in (".txt", ".md", ".text", ".markdown"):
         errors.append(f"Warning: unusual file extension '{ext}', attempting to read as plain text")
+
+    # Validate API key is present before starting the (potentially hours-long) run
+    ctx = state.get("context", {})
+    api_key = ctx.get("api_key", "") or os.environ.get("DEEPSEEK_API_KEY", "")
+    if not api_key:
+        return {"status": "error", "errors": [
+            "No API key configured. Open Settings → AI Providers, add your provider key, "
+            "and set it as Active before importing."
+        ]}
 
     try:
         await acquire_lock(project_path, "W1")
