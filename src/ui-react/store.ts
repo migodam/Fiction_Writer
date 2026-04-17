@@ -1504,7 +1504,20 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           w1Errors: s.errors ?? [],
           w1CurrentStep: (s as any).current_step ?? '',
         });
-        if (s.status === 'done') { set({ w1Status: 'done' }); return; }
+        if (s.status === 'done') {
+          set({ w1Status: 'done' });
+          // Reload project from disk to surface newly-written proposals in system/inbox.json
+          try {
+            const { projectRoot } = get();
+            if (projectRoot) {
+              const freshProject = projectService.openProject(projectRoot);
+              if (freshProject) {
+                get().loadProject(freshProject);
+              }
+            }
+          } catch { /* best effort */ }
+          return;
+        }
         if (s.status === 'error') { set({ w1Status: 'error' }); return; }
         if (s.status === 'cancelled') { set({ w1Status: 'cancelled' }); return; }
       } catch { /* sidecar temporarily unreachable — keep polling */ }
