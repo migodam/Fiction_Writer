@@ -915,6 +915,78 @@ async def node_write_to_project(state: ImportState) -> dict:
         except Exception as e:
             errors.append(f"Failed to propose world container {container_id}: {str(e)}")
 
+    # ── Scene proposals ───────────────────────────────────────────────────────
+    # Scenes are extracted per-chunk by W1_EXTRACT_SCENE_SUMMARIES.
+    # Deduplicate by title to avoid creating the same scene multiple times
+    # (scenes may appear in multiple chunk extractions with overlap).
+    seen_scene_titles: set[str] = set()
+    for extraction in state.get("chunk_extractions", []):
+        for scene in extraction.get("scenes", []):
+            title = scene.get("title", "").strip()
+            if not title or title in seen_scene_titles:
+                continue
+            seen_scene_titles.add(title)
+            scene_id = f"scene_{uuid.uuid4().hex[:8]}"
+            op = {
+                "op_type": "create",
+                "entity_type": "scene",
+                "entity_id": scene_id,
+                "data": {
+                    "id": scene_id,
+                    "title": title,
+                    "summary": scene.get("summary", ""),
+                    "povCharacterId": None,
+                    "linkedCharacterIds": [],
+                    "linkedEventIds": [],
+                    "linkedWorldItemIds": [],
+                    "status": "draft",
+                    "notes": "",
+                    "chapterId": None,
+                    "location": scene.get("location_hint", ""),
+                },
+                "source_workflow": "W1_import",
+                "confidence": float(scene.get("confidence", 0.70)),
+                "auto_apply": False,
+                "depends_on": [],
+            }
+            try:
+                proposal = await s2_memory_writer.propose_write(op, str(project_path))
+                proposals.append(proposal)
+            except Exception as e:
+                errors.append(f"Failed to propose scene '{title}': {str(e)}")
+
+    # ── Chapter proposals ─────────────────────────────────────────────────────
+    # manuscript_chapters are assembled by node_build_manuscript from chapter_hint grouping.
+    # Each one becomes a Chapter entity proposal for user review.
+    for mc in state.get("manuscript_chapters", []):
+        chap_id = mc.get("chapter_id") or f"chap_{uuid.uuid4().hex[:8]}"
+        title = mc.get("title", "Untitled Chapter").strip()
+        if not title:
+            continue
+        op = {
+            "op_type": "create",
+            "entity_type": "chapter",
+            "entity_id": chap_id,
+            "data": {
+                "id": chap_id,
+                "title": title,
+                "summary": "",
+                "goal": "",
+                "notes": f"Imported from: {state.get('source_file_path', '')}",
+                "sceneIds": [],
+                "status": "draft",
+            },
+            "source_workflow": "W1_import",
+            "confidence": 0.90,
+            "auto_apply": False,
+            "depends_on": [],
+        }
+        try:
+            proposal = await s2_memory_writer.propose_write(op, str(project_path))
+            proposals.append(proposal)
+        except Exception as e:
+            errors.append(f"Failed to propose chapter '{title}': {str(e)}")
+
     # Push all proposals to inbox
     for proposal in proposals:
         try:
