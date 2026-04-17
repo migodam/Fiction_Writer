@@ -928,8 +928,13 @@ export const projectService = {
 };
 
 function _applyProposalEntity(project: NarrativeProject, proposal: Proposal): NarrativeProject {
-  const data = proposal.data;
-  const entityType = proposal.entityType;
+  // Sidecar proposals store entity info inside operations[0].
+  // Support both the sidecar format (operations[]) and any direct top-level fields.
+  type RawOp = { entityType?: string; fields?: Record<string, unknown> };
+  const rawOps = (proposal as unknown as { operations?: RawOp[] }).operations;
+  const op0: RawOp | undefined = rawOps?.[0] ?? proposal.proposedOperations?.[0];
+  const entityType: string | undefined = op0?.entityType ?? proposal.entityType;
+  const data: Record<string, unknown> | undefined = op0?.fields ?? proposal.data;
   if (!data || !entityType || !data['id']) return project;
   const id = data['id'] as string;
   switch (entityType) {
