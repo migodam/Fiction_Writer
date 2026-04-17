@@ -384,9 +384,10 @@ async def node_split_chunks(state: ImportState) -> dict:
         config = s3_chunk_manager.ChunkConfig(strategy="paragraph", chunk_size=500_000, overlap=50_000)
         chunks = s3_chunk_manager.chunk_text(text, config)
 
-    # Ensure chunk_id and manuscript_content on each chunk
+    # Ensure chunk_id and manuscript_content on each chunk.
+    # Use raw_content (no overlap prefix) so manuscript reflects actual chapter boundaries.
     for i, chunk in enumerate(chunks):
-        chunk["manuscript_content"] = chunk.get("content", "")
+        chunk["manuscript_content"] = chunk.get("raw_content", chunk.get("content", ""))
         chunk["chunk_id"] = i
 
     return {
@@ -619,7 +620,7 @@ async def node_build_manuscript(state: ImportState) -> dict:
         for hint in chapter_order:
             chapter_chunks = chapter_map[hint]
             content = "\n\n".join(
-                c.get("content", c.get("manuscript_content", "")) for c in chapter_chunks
+                c.get("manuscript_content", c.get("raw_content", c.get("content", ""))) for c in chapter_chunks
             )
             manuscript_chapters.append({
                 "chapter_id": f"chap_{uuid.uuid4().hex[:8]}",
