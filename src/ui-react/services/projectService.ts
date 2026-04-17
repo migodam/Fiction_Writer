@@ -885,7 +885,7 @@ export const projectService = {
       resolvedAt: new Date().toISOString(),
     };
 
-    return {
+    const withHistory: NarrativeProject = {
       ...project,
       proposals: project.proposals.filter((proposal) => proposal.id !== proposalId),
       proposalHistory: [resolvedProposal, ...project.proposalHistory],
@@ -918,5 +918,49 @@ export const projectService = {
         },
       },
     };
+
+    // Apply entity data to project when accepting
+    const withEntity = nextStatus === 'accepted'
+      ? _applyProposalEntity(withHistory, target)
+      : withHistory;
+    return withEntity;
   },
 };
+
+function _applyProposalEntity(project: NarrativeProject, proposal: Proposal): NarrativeProject {
+  const data = proposal.data;
+  const entityType = proposal.entityType;
+  if (!data || !entityType || !data['id']) return project;
+  const id = data['id'] as string;
+  switch (entityType) {
+    case 'character':
+      if (project.characters.some(c => c.id === id)) return project;
+      return { ...project, characters: [...project.characters, data as any] };
+    case 'timeline_event':
+      if (project.timelineEvents.some(e => e.id === id)) return project;
+      return { ...project, timelineEvents: [...project.timelineEvents, data as any] };
+    case 'relationship':
+      if (project.relationships.some(r => r.id === id)) return project;
+      return { ...project, relationships: [...project.relationships, data as any] };
+    case 'world_item':
+      if (project.worldItems.some(w => w.id === id)) return project;
+      return { ...project, worldItems: [...project.worldItems, data as any] };
+    case 'character_tag':
+      if (project.characterTags.some(t => t.id === id)) return project;
+      return { ...project, characterTags: [...project.characterTags, data as any] };
+    case 'timeline_branch':
+      if (project.timelineBranches.some(b => b.id === id)) return project;
+      return { ...project, timelineBranches: [...project.timelineBranches, data as any] };
+    case 'world_container':
+      if (project.worldContainers.some(c => c.id === id)) return project;
+      return { ...project, worldContainers: [...project.worldContainers, data as any] };
+    case 'scene':
+      if (project.scenes.some(s => s.id === id)) return project;
+      return { ...project, scenes: [...project.scenes, data as any] };
+    case 'chapter':
+      if (project.chapters.some(c => c.id === id)) return project;
+      return { ...project, chapters: [...project.chapters, data as any] };
+    default:
+      return project;
+  }
+}

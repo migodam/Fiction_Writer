@@ -348,6 +348,8 @@ export interface Proposal {
   status: ProposalStatus;
   createdAt: string;
   resolvedAt?: string;
+  data?: Record<string, unknown>;
+  entityType?: string;
 }
 
 export interface ConsistencyIssue {
