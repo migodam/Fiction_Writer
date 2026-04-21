@@ -820,6 +820,14 @@ export const projectService = {
     ensureDir(runtime.fs, exportDir);
     const exportPath = runtime.path.join(exportDir, fileName);
     runtime.fs.writeFileSync(exportPath, preview, 'utf8');
+
+    // Also export manuscript.json if it exists alongside the project
+    const manuscriptSrc = runtime.path.join(project.metadata.rootPath, 'manuscript.json');
+    if (runtime.fs.existsSync(manuscriptSrc)) {
+      const manuscriptDest = runtime.path.join(exportDir, `${baseName}-${timestamp}-manuscript.json`);
+      runtime.fs.copyFileSync(manuscriptSrc, manuscriptDest);
+    }
+
     return {
       id: `export_${timestamp}`,
       format: input.format,
