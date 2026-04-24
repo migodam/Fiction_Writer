@@ -18,6 +18,7 @@ export const WorkbenchWorkspace = () => {
     promptTemplates,
     todos,
     resolveProposal,
+    resolveAllProposals,
     addImportJob,
     updateImportJob,
     addChapter,
@@ -168,6 +169,19 @@ export const WorkbenchWorkspace = () => {
 
         {sidebarSection === 'inbox' && (
           <div className="space-y-4" data-testid="workbench-inbox-list">
+            {proposals.length > 1 && (
+              <div className="flex justify-end mb-4">
+                <button
+                  type="button"
+                  data-testid="accept-all-proposals-btn"
+                  className="inline-flex items-center gap-2 rounded-lg bg-green px-5 py-2 text-[11px] font-black uppercase tracking-widest text-text-invert"
+                  onClick={() => resolveAllProposals('accepted')}
+                >
+                  <CheckCircle2 size={14} />
+                  {t('workbench.acceptAll', 'Accept All')} ({proposals.length})
+                </button>
+              </div>
+            )}
             {proposals.map((proposal) => (
               <div key={proposal.id} className="rounded-2xl border border-border bg-card p-6 shadow-1" data-testid={`proposal-card-${proposal.id}`}>
                 <div className="mb-4 flex items-start justify-between gap-4">

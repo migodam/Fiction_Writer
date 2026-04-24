@@ -217,6 +217,26 @@ class W1StatusResponse(BaseModel):
     current_step: str = ""
 
 
+class W1ConsoleResponse(BaseModel):
+    entries: List[Any] = []
+    paused: bool = False
+    breakpoint_chunk: Optional[int] = None
+
+
+class W1BreakpointRequest(BaseModel):
+    session_id: str
+    chunk_id: Optional[int] = None   # None = clear breakpoint
+
+
+class W1ResumeRequest(BaseModel):
+    session_id: str
+
+
+class W1RewindRequest(BaseModel):
+    session_id: str
+    to_chunk_id: int
+
+
 # ── W2 Manuscript Sync models ────────────────────────────────────────────────
 
 class W2StartRequest(BaseModel):
@@ -243,36 +263,44 @@ class W2StatusResult(BaseModel):
 # ── W1 background task ────────────────────────────────────────────────────────
 
 async def _run_w1(session_id: str, config: dict) -> None:
-    from sidecar.workflows.w1_import import run_streaming, _chunk_progress
+    from sidecar.workflows.w1_import import run_streaming, _chunk_progress, _chunk_log
     project_path = config["project_path"]
 
-    # Poll _chunk_progress every second so that mid-node chunk updates
-    # (written by node_process_chunks after each individual chunk) are
-    # reflected in the status endpoint without waiting for the whole node.
+    # Poll _chunk_progress and _chunk_log every second so that mid-node chunk
+    # updates (written by node_process_chunks after each individual chunk) are
+    # reflected in the status and console endpoints without waiting for the node.
     ctrl: dict = {"active": True}
 
     async def _poll_chunk_progress() -> None:
         while ctrl["active"]:
             await asyncio.sleep(1)
             progress_data = _chunk_progress.get(project_path)
+            log_entries = _chunk_log.get(project_path, [])
+            current = _w1_sessions.get(session_id, {})
+            if current.get("status") not in ("running", "paused"):
+                continue
+            updates: dict = {}
             if progress_data:
-                current = _w1_sessions.get(session_id, {})
-                if current.get("status") == "running":
-                    c = progress_data.get("completed", 0)
-                    t = progress_data.get("total", 0)
-                    _w1_sessions[session_id] = {
-                        **current,
-                        "completed_chunks": c,
-                        "total_chunks": t,
-                        "progress": 0.1 + 0.7 * (c / max(t, 1)),
-                        "current_step": "process_chunks",
-                    }
+                c = progress_data.get("completed", 0)
+                t = progress_data.get("total", 0)
+                updates = {
+                    "completed_chunks": c,
+                    "total_chunks": t,
+                    "progress": 0.1 + 0.7 * (c / max(t, 1)),
+                    "current_step": "process_chunks",
+                }
+            if log_entries:
+                updates["chunk_log"] = log_entries[:]
+            if updates:
+                _w1_sessions[session_id] = {**current, **updates}
 
     poll_task = asyncio.create_task(_poll_chunk_progress())
 
     try:
         async for state_update in run_streaming(project_path, config):
+            current = _w1_sessions.get(session_id, {})
             _w1_sessions[session_id] = {
+                **current,
                 "status": "running",
                 "progress": state_update.get("progress", 0.0),
                 "errors": state_update.get("errors", []),
@@ -289,11 +317,14 @@ async def _run_w1(session_id: str, config: dict) -> None:
         _w1_sessions[session_id] = {
             "status": "error", "progress": 0.0, "errors": [str(e)],
             "completed_chunks": 0, "total_chunks": 0,
+            "chunk_log": _chunk_log.get(project_path, []),
+            "paused": False, "breakpoint_chunk": None,
         }
     finally:
         ctrl["active"] = False
         poll_task.cancel()
         _chunk_progress.pop(project_path, None)
+        _chunk_log.pop(project_path, None)
 
 
 # ── W2 background task ────────────────────────────────────────────────────────
@@ -320,15 +351,21 @@ async def _run_w2(session_id: str, config: dict) -> None:
 async def w1_start(body: W1StartRequest) -> W1StartResponse:
     """Start a W1 Import workflow run."""
     session_id = str(uuid.uuid4())
-    _w1_sessions[session_id] = {
-        "status": "running", "progress": 0.0, "errors": [],
-        "completed_chunks": 0, "total_chunks": 0,
-    }
     config = {
         "project_path": body.project_path,
         "source_file_path": body.source_file_path,
         "import_mode": body.import_mode,
         "context": {"api_key": body.api_key, "model": body.model, "endpoint": body.endpoint},
+        "session_id": session_id,
+    }
+    _w1_sessions[session_id] = {
+        "status": "running", "progress": 0.0, "errors": [],
+        "completed_chunks": 0, "total_chunks": 0,
+        "chunk_log": [],       # List[ChunkLogEntry dicts]
+        "paused": False,
+        "breakpoint_chunk": None,
+        "project_path": body.project_path,
+        "config": config,
     }
     asyncio.create_task(_run_w1(session_id, config))
     return W1StartResponse(session_id=session_id, status="started")
@@ -341,6 +378,111 @@ async def w1_cancel(body: W1CancelRequest) -> W1CancelResponse:
     if session:
         _w1_sessions[body.session_id] = {**session, "status": "cancelled"}
     return W1CancelResponse(status="cancelled")
+
+
+@router.get("/workflow/w1/console", response_model=W1ConsoleResponse)
+async def w1_console(session_id: str = "", after: int = 0) -> W1ConsoleResponse:
+    """Return new chunk log entries since index `after`."""
+    session = _w1_sessions.get(session_id, {})
+    all_entries = session.get("chunk_log", [])
+    return W1ConsoleResponse(
+        entries=all_entries[after:],
+        paused=session.get("paused", False),
+        breakpoint_chunk=session.get("breakpoint_chunk"),
+    )
+
+
+@router.post("/workflow/w1/set_breakpoint")
+async def w1_set_breakpoint(body: W1BreakpointRequest) -> dict:
+    """Set or clear a breakpoint at a given chunk index."""
+    from sidecar.workflows.w1_import import _breakpoint_chunks
+    session = _w1_sessions.get(body.session_id, {})
+    if session:
+        session["breakpoint_chunk"] = body.chunk_id
+        _w1_sessions[body.session_id] = session
+        project_path = session.get("project_path", "")
+        if project_path:
+            _breakpoint_chunks[project_path] = body.chunk_id
+    return {"ok": True, "breakpoint_chunk": body.chunk_id}
+
+
+@router.post("/workflow/w1/resume")
+async def w1_resume(body: W1ResumeRequest) -> dict:
+    """Resume a paused W1 import session."""
+    from sidecar.workflows.w1_import import _pause_events
+    session = _w1_sessions.get(body.session_id, {})
+    if session:
+        session["paused"] = False
+        session["breakpoint_chunk"] = None
+        _w1_sessions[body.session_id] = session
+        project_path = session.get("project_path", "")
+        if project_path and project_path in _pause_events:
+            _pause_events[project_path].set()
+    return {"ok": True}
+
+
+@router.post("/workflow/w1/rewind")
+async def w1_rewind(body: W1RewindRequest) -> dict:
+    """Rewind import to a prior checkpoint state and restart from that point."""
+    import json
+    from pathlib import Path
+    from sidecar.workflows.w1_import import _cancel_events, _pause_events, _breakpoint_chunks
+
+    session = _w1_sessions.get(body.session_id, {})
+    if not session:
+        return {"ok": False, "error": "session_not_found"}
+
+    project_path = session.get("project_path", "")
+    if not project_path:
+        return {"ok": False, "error": "project_path_missing"}
+
+    # Signal cancel of the current run
+    if project_path in _cancel_events:
+        _cancel_events[project_path].set()
+    # Unblock any pause
+    if project_path in _pause_events:
+        _pause_events[project_path].set()
+
+    # Wait briefly for session to terminate
+    for _ in range(20):
+        await asyncio.sleep(0.2)
+        if _w1_sessions.get(body.session_id, {}).get("status") in ("cancelled", "error", "done"):
+            break
+
+    # Load and truncate checkpoint
+    checkpoint_path = Path(project_path) / "system" / "imports" / "import_progress.json"
+    if not checkpoint_path.exists():
+        checkpoint_path = Path(project_path) / "import_progress.json"
+
+    if checkpoint_path.exists():
+        try:
+            with open(checkpoint_path, encoding="utf-8") as f:
+                cp = json.load(f)
+            cp["completed_chunk_ids"] = [cid for cid in cp.get("completed_chunk_ids", []) if cid < body.to_chunk_id]
+            cp["chunk_extractions"] = [e for e in cp.get("chunk_extractions", []) if e.get("chunk_id", 0) < body.to_chunk_id]
+            # Rebuild registry from truncated extractions (approximate — full rebuild happens in node)
+            with open(checkpoint_path, "w", encoding="utf-8") as f:
+                json.dump(cp, f, ensure_ascii=False, indent=2)
+        except Exception as exc:
+            return {"ok": False, "error": f"checkpoint rewind failed: {exc}"}
+
+    # Re-launch with same config
+    old_config = session.get("config", {})
+    if not old_config:
+        return {"ok": False, "error": "original config missing from session"}
+
+    new_session_id = str(uuid.uuid4())
+    _w1_sessions[new_session_id] = {
+        "status": "running", "progress": 0.0, "errors": [],
+        "completed_chunks": body.to_chunk_id, "total_chunks": session.get("total_chunks", 0),
+        "chunk_log": session.get("chunk_log", [])[:body.to_chunk_id],
+        "paused": False, "breakpoint_chunk": None,
+        "project_path": project_path,
+        "config": old_config,
+    }
+    _breakpoint_chunks.pop(project_path, None)
+    asyncio.create_task(_run_w1(new_session_id, old_config))
+    return {"ok": True, "new_session_id": new_session_id}
 
 
 @router.get("/workflow/w1/status", response_model=W1StatusResponse)

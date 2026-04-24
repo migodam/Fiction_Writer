@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides operational guidance to Claude Code when working in this repository.
+This file provides operational guidance to Codex when working in this repository.
 
 ## Start Here
 Read these before making changes:

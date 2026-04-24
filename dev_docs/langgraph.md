@@ -1,8 +1,9 @@
 # LangGraph Architecture — Narrative IDE
 
-> **This document is the single source of truth for the AI layer of Narrative IDE.**  
-> It covers: storage architecture, tools, skills, shared infrastructure, all workflows (W0–W7), the Orchestrator interface, and implementation conventions.  
-> When giving Claude Code a prompt, always reference this file first.
+> Status: reference-only workflow architecture detail.  
+> Governance source of truth lives in `dev_docs/README.md`.  
+> Workflow status source lives in `dev_docs/WORKFLOW_STATUS.md`.  
+> Workflow/UI/backend integration source lives in `dev_docs/FRONTEND_BACKEND_CHECKLIST.md`.
 
 ---
 

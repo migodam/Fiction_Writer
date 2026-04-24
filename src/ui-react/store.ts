@@ -220,10 +220,12 @@ interface ProjectState {
   updateGraphEdge: (boardId: string, edge: Partial<GraphBoard['edges'][number]> & { id: string }) => void;
   setGraphBoardView: (boardId: string, view: GraphBoard['view']) => void;
   resolveProposal: (proposalId: string, status: Proposal['status']) => void;
+  resolveAllProposals: (status: Proposal['status']) => void;
   resolveIssue: (issueId: string, resolution: 'resolved' | 'ignored') => void;
   dismissIssue: (issueId: string) => void;
   addProposal: (proposal: Proposal) => void;
   addGraphSyncProposal: (title: string, preview: string) => void;
+  updatePromptTemplate: (template: PromptTemplate) => void;
   addExportArtifact: (artifact: ExportArtifact) => void;
   addBetaPersona: (persona: BetaPersona) => void;
   updateBetaPersona: (persona: BetaPersona) => void;
@@ -278,7 +280,7 @@ interface ProjectState {
   resetW3: () => void;
 
   // W1 Import state
-  w1Status: 'idle' | 'running' | 'done' | 'error' | 'cancelled';
+  w1Status: 'idle' | 'running' | 'done' | 'error' | 'cancelled' | 'paused';
   w1Progress: number;
   w1CompletedChunks: number;
   w1TotalChunks: number;
@@ -286,7 +288,13 @@ interface ProjectState {
   w1CurrentStep: string;
   w1SessionId: string | null;
   w1ImportMode: 'import_content_only' | 'import_all';
+  w1ConsoleLog: import('./services/electronApi').ChunkLogEntry[];
+  w1Paused: boolean;
+  w1BreakpointChunk: number | null;
   setW1ImportMode: (mode: 'import_content_only' | 'import_all') => void;
+  setW1Breakpoint: (chunkId: number | null) => Promise<void>;
+  resumeW1: () => Promise<void>;
+  rewindW1: (toChunkId: number) => Promise<void>;
   startImport: (payload: { projectRoot: string; sourceFilePath: string; importMode?: 'import_content_only' | 'import_all' }) => Promise<void>;
   cancelImport: () => Promise<void>;
   resetImport: () => void;
@@ -1083,6 +1091,17 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   updateGraphEdge: (boardId, edge) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, edges: board.edges.map((e) => e.id === edge.id ? { ...e, ...edge } : e) } : board) })),
   setGraphBoardView: (boardId, view) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, view } : board) })),
   resolveProposal: (proposalId, status) => set((state) => withDirtyState(projectService.resolveProposal(cloneProject(state, useUIStore.getState().locale), proposalId, status))),
+  resolveAllProposals: (status) => {
+    const pending = get().proposals.filter((p) => p.status === 'pending' || !p.status);
+    if (!pending.length) return;
+    set((state) => {
+      let project = cloneProject(state, useUIStore.getState().locale);
+      for (const proposal of pending) {
+        project = projectService.resolveProposal(project, proposal.id, status);
+      }
+      return withDirtyState(project);
+    });
+  },
   resolveIssue: (issueId, resolution) => set((state) => withDirtyState({
     issues: state.issues.map((issue) => issue.id === issueId ? { ...issue, status: resolution, visibility: 'history', dismissedAt: new Date().toISOString() } : issue),
   })),
@@ -1090,6 +1109,11 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     issues: state.issues.map((issue) => issue.id === issueId ? { ...issue, status: 'ignored', visibility: 'hidden', dismissedAt: new Date().toISOString() } : issue),
   })),
   addProposal: (proposal) => set((state) => withDirtyState({ proposals: [proposal, ...state.proposals], unreadUpdates: { ...state.unreadUpdates, activities: { ...state.unreadUpdates.activities, workbench: true }, sections: { ...state.unreadUpdates.sections, 'workbench.inbox': true }, entities: { ...state.unreadUpdates.entities, [proposal.id]: true } } })),
+  updatePromptTemplate: (template) => set((state) => withDirtyState({
+    promptTemplates: state.promptTemplates.some(t => t.id === template.id)
+      ? state.promptTemplates.map(t => t.id === template.id ? template : t)
+      : [...state.promptTemplates, template],
+  })),
   addGraphSyncProposal: (title, preview) => set((state) => {
     const proposal: Proposal = {
       id: `proposal_${Date.now()}`,
@@ -1438,7 +1462,30 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   w1CurrentStep: '',
   w1SessionId: null,
   w1ImportMode: 'import_all',
+  w1ConsoleLog: [],
+  w1Paused: false,
+  w1BreakpointChunk: null,
   setW1ImportMode: (mode) => set({ w1ImportMode: mode }),
+  setW1Breakpoint: async (chunkId) => {
+    const { projectRoot, w1SessionId } = get();
+    if (!projectRoot || !w1SessionId) return;
+    set({ w1BreakpointChunk: chunkId });
+    await electronApi.w1SetBreakpoint(projectRoot, w1SessionId, chunkId);
+  },
+  resumeW1: async () => {
+    const { projectRoot, w1SessionId } = get();
+    if (!projectRoot || !w1SessionId) return;
+    set({ w1Paused: false, w1BreakpointChunk: null });
+    await electronApi.w1Resume(projectRoot, w1SessionId);
+  },
+  rewindW1: async (toChunkId) => {
+    const { projectRoot, w1SessionId } = get();
+    if (!projectRoot || !w1SessionId) return;
+    const result = await electronApi.w1Rewind(projectRoot, w1SessionId, toChunkId);
+    if (result.ok && result.new_session_id) {
+      set({ w1SessionId: result.new_session_id, w1Status: 'running', w1Paused: false, w1BreakpointChunk: null, w1ConsoleLog: [] });
+    }
+  },
   startImport: async (payload) => {
     const { projectRoot, w1ImportMode } = get();
     const mode = payload.importMode ?? w1ImportMode;
@@ -1491,6 +1538,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       return;
     }
     // Poll sidecar for progress — up to 3 hours (3600 × 3s) for large novels
+    let consoleLogOffset = 0;
     for (let i = 0; i < 3600; i++) {
       await new Promise(r => setTimeout(r, 3000));
       const { w1Status: cur } = get();
@@ -1504,6 +1552,19 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           w1Errors: s.errors ?? [],
           w1CurrentStep: (s as any).current_step ?? '',
         });
+        // Also poll console log for real-time chunk detail
+        try {
+          const console = await electronApi.w1Console(effectiveRoot, sessionId ?? '', consoleLogOffset);
+          if (console.entries.length > 0) {
+            consoleLogOffset += console.entries.length;
+            set((state) => ({ w1ConsoleLog: [...state.w1ConsoleLog, ...console.entries] }));
+          }
+          set({ w1Paused: console.paused, w1BreakpointChunk: console.breakpoint_chunk });
+          if (console.paused) {
+            set({ w1Status: 'paused' });
+            // Keep polling while paused so resume is reflected promptly
+          }
+        } catch { /* console endpoint optional */ }
         if (s.status === 'done') {
           set({ w1Status: 'done' });
           // Reload project from disk to surface newly-written proposals in system/inbox.json
@@ -1531,7 +1592,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       try { await electronApi.w1Cancel({ session_id: w1SessionId }); } catch { /* already cancelled */ }
     }
   },
-  resetImport: () => set({ w1Status: 'idle', w1Progress: 0, w1CompletedChunks: 0, w1TotalChunks: 0, w1Errors: [], w1CurrentStep: '', w1SessionId: null }),
+  resetImport: () => set({ w1Status: 'idle', w1Progress: 0, w1CompletedChunks: 0, w1TotalChunks: 0, w1Errors: [], w1CurrentStep: '', w1SessionId: null, w1ConsoleLog: [], w1Paused: false, w1BreakpointChunk: null }),
 
   // ── W2 Manuscript Sync ────────────────────────────────────────────────────
   w2Status: 'idle',

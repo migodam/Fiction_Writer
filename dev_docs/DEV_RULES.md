@@ -1,61 +1,69 @@
 # NARRATIVE IDE — DEVELOPMENT RULES
 
-This document defines mandatory development rules for all AI agents working on this repository.
+This document defines the mandatory operating rules for all agents and humans working in this repository.
 
-The goal is to ensure deterministic development, stable architecture, and testable UI behavior.
-
-These rules MUST always be followed.
+These rules are strict. Follow them before, during, and after implementation.
 
 ---
 
-# 1. SOURCE OF TRUTH
+# 1. GOVERNANCE ENTRYPOINT
 
-The following documents define system behavior.
+Every session must start with:
 
-AI MUST read them before modifying any code.
+1. `dev_docs/README.md`
+2. `dev_docs/DEV_RULES.md`
+3. task-relevant canonical docs from the Source-of-Truth Registry
 
-dev_docs/UI_logic.txt  
-dev_docs/UX_rules.txt  
-dev_docs/UI_ROUTES.txt  
-dev_docs/TEST_SELECTORS.txt  
-dev_docs/TEST_PLAN.md  
-
-If conflicts occur:
-
-Priority order:
-
-1 UI_logic  
-2 UX_rules  
-3 UI_ROUTES  
-4 TEST_SELECTORS  
-5 TEST_PLAN
-
-AI must NOT invent new UI behavior not defined in these files.
+Do not guess which doc is canonical. `dev_docs/README.md` decides that.
 
 ---
 
-# 2. TEST-FIRST DEVELOPMENT
+# 2. SOURCE-OF-TRUTH RULE
+
+For UI behavior only, the precedence remains:
+
+1. `UI_logic.txt`
+2. `UX_rules.txt`
+3. `UI_ROUTES.txt`
+4. `TEST_SELECTORS.txt`
+5. `TEST_PLAN.md`
+
+For architecture, workflow status, planning, and worktree coordination, use the canonical docs defined in `dev_docs/README.md`.
+
+Reference-only and legacy docs must not define new work.
+
+---
+
+# 3. ACTIVE STACK RULE
+
+The active implementation baseline is:
+
+- `src/ui-react`
+- `src/electron`
+- `sidecar`
+
+Older paths such as `src/ui` and other prototype-era layers are legacy/reference-only unless the task explicitly says otherwise.
+
+---
+
+# 4. TEST-FIRST DEVELOPMENT
 
 All development must follow this loop:
 
-1 Read TEST_PLAN.md
-2 Identify failing tests
-3 Implement minimal code changes
-4 Run Playwright tests
-5 Fix failing tests
-6 Repeat
+1. Read `TEST_PLAN.md`
+2. Identify the smallest meaningful failing or missing test coverage
+3. Implement minimal code changes
+4. Run the required checks
+5. Fix failures
+6. Repeat
 
-Never implement features without corresponding tests.
-
-P0 and P1 tests MUST pass before committing changes.
+P0 and P1 tests must pass before merge or handoff.
 
 ---
 
-# 3. UI CONSISTENCY RULES
+# 5. UI CONSISTENCY RULES
 
-The following elements MUST remain consistent across all pages:
-
-Layout:
+The shell layout must remain consistent across all pages:
 
 Top Toolbar  
 Activity Bar  
@@ -64,166 +72,129 @@ Workspace
 Global Inspector  
 Status Bar
 
-The layout must NEVER change per page.
-
-Pages only change content inside Workspace.
+Pages may only change workspace content.
 
 ---
 
-# 4. SELECTOR RULE
+# 6. SELECTOR RULE
 
-All interactive UI elements MUST have stable selectors.
+All interactive UI elements must use stable `data-testid` selectors.
 
-Use:
-
-data-testid
-
-Example:
-
-<button data-testid="activity-btn-characters">
-
-Selectors MUST follow definitions in:
-
-dev_docs/TEST_SELECTORS.txt
-
-AI must NEVER generate selectors based on:
+Never rely on:
 
 CSS class  
 DOM hierarchy  
 random attributes
 
-Only data-testid.
+Selectors must follow `dev_docs/TEST_SELECTORS.txt`.
 
 ---
 
-# 5. ROUTING RULE
+# 7. ROUTING RULE
 
-Routes must follow:
+Routes must follow the active route inventory defined by:
 
-dev_docs/UI_ROUTES.txt
+- `src/ui-react/config/routes.tsx` for implementation
+- `dev_docs/PRODUCT_SPEC.md` for product/module inventory
+- `dev_docs/UI_ROUTES.txt` for UI route behavior rules
 
-Rules:
-
-Every route must render a valid workspace.
-
-No blank screens.
-
-Invalid entity IDs must show:
-
-"Entity not found"
-
-with navigation options.
+Every route must render a valid workspace. Invalid entity IDs must show `Entity not found` with a recovery path.
 
 ---
 
-# 6. STATE MANAGEMENT
+# 8. STATE MANAGEMENT
 
 Global UI state must be handled by Zustand.
 
-Store responsibilities:
+High-value shared state must not be duplicated in local component state:
 
-selectedEntity  
-currentRoute  
-sidebarSection  
-workspaceView  
-editorState  
+selected entity  
+current activity/route  
+sidebar section  
+workspace state  
+editor state  
+agent/status surfaces
 
-State must be centralized.
-
-Avoid local component state for global UI.
+Treat `src/ui-react/store.ts` as a shared surface. Coordinate before editing it in parallel work.
 
 ---
 
-# 7. PERSISTENCE
+# 9. PERSISTENCE AND WORKFLOW BOUNDARIES
 
-Data storage strategy:
-
-Phase 1:
-
-JSON persistence
-
-Phase 2:
-
-SQLite migration
-
-Persistence layer must be abstracted.
-
-UI must not directly read/write storage.
+UI must not directly read/write canonical storage.
 
 Use:
 
-services/
-repositories/
+- `src/ui-react/services/*`
+- Electron IPC bridges
+- sidecar workflow endpoints
 
----
-
-# 8. WRITING EDITOR RULE
-
-Writing Studio editor must:
-
-Autosave text  
-Support undo/redo  
-Never block typing
-
-Autosave must be debounced.
-
-Save status must appear in Status Bar.
-
----
-
-# 9. ERROR HANDLING
-
-UI must never crash.
-
-All failures must show:
-
-Error message  
-Root cause hint  
-Actionable next step
-
-AI failures must show Failure Analysis panel in Workbench.
+Proposal gatekeeping remains mandatory: AI-originated changes do not silently mutate canonical data.
 
 ---
 
 # 10. SAFE REFACTORING
 
-AI must NEVER refactor working modules unless:
+Do not refactor a working module unless:
 
-Tests exist  
-Tests pass before refactor  
-Tests pass after refactor
+tests exist  
+tests pass before refactor  
+tests pass after refactor
 
-If no tests exist → do not refactor.
+If no tests exist, add coverage or keep the refactor out of scope.
 
 ---
 
 # 11. DOCUMENTATION UPDATE RULE
 
-If AI modifies:
+Update the canonical docs in the same change whenever you modify:
 
-UI layout  
-Selectors  
-Routes  
-Core architecture
+routes  
+selectors  
+workflow status  
+workflow/UI integration  
+core architecture  
+worktree operating rules
 
-Then AI must update corresponding docs in dev_docs.
+If a change affects parallel execution, update the relevant docs in:
 
-Docs must remain synchronized with implementation.
+- `WORKFLOW_STATUS.md`
+- `FRONTEND_BACKEND_CHECKLIST.md`
+- `PARALLEL_WORKTREE_PROTOCOL.md`
+- `WORKSTREAM_BOARD.md`
+- `DECISION_LOG.md`
 
 ---
 
-# 12. DEVELOPMENT LOG
+# 12. PARALLEL WORKTREE RULE
+
+Parallel work must follow:
+
+- `PARALLEL_WORKTREE_PROTOCOL.md`
+- `SHARED_SURFACES.md`
+- `TASK_PACK_TEMPLATE.md`
+- `WORKSTREAM_BOARD.md`
+
+Every parallel task needs:
+
+goal  
+owned paths  
+forbidden paths  
+required tests  
+handoff artifacts
+
+---
+
+# 13. DEVELOPMENT LOG
 
 Every iteration must record:
 
 changes made  
 files modified  
 tests executed  
-test results  
+test results
 
-Log must be saved in:
-
-dev_logs/
+Log under `dev_logs/`.
 
 ---
 

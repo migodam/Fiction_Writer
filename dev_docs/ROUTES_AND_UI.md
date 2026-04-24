@@ -1,5 +1,9 @@
 # Routes and UI
 
+> Status: reference-only route/UI snapshot.
+> Do not use this file as the active module inventory or route authority.
+> Use `dev_docs/PRODUCT_SPEC.md`, `dev_docs/README.md`, and `src/ui-react/config/routes.tsx` instead.
+
 ## Route Contract
 ### Workbench
 - `/workbench/inbox`

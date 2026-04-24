@@ -4,9 +4,7 @@
       "workbench": false,
       "graph": true,
       "consistency": true,
-      "beta-reader": true,
-      "characters": false,
-      "writing": false
+      "beta-reader": true
     },
     "sections": {
       "workbench.inbox": true,
