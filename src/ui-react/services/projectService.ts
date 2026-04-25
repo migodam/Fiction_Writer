@@ -1,11 +1,13 @@
 import type {
   CreateProjectInput,
+  EntityKind,
   ExportArtifact,
   ExportProjectInput,
   Locale,
   NarrativeProject,
   ProjectTemplate,
   Proposal,
+  ProposalOperation,
   StorageMode,
 } from '../models/project';
 import { PROJECT_SCHEMA_VERSION } from '../models/project';
@@ -887,93 +889,348 @@ export const projectService = {
       return project;
     }
 
+    const applyResult = nextStatus === 'accepted'
+      ? applyProposalOperations(project, target)
+      : { project, applied: false, blockedReason: null };
+    if (nextStatus === 'accepted' && applyResult.blockedReason) {
+      return {
+        ...project,
+        issues: upsertProposalBlockedIssue(project.issues, target, applyResult.blockedReason),
+        unreadUpdates: markProposalUnread(project.unreadUpdates, proposalId),
+      };
+    }
+
     const resolvedProposal: Proposal = {
       ...target,
       status: nextStatus,
       resolvedAt: new Date().toISOString(),
     };
+    const remainingProposals = project.proposals.filter((proposal) => proposal.id !== proposalId);
+    const hasUnreadInbox = remainingProposals.some((proposal) => proposal.status === 'pending' || !proposal.status);
 
     const withHistory: NarrativeProject = {
-      ...project,
-      proposals: project.proposals.filter((proposal) => proposal.id !== proposalId),
+      ...applyResult.project,
+      proposals: remainingProposals,
       proposalHistory: [resolvedProposal, ...project.proposalHistory],
-      issues: project.issues.map((issue) => {
+      issues: applyResult.project.issues.map((issue) => {
         const relatesToProposal = issue.id === target.originIssueId || issue.suggestedProposalIds?.includes(proposalId);
         if (!relatesToProposal) {
           return issue;
         }
+        const suggestedProposalIds = issue.suggestedProposalIds?.filter((id) => id !== proposalId);
         return {
           ...issue,
           status: nextStatus === 'accepted' ? 'resolved' : issue.status,
           visibility: nextStatus === 'accepted' ? 'history' : issue.visibility || 'default',
-          dismissedAt: nextStatus === 'rejected' ? new Date().toISOString() : issue.dismissedAt || null,
+          dismissedAt: nextStatus === 'accepted' ? new Date().toISOString() : issue.dismissedAt || null,
           resolvedByProposalId: nextStatus === 'accepted' ? proposalId : issue.resolvedByProposalId || null,
+          suggestedProposalIds,
         };
       }),
       unreadUpdates: {
-        ...project.unreadUpdates,
+        ...applyResult.project.unreadUpdates,
         entities: {
-          ...project.unreadUpdates.entities,
+          ...applyResult.project.unreadUpdates.entities,
           [proposalId]: false,
+          ...(nextStatus === 'accepted' ? buildResolvedProposalUnreadMap(target) : {}),
         },
         activities: {
-          ...project.unreadUpdates.activities,
-          workbench: project.proposals.length > 1,
+          ...applyResult.project.unreadUpdates.activities,
+          workbench: hasUnreadInbox,
         },
         sections: {
-          ...project.unreadUpdates.sections,
-          'workbench.inbox': project.proposals.length > 1,
+          ...applyResult.project.unreadUpdates.sections,
+          'workbench.inbox': hasUnreadInbox,
         },
       },
     };
 
-    // Apply entity data to project when accepting
-    const withEntity = nextStatus === 'accepted'
-      ? _applyProposalEntity(withHistory, target)
-      : withHistory;
-    return withEntity;
+    return withHistory;
   },
 };
 
-function _applyProposalEntity(project: NarrativeProject, proposal: Proposal): NarrativeProject {
-  // Sidecar proposals store entity info inside operations[0].
-  // Support both the sidecar format (operations[]) and any direct top-level fields.
-  type RawOp = { entityType?: string; fields?: Record<string, unknown> };
-  const rawOps = (proposal as unknown as { operations?: RawOp[] }).operations;
-  const op0: RawOp | undefined = rawOps?.[0] ?? proposal.proposedOperations?.[0];
-  const entityType: string | undefined = op0?.entityType ?? proposal.entityType;
-  const data: Record<string, unknown> | undefined = op0?.fields ?? proposal.data;
-  if (!data || !entityType || !data['id']) return project;
-  const id = data['id'] as string;
+type ProposalApplyResult = { project: NarrativeProject; applied: boolean; blockedReason: string | null };
+type RawProposalOperation = ProposalOperation & { entityType?: EntityKind | string; fields?: Record<string, unknown> };
+type EntityCollectionKey =
+  | 'characters'
+  | 'candidates'
+  | 'characterTags'
+  | 'timelineEvents'
+  | 'timelineBranches'
+  | 'relationships'
+  | 'chapters'
+  | 'scenes'
+  | 'worldContainers'
+  | 'worldItems';
+
+const proposalEntityCollections: Partial<Record<EntityKind, EntityCollectionKey>> = {
+  character: 'characters',
+  candidate: 'candidates',
+  character_tag: 'characterTags',
+  timeline_event: 'timelineEvents',
+  timeline_branch: 'timelineBranches',
+  relationship: 'relationships',
+  chapter: 'chapters',
+  scene: 'scenes',
+  world_container: 'worldContainers',
+  world_item: 'worldItems',
+};
+
+const getProposalOperations = (proposal: Proposal): RawProposalOperation[] => {
+  const sidecarOps = (proposal as unknown as { operations?: RawProposalOperation[] }).operations;
+  if (Array.isArray(sidecarOps) && sidecarOps.length) return sidecarOps;
+  if (Array.isArray(proposal.proposedOperations) && proposal.proposedOperations.length) return proposal.proposedOperations;
+  if (proposal.entityType || proposal.data) {
+    return [{
+      op: proposal.targetEntityId ? 'update' : 'create',
+      entityType: (proposal.entityType || proposal.targetEntityType) as EntityKind,
+      entityId: proposal.targetEntityId,
+      fields: proposal.data || {},
+    }];
+  }
+  return [];
+};
+
+const proposalScopedId = (proposal: Proposal, entityType: string) =>
+  `${entityType}_${proposal.id.replace(/^proposal_/, '').replace(/[^a-zA-Z0-9_]+/g, '_')}`;
+
+const applyProposalOperations = (project: NarrativeProject, proposal: Proposal): ProposalApplyResult => {
+  const operations = getProposalOperations(proposal);
+  if (!operations.length) return { project, applied: false, blockedReason: null };
+
+  let draft = project;
+  let applied = false;
+
+  for (const operation of operations) {
+    const entityType = operation.entityType as EntityKind | undefined;
+    const collectionKey = entityType ? proposalEntityCollections[entityType] : undefined;
+    if (!entityType || !collectionKey) {
+      continue;
+    }
+
+    const result = applyProposalOperation(draft, proposal, operation, entityType, collectionKey);
+    if (result.blockedReason) {
+      return { project, applied: false, blockedReason: result.blockedReason };
+    }
+    draft = result.project;
+    applied = applied || result.applied;
+  }
+
+  if (!applied) {
+    return { project, applied: false, blockedReason: 'Proposal did not contain a supported canonical change.' };
+  }
+
+  return { project: draft, applied, blockedReason: null };
+};
+
+const applyProposalOperation = (
+  project: NarrativeProject,
+  proposal: Proposal,
+  operation: RawProposalOperation,
+  entityType: EntityKind,
+  collectionKey: EntityCollectionKey,
+): ProposalApplyResult => {
+  const records = project[collectionKey] as unknown as Array<Record<string, unknown>>;
+  const fields = operation.fields || {};
+  const id = String(operation.entityId || fields.id || proposal.targetEntityId || proposalScopedId(proposal, entityType));
+
+  if (operation.op === 'delete') {
+    if (hasEntityReferences(project, entityType, id)) {
+      return { project, applied: false, blockedReason: `Cannot delete ${entityType} ${id}; references still exist.` };
+    }
+    return {
+      project: { ...project, [collectionKey]: records.filter((entry) => entry.id !== id) } as NarrativeProject,
+      applied: records.some((entry) => entry.id === id),
+      blockedReason: null,
+    };
+  }
+
+  if (operation.op === 'link' || operation.op === 'unlink') {
+    return { project, applied: false, blockedReason: `Proposal operation ${operation.op} is not supported by the Workbench safety applier.` };
+  }
+
+  const existing = records.find((entry) => entry.id === id);
+  const nextEntity = operation.op === 'update'
+    ? { ...(existing || {}), ...fields, id }
+    : buildProposalEntity(project, proposal, entityType, id, fields);
+  const validationError = validateProposalEntityReferences(project, entityType, nextEntity);
+  if (validationError) {
+    return { project, applied: false, blockedReason: validationError };
+  }
+
+  if (operation.op === 'update') {
+    if (!existing) {
+      return { project, applied: false, blockedReason: `Cannot update missing ${entityType} ${id}.` };
+    }
+    return {
+      project: { ...project, [collectionKey]: records.map((entry) => entry.id === id ? nextEntity : entry) } as NarrativeProject,
+      applied: true,
+      blockedReason: null,
+    };
+  }
+
+  if (existing) {
+    return { project, applied: false, blockedReason: `Cannot create duplicate ${entityType} ${id}.` };
+  }
+
+  return {
+    project: { ...project, [collectionKey]: [...records, nextEntity] } as NarrativeProject,
+    applied: true,
+    blockedReason: null,
+  };
+};
+
+const buildProposalEntity = (
+  project: NarrativeProject,
+  proposal: Proposal,
+  entityType: EntityKind,
+  id: string,
+  fields: Record<string, unknown>,
+): Record<string, unknown> => {
+  const title = String(fields.title || fields.name || proposal.title);
   switch (entityType) {
     case 'character':
-      if (project.characters.some(c => c.id === id)) return project;
-      return { ...project, characters: [...project.characters, data as any] };
-    case 'timeline_event':
-      if (project.timelineEvents.some(e => e.id === id)) return project;
-      return { ...project, timelineEvents: [...project.timelineEvents, data as any] };
-    case 'relationship':
-      if (project.relationships.some(r => r.id === id)) return project;
-      return { ...project, relationships: [...project.relationships, data as any] };
-    case 'world_item':
-      if (project.worldItems.some(w => w.id === id)) return project;
-      return { ...project, worldItems: [...project.worldItems, data as any] };
+      return { id, name: title, summary: '', background: '', aliases: [], birthdayText: '', tagIds: [], organizationIds: [], linkedSceneIds: [], linkedEventIds: [], linkedWorldItemIds: [], statusFlags: {}, ...fields };
+    case 'candidate':
+      return { id, name: title, background: '', summary: '', ...fields };
     case 'character_tag':
-      if (project.characterTags.some(t => t.id === id)) return project;
-      return { ...project, characterTags: [...project.characterTags, data as any] };
+      return { id, name: title, color: '#f59e0b', description: '', characterIds: [], ...fields };
+    case 'timeline_event':
+      return { id, title, summary: '', branchId: project.timelineBranches[0]?.id || '', orderIndex: project.timelineEvents.length, locationIds: [], participantCharacterIds: [], linkedSceneIds: [], linkedWorldItemIds: [], tags: [], ...fields };
     case 'timeline_branch':
-      if (project.timelineBranches.some(b => b.id === id)) return project;
-      return { ...project, timelineBranches: [...project.timelineBranches, data as any] };
-    case 'world_container':
-      if (project.worldContainers.some(c => c.id === id)) return project;
-      return { ...project, worldContainers: [...project.worldContainers, data as any] };
-    case 'scene':
-      if (project.scenes.some(s => s.id === id)) return project;
-      return { ...project, scenes: [...project.scenes, data as any] };
+      return { id, name: title, description: '', color: '#f59e0b', sortOrder: project.timelineBranches.length, collapsed: false, mode: project.timelineBranches.length ? 'independent' : 'root', ...fields };
+    case 'relationship':
+      return { id, sourceId: '', targetId: '', type: 'related', description: '', ...fields };
     case 'chapter':
-      if (project.chapters.some(c => c.id === id)) return project;
-      return { ...project, chapters: [...project.chapters, data as any] };
+      return { id, title, summary: '', goal: '', notes: '', sceneIds: [], orderIndex: project.chapters.length, status: 'draft', ...fields };
+    case 'scene':
+      return { id, chapterId: project.chapters[0]?.id || '', title, summary: '', content: '', orderIndex: project.scenes.length, povCharacterId: null, linkedCharacterIds: [], linkedEventIds: [], linkedWorldItemIds: [], status: 'draft', ...fields };
+    case 'world_container':
+      return { id, name: title, type: 'notebook', isDefault: false, sortOrder: project.worldContainers.length, ...fields };
+    case 'world_item':
+      return { id, containerId: project.worldContainers[0]?.id || '', type: 'note', name: title, description: '', attributes: [], linkedCharacterIds: [], linkedEventIds: [], linkedSceneIds: [], mapMarkers: [], ...fields };
     default:
-      return project;
+      return { id, ...fields };
   }
-}
+};
+
+const missingIds = (ids: unknown, allowedIds: Set<string>) =>
+  (Array.isArray(ids) ? ids.map(String) : []).filter((id) => id && !allowedIds.has(id));
+
+const validateProposalEntityReferences = (
+  project: NarrativeProject,
+  entityType: EntityKind,
+  entity: Record<string, unknown>,
+): string | null => {
+  const characters = new Set(project.characters.map((item) => item.id));
+  const scenes = new Set(project.scenes.map((item) => item.id));
+  const events = new Set(project.timelineEvents.map((item) => item.id));
+  const branches = new Set(project.timelineBranches.map((item) => item.id));
+  const worldItems = new Set(project.worldItems.map((item) => item.id));
+  const containers = new Set(project.worldContainers.map((item) => item.id));
+  const tags = new Set(project.characterTags.map((item) => item.id));
+  const chapters = new Set(project.chapters.map((item) => item.id));
+
+  const fail = (label: string, ids: string[]) => ids.length ? `${entityType} ${entity.id} references missing ${label}: ${ids.join(', ')}` : null;
+
+  if (entityType === 'timeline_event') {
+    if (entity.branchId && !branches.has(String(entity.branchId))) return `${entityType} ${entity.id} references missing branch: ${String(entity.branchId)}`;
+    return fail('characters', missingIds(entity.participantCharacterIds, characters))
+      || fail('scenes', missingIds(entity.linkedSceneIds, scenes))
+      || fail('world items', [...missingIds(entity.locationIds, worldItems), ...missingIds(entity.linkedWorldItemIds, worldItems)]);
+  }
+  if (entityType === 'scene') {
+    if (entity.chapterId && !chapters.has(String(entity.chapterId))) return `${entityType} ${entity.id} references missing chapter: ${String(entity.chapterId)}`;
+    if (entity.povCharacterId && !characters.has(String(entity.povCharacterId))) return `${entityType} ${entity.id} references missing POV character: ${String(entity.povCharacterId)}`;
+    return fail('characters', missingIds(entity.linkedCharacterIds, characters))
+      || fail('events', missingIds(entity.linkedEventIds, events))
+      || fail('world items', missingIds(entity.linkedWorldItemIds, worldItems));
+  }
+  if (entityType === 'chapter') return fail('scenes', missingIds(entity.sceneIds, scenes));
+  if (entityType === 'character') {
+    return fail('tags', missingIds(entity.tagIds, tags))
+      || fail('scenes', missingIds(entity.linkedSceneIds, scenes))
+      || fail('events', missingIds(entity.linkedEventIds, events))
+      || fail('world items', missingIds(entity.linkedWorldItemIds, worldItems));
+  }
+  if (entityType === 'relationship') {
+    return fail('characters', [String(entity.sourceId || ''), String(entity.targetId || '')].filter((id) => id && !characters.has(id)));
+  }
+  if (entityType === 'world_item') {
+    if (entity.containerId && !containers.has(String(entity.containerId))) return `${entityType} ${entity.id} references missing container: ${String(entity.containerId)}`;
+    return fail('characters', missingIds(entity.linkedCharacterIds, characters))
+      || fail('events', missingIds(entity.linkedEventIds, events))
+      || fail('scenes', missingIds(entity.linkedSceneIds, scenes));
+  }
+  return null;
+};
+
+const hasEntityReferences = (project: NarrativeProject, entityType: EntityKind, id: string) => {
+  if (entityType === 'character') {
+    return project.scenes.some((scene) => scene.povCharacterId === id || scene.linkedCharacterIds.includes(id))
+      || project.timelineEvents.some((event) => event.participantCharacterIds.includes(id))
+      || project.worldItems.some((item) => item.linkedCharacterIds.includes(id))
+      || project.relationships.some((rel) => rel.sourceId === id || rel.targetId === id);
+  }
+  if (entityType === 'timeline_event') {
+    return project.characters.some((character) => character.linkedEventIds.includes(id))
+      || project.scenes.some((scene) => scene.linkedEventIds.includes(id))
+      || project.worldItems.some((item) => item.linkedEventIds.includes(id))
+      || project.timelineBranches.some((branch) => branch.forkEventId === id || branch.mergeEventId === id || branch.startAnchor?.eventId === id || branch.endAnchor?.eventId === id);
+  }
+  if (entityType === 'scene') {
+    return project.characters.some((character) => character.linkedSceneIds.includes(id))
+      || project.chapters.some((chapter) => chapter.sceneIds.includes(id))
+      || project.timelineEvents.some((event) => event.linkedSceneIds.includes(id))
+      || project.worldItems.some((item) => item.linkedSceneIds.includes(id));
+  }
+  if (entityType === 'world_item') {
+    return project.characters.some((character) => character.linkedWorldItemIds.includes(id))
+      || project.scenes.some((scene) => scene.linkedWorldItemIds.includes(id))
+      || project.timelineEvents.some((event) => event.locationIds.includes(id) || event.linkedWorldItemIds.includes(id));
+  }
+  return false;
+};
+
+const markProposalUnread = (unreadUpdates: NarrativeProject['unreadUpdates'], proposalId: string): NarrativeProject['unreadUpdates'] => ({
+  ...unreadUpdates,
+  activities: { ...unreadUpdates.activities, workbench: true },
+  sections: { ...unreadUpdates.sections, 'workbench.inbox': true },
+  entities: { ...unreadUpdates.entities, [proposalId]: true },
+});
+
+const buildResolvedProposalUnreadMap = (proposal: Proposal): Record<string, boolean> => {
+  const ids = [
+    proposal.originIssueId,
+    proposal.targetEntityId,
+    ...(proposal.targetEntityRefs || []).map((ref) => ref.id),
+  ].filter(Boolean) as string[];
+  return Object.fromEntries(ids.map((id) => [id, false]));
+};
+
+const upsertProposalBlockedIssue = (
+  issues: NarrativeProject['issues'],
+  proposal: Proposal,
+  reason: string,
+): NarrativeProject['issues'] => {
+  const id = `issue_proposal_blocked_${proposal.id}`;
+  const existing = issues.find((issue) => issue.id === id);
+  const nextIssue = {
+    id,
+    title: `Proposal blocked: ${proposal.title}`,
+    description: reason,
+    severity: 'high' as const,
+    status: 'open' as const,
+    source: proposal.source === 'consistency' ? 'consistency' as const : 'agent' as const,
+    referenceIds: proposal.targetEntityRefs || [],
+    suggestedProposalIds: [proposal.id],
+    fixSuggestion: 'Review the proposal payload before accepting.',
+    visibility: 'default' as const,
+    originTaskRunId: proposal.originTaskRunId || null,
+    resolvedByProposalId: null,
+    dismissedAt: null,
+  };
+  return existing
+    ? issues.map((issue) => issue.id === id ? { ...issue, ...nextIssue } : issue)
+    : [nextIssue, ...issues];
+};
