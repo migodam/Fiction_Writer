@@ -32,6 +32,7 @@ When adding a new button or feature:
 | Continue writing button | WritingWorkspace.tsx | startW3 | w3Start | w3:start | POST /workflow/w3/start | W3 Writing Assistant (DeepSeek) | ✅ COMPLETE | Phase 6: DeepSeek; endpoint routing fixed 2026-04-06 |
 | Select option (3-option mode) | WritingWorkspace.tsx | selectW3Option | w3Select | w3:select | POST /workflow/w3/select | W3 (resume) | ✅ COMPLETE | Phase 7: three_options + select verified (D5) |
 | W3 status poll | WritingWorkspace.tsx | — | w3Status | w3:status | GET /workflow/w3/status | — | 🔵 FRONTEND_ONLY | |
+| W2 sync selected chapter | WritingWorkspace.tsx | startManuscriptSync | w2Start + w2Status | w2:start + w2:status | POST /workflow/w2/start + GET /workflow/w2/status | W2 Manuscript Sync (DeepSeek) | ✅ COMPLETE | Writing Chapters trigger polls status, reports proposal count, and links to Workbench Inbox |
 
 ### Characters
 
@@ -111,7 +112,6 @@ When adding a new button or feature:
 | Cancel import | ImportWorkflow.tsx | cancelImport | w1Cancel | w1:cancel | POST /workflow/w1/cancel | — | ✅ COMPLETE | Verified by `tests/e2e/p1/import_workflow.spec.ts` on 2026-04-24 |
 | Accept proposal | WorkbenchWorkspace.tsx | acceptProposal | — | — | — | — | 🔵 FRONTEND_ONLY | |
 | Reject proposal | WorkbenchWorkspace.tsx | rejectProposal | — | — | — | — | 🔵 FRONTEND_ONLY | |
-| W2 Manuscript Sync | WorkbenchWorkspace.tsx | — | w2Start | w2:start | POST /workflow/w2/start | W2 Manuscript Sync (DeepSeek) | ⚠️ STUB | No UI trigger yet; router verified 2026-04-06 (requires mode: post_import/draft_only/single_chapter) |
 | Spawn sidecar | main.js / WorkbenchWorkspace | — | sidecarSpawn | sidecar:spawn | — (process) | — | 🔵 FRONTEND_ONLY | |
 | Force-clear workflow lock | WorkbenchWorkspace.tsx | — | — | workflow:force-clear | — | — | 🔵 FRONTEND_ONLY | |
 
@@ -152,7 +152,6 @@ _(none — all gaps resolved in Phase 7)_
 
 ### ⚠️ STUB items (chain exists but workflow is placeholder or not triggered from UI)
 
-- **W2 Manuscript Sync**: No UI button yet. Router + sidecar fully verified Phase 7 (all 3 modes: `post_import`, `draft_only`, `single_chapter`). Should be added to Workbench.
 - **W0 Orchestrator**: Backend fully verified Phase 7 (I1/I2/I3 goals). No UI panel to compose goals — needs Workbench Orchestrator section.
 
 ### 🧪 UNTESTED items (need runtime verification)

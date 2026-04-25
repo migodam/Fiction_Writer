@@ -303,6 +303,7 @@ interface ProjectState {
   w2Status: 'idle' | 'running' | 'done' | 'error';
   w2Progress: number;
   w2ProposalCount: number;
+  w2Errors: string[];
   startManuscriptSync: (payload: { projectRoot: string; mode: string; target_chapter_id?: string }) => Promise<void>;
 
   // Entity focus (navigates sidebar to entity)
@@ -1598,18 +1599,58 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   w2Status: 'idle',
   w2Progress: 0,
   w2ProposalCount: 0,
+  w2Errors: [],
   startManuscriptSync: async (payload) => {
     const { projectRoot } = get();
-    set({ w2Status: 'running', w2Progress: 0 });
+    const effectiveRoot = projectRoot || payload.projectRoot;
+    const appSettings = useUIStore.getState().appSettings;
+    const profiles = appSettings?.providerProfiles ?? [];
+    const modelProfiles = appSettings?.modelProfiles ?? [];
+    const profile = profiles.find((p: { id: string }) => p.id === appSettings?.selectedProviderProfileId) ?? profiles[0] as { apiKey?: string; endpoint?: string } | undefined;
+    const modelProfile = modelProfiles.find((m: { id: string }) => m.id === appSettings?.selectedModelProfileId) ?? modelProfiles[0] as { model?: string } | undefined;
+    set({ w2Status: 'running', w2Progress: 0, w2ProposalCount: 0, w2Errors: [] });
     try {
-      await electronApi.w2Start({
-        projectRoot: projectRoot || payload.projectRoot,
+      try { await electronApi.sidecarSpawn(effectiveRoot); } catch { /* best effort */ }
+      const start = await electronApi.w2Start({
+        projectRoot: effectiveRoot,
         mode: payload.mode,
         target_chapter_id: payload.target_chapter_id,
+        api_key: profile?.apiKey ?? '',
+        model: modelProfile?.model ?? 'deepseek-chat',
+        endpoint: profile?.endpoint ?? 'https://api.deepseek.com/v1',
       });
-      set({ w2Status: 'done' });
+      if (!start.session_id || start.status === 'error') {
+        set({ w2Status: 'error', w2Errors: [start.error || 'Manuscript sync failed to start'] });
+        return;
+      }
+      for (let i = 0; i < 150; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        const s = await electronApi.w2Status(effectiveRoot, start.session_id);
+        set({
+          w2Progress: s.progress ?? 0,
+          w2ProposalCount: s.proposals_count ?? 0,
+          w2Errors: s.errors ?? [],
+        });
+        if (s.status === 'done' || s.status === 'completed') {
+          set({ w2Status: 'done', w2Progress: 1, w2ProposalCount: s.proposals_count ?? 0 });
+          try {
+            if (effectiveRoot) {
+              const freshProject = projectService.openProject(effectiveRoot);
+              if (freshProject) {
+                get().loadProject(freshProject);
+              }
+            }
+          } catch { /* best effort */ }
+          return;
+        }
+        if (s.status === 'error' || s.status === 'failed') {
+          set({ w2Status: 'error', w2Errors: s.errors?.length ? s.errors : ['Manuscript sync failed'] });
+          return;
+        }
+      }
+      set({ w2Status: 'error', w2Errors: ['Manuscript sync timed out'] });
     } catch (e) {
-      set({ w2Status: 'error' });
+      set({ w2Status: 'error', w2Errors: [String(e)] });
     }
   },
 

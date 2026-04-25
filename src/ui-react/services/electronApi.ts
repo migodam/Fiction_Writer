@@ -99,11 +99,22 @@ export interface W2StartPayload {
   projectRoot: string;
   mode: string;
   target_chapter_id?: string;
+  api_key?: string;
+  model?: string;
+  endpoint?: string;
 }
 
 export interface W2StartResult {
   session_id: string;
   status: string;
+  error?: string;
+}
+
+export interface W2StatusResult {
+  status: string;
+  progress: number;
+  errors: string[];
+  proposals_count: number;
 }
 
 // ── W4 Consistency Check ─────────────────────────────────────────────────────
@@ -486,6 +497,12 @@ export const electronApi = {
     const ipcRenderer = getIpcRenderer();
     if (!ipcRenderer) return { session_id: '', status: 'error' };
     return (await ipcRenderer.invoke('w2:start', payload)) as W2StartResult;
+  },
+
+  async w2Status(projectRoot: string, sessionId: string): Promise<W2StatusResult> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return { status: 'error', progress: 0, errors: ['ipc_unavailable'], proposals_count: 0 };
+    return (await ipcRenderer.invoke('w2:status', { projectRoot, session_id: sessionId })) as W2StatusResult;
   },
 
   // ── W4 Consistency Check ──────────────────────────────────────────────────
