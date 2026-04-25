@@ -11,7 +11,7 @@ This is the status source of truth for W0-W7. Use `FRONTEND_BACKEND_CHECKLIST.md
 ## Workflow Matrix
 | Workflow | Purpose | Backend status | UI status | Current status | Integration source | Open gaps |
 |---|---|---|---|---|---|---|
-| W0 Orchestrator | Multi-step workflow planner/executor | Verified in sidecar | No dedicated production control surface yet | `ui-gap` | `FRONTEND_BACKEND_CHECKLIST.md` | Missing stable UI panel, child-step status reporting still noisy |
+| W0 Orchestrator | Multi-step workflow planner/executor | Verified in sidecar | Agents workspace control surface present for goal entry, status, permissions, and results | `active` | `FRONTEND_BACKEND_CHECKLIST.md` | Needs live sidecar/provider regression after WS-01/WS-03 integration rebase |
 | W1 Import | Novel/file import into proposals and project structure | Verified and actively used | Import modal and polling flow present | `active` | `FRONTEND_BACKEND_CHECKLIST.md` | Quality still being tuned for chunking/entity completeness |
 | W2 Manuscript Sync | Sync writing content back into canonical/project data proposals | Verified in backend | No stable user-facing trigger in current UI | `ui-gap` | `FRONTEND_BACKEND_CHECKLIST.md` | Need trigger placement, UX copy, acceptance tests |
 | W3 Writing Assistant | Continue/rewrite/expand/improve-dialogue flows | Verified and wired | Available in writing flows | `active` | `FRONTEND_BACKEND_CHECKLIST.md` | Occasional preamble text still needs prompt hardening |
@@ -21,7 +21,6 @@ This is the status source of truth for W0-W7. Use `FRONTEND_BACKEND_CHECKLIST.md
 | W7 Metadata Ingestion | Reference library ingestion and style grounding | Verified and wired | Metadata workspace supports import and status | `active` | `FRONTEND_BACKEND_CHECKLIST.md` | Style extraction quality still uneven for some genres |
 
 ## Current Product Gaps That Are Real
-- W0 backend exists, but there is no canonical production UI for goal composition, permissions, and step control.
 - W2 backend exists, but there is no canonical production UI trigger or acceptance loop for sync proposals.
 - Proposal acceptance and canonical-data safety still need a stronger end-to-end user path across Workbench, Writing, and shared references.
 - Publish/export remains present as a workspace but is not yet a fully closed delivery surface.
@@ -31,3 +30,9 @@ This is the status source of truth for W0-W7. Use `FRONTEND_BACKEND_CHECKLIST.md
 - Status changes update this file.
 - Bridge/action wiring changes update `FRONTEND_BACKEND_CHECKLIST.md`.
 - Deep workflow implementation details remain in code and `langgraph.md`, which is reference-only.
+
+## W0 UI Control Surface Notes
+- Entry point: Agents activity (`/agents/console`), `W0 Orchestrator` panel above Agent Chat.
+- User path: compose goal -> start W0 -> watch plan/progress/status -> grant or deny permission if the sidecar returns `waiting_permission` -> read completion or error card.
+- Status source: Zustand orchestrator state backed by `orchestrator:start`, `orchestrator:status`, `orchestrator:grant`, and `orchestrator:deny`.
+- 2026-04-24 WS-02 scoped W0 fix: child workflows that return `done`/`completed` directly from their start endpoint are marked completed immediately instead of being polled into a false timeout/failure.
