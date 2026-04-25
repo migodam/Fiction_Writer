@@ -257,24 +257,35 @@ async def node_execute_step(state: dict) -> dict:
             resp.raise_for_status()
             start_data = resp.json()
             session_id = start_data.get("session_id", "")
+            start_status = start_data.get("status", "")
 
-            # Poll for completion (max 5 min)
-            status_path = _workflow_status_for(workflow)
-            for _ in range(150):
-                await asyncio.sleep(2)
-                try:
-                    s = await client.get(f"{base}{status_path}", params={"session_id": session_id})
-                    s_data = s.json()
-                    w_status = s_data.get("status", "")
-                    if w_status in ("done", "completed", "error", "failed"):
-                        step_result["status"] = "completed" if w_status in ("done", "completed") else "failed"
-                        step_result["summary"] = json.dumps(s_data)[:400]
-                        break
-                except Exception:
-                    continue
-            else:
+            if start_status in ("done", "completed"):
+                step_result["status"] = "completed"
+                step_result["summary"] = json.dumps(start_data)[:400]
+            elif start_status in ("error", "failed"):
                 step_result["status"] = "failed"
-                step_result["summary"] = "Timed out"
+                step_result["summary"] = json.dumps(start_data)[:400]
+            elif not session_id:
+                step_result["status"] = "failed"
+                step_result["summary"] = f"Missing child workflow session_id after status '{start_status}'"
+            else:
+                # Poll for completion (max 5 min)
+                status_path = _workflow_status_for(workflow)
+                for _ in range(150):
+                    await asyncio.sleep(2)
+                    try:
+                        s = await client.get(f"{base}{status_path}", params={"session_id": session_id})
+                        s_data = s.json()
+                        w_status = s_data.get("status", "")
+                        if w_status in ("done", "completed", "error", "failed"):
+                            step_result["status"] = "completed" if w_status in ("done", "completed") else "failed"
+                            step_result["summary"] = json.dumps(s_data)[:400]
+                            break
+                    except Exception:
+                        continue
+                else:
+                    step_result["status"] = "failed"
+                    step_result["summary"] = "Timed out"
 
         updated_plan[current] = {**step, "status": step_result.get("status", "done")}
     except Exception as e:

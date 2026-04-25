@@ -342,6 +342,7 @@ interface ProjectState {
   orchestratorPlan: any[];
   orchestratorCurrentStep: number;
   orchestratorPendingPermission: any | null;
+  orchestratorErrors: string[];
   orchestratorSessionId: string | null;
   startOrchestrator: (payload: { projectRoot: string; goal: string; auto_apply_threshold?: number }) => Promise<void>;
   grantPermission: (projectRoot: string, stepId: string) => Promise<void>;
@@ -1814,6 +1815,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   orchestratorPlan: [],
   orchestratorCurrentStep: 0,
   orchestratorPendingPermission: null,
+  orchestratorErrors: [],
   orchestratorSessionId: null,
   startOrchestrator: async (payload) => {
     const appSettings = useUIStore.getState().appSettings;
@@ -1824,10 +1826,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const api_key = profile?.apiKey ?? '';
     const model = modelProfile?.model ?? 'deepseek-chat';
     const endpoint = profile?.endpoint ?? 'https://api.deepseek.com/v1';
-    set({ orchestratorStatus: 'planning', orchestratorProgress: 0, orchestratorPlan: [], orchestratorCurrentStep: 0, orchestratorPendingPermission: null, orchestratorSessionId: null });
+    set({ orchestratorStatus: 'planning', orchestratorProgress: 0, orchestratorPlan: [], orchestratorCurrentStep: 0, orchestratorPendingPermission: null, orchestratorErrors: [], orchestratorSessionId: null });
     try {
       const start = await electronApi.orchestratorStart({ ...payload, api_key, model, endpoint });
-      if (!start.session_id || start.status === 'error') { set({ orchestratorStatus: 'error' }); return; }
+      if (!start.session_id || start.status === 'error') { set({ orchestratorStatus: 'error', orchestratorErrors: ['Failed to start W0 orchestrator.'] }); return; }
       set({ orchestratorSessionId: start.session_id });
       const poll = async () => {
         for (let i = 0; i < 300; i++) {
@@ -1838,6 +1840,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
             orchestratorPlan: s.plan ?? [],
             orchestratorCurrentStep: s.current_step,
             orchestratorPendingPermission: s.pending_permission ?? null,
+            orchestratorErrors: s.errors ?? [],
           });
           const st = s.status as string;
           if (st === 'waiting_permission') { set({ orchestratorStatus: 'waiting_permission' }); return; }
@@ -1845,10 +1848,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           if (st === 'error' || st === 'failed') { set({ orchestratorStatus: 'error' }); return; }
           if (st === 'executing') { set({ orchestratorStatus: 'executing' }); }
         }
-        set({ orchestratorStatus: 'error' });
+        set({ orchestratorStatus: 'error', orchestratorErrors: ['W0 timed out before completion.'] });
       };
       await poll();
-    } catch { set({ orchestratorStatus: 'error' }); }
+    } catch (err) { set({ orchestratorStatus: 'error', orchestratorErrors: [String(err)] }); }
   },
   grantPermission: async (projectRoot, stepId) => {
     const { orchestratorSessionId } = get();
@@ -1865,13 +1868,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           orchestratorPlan: s.plan ?? [],
           orchestratorCurrentStep: s.current_step,
           orchestratorPendingPermission: s.pending_permission ?? null,
+          orchestratorErrors: s.errors ?? [],
         });
         const st = s.status as string;
         if (st === 'waiting_permission') { set({ orchestratorStatus: 'waiting_permission' }); return; }
         if (st === 'done' || st === 'completed') { set({ orchestratorStatus: 'done', orchestratorProgress: 1 }); return; }
         if (st === 'error' || st === 'failed') { set({ orchestratorStatus: 'error' }); return; }
       }
-      set({ orchestratorStatus: 'error' });
+      set({ orchestratorStatus: 'error', orchestratorErrors: ['W0 timed out before completion.'] });
     };
     poll();
   },
@@ -1879,7 +1883,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const { orchestratorSessionId } = get();
     if (!orchestratorSessionId) return;
     await electronApi.orchestratorDeny(projectRoot, stepId, orchestratorSessionId, reason);
-    set({ orchestratorStatus: 'error', orchestratorPendingPermission: null });
+    set({ orchestratorStatus: 'error', orchestratorPendingPermission: null, orchestratorErrors: [`Permission denied: ${reason}`] });
   },
   resetOrchestrator: () => set({
     orchestratorStatus: 'idle',
@@ -1887,6 +1891,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     orchestratorPlan: [],
     orchestratorCurrentStep: 0,
     orchestratorPendingPermission: null,
+    orchestratorErrors: [],
     orchestratorSessionId: null,
   }),
 

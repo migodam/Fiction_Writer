@@ -83,6 +83,10 @@ When adding a new button or feature:
 | Send chat message | AgentChat.tsx | addTaskRequest + addTaskRun | aiChat | ai:chat | — (provider direct) | Configured AI provider | ✅ COMPLETE | Phase 6: wired to real ai:chat; was hardcoded mock; needs real API key |
 | Mode switch tabs | AgentChat.tsx | setAgentChatMode (UIStore) | — | — | — | — | ✅ COMPLETE | Phase 6: persists across nav |
 | Chat messages persist | AgentChat.tsx | agentChatMessages (UIStore) | — | — | — | — | ✅ COMPLETE | Phase 6: route persistence fixed |
+| W0 goal/start control | W0OrchestratorPanel.tsx | startOrchestrator | orchestratorStart | orchestrator:start | POST /orchestrator/start | W0 Orchestrator (DeepSeek) | ✅ COMPLETE | Added WS-02 2026-04-24; Playwright mocked IPC coverage in `w0_orchestrator_ui.spec.ts` |
+| W0 status/progress display | W0OrchestratorPanel.tsx | orchestratorStatus/progress/plan state | orchestratorStatus | orchestrator:status | GET /orchestrator/status | — | ✅ COMPLETE | Shows plan, progress, current step, completion, and errors |
+| W0 permission grant | W0OrchestratorPanel.tsx | grantPermission | orchestratorGrant | orchestrator:grant | POST /orchestrator/permission/{id}/grant | — | ✅ COMPLETE | Shows permission card when status is `waiting_permission` |
+| W0 permission deny | W0OrchestratorPanel.tsx | denyPermission | orchestratorDeny | orchestrator:deny | POST /orchestrator/permission/{id}/deny | — | ✅ COMPLETE | Denial moves UI to error state with reason |
 
 ### Simulation Lab
 
@@ -127,10 +131,10 @@ When adding a new button or feature:
 
 | UI Element | Component File | Store Action | electronApi Method | IPC Channel | Sidecar Endpoint | AI Workflow | Status | Notes |
 |---|---|---|---|---|---|---|---|---|
-| Start orchestrator | — (no UI yet) | startOrchestrator | orchestratorStart | orchestrator:start | POST /orchestrator/start | W0 Orchestrator (DeepSeek) | ✅ COMPLETE | Phase 7: W0 tested via curl (I1/I2/I3 PASS); no UI panel yet |
-| Orchestrator status | — | — | orchestratorStatus | orchestrator:status | GET /orchestrator/status | — | ✅ COMPLETE | Phase 7: polling verified; returns plan + current_step + progress |
-| Grant permission | — | grantPermission | orchestratorGrant | orchestrator:grant | POST /orchestrator/permission/{id}/grant | — | ✅ COMPLETE | Phase 7: auto_approve_all bypass tested; manual grant endpoint verified |
-| Deny permission | — | denyPermission | orchestratorDeny | orchestrator:deny | POST /orchestrator/permission/{id}/deny | — | ✅ COMPLETE | Phase 7: deny sets status=error |
+| Start orchestrator | W0OrchestratorPanel.tsx | startOrchestrator | orchestratorStart | orchestrator:start | POST /orchestrator/start | W0 Orchestrator (DeepSeek) | ✅ COMPLETE | Canonical UI entry in Agents workspace; Phase 7 curl verification plus WS-02 UI coverage |
+| Orchestrator status | W0OrchestratorPanel.tsx | orchestratorStatus/progress/plan/errors state | orchestratorStatus | orchestrator:status | GET /orchestrator/status | — | ✅ COMPLETE | Polling returns plan + current_step + progress + errors for UI state |
+| Grant permission | W0OrchestratorPanel.tsx | grantPermission | orchestratorGrant | orchestrator:grant | POST /orchestrator/permission/{id}/grant | — | ✅ COMPLETE | Manual grant resumes polling |
+| Deny permission | W0OrchestratorPanel.tsx | denyPermission | orchestratorDeny | orchestrator:deny | POST /orchestrator/permission/{id}/deny | — | ✅ COMPLETE | Deny sets status=error and surfaces reason in UI |
 
 ### App Settings
 
@@ -152,7 +156,7 @@ _(none — all gaps resolved in Phase 7)_
 
 ### ⚠️ STUB items (chain exists but workflow is placeholder or not triggered from UI)
 
-- **W0 Orchestrator**: Backend fully verified Phase 7 (I1/I2/I3 goals). No UI panel to compose goals — needs Workbench Orchestrator section.
+_(none currently tracked in this file)_
 
 ### 🧪 UNTESTED items (need runtime verification)
 
@@ -172,6 +176,5 @@ _(none currently tracked in this file)_
 
 ### Remaining Non-Blocking Issues
 
-1. W0 child step status shows "failed" prematurely — first poll sees "running" before workflow completes. Non-blocking: session shows "done" correctly.
-2. W3 occasional preamble headers ("续写内容：") in direct_output mode. Prompt improvement needed.
-3. W7 `pov_style` returns "unknown" for xianxia. Needs Chinese-literature pov vocabulary in prompt.
+1. W3 occasional preamble headers ("续写内容：") in direct_output mode. Prompt improvement needed.
+2. W7 `pov_style` returns "unknown" for xianxia. Needs Chinese-literature pov vocabulary in prompt.

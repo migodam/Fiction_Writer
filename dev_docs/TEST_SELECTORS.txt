@@ -350,5 +350,28 @@ w1-success-msg           (completion success paragraph)
 w1-close-btn             (close modal button)
 
 ==================================================
+23 ORCHESTRATOR WORKFLOW (W0)
+==================================================
+
+w0-orchestrator-panel    (canonical W0 control surface in Agents workspace)
+w0-goal-input            (goal composition textarea)
+w0-start-btn             (start W0 button)
+w0-reset-btn             (reset local W0 UI state button)
+w0-status                (current W0 status label)
+w0-progress-label        (percentage label)
+w0-progress-bar          (progress bar div)
+w0-step-counter          (current step / total step label)
+w0-session-id            (active sidecar session identifier)
+w0-permission-card       (permission request card)
+w0-grant-btn             (grant pending permission)
+w0-deny-reason-input     (permission denial reason input)
+w0-deny-btn              (deny pending permission)
+w0-error-card            (error state card)
+w0-result-card           (completion state card)
+w0-plan-list             (planned workflow step list)
+w0-plan-empty            (empty plan placeholder)
+w0-plan-step-<index>     (planned workflow step card)
+
+==================================================
 END
 ==================================================
