@@ -3,6 +3,7 @@
 This board contains ready-to-assign task packs for the next execution wave. Primary write scopes are intentionally non-overlapping. Shared surfaces require explicit reservation per `SHARED_SURFACES.md`.
 
 ## WS-01 — W2 Manuscript Sync UI Closure
+- Integration status: merged into `codex/integration-wave1` on 2026-04-25.
 - Owner role: Writing/workflow owner
 - Allowed write scope:
   - `src/ui-react/components/ManuscriptWorkspace.tsx`
@@ -25,6 +26,7 @@ This board contains ready-to-assign task packs for the next execution wave. Prim
   - `tests/e2e/p0/navigation.spec.ts`
 
 ## WS-02 — W0 Orchestrator UI and Control Surface
+- Integration status: merged into `codex/integration-wave1` on 2026-04-25.
 - Owner role: Agent/workflow owner
 - Allowed write scope:
   - `src/ui-react/components/AgentWorkspace.tsx`
@@ -47,6 +49,7 @@ This board contains ready-to-assign task packs for the next execution wave. Prim
   - `tests/e2e/p0/navigation.spec.ts`
 
 ## WS-03 — Proposal Acceptance and Canonical Data Safety Closure
+- Integration status: merged into `codex/integration-wave1` on 2026-04-25.
 - Owner role: Workbench/data owner
 - Allowed write scope:
   - `src/ui-react/components/WorkbenchWorkspace.tsx`
