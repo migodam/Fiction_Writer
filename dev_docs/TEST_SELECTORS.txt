@@ -210,6 +210,13 @@ editor-rewrite-btn
 editor-continue-btn
 editor-dialogue-btn
 
+w2-sync-chapter-btn
+w2-status-card
+w2-status-label
+w2-progress-bar
+w2-open-workbench-btn
+w2-error-msg
+
 context-panel
 
 context-insert-event

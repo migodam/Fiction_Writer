@@ -596,6 +596,14 @@ ipcMain.handle('w2:start', async (_event, payload) => {
   }
 });
 
+ipcMain.handle('w2:status', async (_event, { projectRoot, session_id }) => {
+  try {
+    return await proxyToSidecar(projectRoot, `/workflow/w2/status?session_id=${session_id}`, 'GET');
+  } catch (err) {
+    return { status: 'error', progress: 0, errors: [err.message], proposals_count: 0 };
+  }
+});
+
 // ── W4 Consistency Check IPC handlers ──────────────────────────────────────
 
 ipcMain.handle('w4:start', async (_event, payload) => {
