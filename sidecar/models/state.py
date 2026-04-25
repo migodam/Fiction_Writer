@@ -50,6 +50,20 @@ class ChunkExtraction(TypedDict):
     notes: List[str]
 
 
+class ChunkLogEntry(TypedDict):
+    chunk_id: int
+    total_chunks: int
+    step: str
+    new_characters: int
+    updated_characters: int
+    new_events: int
+    new_world: int
+    duration_ms: int
+    excerpt: str        # first 200 chars of raw chunk content
+    errors: List[str]
+    timestamp: str      # ISO-8601
+
+
 class ManuscriptChapter(TypedDict):
     chapter_id: str
     title: str

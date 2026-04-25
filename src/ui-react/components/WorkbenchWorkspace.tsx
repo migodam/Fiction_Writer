@@ -18,6 +18,7 @@ export const WorkbenchWorkspace = () => {
     promptTemplates,
     todos,
     resolveProposal,
+    resolveAllProposals,
     addImportJob,
     updateImportJob,
     addChapter,
@@ -168,6 +169,19 @@ export const WorkbenchWorkspace = () => {
 
         {sidebarSection === 'inbox' && (
           <div className="space-y-4" data-testid="workbench-inbox-list">
+            {proposals.length > 1 && (
+              <div className="flex justify-end mb-4">
+                <button
+                  type="button"
+                  data-testid="accept-all-proposals-btn"
+                  className="inline-flex items-center gap-2 rounded-lg bg-green px-5 py-2 text-[11px] font-black uppercase tracking-widest text-text-invert"
+                  onClick={() => resolveAllProposals('accepted')}
+                >
+                  <CheckCircle2 size={14} />
+                  {t('workbench.acceptAll', 'Accept All')} ({proposals.length})
+                </button>
+              </div>
+            )}
             {proposals.map((proposal) => (
               <div key={proposal.id} className="rounded-2xl border border-border bg-card p-6 shadow-1" data-testid={`proposal-card-${proposal.id}`}>
                 <div className="mb-4 flex items-start justify-between gap-4">
@@ -180,11 +194,11 @@ export const WorkbenchWorkspace = () => {
                 <p className="text-sm leading-relaxed text-text-2">{proposal.description}</p>
                 <div className="mt-4 rounded-xl border border-border bg-bg-elev-1 p-4 text-sm text-text-2">{proposal.preview}</div>
                 <div className="mt-5 flex items-center gap-3">
-                  <button type="button" data-testid="proposal-accept-btn" className="inline-flex items-center gap-2 rounded-lg bg-green px-4 py-2 text-[11px] font-black uppercase tracking-widest text-text-invert" onClick={() => resolveProposal(proposal.id, 'accepted')}>
+                  <button type="button" data-testid={`proposal-accept-${proposal.id}`} className="inline-flex items-center gap-2 rounded-lg bg-green px-4 py-2 text-[11px] font-black uppercase tracking-widest text-text-invert" onClick={() => resolveProposal(proposal.id, 'accepted')}>
                     <CheckCircle2 size={14} />
                     {t('workbench.accept')}
                   </button>
-                  <button type="button" data-testid="proposal-reject-btn" className="inline-flex items-center gap-2 rounded-lg border border-red/40 px-4 py-2 text-[11px] font-black uppercase tracking-widest text-red" onClick={() => resolveProposal(proposal.id, 'rejected')}>
+                  <button type="button" data-testid={`proposal-reject-${proposal.id}`} className="inline-flex items-center gap-2 rounded-lg border border-red/40 px-4 py-2 text-[11px] font-black uppercase tracking-widest text-red" onClick={() => resolveProposal(proposal.id, 'rejected')}>
                     <XCircle size={14} />
                     {t('workbench.reject')}
                   </button>
@@ -196,7 +210,7 @@ export const WorkbenchWorkspace = () => {
         )}
 
         {sidebarSection === 'history' && (
-          <div className="space-y-4">
+          <div className="space-y-4" data-testid="workbench-history-list">
             {proposalHistory.map((proposal) => (
               <div key={proposal.id} className="rounded-2xl border border-border bg-card p-5 shadow-1">
                 <div className="flex items-center justify-between gap-4">
@@ -233,7 +247,7 @@ export const WorkbenchWorkspace = () => {
         {sidebarSection === 'imports' && <ImportsPanel importJobs={importJobs} onSelect={(id) => setSelectedEntity('import_job', id)} onOpenImport={() => setImportState((current) => ({ ...current, open: true }))} />}
 
         {sidebarSection === 'runs' && (
-          <div className="space-y-4">
+          <div className="space-y-4" data-testid="workbench-runs-list">
             {taskRuns.map((run) => (
               <div key={run.id} className="rounded-2xl border border-border bg-card p-6 shadow-1">
                 <div className="mb-3 flex items-start justify-between gap-4">
@@ -269,7 +283,7 @@ export const WorkbenchWorkspace = () => {
         )}
 
         {sidebarSection === 'prompts' && (
-          <div className="space-y-4">
+          <div className="space-y-4" data-testid="workbench-prompts-list">
             {promptTemplates.map((template) => (
               <button key={template.id} type="button" className="w-full rounded-2xl border border-border bg-card p-6 text-left shadow-1" onClick={() => setSelectedEntity('prompt_template', template.id)}>
                 <div className="mb-3 flex items-start justify-between gap-4">

@@ -44,7 +44,7 @@ test.describe('Cross-page links', () => {
     await page.getByTestId('activity-btn-workbench').click();
     await expect(page.getByText('Convert public fallout note into timeline candidate')).toBeVisible();
 
-    await page.getByTestId('proposal-accept-btn').first().click();
+    await page.getByTestId('proposal-accept-proposal_graph_public_fallout').click();
     await page.getByTestId('sidebar-section-workbench-history').click();
 
     const historyList = page.getByTestId('workbench-history-list');
