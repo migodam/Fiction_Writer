@@ -16,6 +16,9 @@ Every session must start with:
 
 Do not guess which doc is canonical. `dev_docs/README.md` decides that.
 
+Workflow-specific source of truth:
+- `dev_docs/W1_IMPORT_COMPILER.md` for W1 import architecture, artifacts, prompt profiles, and timeline proposal requirements.
+
 ---
 
 # 2. SOURCE-OF-TRUTH RULE

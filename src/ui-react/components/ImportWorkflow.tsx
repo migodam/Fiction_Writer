@@ -17,7 +17,9 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
   const w1Errors = useProjectStore((s) => s.w1Errors);
   const w1CurrentStep = useProjectStore((s) => s.w1CurrentStep);
   const w1ImportMode = useProjectStore((s) => s.w1ImportMode);
+  const w1PromptProfile = useProjectStore((s) => s.w1PromptProfile);
   const setW1ImportMode = useProjectStore((s) => s.setW1ImportMode);
+  const setW1PromptProfile = useProjectStore((s) => s.setW1PromptProfile);
   const startImport = useProjectStore((s) => s.startImport);
   const cancelImport = useProjectStore((s) => s.cancelImport);
   const { t } = useI18n();
@@ -88,6 +90,36 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
           </div>
         )}
 
+        {isIdle && (
+          <div className="mb-4 rounded-xl border border-border bg-bg-elev-1 p-3">
+            <label htmlFor="w1-prompt-profile" className="mb-2 block text-sm font-medium text-text-2">
+              {t('import.promptProfile')}
+            </label>
+            <select
+              id="w1-prompt-profile"
+              data-testid="w1-prompt-profile-select"
+              value={w1PromptProfile}
+              onChange={(event) => setW1PromptProfile(event.target.value as 'fast' | 'balanced' | 'deep' | 'custom')}
+              className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text"
+            >
+              <option value="fast">{t('import.promptFast')}</option>
+              <option value="balanced">{t('import.promptBalanced')}</option>
+              <option value="deep">{t('import.promptDeep')}</option>
+              <option value="custom">{t('import.promptCustom')}</option>
+            </select>
+            <p className="mt-2 text-xs text-text-3">{t('import.promptProfileDesc')}</p>
+            <details data-testid="w1-prompt-review-panel" className="mt-3 rounded-lg border border-border bg-card p-3 text-xs text-text-2">
+              <summary className="cursor-pointer font-semibold text-text">{t('import.promptReview')}</summary>
+              <ul className="mt-2 space-y-1">
+                <li>{t('import.promptReviewScout')}</li>
+                <li>{t('import.promptReviewReducer')}</li>
+                <li>{t('import.promptReviewTimeline')}</li>
+                <li>{t('import.promptReviewCache')}</li>
+              </ul>
+            </details>
+          </div>
+        )}
+
         {/* File picker — visible when idle */}
         {isIdle && (
           <button
@@ -116,8 +148,8 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
                   : `${Math.round(w1Progress * 100)}%`}
               </span>
               {w1CurrentStep && (
-                <span className="text-xs text-text-3">
-                  {w1CurrentStep.replace(/_/g, ' ')}
+                <span data-testid="w1-current-step" className="text-xs text-text-3">
+                  {t('import.currentStep')}: {w1CurrentStep.replace(/_/g, ' ')}
                 </span>
               )}
             </div>

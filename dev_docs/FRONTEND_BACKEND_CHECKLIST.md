@@ -111,9 +111,9 @@ When adding a new button or feature:
 
 | UI Element | Component File | Store Action | electronApi Method | IPC Channel | Sidecar Endpoint | AI Workflow | Status | Notes |
 |---|---|---|---|---|---|---|---|---|
-| Import novel | ImportWorkflow.tsx + WorkbenchWorkspace.tsx | startImport | w1Start | w1:start | POST /workflow/w1/start | W1 Import (DeepSeek) | ✅ COMPLETE | Phase 6: W1 router wired; was stub; verified 2026-04-06 |
-| W1 status poll | ImportWorkflow.tsx | — | w1Status | w1:status | GET /workflow/w1/status | — | ✅ COMPLETE | Phase 6: accepts session_id; verified |
-| Cancel import | ImportWorkflow.tsx | cancelImport | w1Cancel | w1:cancel | POST /workflow/w1/cancel | — | ✅ COMPLETE | Verified by `tests/e2e/p1/import_workflow.spec.ts` on 2026-04-24 |
+| Import novel | ImportWorkflow.tsx + WorkbenchWorkspace.tsx | startImport | w1Start | w1:start | POST /workflow/w1/start | W1 Import Compiler (DeepSeek) | ✅ COMPLETE | Hybrid compiler artifacts added; prompt_profile recorded; see W1_IMPORT_COMPILER.md |
+| W1 status poll | ImportWorkflow.tsx | — | w1Status | w1:status | GET /workflow/w1/status | — | ✅ COMPLETE | Returns current_step and prompt_profile for long-import progress |
+| Cancel import | ImportWorkflow.tsx | cancelImport | w1Cancel | w1:cancel | POST /workflow/w1/cancel | — | ✅ COMPLETE | Verified by `tests/e2e/p1/import_workflow.spec.ts` on 2026-04-25 final integration |
 | Accept proposal | WorkbenchWorkspace.tsx | acceptProposal | — | — | — | — | 🔵 FRONTEND_ONLY | |
 | Reject proposal | WorkbenchWorkspace.tsx | rejectProposal | — | — | — | — | 🔵 FRONTEND_ONLY | |
 | Spawn sidecar | main.js / WorkbenchWorkspace | — | sidecarSpawn | sidecar:spawn | — (process) | — | 🔵 FRONTEND_ONLY | |

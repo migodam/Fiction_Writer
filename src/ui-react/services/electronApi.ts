@@ -51,6 +51,7 @@ export interface W1StartPayload {
   projectRoot: string;
   source_file_path: string;
   import_mode?: 'import_content_only' | 'import_all';
+  prompt_profile?: 'fast' | 'balanced' | 'deep' | 'custom';
   api_key?: string;
   model?: string;
   endpoint?: string;
@@ -71,6 +72,8 @@ export interface W1StatusResult {
   errors: string[];
   completed_chunks: number;
   total_chunks: number;
+  current_step?: string;
+  prompt_profile?: 'fast' | 'balanced' | 'deep' | 'custom';
 }
 
 export interface ChunkLogEntry {
@@ -136,7 +139,6 @@ export interface W4StartResult {
 export interface W4StatusResult {
   status: string;
   progress: number;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   issues: any[];
   severity_counts: Record<string, number>;
   errors: string[];
@@ -163,7 +165,6 @@ export interface W5StatusResult {
   status: string;
   progress: number;
   report_markdown: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   engine_results: Record<string, any>;
   errors: string[];
 }
@@ -188,7 +189,6 @@ export interface W6StatusResult {
   status: string;
   progress: number;
   report_markdown: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   feedback_items: any[];
   errors: string[];
 }
@@ -232,7 +232,6 @@ export interface OrchestratorStartPayload {
 export interface OrchestratorStartResult {
   session_id: string;
   status: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   plan: any[];
 }
 
@@ -241,9 +240,7 @@ export interface OrchestratorStatusResult {
   current_step: number;
   total_steps: number;
   progress: number;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   pending_permission: any | null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   plan?: any[];
   errors?: string[];
 }
@@ -575,14 +572,12 @@ export const electronApi = {
     return (await ipcRenderer.invoke('orchestrator:status', { projectRoot, session_id: sessionId })) as OrchestratorStatusResult;
   },
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async orchestratorGrant(projectRoot: string, stepId: string, sessionId: string): Promise<any> {
     const ipcRenderer = getIpcRenderer();
     if (!ipcRenderer) return { status: 'error' };
     return ipcRenderer.invoke('orchestrator:grant', { projectRoot, stepId, session_id: sessionId });
   },
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async orchestratorDeny(projectRoot: string, stepId: string, sessionId: string, reason: string): Promise<any> {
     const ipcRenderer = getIpcRenderer();
     if (!ipcRenderer) return { status: 'error' };
