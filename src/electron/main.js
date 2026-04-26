@@ -55,13 +55,26 @@ async function spawnSidecar(projectRoot) {
     try {
       const data = JSON.parse(fs.readFileSync(pidFile, 'utf8'));
       if (data.pid && isPidAlive(data.pid)) {
-        // Sidecar already running — reuse
+        // Sidecar already running — verify it's actually listening
         sidecarPorts.set(projectRoot, data.port);
-        return data.port;
+        if (await waitForSidecarHealth(data.port, 1)) {
+          return data.port;
+        }
+        // Health check failed — kill stale process and respawn
+        try { process.kill(data.pid, 'SIGTERM'); } catch { /* ignore */ }
+        try { fs.unlinkSync(pidFile); } catch { /* ignore */ }
+        sidecarPorts.delete(projectRoot);
+      } else {
+        // Stale PID — delete and respawn
+        fs.unlinkSync(pidFile);
       }
-      // Stale PID — delete and respawn
-      fs.unlinkSync(pidFile);
     } catch { /* corrupt file — ignore */ }
+  }
+
+  // If already spawned in this session, wait for health
+  const existingPort = sidecarPorts.get(projectRoot);
+  if (existingPort && sidecarProcesses.has(projectRoot)) {
+    if (await waitForSidecarHealth(existingPort, 5)) return existingPort;
   }
 
   const port = await findFreePort();
@@ -91,7 +104,27 @@ async function spawnSidecar(projectRoot) {
   // Write PID file
   fs.writeFileSync(pidFile, JSON.stringify({ pid: proc.pid, port, projectPath: projectRoot }, null, 2), 'utf8');
 
+  // Wait for the Python HTTP server to actually start accepting connections
+  await waitForSidecarHealth(port, 15);
+
   return port;
+}
+
+/**
+ * Poll the sidecar health endpoint until it responds or we give up.
+ * @param {number} port
+ * @param {number} maxAttempts - seconds to wait
+ * @returns {Promise<boolean>} true if healthy
+ */
+async function waitForSidecarHealth(port, maxAttempts) {
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/health`);
+      if (res.ok) return true;
+    } catch { /* not ready yet */ }
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  return false;
 }
 
 function killSidecar(projectRoot) {
@@ -511,6 +544,47 @@ ipcMain.handle('w1:status', async (_event, { projectRoot, session_id }) => {
   }
 });
 
+ipcMain.handle('w1:console', async (_event, { projectRoot, session_id, after = 0 }) => {
+  try {
+    const qs = `?session_id=${session_id}&after=${after}`;
+    return await proxyToSidecar(projectRoot, `/workflow/w1/console${qs}`, 'GET');
+  } catch {
+    return { entries: [], paused: false, breakpoint_chunk: null };
+  }
+});
+
+ipcMain.handle('w1:set_breakpoint', async (_event, { projectRoot, session_id, chunk_id }) => {
+  try {
+    return await proxyToSidecar(projectRoot, '/workflow/w1/set_breakpoint', 'POST', { session_id, chunk_id: chunk_id ?? null });
+  } catch {
+    return { ok: false };
+  }
+});
+
+ipcMain.handle('w1:resume', async (_event, { projectRoot, session_id }) => {
+  try {
+    return await proxyToSidecar(projectRoot, '/workflow/w1/resume', 'POST', { session_id });
+  } catch {
+    return { ok: false };
+  }
+});
+
+ipcMain.handle('w1:rewind', async (_event, { projectRoot, session_id, to_chunk_id }) => {
+  try {
+    return await proxyToSidecar(projectRoot, '/workflow/w1/rewind', 'POST', { session_id, to_chunk_id });
+  } catch {
+    return { ok: false };
+  }
+});
+
+ipcMain.handle('prompts:list', async (_event, { projectRoot }) => {
+  try {
+    return await proxyToSidecar(projectRoot, '/prompts/list', 'GET');
+  } catch {
+    return {};
+  }
+});
+
 // ── W2 Manuscript Sync IPC handlers ────────────────────────────────────────
 
 ipcMain.handle('w2:start', async (_event, payload) => {
@@ -519,6 +593,14 @@ ipcMain.handle('w2:start', async (_event, payload) => {
     return await proxyToSidecar(projectRoot, '/workflow/w2/start', 'POST', { project_path: projectRoot, ...rest });
   } catch (err) {
     return { status: 'error', error: err.message };
+  }
+});
+
+ipcMain.handle('w2:status', async (_event, { projectRoot, session_id }) => {
+  try {
+    return await proxyToSidecar(projectRoot, `/workflow/w2/status?session_id=${session_id}`, 'GET');
+  } catch (err) {
+    return { status: 'error', progress: 0, errors: [err.message], proposals_count: 0 };
   }
 });
 

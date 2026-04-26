@@ -4,7 +4,7 @@ Goal: consistent VSCode/Premiere-like desktop IDE.
 
 ------------------------------------------------------------
 0) Principles (Non-negotiable)
-- Single source of truth: tokens -> components -> pages.
+- Design-system flow: tokens -> components -> pages.
 - No hard-coded colors in components. Use tokens only.
 - Layout is IDE: Activity Bar + Sidebar + Workspace + Inspector + Status Bar.
 - Every page must have meaningful empty states (never blank).
@@ -438,4 +438,3 @@ color: --text-3
 
 Participant chips:
 Badge style
-

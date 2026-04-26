@@ -3,12 +3,16 @@ import { CornerDownLeft, FileSearch, Layers3 } from 'lucide-react';
 import { useProjectStore } from '../store';
 import { useI18n } from '../i18n';
 import { AgentChat } from './agent';
+import { W0OrchestratorPanel } from './agent/W0OrchestratorPanel';
 
 export const AgentWorkspace = () => {
   return (
     <div className="flex h-full overflow-hidden bg-bg" data-testid="agent-workspace">
-      <div className="flex-1 overflow-hidden">
-        <AgentChat />
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <W0OrchestratorPanel />
+        <div className="min-h-0 flex-1">
+          <AgentChat />
+        </div>
       </div>
       <AgentRunsPanel />
     </div>

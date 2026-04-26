@@ -55,6 +55,63 @@ _HAS_DEEP_PROMPTS = True
 # key: project_path  value: {"completed": int, "total": int}
 _chunk_progress: dict[str, dict] = {}
 
+# Module-level per-project chunk log (populated by node_process_chunks).
+# key: project_path  value: List[ChunkLogEntry dicts]
+_chunk_log: dict[str, list] = {}
+
+# Breakpoint: process_chunks pauses after completing this chunk index (0-based count).
+# key: project_path  value: int | None
+_breakpoint_chunks: dict[str, int | None] = {}
+
+# Pause events: clear() to block, set() to unblock.
+# key: project_path  value: asyncio.Event (starts set = running)
+_pause_events: dict[str, asyncio.Event] = {}
+
+# Cancel events: set to signal node_process_chunks to abort early.
+# key: project_path  value: asyncio.Event
+_cancel_events: dict[str, asyncio.Event] = {}
+
+# ── Importance mapping ──────────────────────────────────────────────────────────
+# Maps LLM output values (including legacy) → canonical model values.
+IMPORTANCE_MAP: dict[str, str] = {
+    "lead":       "core",
+    "core":       "core",
+    "major":      "major",
+    "supporting": "supporting",
+    "minor":      "minor",
+    "background": "minor",
+}
+
+# Group labels assigned during auto-grouping at import time.
+IMPORTANCE_TO_GROUP: dict[str, str] = {
+    "core":       "Main Characters",
+    "major":      "Supporting Cast",
+    "supporting": "Supporting Cast",
+    "minor":      "Minor Characters",
+}
+
+# ── Field truncation ────────────────────────────────────────────────────────────
+_FIELD_WORD_LIMITS: dict[str, int] = {
+    "summary": 40,
+    "background": 60,
+    "personality_traits": 0,  # handled as list
+    "physical_description": 40,
+    "arc_notes": 40,
+}
+
+
+def _truncate_text_fields(char_data: dict) -> dict:
+    """Enforce word-count limits on character description fields."""
+    for field, limit in _FIELD_WORD_LIMITS.items():
+        if limit == 0:
+            continue
+        val = char_data.get(field, "")
+        if val and isinstance(val, str):
+            words = val.split()
+            if len(words) > limit:
+                char_data[field] = " ".join(words[:limit]) + "…"
+    return char_data
+
 
 # ── Alias resolver ──────────────────────────────────────────────────────────────
 
@@ -184,7 +241,7 @@ def _append_unique_strings(target: list[str], values: list[Any]) -> None:
 
 
 def _merge_text_field(existing: str, incoming: Any) -> str:
-    """Merge a short text field without duplicating identical lines."""
+    """Merge a short text field without duplicating identical or near-duplicate lines."""
     if not isinstance(incoming, str):
         return existing
     cleaned = incoming.strip()
@@ -193,6 +250,11 @@ def _merge_text_field(existing: str, incoming: Any) -> str:
     existing_lines = [line.strip() for line in existing.splitlines() if line.strip()]
     if cleaned in existing_lines:
         return existing
+    # Skip near-duplicate content (catches bilingual translations of the same fact)
+    for line in existing_lines:
+        ratio = difflib.SequenceMatcher(None, cleaned.lower()[:200], line.lower()[:200]).ratio()
+        if ratio > 0.65:
+            return existing
     if not existing_lines:
         return cleaned
     return f"{existing.rstrip()}\n{cleaned}"
@@ -610,7 +672,11 @@ async def node_resolve_low_confidence(state: ImportState) -> dict:
                 "[LOW CONFIDENCE — needs review]"
             )
 
-    return {"entity_registry": registry, "progress": 0.82}
+    return {
+        "entity_registry": registry,
+        "raw_relationships": state.get("raw_relationships", []),  # preserve for node_synthesize_relationships
+        "progress": 0.82,
+    }
 
 
 async def node_build_manuscript(state: ImportState) -> dict:
@@ -777,6 +843,8 @@ async def node_write_to_project(state: ImportState) -> dict:
                 "notes": entry.get("notes", []),
                 "importConfidence": entry.get("confidence", 0.7),
                 "importImportance": entry.get("importance", ""),
+                "importance": entry.get("importance", "supporting") or "supporting",
+                "groupKey": entry.get("groupKey", IMPORTANCE_TO_GROUP.get(entry.get("importance", ""), "")) or "",
             },
             "source_workflow": "W1_import",
             "confidence": 0.75,
@@ -789,8 +857,66 @@ async def node_write_to_project(state: ImportState) -> dict:
         except Exception as e:
             errors.append(f"Failed to propose character {cid}: {str(e)}")
 
-    # Write event proposals
+    # Determine default branch for event assignment
+    default_branch_id = next(
+        (b["id"] for b in timeline_branches if b.get("mode") == "root"),
+        None,
+    ) or next((b["id"] for b in timeline_branches), None)
+
+    if not default_branch_id:
+        default_branch_id = f"branch_{uuid.uuid4().hex[:8]}"
+        branch_op = {
+            "op_type": "create",
+            "entity_type": "timeline_branch",
+            "entity_id": default_branch_id,
+            "data": {
+                "id": default_branch_id,
+                "name": "Main Timeline",
+                "description": "Primary narrative timeline",
+                "mode": "root",
+                "color": "#38bdf8",
+                "sortOrder": 0,
+                "isDefault": True,
+            },
+            "source_workflow": "W1_import",
+            "confidence": 0.95,
+            "auto_apply": False,
+            "depends_on": [],
+        }
+        try:
+            proposal = await s2_memory_writer.propose_write(branch_op, str(project_path))
+            proposals.append(proposal)
+        except Exception as e:
+            errors.append(f"Failed to propose main timeline branch: {str(e)}")
+
+    # Deduplicate events by title before writing proposals
+    def _is_duplicate_event(title: str, seen_titles: list[str]) -> bool:
+        norm = re.sub(r'\s+', '', title).lower()
+        for s in seen_titles:
+            if difflib.SequenceMatcher(None, norm, s).ratio() > 0.80:
+                return True
+        return False
+
+    seen_event_title_norms: list[str] = []
+    deduped_events: dict[str, dict] = {}
     for eid, entry in registry.get("events", {}).items():
+        title = entry.get("title", "")
+        title_key = re.sub(r'\s+', '', title).lower()
+        if not title_key:
+            continue
+        if title_key in seen_event_title_norms or _is_duplicate_event(title_key, seen_event_title_norms):
+            continue
+        seen_event_title_norms.append(title_key)
+        deduped_events[eid] = entry
+
+    # Sort by temporal_hint for stable orderIndex assignment
+    sorted_events = sorted(
+        deduped_events.items(),
+        key=lambda kv: kv[1].get("temporal_hint", "") or "",
+    )
+
+    # Write event proposals
+    for order_idx, (eid, entry) in enumerate(sorted_events):
         op = {
             "op_type": "create",
             "entity_type": "timeline_event",
@@ -799,7 +925,13 @@ async def node_write_to_project(state: ImportState) -> dict:
                 "id": eid,
                 "title": entry.get("title", ""),
                 "summary": entry.get("description", ""),
+                "branchId": default_branch_id,
+                "orderIndex": order_idx,
                 "participantCharacterIds": entry.get("character_ids", []),
+                "locationIds": [],
+                "linkedSceneIds": [],
+                "linkedWorldItemIds": [],
+                "tags": [],
                 "time": entry.get("temporal_hint", ""),
                 "importConfidence": entry.get("confidence", 0.7),
             },
@@ -1249,9 +1381,13 @@ async def node_classify_character_tags(state: ImportState) -> dict:
         cid = update.get("character_id") or _resolve_character_id(update.get("character_name"), registry)
         if not cid or cid not in registry["characters"]:
             continue
-        importance = str(update.get("importance", "")).strip()
-        if importance:
+        raw_imp = str(update.get("importance", "")).strip()
+        if raw_imp:
+            importance = IMPORTANCE_MAP.get(raw_imp, raw_imp)
             registry["characters"][cid]["importance"] = importance
+            group = IMPORTANCE_TO_GROUP.get(importance)
+            if group:
+                registry["characters"][cid]["groupKey"] = group
 
     return {
         "character_tags": character_tags,
@@ -1507,7 +1643,8 @@ async def node_process_chunks(state: ImportState) -> dict:
                 _append_unique_strings(entry["fears"], update.get("new_fears", []))
                 _append_unique_strings(entry["secrets"], update.get("new_secrets", []))
                 if isinstance(update.get("importance_update"), str) and update["importance_update"].strip():
-                    entry["importance"] = update["importance_update"].strip()
+                    raw_imp = update["importance_update"].strip()
+                    entry["importance"] = IMPORTANCE_MAP.get(raw_imp, raw_imp)
                 entry["confidence"] = max(float(entry.get("confidence", 0.7)), float(update.get("confidence", 0.7)))
 
             for nc in char_data.get("new_characters", []):
@@ -1563,14 +1700,16 @@ async def node_process_chunks(state: ImportState) -> dict:
                     _append_unique_strings(entry["fears"], nc.get("fears", []))
                     _append_unique_strings(entry["secrets"], nc.get("secrets", []))
                     if isinstance(nc.get("importance"), str) and nc["importance"].strip():
-                        entry["importance"] = nc["importance"].strip()
+                        raw_imp = nc["importance"].strip()
+                        entry["importance"] = IMPORTANCE_MAP.get(raw_imp, raw_imp)
                     entry["confidence"] = max(float(entry.get("confidence", 0.7)), float(nc.get("confidence", 0.7)))
                     continue
 
                 char_id = f"char_{uuid.uuid4().hex[:8]}"
                 aliases: list[str] = []
                 _append_unique_strings(aliases, nc.get("aliases", []))
-                registry["characters"][char_id] = {
+                raw_importance = str(nc.get("importance", "")).strip()
+                registry["characters"][char_id] = _truncate_text_fields({
                     "canonical_id": char_id,
                     "canonical_name": name,
                     "aliases": aliases,
@@ -1581,18 +1720,23 @@ async def node_process_chunks(state: ImportState) -> dict:
                     "background": str(nc.get("background", "")).strip(),
                     "role_in_story": str(nc.get("role_in_story", "")).strip(),
                     "physical_description": str(nc.get("physical_description", "")).strip(),
-                    "personality_traits": [trait.strip() for trait in nc.get("personality_traits", []) if isinstance(trait, str) and trait.strip()],
+                    "personality_traits": [trait.strip() for trait in nc.get("personality_traits", []) if isinstance(trait, str) and trait.strip()][:4],
                     "goals": [goal.strip() for goal in nc.get("goals", []) if isinstance(goal, str) and goal.strip()],
                     "fears": [fear.strip() for fear in nc.get("fears", []) if isinstance(fear, str) and fear.strip()],
                     "secrets": [secret.strip() for secret in nc.get("secrets", []) if isinstance(secret, str) and secret.strip()],
                     "speech_style": str(nc.get("speech_style", "")).strip(),
                     "arc_notes": str(nc.get("arc_notes", "")).strip(),
-                    "importance": str(nc.get("importance", "")).strip(),
+                    "importance": IMPORTANCE_MAP.get(raw_importance, raw_importance or "supporting"),
                     "tag_ids": [],
-                }
+                })
                 new_chars.append(registry["characters"][char_id])
 
-            for ev in event_data.get("events", []):
+            # Enforce confidence floor and density cap per chunk
+            raw_events = event_data.get("events", [])
+            raw_events = [e for e in raw_events if float(e.get("confidence", 0)) >= 0.75]
+            raw_events = sorted(raw_events, key=lambda e: float(e.get("confidence", 0)), reverse=True)[:3]
+
+            for ev in raw_events:
                 event_id = f"event_{uuid.uuid4().hex[:8]}"
                 character_refs = list(ev.get("character_ids", [])) + list(ev.get("character_names", []))
                 resolved_character_ids = _resolve_character_ids(character_refs, registry)
@@ -1727,9 +1871,31 @@ async def node_process_chunks(state: ImportState) -> dict:
             })
 
         completed = len([e for e in extractions if e.get("chunk_id") is not None])
+        chunk_duration_ms = int((asyncio.get_event_loop().time() - _chunk_start_time) * 1000) if "_chunk_start_time" in dir() else 0
+
         # Update mid-node progress so the polling coroutine in _run_w1 can
         # report real-time chunk counts without waiting for the node to finish.
         _chunk_progress[project_path] = {"completed": completed, "total": total}
+
+        # Emit a chunk log entry for the console
+        last_extraction = extractions[-1] if extractions else {}
+        log_entry: dict = {
+            "chunk_id": chunk_id,
+            "total_chunks": total,
+            "step": "process_chunks",
+            "new_characters": len(new_chars),
+            "updated_characters": len(alias_updates),
+            "new_events": len(events),
+            "new_world": len(world_mentions),
+            "duration_ms": chunk_duration_ms,
+            "excerpt": chunk_content[:200],
+            "errors": [n for n in chunk_notes if "fail" in n.lower() or "error" in n.lower()],
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        if project_path not in _chunk_log:
+            _chunk_log[project_path] = []
+        _chunk_log[project_path].append(log_entry)
+
         try:
             checkpoint = {
                 "project_path": project_path,
@@ -1746,6 +1912,22 @@ async def node_process_chunks(state: ImportState) -> dict:
                 json.dump(checkpoint, f, ensure_ascii=False, indent=2)
         except Exception as e:
             errors.append(f"Checkpoint save failed after chunk {chunk_id}: {str(e)}")
+
+        # Check for cancel signal
+        cancel_event = _cancel_events.get(project_path)
+        if cancel_event and cancel_event.is_set():
+            break
+
+        # Check for breakpoint — pause until resume endpoint sets the pause_event
+        bp = _breakpoint_chunks.get(project_path)
+        if bp is not None and completed >= bp:
+            if project_path not in _pause_events:
+                ev = asyncio.Event()
+                ev.set()
+                _pause_events[project_path] = ev
+            pause_event = _pause_events[project_path]
+            pause_event.clear()
+            await pause_event.wait()
 
     progress = 0.1 + (0.7 * (completed / max(total, 1)))
     return {

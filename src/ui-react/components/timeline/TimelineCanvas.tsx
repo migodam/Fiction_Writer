@@ -77,7 +77,9 @@ interface BranchContextMenuState {
 const MOVE_THRESHOLD_PX = 5;
 const SNAP_THRESHOLD = 40;
 const LONG_PRESS_MS = 500;
-const BRANCH_LANE_SPACING = 120;
+const BRANCH_LANE_SPACING = 160;
+const MIN_EVENT_SPACING_PX = 80;
+const MAX_VISIBLE_EVENTS_PER_BRANCH = 15;
 
 function resolveBranchEndAnchor(branch: TimelineBranch): TimelineBranch['endAnchor'] {
   return branch.endAnchor ?? (
@@ -253,15 +255,34 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
 
   const eventPositions = useMemo(() => {
     const map = new Map<string, Point>();
-    for (const event of events) {
-      const cp = branchCPMap.get(event.branchId);
+
+    // Process each branch independently
+    const branchIds = new Set(events.map((e) => e.branchId));
+    for (const branchId of branchIds) {
+      const cp = branchCPMap.get(branchId);
       if (!cp) continue;
-      if (event.position) {
-        map.set(event.id, event.position);
-      } else {
-        const evtsOnBranch = branchEventsMap.get(event.branchId) || [];
+      const evtsOnBranch = (branchEventsMap.get(branchId) || []).slice(0, MAX_VISIBLE_EVENTS_PER_BRANCH);
+
+      // Compute initial positions from t-parameter
+      const positioned: { event: TimelineEvent; pos: Point }[] = evtsOnBranch.map((event) => {
+        if (event.position) return { event, pos: event.position };
         const tVal = tFromOrderIndex(evtsOnBranch.length, evtsOnBranch.indexOf(event));
-        map.set(event.id, cubicBezierPoint(cp.p0, cp.p1, cp.p2, cp.p3, tVal));
+        return { event, pos: cubicBezierPoint(cp.p0, cp.p1, cp.p2, cp.p3, tVal) };
+      });
+
+      // Min-spacing pass: sort by x, push right if too close
+      positioned.sort((a, b) => a.pos.x - b.pos.x);
+      for (let i = 1; i < positioned.length; i++) {
+        const prev = positioned[i - 1].pos;
+        const curr = positioned[i].pos;
+        const gap = curr.x - prev.x;
+        if (gap < MIN_EVENT_SPACING_PX) {
+          positioned[i] = { ...positioned[i], pos: { x: prev.x + MIN_EVENT_SPACING_PX, y: curr.y } };
+        }
+      }
+
+      for (const { event, pos } of positioned) {
+        map.set(event.id, pos);
       }
     }
     return map;

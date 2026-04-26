@@ -73,17 +73,48 @@ export interface W1StatusResult {
   total_chunks: number;
 }
 
+export interface ChunkLogEntry {
+  chunk_id: number;
+  total_chunks: number;
+  step: string;
+  new_characters: number;
+  updated_characters: number;
+  new_events: number;
+  new_world: number;
+  duration_ms: number;
+  excerpt: string;
+  errors: string[];
+  timestamp: string;
+}
+
+export interface W1ConsoleResult {
+  entries: ChunkLogEntry[];
+  paused: boolean;
+  breakpoint_chunk: number | null;
+}
+
 // ── W2 Manuscript Sync ───────────────────────────────────────────────────────
 
 export interface W2StartPayload {
   projectRoot: string;
   mode: string;
   target_chapter_id?: string;
+  api_key?: string;
+  model?: string;
+  endpoint?: string;
 }
 
 export interface W2StartResult {
   session_id: string;
   status: string;
+  error?: string;
+}
+
+export interface W2StatusResult {
+  status: string;
+  progress: number;
+  errors: string[];
+  proposals_count: number;
 }
 
 // ── W4 Consistency Check ─────────────────────────────────────────────────────
@@ -424,6 +455,36 @@ export const electronApi = {
     return (await ipcRenderer.invoke('w1:status', { projectRoot, session_id: sessionId })) as W1StatusResult;
   },
 
+  async w1Console(projectRoot: string, sessionId: string, after = 0): Promise<W1ConsoleResult> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return { entries: [], paused: false, breakpoint_chunk: null };
+    return (await ipcRenderer.invoke('w1:console', { projectRoot, session_id: sessionId, after })) as W1ConsoleResult;
+  },
+
+  async w1SetBreakpoint(projectRoot: string, sessionId: string, chunkId: number | null): Promise<{ ok: boolean }> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return { ok: false };
+    return (await ipcRenderer.invoke('w1:set_breakpoint', { projectRoot, session_id: sessionId, chunk_id: chunkId })) as { ok: boolean };
+  },
+
+  async w1Resume(projectRoot: string, sessionId: string): Promise<{ ok: boolean }> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return { ok: false };
+    return (await ipcRenderer.invoke('w1:resume', { projectRoot, session_id: sessionId })) as { ok: boolean };
+  },
+
+  async w1Rewind(projectRoot: string, sessionId: string, toChunkId: number): Promise<{ ok: boolean; new_session_id?: string }> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return { ok: false };
+    return (await ipcRenderer.invoke('w1:rewind', { projectRoot, session_id: sessionId, to_chunk_id: toChunkId })) as { ok: boolean; new_session_id?: string };
+  },
+
+  async fetchPrompts(projectRoot: string): Promise<Record<string, { name: string; text: string }[]>> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return {};
+    return (await ipcRenderer.invoke('prompts:list', { projectRoot })) as Record<string, { name: string; text: string }[]>;
+  },
+
   async sidecarSpawn(projectRoot: string): Promise<{ ok: boolean; port: number }> {
     const ipcRenderer = getIpcRenderer();
     if (!ipcRenderer) return { ok: false, port: 0 };
@@ -436,6 +497,12 @@ export const electronApi = {
     const ipcRenderer = getIpcRenderer();
     if (!ipcRenderer) return { session_id: '', status: 'error' };
     return (await ipcRenderer.invoke('w2:start', payload)) as W2StartResult;
+  },
+
+  async w2Status(projectRoot: string, sessionId: string): Promise<W2StatusResult> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return { status: 'error', progress: 0, errors: ['ipc_unavailable'], proposals_count: 0 };
+    return (await ipcRenderer.invoke('w2:status', { projectRoot, session_id: sessionId })) as W2StatusResult;
   },
 
   // ── W4 Consistency Check ──────────────────────────────────────────────────

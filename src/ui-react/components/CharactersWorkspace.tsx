@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Check, Clock3, ImageIcon, Link2, Plus, Search, Tag, Trash2, Upload } from 'lucide-react';
 import { useProjectStore, useUIStore } from '../store';
@@ -37,9 +37,11 @@ export const CharactersWorkspace = () => {
   const { t } = useI18n();
   const { openContextMenu, setLastActionStatus } = useUIStore();
   const [search, setSearch] = useState('');
+  const [showMinor, setShowMinor] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [showNewPartition, setShowNewPartition] = useState(false);
   const [newPartitionName, setNewPartitionName] = useState('');
+  const [dragCharacterId, setDragCharacterId] = useState<string | null>(null);
   const route = location.pathname.includes('/relationship-graph')
     ? 'relationship-graph'
     : location.pathname.includes('/tags')
@@ -53,9 +55,13 @@ export const CharactersWorkspace = () => {
     () =>
       characterPartitions.map((group) => ({
         group,
-        items: characters.filter((character) => (character.importance || 'ungrouped') === group && character.name.toLowerCase().includes(search.toLowerCase())),
+        items: characters.filter((character) => {
+          const imp = character.importance || 'ungrouped';
+          if (!showMinor && imp === 'minor') return false;
+          return imp === group && character.name.toLowerCase().includes(search.toLowerCase());
+        }),
       })).filter((group) => group.items.length > 0),
-    [characters, search, characterPartitions],
+    [characters, search, characterPartitions, showMinor],
   );
 
   const selected = characters.find((character) => character.id === characterId) || grouped[0]?.items[0] || null;
@@ -77,6 +83,18 @@ export const CharactersWorkspace = () => {
     deleteCharacterPartition(groupName);
     setLastActionStatus(t('characters.partitionDeleted'));
   };
+
+  const handleDropOnGroup = useCallback((e: React.DragEvent, groupName: string) => {
+    e.preventDefault();
+    const charId = e.dataTransfer.getData('text/plain');
+    if (!charId) return;
+    const char = characters.find((c) => c.id === charId);
+    if (char && (char.importance || 'ungrouped') !== groupName) {
+      updateCharacter({ ...char, importance: groupName as any, groupKey: groupName });
+      setLastActionStatus(`${char.name} → ${groupName}`);
+    }
+    setDragCharacterId(null);
+  }, [characters, updateCharacter, setLastActionStatus]);
 
   return (
     <div className="flex h-full overflow-hidden bg-bg">
@@ -132,6 +150,16 @@ export const CharactersWorkspace = () => {
               <input value={search} onChange={(event) => setSearch(event.target.value)} className="w-full bg-transparent text-sm outline-none" placeholder={t('characters.searchCharacters')} />
             </div>
           </div>
+          {route !== 'candidates' && (
+            <button
+              type="button"
+              data-testid="characters-show-minor-toggle"
+              onClick={() => setShowMinor((v) => !v)}
+              className={`mt-2 w-full rounded-lg border px-3 py-1 text-xs font-medium transition-colors ${showMinor ? 'border-brand/40 bg-brand/10 text-brand' : 'border-border text-text-3 hover:bg-hover hover:text-text-2'}`}
+            >
+              {showMinor ? t('characters.hideMinor') : t('characters.showMinor')}
+            </button>
+          )}
         </div>
         <div className="h-full overflow-y-auto custom-scrollbar p-2">
           {route === 'candidates' ? (
@@ -161,7 +189,12 @@ export const CharactersWorkspace = () => {
           ) : (
             <>
               {grouped.map((group) => (
-                <div key={group.group} className="mb-3 rounded-2xl border border-border bg-card">
+                <div
+                  key={group.group}
+                  className={cn('mb-3 rounded-2xl border bg-card transition-colors', dragCharacterId ? 'border-brand/60' : 'border-border')}
+                  onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+                  onDrop={(e) => handleDropOnGroup(e, group.group)}
+                >
                   <button
                     type="button"
                     className="flex w-full items-center justify-between px-4 py-3 text-left"
@@ -188,7 +221,39 @@ export const CharactersWorkspace = () => {
                     <span className="rounded-full border border-border bg-bg px-2 py-0.5 text-[10px] font-black text-text-3">{group.items.length}</span>
                   </button>
                   {!collapsed[group.group] && group.items.map((character) => (
-                    <button key={character.id} type="button" data-testid={`character-card-${character.id}`} className={cn('flex w-full items-center justify-between border-t border-divider px-4 py-3 text-left', selected?.id === character.id ? 'bg-selected text-text' : 'text-text-2 hover:bg-hover')} onClick={() => navigate(`/characters/profile/${character.id}`)} onContextMenu={(e) => { e.preventDefault(); openContextMenu({ x: e.clientX, y: e.clientY, items: [{ id: 'delete', label: t('common.delete'), action: () => { deleteCharacter(character.id); setLastActionStatus(t('characters.characterDeleted')); }, destructive: true }] }); }}>
+                    <button
+                      key={character.id}
+                      type="button"
+                      data-testid={`character-card-${character.id}`}
+                      draggable
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData('text/plain', character.id);
+                        e.dataTransfer.effectAllowed = 'move';
+                        setDragCharacterId(character.id);
+                      }}
+                      onDragEnd={() => setDragCharacterId(null)}
+                      className={cn(
+                        'flex w-full items-center justify-between border-t border-divider px-4 py-3 text-left cursor-grab active:cursor-grabbing',
+                        selected?.id === character.id ? 'bg-selected text-text' : 'text-text-2 hover:bg-hover',
+                      )}
+                      onClick={() => navigate(`/characters/profile/${character.id}`)}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        openContextMenu({
+                          x: e.clientX,
+                          y: e.clientY,
+                          items: [{
+                            id: 'delete',
+                            label: t('common.delete'),
+                            action: () => {
+                              deleteCharacter(character.id);
+                              setLastActionStatus(t('characters.characterDeleted'));
+                            },
+                            destructive: true,
+                          }],
+                        });
+                      }}
+                    >
                       <span className="text-sm font-black">{character.name}</span>
                     </button>
                   ))}
@@ -259,14 +324,19 @@ const CharacterDetail = ({ character, tab }: any) => {
   const [newTag, setNewTag] = useState('');
   const [tagOpen, setTagOpen] = useState(false);
   const [portraitModalOpen, setPortraitModalOpen] = useState(false);
-  const [relationTargetId, setRelationTargetId] = useState(characters.find((entry) => entry.id !== character.id)?.id || '');
+  const [relationTargetId, setRelationTargetId] = useState('');
   const [relationType, setRelationType] = useState('');
   const [relationDescription, setRelationDescription] = useState('');
   const relatedRelationships = relationships.filter((relationship) => relationship.sourceId === character.id || relationship.targetId === character.id);
   const relatedEvents = timelineEvents.filter((event) => event.participantCharacterIds.includes(character.id));
   const activeTags = characterTags.filter((tag) => draft.tagIds.includes(tag.id));
 
-  React.useEffect(() => setDraft(character), [character]);
+  React.useEffect(() => {
+    setDraft(character);
+    // Reset relationTargetId to first available other character
+    const others = characters.filter((c) => c.id !== character.id);
+    setRelationTargetId(others[0]?.id || '');
+  }, [character]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -366,22 +436,44 @@ const CharacterDetail = ({ character, tab }: any) => {
                   </div>
                 );
               })}
+              {relatedRelationships.length === 0 && (
+                <div className="py-6 text-center text-sm text-text-3">{t('characters.noCharactersYet')}</div>
+              )}
             </div>
           </div>
-          <div className="rounded-3xl border border-border bg-card p-6">
-            <div className="mb-4 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{t('characters.createRelationshipLabel')}</div>
+          <div className="rounded-3xl border border-brand/30 bg-brand/5 p-6">
+            <div className="mb-4 text-[10px] font-black uppercase tracking-[0.18em] text-brand">{t('characters.createRelationshipLabel')}</div>
             <div className="grid gap-3">
               <select value={relationTargetId} onChange={(event) => setRelationTargetId(event.target.value)} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none">
+                <option value="" disabled>{t('characters.characterName')}</option>
                 {characters.filter((entry) => entry.id !== draft.id).map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
               </select>
               <input value={relationType} onChange={(event) => setRelationType(event.target.value)} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('characters.relationshipTypePlaceholder')} />
               <textarea value={relationDescription} onChange={(event) => setRelationDescription(event.target.value)} className="h-28 rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('characters.relationshipDescriptionPlaceholder')} />
-              <button type="button" className="rounded-xl bg-brand px-4 py-3 text-sm font-black text-white" onClick={() => {
-                if (!relationTargetId || !relationType.trim()) return;
-                addRelationship({ id: `rel_${Date.now()}`, sourceId: draft.id, targetId: relationTargetId, type: relationType.trim(), description: relationDescription, category: 'general', directionality: 'bidirectional', status: 'active', sourceNotes: '' });
-                setRelationType('');
-                setRelationDescription('');
-              }}>
+              <button
+                type="button"
+                data-testid="create-relationship-btn"
+                className="rounded-xl bg-brand px-4 py-3 text-sm font-black text-white disabled:opacity-40"
+                disabled={!relationTargetId || !relationType.trim()}
+                onClick={() => {
+                  if (!relationTargetId || !relationType.trim()) return;
+                  addRelationship({
+                    id: `rel_${Date.now()}`,
+                    sourceId: draft.id,
+                    targetId: relationTargetId,
+                    type: relationType.trim(),
+                    description: relationDescription,
+                    category: 'general',
+                    directionality: 'bidirectional',
+                    status: 'active',
+                    sourceNotes: '',
+                  });
+                  setRelationType('');
+                  setRelationDescription('');
+                  setLastActionStatus(t('characters.saved'));
+                }}
+              >
+                <Plus size={14} className="mr-2 inline" />
                 {t('characters.createRelationshipBtn')}
               </button>
             </div>
@@ -504,7 +596,7 @@ const CharacterDetail = ({ character, tab }: any) => {
             </div>
             <div className="rounded-3xl border border-border bg-card p-5">
               <div className="mb-4 flex items-center justify-between">
-                <div className="text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{t('characters.relationships')}</div>
+                <div className="text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{t('characters.tagSystem')}</div>
                 <button type="button" className="rounded-full border border-border px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-text-2" onClick={() => setTagOpen((current) => !current)}>
                   <Plus size={12} className="mr-1 inline" />
                   {t('characters.addTag')}
@@ -573,12 +665,76 @@ const CharacterDetail = ({ character, tab }: any) => {
 };
 
 const RelationshipGraphPanel: React.FC = () => {
+  const { characters, addRelationship } = useProjectStore();
+  const { setLastActionStatus } = useUIStore();
+  const { t } = useI18n();
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [sourceId, setSourceId] = useState('');
+  const [targetId, setTargetId] = useState('');
+  const [relType, setRelType] = useState('');
+
+  const handleCreate = () => {
+    if (!sourceId || !targetId || !relType.trim() || sourceId === targetId) return;
+    addRelationship({
+      id: `rel_${Date.now()}`,
+      sourceId,
+      targetId,
+      type: relType.trim(),
+      description: '',
+      category: 'general',
+      directionality: 'bidirectional',
+      status: 'active',
+      sourceNotes: '',
+    });
+    setRelType('');
+    setSourceId('');
+    setTargetId('');
+    setShowCreateForm(false);
+    setLastActionStatus(t('characters.saved'));
+  };
+
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b border-border bg-bg-elev-2 px-6 py-4">
-        <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">Relationship Graph</div>
-        <div className="text-sm font-black text-text">Interactive character network</div>
+      <div className="flex items-center justify-between border-b border-border bg-bg-elev-2 px-6 py-4">
+        <div>
+          <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('characters.relationshipGraph')}</div>
+          <div className="text-sm font-black text-text">{t('characters.characterNavigator')}</div>
+        </div>
+        <button
+          type="button"
+          data-testid="graph-create-relationship-btn"
+          className="rounded-xl bg-brand px-4 py-2 text-[11px] font-black uppercase tracking-[0.25em] text-white"
+          onClick={() => setShowCreateForm(!showCreateForm)}
+        >
+          <Plus size={13} className="mr-2 inline" />
+          {t('characters.createRelationshipLabel')}
+        </button>
       </div>
+      {showCreateForm && (
+        <div className="flex items-center gap-3 border-b border-border bg-brand/5 px-6 py-3">
+          <select value={sourceId} onChange={(e) => setSourceId(e.target.value)} className="rounded-xl border border-border bg-bg px-3 py-2 text-sm outline-none">
+            <option value="" disabled>{t('characters.characterName')}</option>
+            {characters.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <span className="text-text-3">→</span>
+          <select value={targetId} onChange={(e) => setTargetId(e.target.value)} className="rounded-xl border border-border bg-bg px-3 py-2 text-sm outline-none">
+            <option value="" disabled>{t('characters.characterName')}</option>
+            {characters.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <input value={relType} onChange={(e) => setRelType(e.target.value)} className="rounded-xl border border-border bg-bg px-3 py-2 text-sm outline-none" placeholder={t('characters.relationshipTypePlaceholder')} />
+          <button
+            type="button"
+            className="rounded-xl bg-brand px-4 py-2 text-xs font-black text-white disabled:opacity-40"
+            disabled={!sourceId || !targetId || !relType.trim() || sourceId === targetId}
+            onClick={handleCreate}
+          >
+            {t('characters.createRelationshipBtn')}
+          </button>
+          <button type="button" className="rounded-xl border border-border px-3 py-2 text-xs text-text-2" onClick={() => setShowCreateForm(false)}>
+            {t('common.cancel')}
+          </button>
+        </div>
+      )}
       <div className="flex-1 overflow-hidden">
         <CharacterRelationshipFlow />
       </div>

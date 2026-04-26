@@ -1,5 +1,9 @@
 # NARRATIVE IDE — AI EXECUTION PLAN
 
+> Status: legacy planning artifact.
+> Do not use this file as the active execution plan.
+> Use `dev_docs/EXECUTION_PLAN.md` for current sequencing and `dev_docs/WORKSTREAM_BOARD.md` for task packs.
+
 This is the primary execution protocol for any AI agent working on this repository.
 Goal: produce a stable, commercial-grade Desktop Narrative IDE UI with deterministic behavior and strong automated tests.
 

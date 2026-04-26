@@ -1,7 +1,9 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
+import { Terminal } from 'lucide-react';
 import { electronApi } from '../services/electronApi';
 import { useProjectStore } from '../store';
 import { useI18n } from '../i18n';
+import { ImportConsole } from './ImportConsole';
 
 interface ImportWorkflowProps {
   onClose: () => void;
@@ -13,11 +15,13 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
   const w1CompletedChunks = useProjectStore((s) => s.w1CompletedChunks);
   const w1TotalChunks = useProjectStore((s) => s.w1TotalChunks);
   const w1Errors = useProjectStore((s) => s.w1Errors);
+  const w1CurrentStep = useProjectStore((s) => s.w1CurrentStep);
   const w1ImportMode = useProjectStore((s) => s.w1ImportMode);
   const setW1ImportMode = useProjectStore((s) => s.setW1ImportMode);
   const startImport = useProjectStore((s) => s.startImport);
   const cancelImport = useProjectStore((s) => s.cancelImport);
   const { t } = useI18n();
+  const [consoleOpen, setConsoleOpen] = useState(false);
 
   const handlePickFile = useCallback(async () => {
     try {
@@ -95,8 +99,8 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
           </button>
         )}
 
-        {/* Progress — visible when running */}
-        {w1Status === 'running' && (
+        {/* Progress — visible when running or paused */}
+        {(w1Status === 'running' || w1Status === 'paused') && (
           <div className="space-y-3">
             <div className="h-3 w-full overflow-hidden rounded-full bg-bg-elev-1">
               <div
@@ -105,18 +109,39 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
                 style={{ width: `${w1Progress * 100}%` }}
               />
             </div>
-            <p className="text-sm text-text-2">
-              {w1CompletedChunks} / {w1TotalChunks} {t('import.chunksProcessed')}
-            </p>
-            <button
-              data-testid="w1-cancel-btn"
-              onClick={cancelImport}
-              className="rounded-lg border border-border px-4 py-1.5 text-sm text-text-2 hover:bg-hover"
-            >
-              {t('import.cancel')}
-            </button>
+            <div className="flex items-center justify-between text-sm text-text-2">
+              <span>
+                {w1TotalChunks > 0
+                  ? `${w1CompletedChunks} / ${w1TotalChunks} ${t('import.chunksProcessed')}`
+                  : `${Math.round(w1Progress * 100)}%`}
+              </span>
+              {w1CurrentStep && (
+                <span className="text-xs text-text-3">
+                  {w1CurrentStep.replace(/_/g, ' ')}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                data-testid="w1-console-toggle-btn"
+                onClick={() => setConsoleOpen((v) => !v)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-text-2 hover:bg-hover"
+              >
+                <Terminal size={12} />
+                {t('import.console', 'Console')}
+              </button>
+              <button
+                data-testid="w1-cancel-btn"
+                onClick={cancelImport}
+                className="rounded-lg border border-border px-4 py-1.5 text-sm text-text-2 hover:bg-hover"
+              >
+                {t('import.cancel')}
+              </button>
+            </div>
           </div>
         )}
+        <ImportConsole visible={consoleOpen && (w1Status === 'running' || w1Status === 'paused')} />
 
         {/* Errors */}
         {w1Errors.length > 0 && (

@@ -122,15 +122,40 @@ Your job is to perform deep character extraction from this text chunk.
 ## Text Chunk
 {chunk_content}
 
+## LANGUAGE RULE
+All text fields (summary, background, personality_traits, goals, fears, secrets, speech_style, arc_notes, role_in_story, physical_description) MUST be written in the same language as the source text chunk. Do NOT translate or add parallel translations.
+
+## ALIAS-FIRST RULE
+Before creating any new character, check ALL existing registry entries for any name, alias, title, or honorific match. In cultivation novels a single character may appear under: childhood name, courtesy name, cultivation title (e.g. 炼气期弟子), sect rank, given name + surname, and nicknames — these ALL refer to ONE entity. Only create a new character if the reference genuinely cannot be reconciled with any registry entry after exhaustive checking.
+
+## CONFIDENCE CALIBRATION
+- 0.9–1.0: Named character with dialogue or direct action in this chunk
+- 0.75–0.89: Named character mentioned in passing with context
+- 0.6–0.74: Unnamed role (e.g. "an elder", "a servant") — use the role as canonical_name
+- Below 0.6: Do not output this character
+
+## LENGTH LIMITS (strictly enforced — truncate before output)
+- summary: ≤ 2 sentences, ≤ 40 words
+- background: ≤ 3 sentences, ≤ 60 words
+- personality_traits: ≤ 4 traits total
+- physical_description: ≤ 2 sentences, ≤ 40 words
+- arc_notes: ≤ 2 sentences, ≤ 40 words
+
+## IMPORTANCE VALUES
+Use exactly one of: core | major | supporting | minor
+- core: protagonist or POV character present in >50% of chapters
+- major: recurring named character with a significant arc
+- supporting: named character with a defined role but limited scenes
+- minor: named but single-scene or purely functional character
+
 ## Instructions
-Extract ALL named characters from this chunk, including minor and background characters.
-- Reuse an existing character when the identity clearly matches the registry
-- Create a new character entry for EVERY distinct named person, even those with brief mentions
+Extract named characters from this chunk using the alias-first rule above.
+- Reuse an existing character (via existing_character_updates) whenever possible
+- Create a new character only when identity is genuinely distinct
 - For ALL fields: fill with reasonable inference from context rather than leaving empty
-  - If a trait/goal/fear is not stated explicitly, infer the most likely value from context
-  - For minor characters (siblings, servants, rivals): use their role, name, and interactions to fill fields
 - Use empty strings or empty arrays only when there is truly no basis for inference
-- Keep every field concise and factual
+- Keep every field concise and factual; source language only (see LANGUAGE RULE)
+- Obey LENGTH LIMITS — do not write novel-length descriptions
 
 Output valid JSON only:
 {{
@@ -149,7 +174,7 @@ Output valid JSON only:
       "new_secrets": ["<secret>"],
       "speech_style_update": "<speech pattern or voice detail>",
       "arc_notes_update": "<arc or trajectory note>",
-      "importance_update": "<lead|supporting|minor|background>",
+      "importance_update": "<core|major|supporting|minor>",
       "confidence": <0.6-1.0>
     }}
   ],
@@ -167,7 +192,7 @@ Output valid JSON only:
       "secrets": ["<secret>"],
       "speech_style": "<voice or dialogue pattern>",
       "arc_notes": "<arc direction or pressure>",
-      "importance": "<lead|supporting|minor|background>",
+      "importance": "<core|major|supporting|minor>",
       "notes": ["<other grounded notes>"],
       "confidence": <0.6-1.0>
     }}
@@ -187,11 +212,29 @@ Your job is to perform deep event extraction from this text chunk.
 ## Text Chunk
 {chunk_content}
 
+## LANGUAGE RULE
+All text fields (title, description, stakes) MUST be written in the same language as the source text chunk. Do NOT translate.
+
+## TEMPORAL ANCHOR RULE
+Every event MUST include the most specific time reference available: chapter number, arc stage, cultivation milestone, season, or relative marker like "three days later". Use this as temporal_hint. If no anchor exists, use "unknown" — never leave temporal_hint empty.
+
+## DEDUP RULE
+Do NOT emit an event that is semantically equivalent to one already in the Entity Registry (same participants + same action). If this chunk adds new detail to an existing registry event, skip it — updating existing events is not supported at this stage.
+
+## STRUCTURAL BEATS ONLY
+Extract only major plot-turning events: breakthroughs, confrontations, deaths, revelations, alliance formations, betrayals, power shifts, key arrivals/departures. Do NOT extract travel, daily training, minor conversations, or scene descriptions that do not directly advance the main conflict or a character arc.
+
+## DENSITY LIMIT
+Output at most 3 events per chunk. If more than 3 qualify, select the 3 highest-impact ones by confidence. For a 100-chapter novel the total event count should be 20–40, not hundreds.
+
+## CONFIDENCE FLOOR
+Only output events with confidence ≥ 0.75. Skip anything below.
+
 ## Instructions
-Extract significant events that matter to the story timeline.
-- Prefer canonical character ids when the registry is sufficient
-- If a character appears in the chunk but is not yet in the registry, include them in character_names
-- Keep descriptions grounded in the text
+Extract only events that significantly advance the plot or mark a turning point.
+- Prefer canonical character ids from the registry; fall back to character_names for unresolved references
+- One event per distinct plot beat — do not split a single scene into multiple events
+- Keep titles short and specific (max 6 words)
 
 Output valid JSON only:
 {{
@@ -202,9 +245,9 @@ Output valid JSON only:
       "character_ids": ["<canonical_id if known>"],
       "character_names": ["<name if not yet resolved>"],
       "location_hint": "<location or empty string>",
-      "temporal_hint": "<time clue or empty string>",
+      "temporal_hint": "<chapter/arc/time anchor — required>",
       "chunk_position": "<early|middle|late>",
-      "stakes": "<why this matters>",
+      "stakes": "<why this matters to the story>",
       "confidence": <0.6-1.0>
     }}
   ]
@@ -334,25 +377,36 @@ You are consolidating raw relationship candidates from a novel import pipeline.
 
 ## Instructions
 Merge duplicate relationship candidates into canonical relationship entities.
-- Use canonical character ids only in the final output
-- Include all relationships supported by at least 1 piece of evidence
-- Deduplicate near-identical evidence and prefer the strongest supported interpretation
-- Keep descriptions concise and grounded in the evidence
+- `source_id` and `target_id` MUST be canonical character IDs from the Entity Registry. If a candidate uses a name that does not map to any registry ID, skip that candidate.
+- Include relationships supported by at least 1 piece of evidence
+- Deduplicate near-identical evidence; prefer the strongest supported interpretation
+- Keep descriptions concise (source language only)
+
+## Relationship Type Taxonomy
+Use EXACTLY one of these categories:
+- `family` — blood or adoptive family (parent/child/sibling/spouse)
+- `romantic` — romantic interest, lovers, betrothed
+- `rivalry` — competing peers, enemies of equal standing
+- `mentor_disciple` — teacher/master → student/apprentice (cultivation context: sect hierarchy)
+- `sworn_brothers` — sworn bond, blood oath, kuòlaoméng (结拜)
+- `political` — alliance, submission, lord/vassal, faction membership
+- `conflict` — active hostility without rivalry framing (assassination, war, vendetta)
+- `unknown` — insufficient evidence to categorise
 
 Output valid JSON only:
 {{
   "relationships": [
     {{
-      "source_id": "<canonical character id>",
-      "target_id": "<canonical character id>",
-      "type": "<relationship label>",
+      "source_id": "<canonical character id from registry>",
+      "target_id": "<canonical character id from registry>",
+      "type": "<short label in source language>",
       "description": "<one sentence summary>",
-      "category": "<alliance|conflict|family|romance|political|mentor|rivalry|other>",
+      "category": "<family|romantic|rivalry|mentor_disciple|sworn_brothers|political|conflict|unknown>",
       "directionality": "<bidirectional|source_to_target|target_to_source>",
       "status": "<active|strained|broken|unknown>",
-      "strength": <1-10>,
+      "strength": <0.1-1.0>,
       "evidence": ["<evidence 1>", "<evidence 2>"],
-      "confidence": <0.6-1.0>
+      "importConfidence": <0.6-1.0>
     }}
   ]
 }}
@@ -371,7 +425,11 @@ Group characters into a compact, useful tag system for a fiction project.
 - Prefer 3-8 tags total unless the cast is extremely large
 - Tags should help navigation and editorial reasoning, not restate names
 - Every tag must include character_ids
-- Importance updates should use lead, supporting, minor, or background
+- Importance updates MUST use exactly one of: core | major | supporting | minor
+  - core: protagonist or POV character present throughout
+  - major: recurring named character with significant arc
+  - supporting: named character with defined role but limited scenes
+  - minor: named but single-scene or purely functional
 
 Output valid JSON only:
 {{
@@ -386,7 +444,7 @@ Output valid JSON only:
   "character_importance_updates": [
     {{
       "character_id": "<canonical id>",
-      "importance": "<lead|supporting|minor|background>",
+      "importance": "<core|major|supporting|minor>",
       "rationale": "<brief reason>"
     }}
   ]

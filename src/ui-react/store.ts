@@ -220,10 +220,12 @@ interface ProjectState {
   updateGraphEdge: (boardId: string, edge: Partial<GraphBoard['edges'][number]> & { id: string }) => void;
   setGraphBoardView: (boardId: string, view: GraphBoard['view']) => void;
   resolveProposal: (proposalId: string, status: Proposal['status']) => void;
+  resolveAllProposals: (status: Proposal['status']) => void;
   resolveIssue: (issueId: string, resolution: 'resolved' | 'ignored') => void;
   dismissIssue: (issueId: string) => void;
   addProposal: (proposal: Proposal) => void;
   addGraphSyncProposal: (title: string, preview: string) => void;
+  updatePromptTemplate: (template: PromptTemplate) => void;
   addExportArtifact: (artifact: ExportArtifact) => void;
   addBetaPersona: (persona: BetaPersona) => void;
   updateBetaPersona: (persona: BetaPersona) => void;
@@ -278,7 +280,7 @@ interface ProjectState {
   resetW3: () => void;
 
   // W1 Import state
-  w1Status: 'idle' | 'running' | 'done' | 'error' | 'cancelled';
+  w1Status: 'idle' | 'running' | 'done' | 'error' | 'cancelled' | 'paused';
   w1Progress: number;
   w1CompletedChunks: number;
   w1TotalChunks: number;
@@ -286,7 +288,13 @@ interface ProjectState {
   w1CurrentStep: string;
   w1SessionId: string | null;
   w1ImportMode: 'import_content_only' | 'import_all';
+  w1ConsoleLog: import('./services/electronApi').ChunkLogEntry[];
+  w1Paused: boolean;
+  w1BreakpointChunk: number | null;
   setW1ImportMode: (mode: 'import_content_only' | 'import_all') => void;
+  setW1Breakpoint: (chunkId: number | null) => Promise<void>;
+  resumeW1: () => Promise<void>;
+  rewindW1: (toChunkId: number) => Promise<void>;
   startImport: (payload: { projectRoot: string; sourceFilePath: string; importMode?: 'import_content_only' | 'import_all' }) => Promise<void>;
   cancelImport: () => Promise<void>;
   resetImport: () => void;
@@ -295,6 +303,7 @@ interface ProjectState {
   w2Status: 'idle' | 'running' | 'done' | 'error';
   w2Progress: number;
   w2ProposalCount: number;
+  w2Errors: string[];
   startManuscriptSync: (payload: { projectRoot: string; mode: string; target_chapter_id?: string }) => Promise<void>;
 
   // Entity focus (navigates sidebar to entity)
@@ -333,6 +342,7 @@ interface ProjectState {
   orchestratorPlan: any[];
   orchestratorCurrentStep: number;
   orchestratorPendingPermission: any | null;
+  orchestratorErrors: string[];
   orchestratorSessionId: string | null;
   startOrchestrator: (payload: { projectRoot: string; goal: string; auto_apply_threshold?: number }) => Promise<void>;
   grantPermission: (projectRoot: string, stepId: string) => Promise<void>;
@@ -1083,6 +1093,17 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   updateGraphEdge: (boardId, edge) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, edges: board.edges.map((e) => e.id === edge.id ? { ...e, ...edge } : e) } : board) })),
   setGraphBoardView: (boardId, view) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, view } : board) })),
   resolveProposal: (proposalId, status) => set((state) => withDirtyState(projectService.resolveProposal(cloneProject(state, useUIStore.getState().locale), proposalId, status))),
+  resolveAllProposals: (status) => {
+    const pending = get().proposals.filter((p) => p.status === 'pending' || !p.status);
+    if (!pending.length) return;
+    set((state) => {
+      let project = cloneProject(state, useUIStore.getState().locale);
+      for (const proposal of pending) {
+        project = projectService.resolveProposal(project, proposal.id, status);
+      }
+      return withDirtyState(project);
+    });
+  },
   resolveIssue: (issueId, resolution) => set((state) => withDirtyState({
     issues: state.issues.map((issue) => issue.id === issueId ? { ...issue, status: resolution, visibility: 'history', dismissedAt: new Date().toISOString() } : issue),
   })),
@@ -1090,6 +1111,11 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     issues: state.issues.map((issue) => issue.id === issueId ? { ...issue, status: 'ignored', visibility: 'hidden', dismissedAt: new Date().toISOString() } : issue),
   })),
   addProposal: (proposal) => set((state) => withDirtyState({ proposals: [proposal, ...state.proposals], unreadUpdates: { ...state.unreadUpdates, activities: { ...state.unreadUpdates.activities, workbench: true }, sections: { ...state.unreadUpdates.sections, 'workbench.inbox': true }, entities: { ...state.unreadUpdates.entities, [proposal.id]: true } } })),
+  updatePromptTemplate: (template) => set((state) => withDirtyState({
+    promptTemplates: state.promptTemplates.some(t => t.id === template.id)
+      ? state.promptTemplates.map(t => t.id === template.id ? template : t)
+      : [...state.promptTemplates, template],
+  })),
   addGraphSyncProposal: (title, preview) => set((state) => {
     const proposal: Proposal = {
       id: `proposal_${Date.now()}`,
@@ -1438,7 +1464,30 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   w1CurrentStep: '',
   w1SessionId: null,
   w1ImportMode: 'import_all',
+  w1ConsoleLog: [],
+  w1Paused: false,
+  w1BreakpointChunk: null,
   setW1ImportMode: (mode) => set({ w1ImportMode: mode }),
+  setW1Breakpoint: async (chunkId) => {
+    const { projectRoot, w1SessionId } = get();
+    if (!projectRoot || !w1SessionId) return;
+    set({ w1BreakpointChunk: chunkId });
+    await electronApi.w1SetBreakpoint(projectRoot, w1SessionId, chunkId);
+  },
+  resumeW1: async () => {
+    const { projectRoot, w1SessionId } = get();
+    if (!projectRoot || !w1SessionId) return;
+    set({ w1Paused: false, w1BreakpointChunk: null });
+    await electronApi.w1Resume(projectRoot, w1SessionId);
+  },
+  rewindW1: async (toChunkId) => {
+    const { projectRoot, w1SessionId } = get();
+    if (!projectRoot || !w1SessionId) return;
+    const result = await electronApi.w1Rewind(projectRoot, w1SessionId, toChunkId);
+    if (result.ok && result.new_session_id) {
+      set({ w1SessionId: result.new_session_id, w1Status: 'running', w1Paused: false, w1BreakpointChunk: null, w1ConsoleLog: [] });
+    }
+  },
   startImport: async (payload) => {
     const { projectRoot, w1ImportMode } = get();
     const mode = payload.importMode ?? w1ImportMode;
@@ -1491,6 +1540,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       return;
     }
     // Poll sidecar for progress — up to 3 hours (3600 × 3s) for large novels
+    let consoleLogOffset = 0;
     for (let i = 0; i < 3600; i++) {
       await new Promise(r => setTimeout(r, 3000));
       const { w1Status: cur } = get();
@@ -1504,6 +1554,19 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           w1Errors: s.errors ?? [],
           w1CurrentStep: (s as any).current_step ?? '',
         });
+        // Also poll console log for real-time chunk detail
+        try {
+          const console = await electronApi.w1Console(effectiveRoot, sessionId ?? '', consoleLogOffset);
+          if (console.entries.length > 0) {
+            consoleLogOffset += console.entries.length;
+            set((state) => ({ w1ConsoleLog: [...state.w1ConsoleLog, ...console.entries] }));
+          }
+          set({ w1Paused: console.paused, w1BreakpointChunk: console.breakpoint_chunk });
+          if (console.paused) {
+            set({ w1Status: 'paused' });
+            // Keep polling while paused so resume is reflected promptly
+          }
+        } catch { /* console endpoint optional */ }
         if (s.status === 'done') {
           set({ w1Status: 'done' });
           // Reload project from disk to surface newly-written proposals in system/inbox.json
@@ -1531,24 +1594,64 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       try { await electronApi.w1Cancel({ session_id: w1SessionId }); } catch { /* already cancelled */ }
     }
   },
-  resetImport: () => set({ w1Status: 'idle', w1Progress: 0, w1CompletedChunks: 0, w1TotalChunks: 0, w1Errors: [], w1CurrentStep: '', w1SessionId: null }),
+  resetImport: () => set({ w1Status: 'idle', w1Progress: 0, w1CompletedChunks: 0, w1TotalChunks: 0, w1Errors: [], w1CurrentStep: '', w1SessionId: null, w1ConsoleLog: [], w1Paused: false, w1BreakpointChunk: null }),
 
   // ── W2 Manuscript Sync ────────────────────────────────────────────────────
   w2Status: 'idle',
   w2Progress: 0,
   w2ProposalCount: 0,
+  w2Errors: [],
   startManuscriptSync: async (payload) => {
     const { projectRoot } = get();
-    set({ w2Status: 'running', w2Progress: 0 });
+    const effectiveRoot = projectRoot || payload.projectRoot;
+    const appSettings = useUIStore.getState().appSettings;
+    const profiles = appSettings?.providerProfiles ?? [];
+    const modelProfiles = appSettings?.modelProfiles ?? [];
+    const profile = profiles.find((p: { id: string }) => p.id === appSettings?.selectedProviderProfileId) ?? profiles[0] as { apiKey?: string; endpoint?: string } | undefined;
+    const modelProfile = modelProfiles.find((m: { id: string }) => m.id === appSettings?.selectedModelProfileId) ?? modelProfiles[0] as { model?: string } | undefined;
+    set({ w2Status: 'running', w2Progress: 0, w2ProposalCount: 0, w2Errors: [] });
     try {
-      await electronApi.w2Start({
-        projectRoot: projectRoot || payload.projectRoot,
+      try { await electronApi.sidecarSpawn(effectiveRoot); } catch { /* best effort */ }
+      const start = await electronApi.w2Start({
+        projectRoot: effectiveRoot,
         mode: payload.mode,
         target_chapter_id: payload.target_chapter_id,
+        api_key: profile?.apiKey ?? '',
+        model: modelProfile?.model ?? 'deepseek-chat',
+        endpoint: profile?.endpoint ?? 'https://api.deepseek.com/v1',
       });
-      set({ w2Status: 'done' });
+      if (!start.session_id || start.status === 'error') {
+        set({ w2Status: 'error', w2Errors: [start.error || 'Manuscript sync failed to start'] });
+        return;
+      }
+      for (let i = 0; i < 150; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        const s = await electronApi.w2Status(effectiveRoot, start.session_id);
+        set({
+          w2Progress: s.progress ?? 0,
+          w2ProposalCount: s.proposals_count ?? 0,
+          w2Errors: s.errors ?? [],
+        });
+        if (s.status === 'done' || s.status === 'completed') {
+          set({ w2Status: 'done', w2Progress: 1, w2ProposalCount: s.proposals_count ?? 0 });
+          try {
+            if (effectiveRoot) {
+              const freshProject = projectService.openProject(effectiveRoot);
+              if (freshProject) {
+                get().loadProject(freshProject);
+              }
+            }
+          } catch { /* best effort */ }
+          return;
+        }
+        if (s.status === 'error' || s.status === 'failed') {
+          set({ w2Status: 'error', w2Errors: s.errors?.length ? s.errors : ['Manuscript sync failed'] });
+          return;
+        }
+      }
+      set({ w2Status: 'error', w2Errors: ['Manuscript sync timed out'] });
     } catch (e) {
-      set({ w2Status: 'error' });
+      set({ w2Status: 'error', w2Errors: [String(e)] });
     }
   },
 
@@ -1712,6 +1815,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   orchestratorPlan: [],
   orchestratorCurrentStep: 0,
   orchestratorPendingPermission: null,
+  orchestratorErrors: [],
   orchestratorSessionId: null,
   startOrchestrator: async (payload) => {
     const appSettings = useUIStore.getState().appSettings;
@@ -1722,10 +1826,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const api_key = profile?.apiKey ?? '';
     const model = modelProfile?.model ?? 'deepseek-chat';
     const endpoint = profile?.endpoint ?? 'https://api.deepseek.com/v1';
-    set({ orchestratorStatus: 'planning', orchestratorProgress: 0, orchestratorPlan: [], orchestratorCurrentStep: 0, orchestratorPendingPermission: null, orchestratorSessionId: null });
+    set({ orchestratorStatus: 'planning', orchestratorProgress: 0, orchestratorPlan: [], orchestratorCurrentStep: 0, orchestratorPendingPermission: null, orchestratorErrors: [], orchestratorSessionId: null });
     try {
       const start = await electronApi.orchestratorStart({ ...payload, api_key, model, endpoint });
-      if (!start.session_id || start.status === 'error') { set({ orchestratorStatus: 'error' }); return; }
+      if (!start.session_id || start.status === 'error') { set({ orchestratorStatus: 'error', orchestratorErrors: ['Failed to start W0 orchestrator.'] }); return; }
       set({ orchestratorSessionId: start.session_id });
       const poll = async () => {
         for (let i = 0; i < 300; i++) {
@@ -1736,6 +1840,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
             orchestratorPlan: s.plan ?? [],
             orchestratorCurrentStep: s.current_step,
             orchestratorPendingPermission: s.pending_permission ?? null,
+            orchestratorErrors: s.errors ?? [],
           });
           const st = s.status as string;
           if (st === 'waiting_permission') { set({ orchestratorStatus: 'waiting_permission' }); return; }
@@ -1743,10 +1848,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           if (st === 'error' || st === 'failed') { set({ orchestratorStatus: 'error' }); return; }
           if (st === 'executing') { set({ orchestratorStatus: 'executing' }); }
         }
-        set({ orchestratorStatus: 'error' });
+        set({ orchestratorStatus: 'error', orchestratorErrors: ['W0 timed out before completion.'] });
       };
       await poll();
-    } catch { set({ orchestratorStatus: 'error' }); }
+    } catch (err) { set({ orchestratorStatus: 'error', orchestratorErrors: [String(err)] }); }
   },
   grantPermission: async (projectRoot, stepId) => {
     const { orchestratorSessionId } = get();
@@ -1763,13 +1868,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           orchestratorPlan: s.plan ?? [],
           orchestratorCurrentStep: s.current_step,
           orchestratorPendingPermission: s.pending_permission ?? null,
+          orchestratorErrors: s.errors ?? [],
         });
         const st = s.status as string;
         if (st === 'waiting_permission') { set({ orchestratorStatus: 'waiting_permission' }); return; }
         if (st === 'done' || st === 'completed') { set({ orchestratorStatus: 'done', orchestratorProgress: 1 }); return; }
         if (st === 'error' || st === 'failed') { set({ orchestratorStatus: 'error' }); return; }
       }
-      set({ orchestratorStatus: 'error' });
+      set({ orchestratorStatus: 'error', orchestratorErrors: ['W0 timed out before completion.'] });
     };
     poll();
   },
@@ -1777,7 +1883,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const { orchestratorSessionId } = get();
     if (!orchestratorSessionId) return;
     await electronApi.orchestratorDeny(projectRoot, stepId, orchestratorSessionId, reason);
-    set({ orchestratorStatus: 'error', orchestratorPendingPermission: null });
+    set({ orchestratorStatus: 'error', orchestratorPendingPermission: null, orchestratorErrors: [`Permission denied: ${reason}`] });
   },
   resetOrchestrator: () => set({
     orchestratorStatus: 'idle',
@@ -1785,6 +1891,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     orchestratorPlan: [],
     orchestratorCurrentStep: 0,
     orchestratorPendingPermission: null,
+    orchestratorErrors: [],
     orchestratorSessionId: null,
   }),
 
