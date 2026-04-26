@@ -286,7 +286,9 @@ interface ProjectState {
   w1CurrentStep: string;
   w1SessionId: string | null;
   w1ImportMode: 'import_content_only' | 'import_all';
+  w1PromptProfile: 'fast' | 'balanced' | 'deep' | 'custom';
   setW1ImportMode: (mode: 'import_content_only' | 'import_all') => void;
+  setW1PromptProfile: (profile: 'fast' | 'balanced' | 'deep' | 'custom') => void;
   startImport: (payload: { projectRoot: string; sourceFilePath: string; importMode?: 'import_content_only' | 'import_all' }) => Promise<void>;
   cancelImport: () => Promise<void>;
   resetImport: () => void;
@@ -1438,9 +1440,11 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   w1CurrentStep: '',
   w1SessionId: null,
   w1ImportMode: 'import_all',
+  w1PromptProfile: 'balanced',
   setW1ImportMode: (mode) => set({ w1ImportMode: mode }),
+  setW1PromptProfile: (profile) => set({ w1PromptProfile: profile }),
   startImport: async (payload) => {
-    const { projectRoot, w1ImportMode } = get();
+    const { projectRoot, w1ImportMode, w1PromptProfile } = get();
     const mode = payload.importMode ?? w1ImportMode;
     const effectiveRoot = projectRoot || payload.projectRoot;
     if (!effectiveRoot) {
@@ -1465,6 +1469,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           projectRoot: effectiveRoot,
           source_file_path: payload.sourceFilePath,
           import_mode: mode,
+          prompt_profile: w1PromptProfile,
           api_key: providerProfile?.apiKey ?? '',
           model: modelProfile?.model ?? 'deepseek-chat',
           endpoint: providerProfile?.endpoint ?? 'https://api.deepseek.com/v1',
@@ -1502,7 +1507,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           w1CompletedChunks: s.completed_chunks ?? 0,
           w1TotalChunks: s.total_chunks ?? 0,
           w1Errors: s.errors ?? [],
-          w1CurrentStep: (s as any).current_step ?? '',
+          w1CurrentStep: s.current_step ?? '',
+          w1PromptProfile: s.prompt_profile ?? w1PromptProfile,
         });
         if (s.status === 'done') {
           set({ w1Status: 'done' });

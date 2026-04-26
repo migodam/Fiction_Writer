@@ -18,7 +18,11 @@ dev_docs/UI_logic.txt
 dev_docs/UX_rules.txt  
 dev_docs/UI_ROUTES.txt  
 dev_docs/TEST_SELECTORS.txt  
-dev_docs/TEST_PLAN.md  
+dev_docs/TEST_PLAN.md
+
+Workflow-specific source of truth:
+
+dev_docs/W1_IMPORT_COMPILER.md for W1 import architecture, artifacts, prompt profiles, and timeline proposal requirements.
 
 If conflicts occur:
 

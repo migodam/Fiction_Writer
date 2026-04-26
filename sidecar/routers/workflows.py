@@ -190,6 +190,7 @@ class W1StartRequest(BaseModel):
     project_path: str
     source_file_path: str
     import_mode: str = "import_all"
+    prompt_profile: str = "balanced"
     api_key: str = ""
     model: str = "deepseek-chat"
     endpoint: str = "https://api.deepseek.com/v1"
@@ -215,6 +216,7 @@ class W1StatusResponse(BaseModel):
     completed_chunks: int = 0
     total_chunks: int = 0
     current_step: str = ""
+    prompt_profile: str = "balanced"
 
 
 # ── W2 Manuscript Sync models ────────────────────────────────────────────────
@@ -272,6 +274,7 @@ async def _run_w1(session_id: str, config: dict) -> None:
 
     try:
         async for state_update in run_streaming(project_path, config):
+            current = _w1_sessions.get(session_id, {})
             _w1_sessions[session_id] = {
                 "status": "running",
                 "progress": state_update.get("progress", 0.0),
@@ -279,6 +282,7 @@ async def _run_w1(session_id: str, config: dict) -> None:
                 "completed_chunks": state_update.get("completed_chunks", 0),
                 "total_chunks": state_update.get("total_chunks", 0),
                 "current_step": state_update.get("current_node", ""),
+                "prompt_profile": current.get("prompt_profile", config.get("prompt_profile", "balanced")),
             }
         # Final state from the last update
         final = _w1_sessions.get(session_id, {})
@@ -323,12 +327,14 @@ async def w1_start(body: W1StartRequest) -> W1StartResponse:
     _w1_sessions[session_id] = {
         "status": "running", "progress": 0.0, "errors": [],
         "completed_chunks": 0, "total_chunks": 0,
+        "prompt_profile": body.prompt_profile,
     }
     config = {
         "project_path": body.project_path,
         "source_file_path": body.source_file_path,
         "import_mode": body.import_mode,
-        "context": {"api_key": body.api_key, "model": body.model, "endpoint": body.endpoint},
+        "prompt_profile": body.prompt_profile,
+        "context": {"api_key": body.api_key, "model": body.model, "endpoint": body.endpoint, "prompt_profile": body.prompt_profile},
     }
     asyncio.create_task(_run_w1(session_id, config))
     return W1StartResponse(session_id=session_id, status="started")
@@ -354,6 +360,7 @@ async def w1_status(session_id: str = "") -> W1StatusResponse:
         completed_chunks=session.get("completed_chunks", 0),
         total_chunks=session.get("total_chunks", 0),
         current_step=session.get("current_step", ""),
+        prompt_profile=session.get("prompt_profile", "balanced"),
     )
 
 

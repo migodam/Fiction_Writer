@@ -129,6 +129,12 @@ test.describe('W1 Import Workflow — UI structure', () => {
     await expect(page.getByTestId('w1-file-picker-btn')).toBeVisible();
   });
 
+  test('prompt profile selector is visible when idle', async ({ page }) => {
+    await expect(page.getByTestId('w1-prompt-profile-select')).toBeVisible();
+    await expect(page.getByTestId('w1-prompt-profile-select')).toHaveValue('balanced');
+    await expect(page.getByTestId('w1-prompt-review-panel')).toBeVisible();
+  });
+
   test('close button is always visible', async ({ page }) => {
     await expect(page.getByTestId('w1-close-btn')).toBeVisible();
   });
@@ -163,6 +169,7 @@ test.describe('W1 Import Workflow — mode selection', () => {
 
     // Mode selectors and file picker should be hidden while running
     await expect(page.getByTestId('w1-mode-content-only')).not.toBeVisible();
+    await expect(page.getByTestId('w1-prompt-profile-select')).not.toBeVisible();
     await expect(page.getByTestId('w1-file-picker-btn')).not.toBeVisible();
   });
 });
@@ -315,6 +322,7 @@ test.describe('W1 Import Workflow — provider credentials wiring', () => {
     await page.goto('http://localhost:3000');
     await page.getByTestId('activity-btn-workbench').click();
     await page.getByTestId('open-import-btn').click();
+    await page.getByTestId('w1-prompt-profile-select').selectOption('deep');
     await page.getByTestId('w1-file-picker-btn').click();
 
     // Wait for the start call to be captured
@@ -329,5 +337,6 @@ test.describe('W1 Import Workflow — provider credentials wiring', () => {
     expect(Object.keys(capturedPayload!)).toContain('api_key');
     expect(Object.keys(capturedPayload!)).toContain('model');
     expect(Object.keys(capturedPayload!)).toContain('endpoint');
+    expect(capturedPayload!.prompt_profile).toBe('deep');
   });
 });

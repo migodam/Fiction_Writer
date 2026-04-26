@@ -470,32 +470,41 @@ class ChunkExtraction(TypedDict):
     notes: List[str]                    # extractor notes for review
 ```
 
-**Graph (fully serial):**
+**Graph (Hybrid Compiler):**
 
 ```
 validate_file
     ↓
 split_chunks (S3)
     ↓
-[FOR EACH CHUNK — serial]:
-    extract_characters          ← updates EntityRegistry
-        ↓
-    extract_events              ← references canonical IDs from updated registry
-        ↓
-    extract_world_mentions
-        ↓
-    update_entity_registry      ← append aliases/notes, never overwrite
-        ↓
-    buffer_manuscript_content
+build ImportRunManifest
+    ↓
+process_chunks                 ← bounded Scout extraction per prompt profile
     ↓
 resolve_conflicts               ← entities with confidence < 0.6 flagged
     ↓
 build_manuscript                ← assemble ManuscriptChapters from buffered content
     ↓
+synthesize_relationships
+    ↓
+classify_character_tags
+    ↓
+infer_world_settings
+    ↓
+build_evidence_cards            ← raw non-canonical evidence with source spans
+    ↓
+reconcile_entities              ← align against existing project data
+    ↓
+architect_timeline              ← dedupe/place events and assign branch/order
+    ↓
 generate_todos                  ← flag unresolved entities, open plot threads
+    ↓
+review_import                   ← write ImportReviewReport before proposals
     ↓
 write_to_project (S2)          ← all proposals at once, dependency-ordered
 ```
+
+See `dev_docs/W1_IMPORT_COMPILER.md` for artifact contracts and timeline proposal requirements.
 
 **Failure handling:** On any chunk failure, log to `errors[]`, skip chunk, continue. Surface all errors to UI at end. User can re-run failed chunks individually.
 

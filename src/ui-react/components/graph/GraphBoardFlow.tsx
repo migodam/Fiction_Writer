@@ -176,8 +176,8 @@ export const GraphBoardFlow: React.FC<GraphBoardFlowProps> = ({ board }) => {
   const { t } = useI18n();
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
 
-  const initialNodes = useMemo(() => toRFNodes(board.nodes), [board.id]); // eslint-disable-line react-hooks/exhaustive-deps
-  const initialEdges = useMemo(() => toRFEdges(board.edges), [board.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const initialNodes = useMemo(() => toRFNodes(board.nodes), [board.id]);
+  const initialEdges = useMemo(() => toRFEdges(board.edges), [board.id]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
@@ -186,7 +186,7 @@ export const GraphBoardFlow: React.FC<GraphBoardFlowProps> = ({ board }) => {
   React.useEffect(() => {
     setNodes(toRFNodes(board.nodes));
     setEdges(toRFEdges(board.edges));
-  }, [board.id, board.nodes, board.edges]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [board.id, board.nodes, board.edges]);
 
   // Persist node position changes back to store
   const handleNodesChange = useCallback((changes: NodeChange[]) => {

@@ -68,13 +68,81 @@ class ImportCheckpoint(TypedDict):
     last_updated: str
 
 
+PromptProfile = Literal["fast", "balanced", "deep", "custom"]
+
+
+class ImportRunManifest(TypedDict, total=False):
+    import_run_id: str
+    source_file_path: str
+    source_hash: str
+    import_mode: Literal["import_content_only", "import_all"]
+    prompt_profile: PromptProfile
+    model: str
+    created_at: str
+    segment_count: int
+    artifact_dir: str
+    segments: List[dict]
+
+
+class EvidenceCard(TypedDict, total=False):
+    id: str
+    kind: Literal["character", "event", "world", "relationship", "scene"]
+    source_chunk_id: int
+    source_segment_id: str
+    source_span: dict
+    summary: str
+    candidate_names: List[str]
+    candidate_ids: List[str]
+    temporal_hint: str
+    location_hint: str
+    confidence: float
+    uncertainty: str
+    raw: dict
+
+
+class ReducerArtifact(TypedDict, total=False):
+    import_run_id: str
+    existing_matches: dict
+    duplicate_candidates: List[dict]
+    dependency_edges: List[dict]
+    skipped_existing: List[dict]
+    warnings: List[str]
+
+
+class TimelineArchitectureArtifact(TypedDict, total=False):
+    import_run_id: str
+    root_branch_id: str
+    branches: List[dict]
+    canonical_events: List[dict]
+    discarded_duplicates: List[dict]
+    density_policy: dict
+    warnings: List[str]
+
+
+class ImportReviewReport(TypedDict, total=False):
+    import_run_id: str
+    status: Literal["pass", "warning", "fail"]
+    warnings: List[str]
+    errors: List[str]
+    proposal_counts: Dict[str, int]
+    duplicate_merges: List[dict]
+    low_confidence_items: List[dict]
+
+
 class ImportState(TypedDict, total=False):
     project_path: str
     workflow_id: str
     source_file_path: str
     import_mode: Literal["import_content_only", "import_all"]
+    import_run_id: str
+    prompt_profile: PromptProfile
     context: dict
     chunks: List["Chunk"]
+    import_run_manifest: ImportRunManifest
+    evidence_cards: List[EvidenceCard]
+    reducer_artifact: ReducerArtifact
+    timeline_architecture: TimelineArchitectureArtifact
+    import_review_report: ImportReviewReport
     entity_registry: dict
     chunk_extractions: List[ChunkExtraction]
     # Per-chunk raw relationship candidates (resolved post-loop)

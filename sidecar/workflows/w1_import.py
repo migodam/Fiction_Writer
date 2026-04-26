@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import difflib
+import hashlib
 import json
 import re
 import uuid
@@ -30,7 +31,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
 
 from sidecar.models.state import ImportState, ManuscriptChapter
-from sidecar.shared import s2_memory_writer, s3_chunk_manager, s4_proposal_queue
+from sidecar.shared import s2_memory_writer, s3_chunk_manager
 from sidecar.utils.lock import acquire_lock, release_lock, WorkflowBusyError
 from sidecar.prompts.w1_prompts import (
     W1_EXTRACT_CHARACTERS,
@@ -261,6 +262,287 @@ def _tag_color(index: int) -> str:
     return palette[index % len(palette)]
 
 
+# ── Import compiler artifacts ─────────────────────────────────────────────────
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
+
+
+def _stable_id(prefix: str, *parts: Any, length: int = 12) -> str:
+    payload = "|".join(str(part) for part in parts)
+    digest = hashlib.sha256(payload.encode("utf-8", errors="replace")).hexdigest()[:length]
+    return f"{prefix}_{digest}"
+
+
+def _normal_key(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    return re.sub(r"[\W_]+", "", text)
+
+
+def _artifact_dir(project_path: str | Path, import_run_id: str) -> Path:
+    return Path(project_path) / "system" / "imports" / import_run_id
+
+
+def _write_import_artifact(project_path: str | Path, import_run_id: str, filename: str, payload: dict | list) -> str:
+    directory = _artifact_dir(project_path, import_run_id)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / filename
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    return str(path)
+
+
+def _chunk_cache_path(project_path: str | Path, import_run_id: str, chunk_id: int) -> Path:
+    return _artifact_dir(project_path, import_run_id) / "chunks" / f"chunk_{chunk_id}.json"
+
+
+def _read_chunk_prompt_cache(state: ImportState, chunk: dict) -> dict | None:
+    import_run_id = state.get("import_run_id")
+    if not import_run_id:
+        return None
+    chunk_id = int(chunk.get("chunk_id", 0) or 0)
+    path = _chunk_cache_path(state["project_path"], import_run_id, chunk_id)
+    payload = _safe_read_json(path, None)
+    if not isinstance(payload, dict):
+        return None
+    raw = chunk.get("manuscript_content") or chunk.get("raw_content") or chunk.get("content", "")
+    if payload.get("chunk_hash") != _sha256_text(raw):
+        return None
+    if payload.get("prompt_profile") != (state.get("prompt_profile") or "balanced"):
+        return None
+    prompts = payload.get("prompt_outputs")
+    return prompts if isinstance(prompts, dict) else None
+
+
+def _write_chunk_prompt_cache(state: ImportState, chunk: dict, prompt_outputs: dict) -> None:
+    import_run_id = state.get("import_run_id")
+    if not import_run_id:
+        return
+    chunk_id = int(chunk.get("chunk_id", 0) or 0)
+    raw = chunk.get("manuscript_content") or chunk.get("raw_content") or chunk.get("content", "")
+    path = _chunk_cache_path(state["project_path"], import_run_id, chunk_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({
+            "chunk_id": chunk_id,
+            "segment_id": chunk.get("segment_id"),
+            "chunk_hash": _sha256_text(raw),
+            "prompt_profile": state.get("prompt_profile") or "balanced",
+            "written_at": _now_iso(),
+            "prompt_outputs": prompt_outputs,
+        }, f, ensure_ascii=False, indent=2)
+
+
+def _profile_text_budget(profile: str) -> int:
+    """Bound per-prompt source text so long novels do not blow model context."""
+    budgets = {
+        "fast": 24_000,
+        "balanced": 64_000,
+        "deep": 128_000,
+        "custom": 128_000,
+    }
+    return budgets.get(profile, budgets["balanced"])
+
+
+def _bounded_chunk_content(state: ImportState, chunk_content: str) -> str:
+    budget = _profile_text_budget(state.get("prompt_profile") or state.get("context", {}).get("prompt_profile", "balanced"))
+    if len(chunk_content) <= budget:
+        return chunk_content
+    head = chunk_content[: budget // 2]
+    tail = chunk_content[-(budget // 2):]
+    return f"{head}\n\n[...middle omitted by W1 prompt profile context budget...]\n\n{tail}"
+
+
+def _safe_read_json(path: Path, fallback: Any) -> Any:
+    try:
+        if path.exists():
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        return fallback
+    return fallback
+
+
+def _read_json_files(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    items: list[dict] = []
+    for file_path in sorted(path.glob("*.json")):
+        item = _safe_read_json(file_path, None)
+        if isinstance(item, dict):
+            items.append(item)
+    return items
+
+
+def _load_existing_project_snapshot(project_path: str | Path) -> dict:
+    """Load a compact project snapshot for deterministic import reconciliation."""
+    root = Path(project_path)
+    entities = root / "entities"
+    timeline_dir = entities / "timeline"
+    writing_dir = root / "writing"
+    snapshot = {
+        "characters": _read_json_files(entities / "characters"),
+        "character_tags": _safe_read_json(entities / "character_tags.json", []),
+        "relationships": _safe_read_json(entities / "relationships.json", []),
+        "world_items": _read_json_files(entities / "world"),
+        "timeline_events": _read_json_files(timeline_dir),
+        "timeline_branches": _safe_read_json(timeline_dir / "branches.json", []),
+        "chapters": _read_json_files(writing_dir / "chapters"),
+        "scenes": _read_json_files(writing_dir / "scenes"),
+    }
+    for key, value in list(snapshot.items()):
+        if not isinstance(value, list):
+            snapshot[key] = []
+    return snapshot
+
+
+def _build_import_manifest(state: ImportState, text: str, chunks: list[dict]) -> dict:
+    source_hash = _sha256_text(text)
+    prompt_profile = state.get("prompt_profile") or state.get("context", {}).get("prompt_profile") or "balanced"
+    import_run_id = state.get("import_run_id") or _stable_id(
+        "import",
+        state.get("source_file_path", ""),
+        source_hash,
+        state.get("import_mode", "import_all"),
+        prompt_profile,
+    )
+    model = state.get("context", {}).get("model", "deepseek-chat")
+    segments: list[dict] = []
+    running_offset = 0
+    for index, chunk in enumerate(chunks):
+        raw = chunk.get("manuscript_content") or chunk.get("raw_content") or chunk.get("content", "")
+        chapter_hint = chunk.get("chapter_hint") or f"Segment {index + 1}"
+        segment_id = _stable_id("seg", import_run_id, index, chapter_hint, _sha256_text(raw)[:16])
+        start = running_offset
+        end = start + len(raw)
+        running_offset = end
+        chunk["segment_id"] = segment_id
+        chunk["source_span"] = {"start": start, "end": end}
+        segments.append({
+            "id": segment_id,
+            "level": "chapter" if chunk.get("chapter_hint") else "window",
+            "title": chapter_hint,
+            "chunk_id": index,
+            "chapter_index": index,
+            "source_span": {"start": start, "end": end},
+            "hash": _sha256_text(raw),
+            "char_count": len(raw),
+        })
+    return {
+        "import_run_id": import_run_id,
+        "source_file_path": state.get("source_file_path", ""),
+        "source_hash": source_hash,
+        "import_mode": state.get("import_mode", "import_all"),
+        "prompt_profile": prompt_profile,
+        "model": model,
+        "created_at": _now_iso(),
+        "segment_count": len(segments),
+        "artifact_dir": str(_artifact_dir(state["project_path"], import_run_id)),
+        "segments": segments,
+    }
+
+
+def _build_evidence_cards(state: ImportState) -> list[dict]:
+    """Convert chunk extraction output into raw evidence cards.
+
+    Evidence cards are intentionally non-canonical. Reducers can merge, reject,
+    or promote them without losing source provenance.
+    """
+    manifest = state.get("import_run_manifest", {})
+    segments = {segment.get("chunk_id"): segment for segment in manifest.get("segments", [])}
+    cards: list[dict] = []
+    for extraction in state.get("chunk_extractions", []):
+        chunk_id = extraction.get("chunk_id", 0)
+        segment = segments.get(chunk_id, {})
+        segment_id = segment.get("id", f"chunk_{chunk_id}")
+        source_span = segment.get("source_span", {})
+
+        for character in extraction.get("new_characters", []):
+            name = character.get("canonical_name") or character.get("name") or ""
+            cards.append({
+                "id": _stable_id("evc", manifest.get("import_run_id", "import"), chunk_id, "character", name),
+                "kind": "character",
+                "source_chunk_id": chunk_id,
+                "source_segment_id": segment_id,
+                "source_span": source_span,
+                "summary": character.get("summary", ""),
+                "candidate_names": [name, *character.get("aliases", [])],
+                "candidate_ids": [character.get("canonical_id") or character.get("id", "")],
+                "confidence": float(character.get("confidence", 0.7)),
+                "uncertainty": "",
+                "raw": character,
+            })
+
+        for event in extraction.get("events", []):
+            cards.append({
+                "id": _stable_id("evc", manifest.get("import_run_id", "import"), chunk_id, "event", event.get("title", ""), event.get("description", "")),
+                "kind": "event",
+                "source_chunk_id": chunk_id,
+                "source_segment_id": segment_id,
+                "source_span": source_span,
+                "summary": event.get("description", ""),
+                "candidate_names": [event.get("title", "")],
+                "candidate_ids": [event.get("event_id", "")],
+                "temporal_hint": event.get("temporal_hint") or "",
+                "location_hint": event.get("location_hint") or "",
+                "confidence": float(event.get("confidence", 0.7)),
+                "uncertainty": "timeline placement is pending Timeline Architect",
+                "raw": event,
+            })
+
+        for world in extraction.get("world_mentions_detailed", []):
+            cards.append({
+                "id": _stable_id("evc", manifest.get("import_run_id", "import"), chunk_id, "world", world.get("name", "")),
+                "kind": "world",
+                "source_chunk_id": chunk_id,
+                "source_segment_id": segment_id,
+                "source_span": source_span,
+                "summary": world.get("description", ""),
+                "candidate_names": [world.get("name", "")],
+                "candidate_ids": [],
+                "confidence": float(world.get("confidence", 0.7)),
+                "uncertainty": "",
+                "raw": world,
+            })
+
+        for relationship in extraction.get("raw_relationships", []):
+            cards.append({
+                "id": _stable_id("evc", manifest.get("import_run_id", "import"), chunk_id, "relationship", relationship.get("source_character_name", ""), relationship.get("target_character_name", ""), relationship.get("type", "")),
+                "kind": "relationship",
+                "source_chunk_id": chunk_id,
+                "source_segment_id": segment_id,
+                "source_span": source_span,
+                "summary": relationship.get("description", ""),
+                "candidate_names": [relationship.get("source_character_name", ""), relationship.get("target_character_name", "")],
+                "candidate_ids": [relationship.get("source_candidate_id") or "", relationship.get("target_candidate_id") or ""],
+                "confidence": float(relationship.get("confidence", 0.7)),
+                "uncertainty": "",
+                "raw": relationship,
+            })
+
+        for scene in extraction.get("scenes", []):
+            cards.append({
+                "id": _stable_id("evc", manifest.get("import_run_id", "import"), chunk_id, "scene", scene.get("title", "")),
+                "kind": "scene",
+                "source_chunk_id": chunk_id,
+                "source_segment_id": segment_id,
+                "source_span": source_span,
+                "summary": scene.get("summary", ""),
+                "candidate_names": [scene.get("title", ""), *scene.get("character_names", [])],
+                "candidate_ids": scene.get("character_ids", []),
+                "temporal_hint": scene.get("time_hint", ""),
+                "location_hint": scene.get("location_hint", ""),
+                "confidence": float(scene.get("confidence", 0.7)),
+                "uncertainty": "",
+                "raw": scene,
+            })
+    return cards
+
+
 # ── LLM helper ──────────────────────────────────────────────────────────────────
 
 # Semaphore to cap the number of concurrent DeepSeek API calls.
@@ -409,8 +691,14 @@ async def node_split_chunks(state: ImportState) -> dict:
         chunk["manuscript_content"] = chunk.get("raw_content", chunk.get("content", ""))
         chunk["chunk_id"] = i
 
+    manifest = _build_import_manifest(state, text, chunks)
+    _write_import_artifact(state["project_path"], manifest["import_run_id"], "manifest.json", manifest)
+
     return {
         "chunks": chunks,
+        "import_run_id": manifest["import_run_id"],
+        "prompt_profile": manifest["prompt_profile"],
+        "import_run_manifest": manifest,
         "progress": 0.1,
     }
 
@@ -732,6 +1020,300 @@ async def node_generate_import_todos(state: ImportState) -> dict:
     return {"proposals": proposals, "errors": errors, "progress": 0.92}
 
 
+async def node_build_evidence_cards(state: ImportState) -> dict:
+    """Persist raw, non-canonical evidence cards for reducer/reviewer stages."""
+    import_run_id = state.get("import_run_id") or state.get("import_run_manifest", {}).get("import_run_id")
+    if not import_run_id:
+        return {"evidence_cards": [], "progress": state.get("progress", 0.8)}
+    cards = _build_evidence_cards(state)
+    _write_import_artifact(state["project_path"], import_run_id, "evidence_cards.json", cards)
+    return {"evidence_cards": cards, "progress": max(float(state.get("progress", 0.8)), 0.82)}
+
+
+async def node_reconcile_entities(state: ImportState) -> dict:
+    """Align imported candidates with existing project data before proposals."""
+    project_path = state["project_path"]
+    snapshot = _load_existing_project_snapshot(project_path)
+    registry = dict(state.get("entity_registry", {}))
+    registry.setdefault("characters", {})
+    relationships = list(state.get("relationships", []))
+    character_tags = list(state.get("character_tags", []))
+    duplicate_candidates: list[dict] = []
+    skipped_existing: list[dict] = []
+    dependency_edges: list[dict] = []
+    character_id_map: dict[str, str] = {}
+    tag_id_map: dict[str, str] = {}
+
+    existing_character_keys: dict[str, dict] = {}
+    for character in snapshot.get("characters", []):
+        for name in [character.get("name", ""), *character.get("aliases", [])]:
+            key = _normal_key(name)
+            if key:
+                existing_character_keys[key] = character
+
+    for cid, entry in registry.get("characters", {}).items():
+        names = [entry.get("canonical_name", ""), *entry.get("aliases", [])]
+        match = next((existing_character_keys.get(_normal_key(name)) for name in names if _normal_key(name) in existing_character_keys), None)
+        if match and match.get("id"):
+            entry["existing_project_id"] = match["id"]
+            entry["skip_create"] = True
+            character_id_map[cid] = match["id"]
+            skipped_existing.append({
+                "entity_type": "character",
+                "import_id": cid,
+                "existing_id": match["id"],
+                "name": entry.get("canonical_name", ""),
+                "reason": "matched existing character name or alias",
+            })
+
+    existing_tag_keys: dict[str, dict] = {}
+    for tag in snapshot.get("character_tags", []):
+        key = _normal_key(tag.get("name", ""))
+        if key:
+            existing_tag_keys[key] = tag
+
+    reconciled_tags: list[dict] = []
+    seen_new_tag_keys: set[str] = set()
+    for tag in character_tags:
+        key = _normal_key(tag.get("name", ""))
+        if not key:
+            continue
+        existing = existing_tag_keys.get(key)
+        if existing and existing.get("id"):
+            tag_id_map[tag.get("id", "")] = existing["id"]
+            skipped_existing.append({
+                "entity_type": "character_tag",
+                "import_id": tag.get("id", ""),
+                "existing_id": existing["id"],
+                "name": tag.get("name", ""),
+                "reason": "matched existing tag name",
+            })
+            continue
+        if key in seen_new_tag_keys:
+            duplicate_candidates.append({"entity_type": "character_tag", "name": tag.get("name", ""), "reason": "duplicate imported tag name"})
+            continue
+        seen_new_tag_keys.add(key)
+        reconciled_tags.append(tag)
+
+    for cid, entry in registry.get("characters", {}).items():
+        mapped_tags: list[str] = []
+        for tag_id in entry.get("tag_ids", []):
+            mapped = tag_id_map.get(tag_id, tag_id)
+            if mapped:
+                mapped_tags.append(mapped)
+            if tag_id not in tag_id_map:
+                dependency_edges.append({"from": cid, "to": tag_id, "type": "character_uses_tag"})
+        entry["tag_ids"] = mapped_tags
+
+    existing_relationship_keys: set[tuple[str, str, str]] = set()
+    for rel in snapshot.get("relationships", []):
+        left = str(rel.get("sourceId") or rel.get("source_id") or "")
+        right = str(rel.get("targetId") or rel.get("target_id") or "")
+        label = _normal_key(rel.get("type", "") or rel.get("category", ""))
+        if left and right:
+            existing_relationship_keys.add((left, right, label))
+            existing_relationship_keys.add((right, left, label))
+
+    reconciled_relationships: list[dict] = []
+    seen_relationship_keys: set[tuple[str, str, str]] = set()
+    for relationship in relationships:
+        source = character_id_map.get(relationship.get("sourceId", ""), relationship.get("sourceId", ""))
+        target = character_id_map.get(relationship.get("targetId", ""), relationship.get("targetId", ""))
+        relationship = {**relationship, "sourceId": source, "targetId": target}
+        key = (source, target, _normal_key(relationship.get("type", "") or relationship.get("category", "")))
+        if key in existing_relationship_keys:
+            skipped_existing.append({
+                "entity_type": "relationship",
+                "sourceId": source,
+                "targetId": target,
+                "type": relationship.get("type", ""),
+                "reason": "matched existing relationship pair",
+            })
+            continue
+        if key in seen_relationship_keys:
+            duplicate_candidates.append({"entity_type": "relationship", "sourceId": source, "targetId": target, "reason": "duplicate imported relationship"})
+            continue
+        seen_relationship_keys.add(key)
+        reconciled_relationships.append(relationship)
+
+    registry["character_id_map"] = character_id_map
+    registry["tag_id_map"] = tag_id_map
+    artifact = {
+        "import_run_id": state.get("import_run_id", ""),
+        "existing_matches": {"characters": character_id_map, "character_tags": tag_id_map},
+        "duplicate_candidates": duplicate_candidates,
+        "dependency_edges": dependency_edges,
+        "skipped_existing": skipped_existing,
+        "warnings": [],
+    }
+    if state.get("import_run_id"):
+        _write_import_artifact(project_path, state["import_run_id"], "reducer_artifact.json", artifact)
+    return {
+        "entity_registry": registry,
+        "relationships": reconciled_relationships,
+        "character_tags": reconciled_tags,
+        "reducer_artifact": artifact,
+        "progress": max(float(state.get("progress", 0.84)), 0.86),
+    }
+
+
+def _event_signature(event: dict) -> str:
+    parts = [
+        _normal_key(event.get("title", "")),
+        _normal_key(event.get("description", ""))[:80],
+        _normal_key(event.get("temporal_hint", "")),
+        _normal_key(event.get("location_hint", "")),
+        ",".join(sorted(event.get("character_ids", []))),
+    ]
+    return "|".join(parts)
+
+
+async def node_architect_timeline(state: ImportState) -> dict:
+    """Deduplicate and place timeline candidates into branch-aware event data."""
+    project_path = state["project_path"]
+    snapshot = _load_existing_project_snapshot(project_path)
+    registry = dict(state.get("entity_registry", {}))
+    events = registry.get("events", {})
+    character_id_map = registry.get("character_id_map", {})
+    discarded_duplicates: list[dict] = []
+
+    existing_branches = snapshot.get("timeline_branches", [])
+    root_branch = next((branch for branch in existing_branches if branch.get("mode") == "root"), None) or (existing_branches[0] if existing_branches else None)
+    root_branch_id = root_branch.get("id") if root_branch else "branch_import_main"
+    timeline_branches = list(state.get("timeline_branches", []))
+    if not root_branch:
+        timeline_branches = [{
+            "id": root_branch_id,
+            "name": "Imported Main Timeline",
+            "description": "Default root branch generated by W1 Import Compiler for imported canonical events.",
+            "parentBranchId": None,
+            "forkEventId": None,
+            "mergeEventId": None,
+            "color": "#38bdf8",
+            "sortOrder": 0,
+            "mode": "root",
+            "startAnchor": None,
+            "endAnchor": None,
+            "endMode": "open",
+            "mergeTargetBranchId": None,
+            "geometry": {"laneOffset": 0, "bend": 0.5, "thickness": 2},
+        }, *timeline_branches]
+
+    existing_event_keys = {
+        (_normal_key(event.get("title", "")), _normal_key(event.get("summary", ""))[:80])
+        for event in snapshot.get("timeline_events", [])
+    }
+    seen_signatures: dict[str, str] = {}
+    canonical_events: dict[str, dict] = {}
+    order_index = len(snapshot.get("timeline_events", []))
+    chunk_event_counts: dict[int, int] = {}
+    density_limit_per_chunk = 8
+
+    for event_id, event in events.items():
+        title = event.get("title", "").strip()
+        if not title:
+            discarded_duplicates.append({"event_id": event_id, "reason": "missing title"})
+            continue
+        existing_key = (_normal_key(title), _normal_key(event.get("description", ""))[:80])
+        if existing_key in existing_event_keys:
+            discarded_duplicates.append({"event_id": event_id, "title": title, "reason": "matches existing timeline event"})
+            continue
+        chunk_id = int(event.get("chunk_id", 0) or 0)
+        chunk_event_counts[chunk_id] = chunk_event_counts.get(chunk_id, 0) + 1
+        if chunk_event_counts[chunk_id] > density_limit_per_chunk and float(event.get("confidence", 0.7)) < 0.9:
+            discarded_duplicates.append({"event_id": event_id, "title": title, "reason": "demoted by density policy"})
+            continue
+        signature = _event_signature(event)
+        if signature in seen_signatures:
+            primary_id = seen_signatures[signature]
+            primary = canonical_events[primary_id]
+            primary.setdefault("mergedEventIds", []).append(event_id)
+            primary["summary"] = _merge_text_field(primary.get("summary", ""), event.get("description", ""))
+            discarded_duplicates.append({"event_id": event_id, "merged_into": primary_id, "title": title, "reason": "duplicate event signature"})
+            continue
+        seen_signatures[signature] = event_id
+        participant_ids = [character_id_map.get(cid, cid) for cid in event.get("character_ids", [])]
+        canonical_events[event_id] = {
+            **event,
+            "event_id": event_id,
+            "branchId": root_branch_id,
+            "orderIndex": order_index,
+            "summary": event.get("description", ""),
+            "locationIds": [],
+            "participantCharacterIds": [cid for cid in participant_ids if cid],
+            "linkedSceneIds": [],
+            "linkedWorldItemIds": [],
+            "tags": ["imported"],
+            "sharedBranchIds": [],
+            "importance": "major" if float(event.get("confidence", 0.7)) >= 0.86 else "minor",
+            "timelineClass": "canonical_event",
+            "mergedEventIds": [],
+        }
+        order_index += 1
+
+    registry["events"] = canonical_events
+    artifact = {
+        "import_run_id": state.get("import_run_id", ""),
+        "root_branch_id": root_branch_id,
+        "branches": timeline_branches,
+        "canonical_events": list(canonical_events.values()),
+        "discarded_duplicates": discarded_duplicates,
+        "density_policy": {"max_events_per_chunk": density_limit_per_chunk, "low_confidence_threshold": 0.9},
+        "warnings": [],
+    }
+    if state.get("import_run_id"):
+        _write_import_artifact(project_path, state["import_run_id"], "timeline_architecture.json", artifact)
+    return {
+        "entity_registry": registry,
+        "timeline_branches": timeline_branches,
+        "timeline_architecture": artifact,
+        "progress": max(float(state.get("progress", 0.88)), 0.9),
+    }
+
+
+async def node_review_import(state: ImportState) -> dict:
+    """Validate compiler outputs before proposal writes."""
+    registry = state.get("entity_registry", {})
+    reducer = state.get("reducer_artifact", {})
+    timeline = state.get("timeline_architecture", {})
+    warnings: list[str] = list(reducer.get("warnings", [])) + list(timeline.get("warnings", []))
+    errors: list[str] = list(state.get("errors", []))
+    low_confidence_items: list[dict] = []
+
+    for cid, character in registry.get("characters", {}).items():
+        if character.get("skip_create"):
+            continue
+        if float(character.get("confidence", 0.7)) < 0.65:
+            low_confidence_items.append({"entity_type": "character", "id": cid, "confidence": character.get("confidence", 0.7)})
+
+    required_event_fields = ["branchId", "orderIndex", "locationIds", "participantCharacterIds", "linkedSceneIds", "linkedWorldItemIds", "tags"]
+    for eid, event in registry.get("events", {}).items():
+        missing = [field for field in required_event_fields if field not in event]
+        if missing:
+            errors.append(f"Timeline event {eid} missing required fields: {', '.join(missing)}")
+        if float(event.get("confidence", 0.7)) < 0.65:
+            low_confidence_items.append({"entity_type": "timeline_event", "id": eid, "confidence": event.get("confidence", 0.7)})
+
+    report = {
+        "import_run_id": state.get("import_run_id", ""),
+        "status": "fail" if errors else "warning" if warnings or low_confidence_items else "pass",
+        "warnings": warnings,
+        "errors": errors,
+        "proposal_counts": {
+            "characters": len([c for c in registry.get("characters", {}).values() if not c.get("skip_create")]),
+            "timeline_events": len(registry.get("events", {})),
+            "relationships": len(state.get("relationships", [])),
+            "character_tags": len(state.get("character_tags", [])),
+            "timeline_branches": len(state.get("timeline_branches", [])),
+        },
+        "duplicate_merges": timeline.get("discarded_duplicates", []) + reducer.get("duplicate_candidates", []),
+        "low_confidence_items": low_confidence_items,
+    }
+    if state.get("import_run_id"):
+        _write_import_artifact(state["project_path"], state["import_run_id"], "review_report.json", report)
+    return {"import_review_report": report, "errors": errors, "progress": max(float(state.get("progress", 0.91)), 0.92)}
+
+
 async def node_write_to_project(state: ImportState) -> dict:
     """Write entities to project, push proposals, write manuscript.json, trigger W2 post_import."""
     project_path = Path(state["project_path"])
@@ -751,9 +1333,12 @@ async def node_write_to_project(state: ImportState) -> dict:
             character_event_links.setdefault(cid, [])
             if event_id not in character_event_links[cid]:
                 character_event_links[cid].append(event_id)
+    character_id_map = registry.get("character_id_map", {})
 
     # Write character proposals
     for cid, entry in registry.get("characters", {}).items():
+        if entry.get("skip_create"):
+            continue
         op = {
             "op_type": "create",
             "entity_type": "character",
@@ -781,13 +1366,33 @@ async def node_write_to_project(state: ImportState) -> dict:
             "source_workflow": "W1_import",
             "confidence": 0.75,
             "auto_apply": False,
-            "depends_on": [],
+            "depends_on": entry.get("tag_ids", []),
         }
         try:
             proposal = await s2_memory_writer.propose_write(op, str(project_path))
             proposals.append(proposal)
         except Exception as e:
             errors.append(f"Failed to propose character {cid}: {str(e)}")
+
+    # Write timeline branch proposals before events so imported events can
+    # depend on branch proposals in the Workbench review queue.
+    for branch in timeline_branches:
+        branch_id = branch.get("id") or f"branch_{uuid.uuid4().hex[:8]}"
+        op = {
+            "op_type": "create",
+            "entity_type": "timeline_branch",
+            "entity_id": branch_id,
+            "data": {**branch, "id": branch_id},
+            "source_workflow": "W1_import",
+            "confidence": 0.75,
+            "auto_apply": False,
+            "depends_on": [],
+        }
+        try:
+            proposal = await s2_memory_writer.propose_write(op, str(project_path))
+            proposals.append(proposal)
+        except Exception as e:
+            errors.append(f"Failed to propose timeline branch {branch_id}: {str(e)}")
 
     # Write event proposals
     for eid, entry in registry.get("events", {}).items():
@@ -798,15 +1403,26 @@ async def node_write_to_project(state: ImportState) -> dict:
             "data": {
                 "id": eid,
                 "title": entry.get("title", ""),
-                "summary": entry.get("description", ""),
-                "participantCharacterIds": entry.get("character_ids", []),
+                "summary": entry.get("summary", entry.get("description", "")),
+                "branchId": entry.get("branchId", "branch_import_main"),
+                "orderIndex": int(entry.get("orderIndex", 0)),
+                "locationIds": entry.get("locationIds", []),
+                "participantCharacterIds": entry.get("participantCharacterIds")
+                    or [character_id_map.get(cid, cid) for cid in entry.get("character_ids", [])],
+                "linkedSceneIds": entry.get("linkedSceneIds", []),
+                "linkedWorldItemIds": entry.get("linkedWorldItemIds", []),
+                "tags": entry.get("tags", ["imported"]),
                 "time": entry.get("temporal_hint", ""),
+                "sharedBranchIds": entry.get("sharedBranchIds", []),
+                "importance": entry.get("importance", "minor"),
                 "importConfidence": entry.get("confidence", 0.7),
+                "importRunId": state.get("import_run_id", ""),
+                "mergedEventIds": entry.get("mergedEventIds", []),
             },
             "source_workflow": "W1_import",
             "confidence": 0.75,
             "auto_apply": False,
-            "depends_on": [],
+            "depends_on": [entry.get("branchId", "branch_import_main")],
         }
         try:
             proposal = await s2_memory_writer.propose_write(op, str(project_path))
@@ -852,7 +1468,7 @@ async def node_write_to_project(state: ImportState) -> dict:
             "source_workflow": "W1_import",
             "confidence": float(relationship.get("importConfidence", 0.75)),
             "auto_apply": False,
-            "depends_on": [],
+            "depends_on": [relationship.get("sourceId", ""), relationship.get("targetId", "")],
         }
         try:
             proposal = await s2_memory_writer.propose_write(op, str(project_path))
@@ -896,25 +1512,6 @@ async def node_write_to_project(state: ImportState) -> dict:
             proposals.append(proposal)
         except Exception as e:
             errors.append(f"Failed to propose world settings: {str(e)}")
-
-    # Write timeline branch proposals
-    for branch in timeline_branches:
-        branch_id = branch.get("id") or f"branch_{uuid.uuid4().hex[:8]}"
-        op = {
-            "op_type": "create",
-            "entity_type": "timeline_branch",
-            "entity_id": branch_id,
-            "data": {**branch, "id": branch_id},
-            "source_workflow": "W1_import",
-            "confidence": 0.75,
-            "auto_apply": False,
-            "depends_on": [],
-        }
-        try:
-            proposal = await s2_memory_writer.propose_write(op, str(project_path))
-            proposals.append(proposal)
-        except Exception as e:
-            errors.append(f"Failed to propose timeline branch {branch_id}: {str(e)}")
 
     # Write world container proposals
     for container in world_containers:
@@ -1007,12 +1604,17 @@ async def node_write_to_project(state: ImportState) -> dict:
         except Exception as e:
             errors.append(f"Failed to propose chapter '{title}': {str(e)}")
 
-    # Push all proposals to inbox
+    proposal_counts: dict[str, int] = {}
     for proposal in proposals:
-        try:
-            await s4_proposal_queue.push_to_inbox(proposal, str(project_path))
-        except Exception:
-            pass
+        ops = proposal.get("operations", [])
+        entity_type = ops[0].get("entityType", "unknown") if ops else "unknown"
+        proposal_counts[entity_type] = proposal_counts.get(entity_type, 0) + 1
+
+    review_report = dict(state.get("import_review_report", {}))
+    if review_report:
+        review_report["proposal_counts"] = proposal_counts
+        if state.get("import_run_id"):
+            _write_import_artifact(str(project_path), state["import_run_id"], "review_report.json", review_report)
 
     # Write manuscript.json directly (verbatim source text, not AI-generated)
     manuscript_data = {
@@ -1041,6 +1643,7 @@ async def node_write_to_project(state: ImportState) -> dict:
             "workflow_id": f"W2-post-{state.get('workflow_id', 'W1')}",
             "mode": "post_import",
             "target_chapter_id": None,
+            "context": state.get("context", {}),
             "extracted_entities": [],
             "diff": [],
             "proposals": [],
@@ -1394,6 +1997,7 @@ async def node_process_chunks(state: ImportState) -> dict:
             continue
 
         chunk_content = chunk.get("content", "")
+        prompt_chunk_content = _bounded_chunk_content(state, chunk_content)
         chunk_notes: list[str] = []
         chunk_raw_relationships: list[dict] = []
         world_mentions_detailed: list[dict] = []
@@ -1407,64 +2011,80 @@ async def node_process_chunks(state: ImportState) -> dict:
         scene_hint = chunk.get("chapter_hint") or ""
 
         try:
-            results = await asyncio.gather(
-                _invoke_json_prompt(
-                    llm,
-                    W1_EXTRACT_CHARACTERS_DEEP,
-                    chunk_content=chunk_content,
-                    chunk_id=chunk_id,
-                    total_chunks=total,
-                    entity_registry_summary=registry_summary,
-                ),
-                _invoke_json_prompt(
-                    llm,
-                    W1_EXTRACT_EVENTS_DEEP,
-                    chunk_content=chunk_content,
-                    chunk_id=chunk_id,
-                    total_chunks=total,
-                    entity_registry_summary=registry_summary,
-                ),
-                _invoke_json_prompt(
-                    llm,
-                    W1_EXTRACT_WORLD_DEEP,
-                    chunk_content=chunk_content,
-                    chunk_id=chunk_id,
-                    total_chunks=total,
-                    entity_registry_summary=registry_summary,
-                ),
-                _invoke_json_prompt(
-                    llm,
-                    W1_EXTRACT_RELATIONSHIPS_CHUNK,
-                    chunk_content=chunk_content,
-                    chunk_id=chunk_id,
-                    total_chunks=total,
-                    entity_registry_summary=registry_summary,
-                ),
-                _invoke_json_prompt(
-                    llm,
-                    W1_EXTRACT_SCENE_SUMMARIES,
-                    chunk_content=chunk_content,
-                    chunk_id=chunk_id,
-                    total_chunks=total,
-                    entity_registry_summary=registry_summary,
-                    chapter_hint=scene_hint,
-                ),
-                return_exceptions=True,
-            )
+            cached_outputs = _read_chunk_prompt_cache(state, chunk)
+            if cached_outputs:
+                char_data = cached_outputs.get("character", {})
+                event_data = cached_outputs.get("event", {})
+                world_data = cached_outputs.get("world", {})
+                relationship_data = cached_outputs.get("relationship", {})
+                scene_data = cached_outputs.get("scene", {})
+                chunk_notes.append("Loaded Scout prompt outputs from import artifact cache.")
+            else:
+                results = await asyncio.gather(
+                    _invoke_json_prompt(
+                        llm,
+                        W1_EXTRACT_CHARACTERS_DEEP,
+                        chunk_content=prompt_chunk_content,
+                        chunk_id=chunk_id,
+                        total_chunks=total,
+                        entity_registry_summary=registry_summary,
+                    ),
+                    _invoke_json_prompt(
+                        llm,
+                        W1_EXTRACT_EVENTS_DEEP,
+                        chunk_content=prompt_chunk_content,
+                        chunk_id=chunk_id,
+                        total_chunks=total,
+                        entity_registry_summary=registry_summary,
+                    ),
+                    _invoke_json_prompt(
+                        llm,
+                        W1_EXTRACT_WORLD_DEEP,
+                        chunk_content=prompt_chunk_content,
+                        chunk_id=chunk_id,
+                        total_chunks=total,
+                        entity_registry_summary=registry_summary,
+                    ),
+                    _invoke_json_prompt(
+                        llm,
+                        W1_EXTRACT_RELATIONSHIPS_CHUNK,
+                        chunk_content=prompt_chunk_content,
+                        chunk_id=chunk_id,
+                        total_chunks=total,
+                        entity_registry_summary=registry_summary,
+                    ),
+                    _invoke_json_prompt(
+                        llm,
+                        W1_EXTRACT_SCENE_SUMMARIES,
+                        chunk_content=prompt_chunk_content,
+                        chunk_id=chunk_id,
+                        total_chunks=total,
+                        entity_registry_summary=registry_summary,
+                        chapter_hint=scene_hint,
+                    ),
+                    return_exceptions=True,
+                )
 
-            def _coerce_result(index: int, label: str) -> dict:
-                result = results[index]
-                if isinstance(result, Exception):
-                    chunk_notes.append(f"{label} extraction failed: {result}")
-                    errors.append(f"Chunk {chunk_id} {label} extraction failed: {result}")
-                    return {}
-                return result
+                def _coerce_result(index: int, label: str) -> dict:
+                    result = results[index]
+                    if isinstance(result, Exception):
+                        chunk_notes.append(f"{label} extraction failed: {result}")
+                        errors.append(f"Chunk {chunk_id} {label} extraction failed: {result}")
+                        return {}
+                    return result
 
-            char_data = _coerce_result(0, "character")
-            event_data = _coerce_result(1, "event")
-            world_data = _coerce_result(2, "world")
-            relationship_data = _coerce_result(3, "relationship")
-            scene_data = _coerce_result(4, "scene")
+                char_data = _coerce_result(0, "character")
+                event_data = _coerce_result(1, "event")
+                world_data = _coerce_result(2, "world")
+                relationship_data = _coerce_result(3, "relationship")
+                scene_data = _coerce_result(4, "scene")
+                _write_chunk_prompt_cache(state, chunk, {
+                    "character": char_data,
+                    "event": event_data,
+                    "world": world_data,
+                    "relationship": relationship_data,
+                    "scene": scene_data,
+                })
 
             for update in char_data.get("existing_character_updates", []):
                 cid = update.get("canonical_id") or _resolve_character_id(update.get("canonical_name"), registry)
@@ -1764,7 +2384,8 @@ def build_graph() -> Any:
     content_only path: validate → checkpoint → split → build_manuscript → todos → write
     import_all path:   validate → checkpoint → split → process_chunks → resolve →
                        build_manuscript → synthesize_relationships → classify_tags →
-                       infer_world_settings → todos → write
+                       infer_world_settings → evidence → reconcile → timeline_architect →
+                       todos → review → write
     """
     builder: StateGraph = StateGraph(ImportState)
 
@@ -1774,6 +2395,10 @@ def build_graph() -> Any:
     builder.add_node("split_chunks", node_split_chunks)
     builder.add_node("build_manuscript", node_build_manuscript)
     builder.add_node("generate_import_todos", node_generate_import_todos)
+    builder.add_node("build_evidence_cards", node_build_evidence_cards)
+    builder.add_node("reconcile_entities", node_reconcile_entities)
+    builder.add_node("architect_timeline", node_architect_timeline)
+    builder.add_node("review_import", node_review_import)
     builder.add_node("write_to_project", node_write_to_project)
 
     # import_all-only nodes
@@ -1816,9 +2441,13 @@ def build_graph() -> Any:
     # Synthesis chain (import_all only)
     builder.add_edge("synthesize_relationships", "classify_character_tags")
     builder.add_edge("classify_character_tags", "infer_world_settings")
-    builder.add_edge("infer_world_settings", "generate_import_todos")
+    builder.add_edge("infer_world_settings", "build_evidence_cards")
+    builder.add_edge("build_evidence_cards", "reconcile_entities")
+    builder.add_edge("reconcile_entities", "architect_timeline")
+    builder.add_edge("architect_timeline", "generate_import_todos")
 
-    builder.add_edge("generate_import_todos", "write_to_project")
+    builder.add_edge("generate_import_todos", "review_import")
+    builder.add_edge("review_import", "write_to_project")
     builder.add_edge("write_to_project", END)
 
     checkpointer = MemorySaver()
@@ -1844,8 +2473,14 @@ async def run(project_path: str, config: dict) -> dict:
         "workflow_id": "W1",
         "source_file_path": config.get("source_file_path", ""),
         "import_mode": import_mode,
+        "prompt_profile": config.get("prompt_profile") or config.get("context", {}).get("prompt_profile", "balanced"),
         "context": config.get("context", {}),
         "chunks": [],
+        "import_run_manifest": {},
+        "evidence_cards": [],
+        "reducer_artifact": {},
+        "timeline_architecture": {},
+        "import_review_report": {},
         "entity_registry": {},
         "chunk_extractions": [],
         "raw_relationships": [],
@@ -1878,8 +2513,14 @@ async def run_streaming(project_path: str, config: dict):
         "workflow_id": "W1",
         "source_file_path": config.get("source_file_path", ""),
         "import_mode": import_mode,
+        "prompt_profile": config.get("prompt_profile") or config.get("context", {}).get("prompt_profile", "balanced"),
         "context": config.get("context", {}),
         "chunks": [],
+        "import_run_manifest": {},
+        "evidence_cards": [],
+        "reducer_artifact": {},
+        "timeline_architecture": {},
+        "import_review_report": {},
         "entity_registry": {},
         "chunk_extractions": [],
         "raw_relationships": [],
