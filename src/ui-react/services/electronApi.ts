@@ -74,6 +74,24 @@ export interface W1StatusResult {
   total_chunks: number;
   current_step?: string;
   prompt_profile?: 'fast' | 'balanced' | 'deep' | 'custom';
+  proposals_count?: number;
+  import_review_report?: W1ImportReviewReport;
+}
+
+export interface W1ImportReviewReport {
+  import_run_id?: string;
+  status?: 'pass' | 'warning' | 'fail';
+  warnings?: string[];
+  errors?: string[];
+  proposal_counts?: Record<string, number>;
+  safe_accept_ids?: string[];
+  blocked_ids?: string[];
+  failed_chunks?: Array<{ chunk_id?: number; errors?: string[] }>;
+  duplicate_merges?: Array<Record<string, unknown>>;
+  low_confidence_items?: Array<Record<string, unknown>>;
+  model?: string;
+  prompt_profile?: 'fast' | 'balanced' | 'deep' | 'custom';
+  artifact_paths?: Record<string, string>;
 }
 
 export interface ChunkLogEntry {

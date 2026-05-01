@@ -79,7 +79,8 @@ const SNAP_THRESHOLD = 40;
 const LONG_PRESS_MS = 500;
 const BRANCH_LANE_SPACING = 160;
 const MIN_EVENT_SPACING_PX = 80;
-const MAX_VISIBLE_EVENTS_PER_BRANCH = 15;
+const TIMELINE_BASE_WIDTH = 2000;
+const TIMELINE_EDGE_PADDING_PX = 240;
 
 function resolveBranchEndAnchor(branch: TimelineBranch): TimelineBranch['endAnchor'] {
   return branch.endAnchor ?? (
@@ -164,7 +165,17 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
 
   // ── Derived data ──────────────────────────────────────────
 
-  const svgWidth = 2000;
+  const maxEventsOnAnyBranch = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const event of events) {
+      counts.set(event.branchId, (counts.get(event.branchId) || 0) + 1);
+    }
+    return Math.max(1, ...counts.values());
+  }, [events]);
+  const svgWidth = Math.max(
+    TIMELINE_BASE_WIDTH,
+    maxEventsOnAnyBranch * MIN_EVENT_SPACING_PX + TIMELINE_EDGE_PADDING_PX,
+  );
   const sortedBranches = useMemo(
     () => branches.slice().sort((left, right) => left.sortOrder - right.sortOrder || left.id.localeCompare(right.id)),
     [branches],
@@ -238,7 +249,7 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
       );
     });
     return map;
-  }, [branchLaneOffsets, sortedBranches]);
+  }, [branchLaneOffsets, sortedBranches, svgWidth]);
 
   const branchEventsMap = useMemo(() => {
     const map = new Map<string, TimelineEvent[]>();
@@ -261,7 +272,7 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
     for (const branchId of branchIds) {
       const cp = branchCPMap.get(branchId);
       if (!cp) continue;
-      const evtsOnBranch = (branchEventsMap.get(branchId) || []).slice(0, MAX_VISIBLE_EVENTS_PER_BRANCH);
+      const evtsOnBranch = branchEventsMap.get(branchId) || [];
 
       // Compute initial positions from t-parameter
       const positioned: { event: TimelineEvent; pos: Point }[] = evtsOnBranch.map((event) => {

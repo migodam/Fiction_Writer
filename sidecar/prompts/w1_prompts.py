@@ -114,7 +114,7 @@ If no new world elements appear, output: {{"world_mentions": []}}
 
 W1_EXTRACT_CHARACTERS_DEEP: str = """
 You are processing chunk {chunk_id} of {total_chunks} from a novel import pipeline.
-Your job is to perform deep character extraction from this text chunk.
+Your job is to extract REVIEWABLE CHARACTER CARD DRAFTS from this text chunk.
 
 ## Entity Registry
 {entity_registry_summary}
@@ -123,7 +123,7 @@ Your job is to perform deep character extraction from this text chunk.
 {chunk_content}
 
 ## LANGUAGE RULE
-All text fields (summary, background, personality_traits, goals, fears, secrets, speech_style, arc_notes, role_in_story, physical_description) MUST be written in the same language as the source text chunk. Do NOT translate or add parallel translations.
+All text fields MUST be written in the same language as the source text chunk. Do NOT translate or add parallel translations.
 
 ## ALIAS-FIRST RULE
 Before creating any new character, check ALL existing registry entries for any name, alias, title, or honorific match. In cultivation novels a single character may appear under: childhood name, courtesy name, cultivation title (e.g. 炼气期弟子), sect rank, given name + surname, and nicknames — these ALL refer to ONE entity. Only create a new character if the reference genuinely cannot be reconciled with any registry entry after exhaustive checking.
@@ -134,12 +134,23 @@ Before creating any new character, check ALL existing registry entries for any n
 - 0.6–0.74: Unnamed role (e.g. "an elder", "a servant") — use the role as canonical_name
 - Below 0.6: Do not output this character
 
+## CHARACTER CARD RULE
+Import is not a biography-writing pass. Output only a compact character card draft:
+- identity and aliases
+- story function or role if directly supported
+- first evidence seen in this chunk
+- up to 3 grounded tags/traits
+- open questions when identity, role, or motivation is uncertain
+
+Do NOT invent deep psychology. Do NOT fill goals, fears, secrets, speech style, arc, or full background unless the source text explicitly states them. Those belong to a later enrichment workflow.
+
 ## LENGTH LIMITS (strictly enforced — truncate before output)
-- summary: ≤ 2 sentences, ≤ 40 words
-- background: ≤ 3 sentences, ≤ 60 words
-- personality_traits: ≤ 4 traits total
-- physical_description: ≤ 2 sentences, ≤ 40 words
-- arc_notes: ≤ 2 sentences, ≤ 40 words
+- summary: ≤ 1 sentence, ≤ 25 words
+- role_in_story: ≤ 12 words
+- physical_description: ≤ 1 sentence, ≤ 25 words
+- notes: ≤ 3 bullets total
+- grounded_tags: ≤ 3 tags total
+- open_questions: ≤ 2 questions total
 
 ## IMPORTANCE VALUES
 Use exactly one of: core | major | supporting | minor
@@ -152,9 +163,8 @@ Use exactly one of: core | major | supporting | minor
 Extract named characters from this chunk using the alias-first rule above.
 - Reuse an existing character (via existing_character_updates) whenever possible
 - Create a new character only when identity is genuinely distinct
-- For ALL fields: fill with reasonable inference from context rather than leaving empty
-- Use empty strings or empty arrays only when there is truly no basis for inference
-- Keep every field concise and factual; source language only (see LANGUAGE RULE)
+- Prefer empty strings or empty arrays over unsupported inference
+- Keep every field concise, factual, and source-grounded
 - Obey LENGTH LIMITS — do not write novel-length descriptions
 
 Output valid JSON only:
@@ -163,17 +173,12 @@ Output valid JSON only:
     {{
       "canonical_id": "<existing registry id>",
       "new_aliases": ["<new alias found in this chunk>"],
-      "new_notes": ["<new observation from this chunk>"],
+      "new_notes": ["<brief evidence-grounded observation from this chunk>"],
       "summary_update": "<new short summary detail>",
-      "background_update": "<new background detail>",
-      "role_in_story_update": "<new role detail>",
+      "role_in_story_update": "<directly supported role detail>",
       "physical_description_update": "<new appearance detail>",
-      "new_personality_traits": ["<trait>"],
-      "new_goals": ["<goal>"],
-      "new_fears": ["<fear>"],
-      "new_secrets": ["<secret>"],
-      "speech_style_update": "<speech pattern or voice detail>",
-      "arc_notes_update": "<arc or trajectory note>",
+      "new_personality_traits": ["<grounded tag or trait>"],
+      "open_questions": ["<question for later review>"],
       "importance_update": "<core|major|supporting|minor>",
       "confidence": <0.6-1.0>
     }}
@@ -182,18 +187,19 @@ Output valid JSON only:
     {{
       "canonical_name": "<best canonical name>",
       "aliases": ["<alternate names in this chunk>"],
-      "summary": "<1-2 sentence summary>",
-      "background": "<backstory or social position known from this chunk>",
-      "role_in_story": "<narrative role>",
+      "summary": "<one sentence identity card>",
+      "background": "",
+      "role_in_story": "<directly supported narrative role>",
       "physical_description": "<appearance cues if present>",
-      "personality_traits": ["<trait>"],
-      "goals": ["<goal>"],
-      "fears": ["<fear>"],
-      "secrets": ["<secret>"],
-      "speech_style": "<voice or dialogue pattern>",
-      "arc_notes": "<arc direction or pressure>",
+      "personality_traits": ["<grounded tag or trait>"],
+      "goals": [],
+      "fears": [],
+      "secrets": [],
+      "speech_style": "",
+      "arc_notes": "",
       "importance": "<core|major|supporting|minor>",
-      "notes": ["<other grounded notes>"],
+      "notes": ["<evidence-grounded note>"],
+      "open_questions": ["<question for later enrichment>"],
       "confidence": <0.6-1.0>
     }}
   ]

@@ -217,6 +217,8 @@ class W1StatusResponse(BaseModel):
     total_chunks: int = 0
     current_step: str = ""
     prompt_profile: str = "balanced"
+    proposals_count: int = 0
+    import_review_report: dict = {}
 
 
 class W1ConsoleResponse(BaseModel):
@@ -310,6 +312,8 @@ async def _run_w1(session_id: str, config: dict) -> None:
                 "total_chunks": state_update.get("total_chunks", 0),
                 "current_step": state_update.get("current_node", ""),
                 "prompt_profile": current.get("prompt_profile", config.get("prompt_profile", "balanced")),
+                "proposals_count": state_update.get("proposals_count", current.get("proposals_count", 0)),
+                "import_review_report": state_update.get("import_review_report") or current.get("import_review_report", {}),
             }
         # Final state from the last update
         final = _w1_sessions.get(session_id, {})
@@ -507,6 +511,8 @@ async def w1_status(session_id: str = "") -> W1StatusResponse:
         total_chunks=session.get("total_chunks", 0),
         current_step=session.get("current_step", ""),
         prompt_profile=session.get("prompt_profile", "balanced"),
+        proposals_count=session.get("proposals_count", 0),
+        import_review_report=session.get("import_review_report", {}),
     )
 
 

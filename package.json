@@ -14,6 +14,7 @@
     "preview": "vite preview",
     "electron:dev": "node scripts/electron-dev.mjs",
     "test:e2e": "npx playwright test --config tests/playwright.config.ts",
+    "sidecar:test": "sidecar/.venv/bin/python -m pytest",
     "postinstall": "electron-rebuild",
     "rebuild:native": "npx @electron/rebuild"
   },

@@ -19,6 +19,7 @@ import hashlib
 import json
 import re
 import uuid
+from json import JSONDecodeError
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -174,8 +175,11 @@ def _world_summary(registry: dict) -> str:
     return "\n".join(f"- {name}: {cat}" for name, cat in world.items())
 
 
-def _parse_json_response(raw: str) -> dict:
-    """Parse JSON from LLM response, stripping code fences."""
+class JsonPromptParseError(ValueError):
+    """Raised when an LLM response cannot be normalized into valid JSON."""
+
+
+def _strip_json_fence(raw: str) -> str:
     text = raw.strip()
     if text.startswith("```"):
         for fence in ("```json", "```"):
@@ -184,7 +188,97 @@ def _parse_json_response(raw: str) -> dict:
             if text.endswith("```"):
                 text = text[:-3]
         text = text.strip()
-    return json.loads(text)
+    return text
+
+
+def _extract_json_object_text(text: str) -> str:
+    """Return the most likely JSON object/array substring from a model response."""
+    text = _strip_json_fence(text)
+    starts = [idx for idx in (text.find("{"), text.find("[")) if idx >= 0]
+    if not starts:
+        return text
+    start = min(starts)
+    opener = text[start]
+    closer = "}" if opener == "{" else "]"
+    depth = 0
+    in_string = False
+    escaped = False
+    for idx in range(start, len(text)):
+        ch = text[idx]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == opener:
+            depth += 1
+        elif ch == closer:
+            depth -= 1
+            if depth == 0:
+                return text[start:idx + 1]
+    return text[start:]
+
+
+def _remove_trailing_json_commas(text: str) -> str:
+    return re.sub(r",(\s*[}\]])", r"\1", text)
+
+
+def _parse_json_response(raw: str) -> dict:
+    """Parse JSON from LLM response, tolerating common non-structured-output drift."""
+    candidates = []
+    extracted = _extract_json_object_text(raw)
+    candidates.append(extracted)
+    candidates.append(_remove_trailing_json_commas(extracted))
+    last_error: Exception | None = None
+    for candidate in dict.fromkeys(candidates):
+        try:
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict):
+                return parsed
+            if isinstance(parsed, list):
+                return {"items": parsed}
+            raise JsonPromptParseError("JSON root must be an object")
+        except Exception as exc:
+            last_error = exc
+    raise JsonPromptParseError(str(last_error) if last_error else "invalid JSON response")
+
+
+def _is_truncated_json_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return (
+        "unterminated string" in message
+        or "expecting ',' delimiter" in message
+        or "expecting value" in message
+        or "char" in message and "line" in message
+    )
+
+
+async def _repair_json_response(llm: ChatOpenAI, raw: str, parse_error: Exception) -> dict:
+    """Ask the configured model to repair malformed JSON without changing semantics."""
+    repair_prompt = f"""
+Repair the following malformed JSON into a single valid JSON object.
+Rules:
+- Output valid JSON only. No markdown, no explanation.
+- Preserve all keys and values that can be recovered.
+- Remove trailing commas.
+- If a string or object is truncated, close it safely and keep the recovered prefix.
+- If a field cannot be recovered, use an empty string, empty array, or null.
+
+Parser error:
+{str(parse_error)[:1200]}
+
+Malformed JSON:
+{raw[:24000]}
+"""
+    async with _API_SEMAPHORE:
+        response = await llm.ainvoke([HumanMessage(content=repair_prompt)])
+    repaired = response.content if isinstance(response.content, str) else str(response.content)
+    return _parse_json_response(repaired)
 
 
 async def _invoke_json_prompt(llm: ChatOpenAI, prompt_template: str, **kwargs: Any) -> dict:
@@ -203,7 +297,12 @@ async def _invoke_json_prompt(llm: ChatOpenAI, prompt_template: str, **kwargs: A
             async with _API_SEMAPHORE:
                 response = await llm.ainvoke([HumanMessage(content=prompt)])
             raw = response.content if isinstance(response.content, str) else str(response.content)
-            return _parse_json_response(raw)
+            try:
+                return _parse_json_response(raw)
+            except Exception as parse_exc:
+                if _is_truncated_json_error(parse_exc) or isinstance(parse_exc, (JSONDecodeError, JsonPromptParseError, ValueError)):
+                    return await _repair_json_response(llm, raw, parse_exc)
+                raise
         except Exception as exc:
             err_str = str(exc).lower()
             is_retryable = (
@@ -396,6 +495,25 @@ def _write_chunk_prompt_cache(state: ImportState, chunk: dict, prompt_outputs: d
             "prompt_profile": state.get("prompt_profile") or "balanced",
             "written_at": _now_iso(),
             "prompt_outputs": prompt_outputs,
+        }, f, ensure_ascii=False, indent=2)
+
+
+def _write_chunk_prompt_failure(state: ImportState, chunk: dict, failures: list[dict]) -> None:
+    import_run_id = state.get("import_run_id")
+    if not import_run_id or not failures:
+        return
+    chunk_id = int(chunk.get("chunk_id", 0) or 0)
+    raw = chunk.get("manuscript_content") or chunk.get("raw_content") or chunk.get("content", "")
+    path = _artifact_dir(state["project_path"], import_run_id) / "chunks" / f"chunk_{chunk_id}_failures.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({
+            "chunk_id": chunk_id,
+            "segment_id": chunk.get("segment_id"),
+            "chunk_hash": _sha256_text(raw),
+            "prompt_profile": state.get("prompt_profile") or "balanced",
+            "written_at": _now_iso(),
+            "failures": failures,
         }, f, ensure_ascii=False, indent=2)
 
 
@@ -1234,6 +1352,41 @@ def _event_signature(event: dict) -> str:
     return "|".join(parts)
 
 
+def _event_sequence_key(event: dict) -> tuple[int, int, str]:
+    position_rank = {"early": 0, "middle": 1, "late": 2}
+    return (
+        int(event.get("chunk_id", 0) or 0),
+        position_rank.get(str(event.get("chunk_position", "")).lower(), 1),
+        _normal_key(event.get("title", "")),
+    )
+
+
+def _timeline_theme_key(event: dict) -> tuple[str, str, str]:
+    text = " ".join([
+        str(event.get("title", "")),
+        str(event.get("description", "")),
+        str(event.get("stakes", "")),
+        str(event.get("temporal_hint", "")),
+    ]).lower()
+    if any(token in text for token in ("flashback", "memory", "remembered", "past", "before", "ago", "回忆", "曾经", "当年", "过去")):
+        return ("theme", "background", "Backstory / Memory Lane")
+    if any(token in text for token in ("betray", "enemy", "antagonist", "ambush", "murder", "death", "背叛", "敌", "伏击", "杀", "死")):
+        return ("theme", "conflict", "Conflict Escalation")
+    if any(token in text for token in ("sect", "court", "clan", "faction", "alliance", "宗门", "朝廷", "家族", "联盟", "势力")):
+        return ("theme", "faction", "Faction / Power Line")
+    return ("theme", "main", "Main Plot")
+
+
+def _safe_branch_slug(value: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9_\u4e00-\u9fff]+", "_", value.strip()).strip("_").lower()
+    return slug[:36] or uuid.uuid4().hex[:8]
+
+
+def _timeline_branch_color(index: int) -> str:
+    colors = ["#38bdf8", "#f97316", "#22c55e", "#a855f7", "#eab308", "#ec4899", "#14b8a6"]
+    return colors[index % len(colors)]
+
+
 async def node_architect_timeline(state: ImportState) -> dict:
     """Deduplicate and place timeline candidates into branch-aware event data."""
     project_path = state["project_path"]
@@ -1242,28 +1395,31 @@ async def node_architect_timeline(state: ImportState) -> dict:
     events = registry.get("events", {})
     character_id_map = registry.get("character_id_map", {})
     discarded_duplicates: list[dict] = []
+    warnings: list[str] = []
 
     existing_branches = snapshot.get("timeline_branches", [])
     root_branch = next((branch for branch in existing_branches if branch.get("mode") == "root"), None) or (existing_branches[0] if existing_branches else None)
     root_branch_id = root_branch.get("id") if root_branch else "branch_import_main"
-    timeline_branches = list(state.get("timeline_branches", []))
-    if not root_branch:
-        timeline_branches = [{
-            "id": root_branch_id,
-            "name": "Imported Main Timeline",
-            "description": "Default root branch generated by W1 Import Compiler for imported canonical events.",
-            "parentBranchId": None,
-            "forkEventId": None,
-            "mergeEventId": None,
-            "color": "#38bdf8",
-            "sortOrder": 0,
-            "mode": "root",
-            "startAnchor": None,
-            "endAnchor": None,
-            "endMode": "open",
-            "mergeTargetBranchId": None,
-            "geometry": {"laneOffset": 0, "bend": 0.5, "thickness": 2},
-        }, *timeline_branches]
+    imported_branches = [branch for branch in state.get("timeline_branches", []) if branch.get("id")]
+    root_geometry = (root_branch or {}).get("geometry") or {}
+    timeline_branches: list[dict] = [{
+        **(root_branch or {}),
+        "id": root_branch_id,
+        "name": (root_branch or {}).get("name", "Imported Main Timeline"),
+        "description": (root_branch or {}).get("description", "Primary imported narrative timeline."),
+        "parentBranchId": (root_branch or {}).get("parentBranchId"),
+        "forkEventId": (root_branch or {}).get("forkEventId"),
+        "mergeEventId": (root_branch or {}).get("mergeEventId"),
+        "color": (root_branch or {}).get("color", "#38bdf8"),
+        "sortOrder": 0,
+        "mode": "root",
+        "startAnchor": (root_branch or {}).get("startAnchor"),
+        "endAnchor": (root_branch or {}).get("endAnchor"),
+        "endMode": (root_branch or {}).get("endMode", "open"),
+        "mergeTargetBranchId": (root_branch or {}).get("mergeTargetBranchId"),
+        "geometry": {**root_geometry, "laneOffset": 0, "bend": root_geometry.get("bend", 0.25), "thickness": 2},
+        "layoutHint": {"eventBudget": 24, "clusterOverflow": True},
+    }]
 
     existing_event_keys = {
         (_normal_key(event.get("title", "")), _normal_key(event.get("summary", ""))[:80])
@@ -1271,39 +1427,38 @@ async def node_architect_timeline(state: ImportState) -> dict:
     }
     seen_signatures: dict[str, str] = {}
     canonical_events: dict[str, dict] = {}
-    order_index = len(snapshot.get("timeline_events", []))
     chunk_event_counts: dict[int, int] = {}
-    density_limit_per_chunk = 8
+    density_limit_per_chunk = 3
+    branch_event_budget = 24
+    prelim_events: dict[str, dict] = {}
 
     for event_id, event in events.items():
         title = event.get("title", "").strip()
         if not title:
-            discarded_duplicates.append({"event_id": event_id, "reason": "missing title"})
+            discarded_duplicates.append({"event_id": event_id, "timelineClass": "discarded_duplicate", "reason": "missing title"})
             continue
         existing_key = (_normal_key(title), _normal_key(event.get("description", ""))[:80])
         if existing_key in existing_event_keys:
-            discarded_duplicates.append({"event_id": event_id, "title": title, "reason": "matches existing timeline event"})
+            discarded_duplicates.append({"event_id": event_id, "title": title, "timelineClass": "discarded_duplicate", "reason": "matches existing timeline event"})
             continue
         chunk_id = int(event.get("chunk_id", 0) or 0)
         chunk_event_counts[chunk_id] = chunk_event_counts.get(chunk_id, 0) + 1
         if chunk_event_counts[chunk_id] > density_limit_per_chunk and float(event.get("confidence", 0.7)) < 0.9:
-            discarded_duplicates.append({"event_id": event_id, "title": title, "reason": "demoted by density policy"})
+            discarded_duplicates.append({"event_id": event_id, "title": title, "timelineClass": "scene_beat", "reason": "demoted by density policy"})
             continue
         signature = _event_signature(event)
         if signature in seen_signatures:
             primary_id = seen_signatures[signature]
-            primary = canonical_events[primary_id]
+            primary = prelim_events[primary_id]
             primary.setdefault("mergedEventIds", []).append(event_id)
             primary["summary"] = _merge_text_field(primary.get("summary", ""), event.get("description", ""))
-            discarded_duplicates.append({"event_id": event_id, "merged_into": primary_id, "title": title, "reason": "duplicate event signature"})
+            discarded_duplicates.append({"event_id": event_id, "merged_into": primary_id, "title": title, "timelineClass": "discarded_duplicate", "reason": "duplicate event signature"})
             continue
         seen_signatures[signature] = event_id
         participant_ids = [character_id_map.get(cid, cid) for cid in event.get("character_ids", [])]
-        canonical_events[event_id] = {
+        prelim_events[event_id] = {
             **event,
             "event_id": event_id,
-            "branchId": root_branch_id,
-            "orderIndex": order_index,
             "summary": event.get("description", ""),
             "locationIds": [],
             "participantCharacterIds": [cid for cid in participant_ids if cid],
@@ -1314,8 +1469,114 @@ async def node_architect_timeline(state: ImportState) -> dict:
             "importance": "major" if float(event.get("confidence", 0.7)) >= 0.86 else "minor",
             "timelineClass": "canonical_event",
             "mergedEventIds": [],
+            "_sequence": _event_sequence_key(event),
         }
-        order_index += 1
+
+    location_counts: dict[str, int] = {}
+    participant_counts: dict[str, int] = {}
+    theme_counts: dict[str, int] = {}
+    for event in prelim_events.values():
+        location_key = _normal_key(event.get("location_hint", ""))
+        if location_key:
+            location_counts[location_key] = location_counts.get(location_key, 0) + 1
+        for participant_id in event.get("participantCharacterIds", [])[:2]:
+            participant_counts[participant_id] = participant_counts.get(participant_id, 0) + 1
+        _, theme_key, _ = _timeline_theme_key(event)
+        theme_counts[theme_key] = theme_counts.get(theme_key, 0) + 1
+
+    total_events = len(prelim_events)
+    branch_threshold = 2 if total_events >= 10 else 3
+    branch_defs: dict[str, dict] = {root_branch_id: timeline_branches[0]}
+
+    def _ensure_branch(branch_id: str, name: str, reason: str) -> None:
+        if branch_id in branch_defs or len(branch_defs) >= 7:
+            return
+        idx = len(branch_defs)
+        branch = {
+            "id": branch_id,
+            "name": name,
+            "description": f"Imported timeline lane inferred from {reason}.",
+            "parentBranchId": root_branch_id,
+            "forkEventId": None,
+            "mergeEventId": None,
+            "color": _timeline_branch_color(idx),
+            "sortOrder": idx,
+            "mode": "forked",
+            "startAnchor": None,
+            "endAnchor": None,
+            "endMode": "open",
+            "mergeTargetBranchId": root_branch_id,
+            "geometry": {"laneOffset": idx * 140, "bend": 0.18 + (idx % 3) * 0.08, "thickness": 2},
+            "layoutHint": {"eventBudget": branch_event_budget, "clusterOverflow": True},
+        }
+        branch_defs[branch_id] = branch
+        timeline_branches.append(branch)
+
+    for branch in imported_branches:
+        branch_id = branch.get("id")
+        if branch_id and branch_id not in branch_defs and len(branch_defs) < 7:
+            idx = len(branch_defs)
+            branch_defs[branch_id] = {
+                **branch,
+                "parentBranchId": branch.get("parentBranchId") or root_branch_id,
+                "sortOrder": branch.get("sortOrder", idx),
+                "mode": branch.get("mode", "forked"),
+                "geometry": {**branch.get("geometry", {}), "laneOffset": branch.get("geometry", {}).get("laneOffset", idx * 140)},
+                "layoutHint": {**branch.get("layoutHint", {}), "eventBudget": branch_event_budget, "clusterOverflow": True},
+            }
+            timeline_branches.append(branch_defs[branch_id])
+
+    for theme_key, count in theme_counts.items():
+        if theme_key != "main" and count >= branch_threshold:
+            _ensure_branch(f"branch_import_{theme_key}", _timeline_theme_key({"title": theme_key})[2] if theme_key == "main" else theme_key.replace("_", " ").title(), f"{count} {theme_key} events")
+
+    for location_key, count in sorted(location_counts.items(), key=lambda item: item[1], reverse=True)[:3]:
+        if count >= branch_threshold:
+            _ensure_branch(f"branch_loc_{_safe_branch_slug(location_key)}", f"Location: {location_key}", f"{count} events at this location")
+
+    for participant_id, count in sorted(participant_counts.items(), key=lambda item: item[1], reverse=True)[:2]:
+        if count >= max(branch_threshold + 1, 3):
+            _ensure_branch(f"branch_char_{_safe_branch_slug(participant_id)}", f"Character Arc: {participant_id}", f"{count} events for one participant")
+
+    def _select_branch(event: dict) -> str:
+        _, theme_key, _ = _timeline_theme_key(event)
+        theme_branch_id = f"branch_import_{theme_key}"
+        if theme_branch_id in branch_defs and theme_key != "main":
+            return theme_branch_id
+        location_key = _normal_key(event.get("location_hint", ""))
+        location_branch_id = f"branch_loc_{_safe_branch_slug(location_key)}" if location_key else ""
+        if location_branch_id in branch_defs:
+            return location_branch_id
+        for participant_id in event.get("participantCharacterIds", [])[:2]:
+            participant_branch_id = f"branch_char_{_safe_branch_slug(participant_id)}"
+            if participant_branch_id in branch_defs:
+                return participant_branch_id
+        return root_branch_id
+
+    branch_buckets: dict[str, list[tuple[str, dict]]] = {}
+    for event_id, event in prelim_events.items():
+        branch_id = _select_branch(event)
+        branch_buckets.setdefault(branch_id, []).append((event_id, event))
+
+    global_order_index = len(snapshot.get("timeline_events", []))
+    for branch_id, branch_events in branch_buckets.items():
+        branch_events.sort(key=lambda item: item[1].get("_sequence", (0, 0, "")))
+        if len(branch_events) > branch_event_budget:
+            warnings.append(f"Branch {branch_id} has {len(branch_events)} canonical events; lower-importance events were converted to scene beats.")
+        visible_index = 0
+        for event_id, event in branch_events:
+            if visible_index >= branch_event_budget and event.get("importance") != "major":
+                discarded_duplicates.append({"event_id": event_id, "title": event.get("title", ""), "timelineClass": "scene_beat", "reason": "branch event budget overflow"})
+                continue
+            cleaned = {k: v for k, v in event.items() if not k.startswith("_")}
+            cleaned["branchId"] = branch_id
+            cleaned["orderIndex"] = visible_index
+            cleaned["globalOrderIndex"] = global_order_index
+            cleaned["sharedBranchIds"] = [root_branch_id] if branch_id != root_branch_id else []
+            cleaned["layoutHints"] = {"density": len(branch_events), "branchEventBudget": branch_event_budget}
+            canonical_events[event_id] = cleaned
+            visible_index += 1
+            global_order_index += 1
 
     registry["events"] = canonical_events
     artifact = {
@@ -1324,8 +1585,18 @@ async def node_architect_timeline(state: ImportState) -> dict:
         "branches": timeline_branches,
         "canonical_events": list(canonical_events.values()),
         "discarded_duplicates": discarded_duplicates,
-        "density_policy": {"max_events_per_chunk": density_limit_per_chunk, "low_confidence_threshold": 0.9},
-        "warnings": [],
+        "density_policy": {
+            "max_events_per_chunk": density_limit_per_chunk,
+            "max_events_per_branch": branch_event_budget,
+            "branch_threshold": branch_threshold,
+            "low_confidence_threshold": 0.9,
+        },
+        "layout_hints": {
+            "strategy": "semantic_branch_topology",
+            "max_branch_count": 7,
+            "branch_lane_spacing": 140,
+        },
+        "warnings": warnings,
     }
     if state.get("import_run_id"):
         _write_import_artifact(project_path, state["import_run_id"], "timeline_architecture.json", artifact)
@@ -1372,6 +1643,21 @@ async def node_review_import(state: ImportState) -> dict:
             "character_tags": len(state.get("character_tags", [])),
             "timeline_branches": len(state.get("timeline_branches", [])),
         },
+        "safe_accept_ids": [],
+        "blocked_ids": [],
+        "failed_chunks": [
+            {"chunk_id": entry.get("chunk_id"), "errors": entry.get("errors", [])}
+            for entry in _chunk_log.get(state.get("project_path", ""), [])
+            if entry.get("errors")
+        ],
+        "model": state.get("context", {}).get("model", "deepseek-chat"),
+        "prompt_profile": state.get("prompt_profile", "balanced"),
+        "artifact_paths": {
+            "manifest": str(_artifact_dir(state["project_path"], state.get("import_run_id", "")) / "manifest.json") if state.get("import_run_id") else "",
+            "reducer": str(_artifact_dir(state["project_path"], state.get("import_run_id", "")) / "reducer_artifact.json") if state.get("import_run_id") else "",
+            "timeline": str(_artifact_dir(state["project_path"], state.get("import_run_id", "")) / "timeline_architecture.json") if state.get("import_run_id") else "",
+            "review": str(_artifact_dir(state["project_path"], state.get("import_run_id", "")) / "review_report.json") if state.get("import_run_id") else "",
+        },
         "duplicate_merges": timeline.get("discarded_duplicates", []) + reducer.get("duplicate_candidates", []),
         "low_confidence_items": low_confidence_items,
     }
@@ -1416,18 +1702,23 @@ async def node_write_to_project(state: ImportState) -> dict:
                 "summary": entry.get("summary", "") or " ".join(entry.get("notes", [])[:2]),
                 "background": entry.get("background", ""),
                 "traits": entry.get("personality_traits", []),
-                "goals": entry.get("goals", []),
-                "fears": entry.get("fears", []),
-                "secrets": entry.get("secrets", []),
-                "speechStyle": entry.get("speech_style", ""),
-                "arc": entry.get("arc_notes", ""),
+                "goals": [],
+                "fears": [],
+                "secrets": [],
+                "speechStyle": "",
+                "arc": "",
                 "tagIds": entry.get("tag_ids", []),
                 "linkedEventIds": character_event_links.get(cid, []),
                 "roleInStory": entry.get("role_in_story", ""),
                 "physicalDescription": entry.get("physical_description", ""),
-                "notes": entry.get("notes", []),
+                "notes": [
+                    *entry.get("notes", [])[:4],
+                    *[f"Open question: {question}" for question in entry.get("open_questions", [])[:2]],
+                ],
                 "importConfidence": entry.get("confidence", 0.7),
                 "importImportance": entry.get("importance", ""),
+                "importCardType": "draft",
+                "enrichmentRecommended": bool(entry.get("open_questions")),
                 "importance": entry.get("importance", "supporting") or "supporting",
                 "groupKey": entry.get("groupKey", IMPORTANCE_TO_GROUP.get(entry.get("importance", ""), "")) or "",
             },
@@ -1728,6 +2019,23 @@ async def node_write_to_project(state: ImportState) -> dict:
     review_report = dict(state.get("import_review_report", {}))
     if review_report:
         review_report["proposal_counts"] = proposal_counts
+        all_proposal_ids = [proposal.get("id", "") for proposal in proposals if proposal.get("id")]
+        blocked_ids = [
+            proposal.get("id", "")
+            for proposal in proposals
+            if proposal.get("status") == "blocked" or proposal.get("blockedReason") or proposal.get("requiresManualReview")
+        ]
+        safe_types = {"character_tag", "timeline_branch", "chapter", "scene"}
+        safe_accept_ids: list[str] = []
+        for proposal in proposals:
+            ops = proposal.get("operations", [])
+            entity_type = ops[0].get("entityType", "unknown") if ops else "unknown"
+            confidence = float(proposal.get("confidence", 0.0) or 0.0)
+            if proposal.get("id") and entity_type in safe_types and confidence >= 0.7:
+                safe_accept_ids.append(proposal["id"])
+        review_report["safe_accept_ids"] = safe_accept_ids
+        review_report["blocked_ids"] = [pid for pid in blocked_ids if pid]
+        review_report["proposal_ids"] = all_proposal_ids
         if state.get("import_run_id"):
             _write_import_artifact(str(project_path), state["import_run_id"], "review_report.json", review_report)
 
@@ -1782,6 +2090,7 @@ async def node_write_to_project(state: ImportState) -> dict:
 
     return {
         "proposals": proposals,
+        "import_review_report": review_report,
         "errors": errors,
         "status": "done",
         "progress": 1.0,
@@ -2184,11 +2493,18 @@ async def node_process_chunks(state: ImportState) -> dict:
                     return_exceptions=True,
                 )
 
+                prompt_failures: list[dict] = []
+
                 def _coerce_result(index: int, label: str) -> dict:
                     result = results[index]
                     if isinstance(result, Exception):
                         chunk_notes.append(f"{label} extraction failed: {result}")
                         errors.append(f"Chunk {chunk_id} {label} extraction failed: {result}")
+                        prompt_failures.append({
+                            "label": label,
+                            "error": str(result),
+                            "chunk_id": chunk_id,
+                        })
                         return {}
                     return result
 
@@ -2197,13 +2513,17 @@ async def node_process_chunks(state: ImportState) -> dict:
                 world_data = _coerce_result(2, "world")
                 relationship_data = _coerce_result(3, "relationship")
                 scene_data = _coerce_result(4, "scene")
-                _write_chunk_prompt_cache(state, chunk, {
+                prompt_outputs = {
                     "character": char_data,
                     "event": event_data,
                     "world": world_data,
                     "relationship": relationship_data,
                     "scene": scene_data,
-                })
+                }
+                if prompt_failures:
+                    _write_chunk_prompt_failure(state, chunk, prompt_failures)
+                else:
+                    _write_chunk_prompt_cache(state, chunk, prompt_outputs)
 
             for update in char_data.get("existing_character_updates", []):
                 cid = update.get("canonical_id") or _resolve_character_id(update.get("canonical_name"), registry)
@@ -2218,6 +2538,7 @@ async def node_process_chunks(state: ImportState) -> dict:
                 entry.setdefault("fears", [])
                 entry.setdefault("secrets", [])
                 entry.setdefault("tag_ids", [])
+                entry.setdefault("open_questions", [])
 
                 new_aliases = update.get("new_aliases", [])
                 _append_unique_strings(entry["aliases"], new_aliases)
@@ -2242,9 +2563,7 @@ async def node_process_chunks(state: ImportState) -> dict:
                 entry["speech_style"] = _merge_text_field(entry.get("speech_style", ""), update.get("speech_style_update", ""))
                 entry["arc_notes"] = _merge_text_field(entry.get("arc_notes", ""), update.get("arc_notes_update", ""))
                 _append_unique_strings(entry["personality_traits"], update.get("new_personality_traits", []))
-                _append_unique_strings(entry["goals"], update.get("new_goals", []))
-                _append_unique_strings(entry["fears"], update.get("new_fears", []))
-                _append_unique_strings(entry["secrets"], update.get("new_secrets", []))
+                _append_unique_strings(entry["open_questions"], update.get("open_questions", []))
                 if isinstance(update.get("importance_update"), str) and update["importance_update"].strip():
                     raw_imp = update["importance_update"].strip()
                     entry["importance"] = IMPORTANCE_MAP.get(raw_imp, raw_imp)
@@ -2265,6 +2584,7 @@ async def node_process_chunks(state: ImportState) -> dict:
                     entry.setdefault("fears", [])
                     entry.setdefault("secrets", [])
                     entry.setdefault("tag_ids", [])
+                    entry.setdefault("open_questions", [])
 
                     if name != entry.get("canonical_name", "") and name not in entry["aliases"]:
                         entry["aliases"].append(name)
@@ -2299,9 +2619,7 @@ async def node_process_chunks(state: ImportState) -> dict:
                     entry["speech_style"] = _merge_text_field(entry.get("speech_style", ""), nc.get("speech_style", ""))
                     entry["arc_notes"] = _merge_text_field(entry.get("arc_notes", ""), nc.get("arc_notes", ""))
                     _append_unique_strings(entry["personality_traits"], nc.get("personality_traits", []))
-                    _append_unique_strings(entry["goals"], nc.get("goals", []))
-                    _append_unique_strings(entry["fears"], nc.get("fears", []))
-                    _append_unique_strings(entry["secrets"], nc.get("secrets", []))
+                    _append_unique_strings(entry["open_questions"], nc.get("open_questions", []))
                     if isinstance(nc.get("importance"), str) and nc["importance"].strip():
                         raw_imp = nc["importance"].strip()
                         entry["importance"] = IMPORTANCE_MAP.get(raw_imp, raw_imp)
@@ -2324,13 +2642,14 @@ async def node_process_chunks(state: ImportState) -> dict:
                     "role_in_story": str(nc.get("role_in_story", "")).strip(),
                     "physical_description": str(nc.get("physical_description", "")).strip(),
                     "personality_traits": [trait.strip() for trait in nc.get("personality_traits", []) if isinstance(trait, str) and trait.strip()][:4],
-                    "goals": [goal.strip() for goal in nc.get("goals", []) if isinstance(goal, str) and goal.strip()],
-                    "fears": [fear.strip() for fear in nc.get("fears", []) if isinstance(fear, str) and fear.strip()],
-                    "secrets": [secret.strip() for secret in nc.get("secrets", []) if isinstance(secret, str) and secret.strip()],
+                    "goals": [],
+                    "fears": [],
+                    "secrets": [],
                     "speech_style": str(nc.get("speech_style", "")).strip(),
                     "arc_notes": str(nc.get("arc_notes", "")).strip(),
                     "importance": IMPORTANCE_MAP.get(raw_importance, raw_importance or "supporting"),
                     "tag_ids": [],
+                    "open_questions": [question.strip() for question in nc.get("open_questions", []) if isinstance(question, str) and question.strip()][:2],
                 })
                 new_chars.append(registry["characters"][char_id])
 
@@ -2737,4 +3056,6 @@ async def run_streaming(project_path: str, config: dict):
                 "completed_chunks": completed_chunks,
                 "total_chunks": total_chunks,
                 "current_node": node_name,
+                "import_review_report": node_output.get("import_review_report", {}),
+                "proposals_count": len(node_output.get("proposals", [])) if isinstance(node_output.get("proposals", []), list) else 0,
             }

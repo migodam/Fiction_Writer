@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { Terminal } from 'lucide-react';
+import { CheckCircle2, ClipboardCheck, Terminal } from 'lucide-react';
 import { electronApi } from '../services/electronApi';
 import { useProjectStore } from '../store';
 import { useI18n } from '../i18n';
@@ -18,12 +18,16 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
   const w1CurrentStep = useProjectStore((s) => s.w1CurrentStep);
   const w1ImportMode = useProjectStore((s) => s.w1ImportMode);
   const w1PromptProfile = useProjectStore((s) => s.w1PromptProfile);
+  const w1ProposalCount = useProjectStore((s) => s.w1ProposalCount);
+  const w1ImportReviewReport = useProjectStore((s) => s.w1ImportReviewReport);
+  const proposals = useProjectStore((s) => s.proposals);
+  const resolveProposal = useProjectStore((s) => s.resolveProposal);
   const setW1ImportMode = useProjectStore((s) => s.setW1ImportMode);
   const setW1PromptProfile = useProjectStore((s) => s.setW1PromptProfile);
   const startImport = useProjectStore((s) => s.startImport);
   const cancelImport = useProjectStore((s) => s.cancelImport);
   const { t } = useI18n();
-  const [consoleOpen, setConsoleOpen] = useState(false);
+  const [consoleOpen, setConsoleOpen] = useState(true);
 
   const handlePickFile = useCallback(async () => {
     try {
@@ -39,6 +43,14 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
   }, [startImport]);
 
   const isIdle = w1Status === 'idle' || w1Status === 'error' || w1Status === 'cancelled';
+  const safeAcceptIds = (w1ImportReviewReport?.safe_accept_ids || []).filter((id) =>
+    proposals.some((proposal) => proposal.id === id),
+  );
+  const acceptSafeAll = useCallback(() => {
+    for (const proposalId of safeAcceptIds) {
+      resolveProposal(proposalId, 'accepted');
+    }
+  }, [resolveProposal, safeAcceptIds]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -173,7 +185,7 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
             </div>
           </div>
         )}
-        <ImportConsole visible={consoleOpen && (w1Status === 'running' || w1Status === 'paused')} />
+        <ImportConsole visible={consoleOpen && ['running', 'paused', 'done', 'error'].includes(w1Status)} />
 
         {/* Errors */}
         {w1Errors.length > 0 && (
@@ -192,9 +204,64 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
 
         {/* Success */}
         {w1Status === 'done' && (
-          <p data-testid="w1-success-msg" className="mt-4 text-sm text-green">
-            {t('import.complete')}
-          </p>
+          <div data-testid="w1-review-step" className="mt-4 rounded-xl border border-green/30 bg-green/10 p-4">
+            <div className="flex items-start gap-3">
+              <ClipboardCheck size={18} className="mt-0.5 text-green" />
+              <div>
+                <p data-testid="w1-success-msg" className="text-sm font-semibold text-green">
+                  {t('import.complete')}
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-text-2">
+                  {t('import.reviewSummary', 'Review report ready. Inspect proposals, failed chunks, duplicates, and safe batch actions before accepting imported changes.')}
+                </p>
+              </div>
+            </div>
+            <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+              <div className="rounded-lg border border-border bg-card p-2">
+                <div className="font-black uppercase tracking-widest text-text-3">{t('import.reviewStatus', 'Status')}</div>
+                <div data-testid="w1-review-status" className="mt-1 text-text">{w1ImportReviewReport?.status || 'pass'}</div>
+              </div>
+              <div className="rounded-lg border border-border bg-card p-2">
+                <div className="font-black uppercase tracking-widest text-text-3">{t('import.reviewProposals', 'Proposals')}</div>
+                <div data-testid="w1-review-proposal-count" className="mt-1 text-text">{w1ProposalCount || proposals.length}</div>
+              </div>
+              <div className="rounded-lg border border-border bg-card p-2">
+                <div className="font-black uppercase tracking-widest text-text-3">{t('import.reviewSafe', 'Safe')}</div>
+                <div data-testid="w1-review-safe-count" className="mt-1 text-text">{safeAcceptIds.length}</div>
+              </div>
+            </div>
+            {Boolean(w1ImportReviewReport?.warnings?.length) && (
+              <ul data-testid="w1-review-warnings" className="mt-3 space-y-1 text-xs text-amber">
+                {w1ImportReviewReport?.warnings?.slice(0, 4).map((warning, index) => <li key={index}>{warning}</li>)}
+              </ul>
+            )}
+            {Boolean(w1ImportReviewReport?.failed_chunks?.length) && (
+              <div data-testid="w1-review-failed-chunks" className="mt-3 rounded-lg border border-red/30 bg-red/10 p-2 text-xs text-red">
+                {t('import.reviewFailedChunks', 'Failed chunks')}: {w1ImportReviewReport?.failed_chunks?.length}
+              </div>
+            )}
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                data-testid="w1-accept-safe-all-btn"
+                disabled={safeAcceptIds.length === 0}
+                onClick={acceptSafeAll}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-green px-3 py-1.5 text-[11px] font-black uppercase tracking-widest text-text-invert disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <CheckCircle2 size={12} />
+                {t('import.acceptSafeAll', 'Accept safe all')} ({safeAcceptIds.length})
+              </button>
+              <button
+                type="button"
+                data-testid="w1-review-open-console-btn"
+                onClick={() => setConsoleOpen((v) => !v)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-[11px] font-black uppercase tracking-widest text-text-2 hover:bg-hover"
+              >
+                <Terminal size={12} />
+                {t('import.console', 'Console')}
+              </button>
+            </div>
+          </div>
         )}
 
         {/* Close button — always visible */}

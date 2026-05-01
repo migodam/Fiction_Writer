@@ -336,7 +336,7 @@ const CharacterDetail = ({ character, tab }: any) => {
     // Reset relationTargetId to first available other character
     const others = characters.filter((c) => c.id !== character.id);
     setRelationTargetId(others[0]?.id || '');
-  }, [character]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [character]);
 
   return (
     <div className="mx-auto max-w-6xl">

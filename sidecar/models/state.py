@@ -139,6 +139,12 @@ class ImportReviewReport(TypedDict, total=False):
     warnings: List[str]
     errors: List[str]
     proposal_counts: Dict[str, int]
+    safe_accept_ids: List[str]
+    blocked_ids: List[str]
+    failed_chunks: List[dict]
+    model: str
+    prompt_profile: PromptProfile
+    artifact_paths: Dict[str, str]
     duplicate_merges: List[dict]
     low_confidence_items: List[dict]
 

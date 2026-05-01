@@ -292,6 +292,8 @@ interface ProjectState {
   w1Paused: boolean;
   w1BreakpointChunk: number | null;
   w1PromptProfile: 'fast' | 'balanced' | 'deep' | 'custom';
+  w1ProposalCount: number;
+  w1ImportReviewReport: import('./services/electronApi').W1ImportReviewReport | null;
   setW1ImportMode: (mode: 'import_content_only' | 'import_all') => void;
   setW1PromptProfile: (profile: 'fast' | 'balanced' | 'deep' | 'custom') => void;
   setW1Breakpoint: (chunkId: number | null) => Promise<void>;
@@ -1470,6 +1472,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   w1Paused: false,
   w1BreakpointChunk: null,
   w1PromptProfile: 'balanced',
+  w1ProposalCount: 0,
+  w1ImportReviewReport: null,
   setW1ImportMode: (mode) => set({ w1ImportMode: mode }),
   setW1PromptProfile: (profile) => set({ w1PromptProfile: profile }),
   setW1Breakpoint: async (chunkId) => {
@@ -1506,7 +1510,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const modelProfiles = appSettings?.modelProfiles ?? [];
     const providerProfile = profiles.find((p: { id: string }) => p.id === appSettings?.selectedProviderProfileId) ?? profiles[0] as { apiKey?: string; endpoint?: string } | undefined;
     const modelProfile = modelProfiles.find((m: { id: string }) => m.id === appSettings?.selectedModelProfileId) ?? modelProfiles[0] as { model?: string } | undefined;
-    set({ w1Status: 'running', w1Progress: 0, w1Errors: [], w1SessionId: null, w1CurrentStep: '' });
+    set({ w1Status: 'running', w1Progress: 0, w1Errors: [], w1SessionId: null, w1CurrentStep: '', w1ProposalCount: 0, w1ImportReviewReport: null });
     // Ensure sidecar is alive before calling start
     try { await electronApi.sidecarSpawn(effectiveRoot); } catch { /* best effort */ }
     let sessionId: string | null = null;
@@ -1559,6 +1563,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           w1Errors: s.errors ?? [],
           w1CurrentStep: s.current_step ?? '',
           w1PromptProfile: s.prompt_profile ?? w1PromptProfile,
+          w1ProposalCount: s.proposals_count ?? 0,
+          w1ImportReviewReport: s.import_review_report ?? null,
         });
         // Also poll console log for real-time chunk detail
         try {
@@ -1600,7 +1606,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       try { await electronApi.w1Cancel({ session_id: w1SessionId }); } catch { /* already cancelled */ }
     }
   },
-  resetImport: () => set({ w1Status: 'idle', w1Progress: 0, w1CompletedChunks: 0, w1TotalChunks: 0, w1Errors: [], w1CurrentStep: '', w1SessionId: null, w1ConsoleLog: [], w1Paused: false, w1BreakpointChunk: null }),
+  resetImport: () => set({ w1Status: 'idle', w1Progress: 0, w1CompletedChunks: 0, w1TotalChunks: 0, w1Errors: [], w1CurrentStep: '', w1SessionId: null, w1ConsoleLog: [], w1Paused: false, w1BreakpointChunk: null, w1ProposalCount: 0, w1ImportReviewReport: null }),
 
   // ── W2 Manuscript Sync ────────────────────────────────────────────────────
   w2Status: 'idle',
