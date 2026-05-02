@@ -3,6 +3,7 @@ import { useProjectStore, useUIStore } from '../../store';
 import { useI18n } from '../../i18n';
 import type { TimelineEvent, TimelineBranch } from '../../models/project';
 import {
+  buildSVGPath,
   buildBranchControlPoints,
   cubicBezierPoint,
   fanLaneOffset,
@@ -54,7 +55,7 @@ interface EventPressState {
   startEventPos: Point;
 }
 
-type BranchHandle = 'start' | 'end' | 'bend';
+type BranchHandle = 'start' | 'end' | 'bend' | 'segment';
 
 interface BranchDragState {
   branchId: string;
@@ -63,6 +64,8 @@ interface BranchDragState {
   origStartPos: Point;
   origEndPos: Point;
   origBend: number;
+  origLaneOffset: number;
+  startPointerPos: Point;
   origStartAnchor: TimelineBranch['startAnchor'];
   origEndAnchor: TimelineBranch['endAnchor'];
   snapTarget: SnapTarget | null;
@@ -81,6 +84,7 @@ const BRANCH_LANE_SPACING = 160;
 const MIN_EVENT_SPACING_PX = 80;
 const TIMELINE_BASE_WIDTH = 2000;
 const TIMELINE_EDGE_PADDING_PX = 240;
+const GRID_SIZE = 20;
 
 function resolveBranchEndAnchor(branch: TimelineBranch): TimelineBranch['endAnchor'] {
   return branch.endAnchor ?? (
@@ -93,6 +97,17 @@ function resolveBranchEndAnchor(branch: TimelineBranch): TimelineBranch['endAnch
 function getBranchParentId(branch: TimelineBranch, branchIds: Set<string>): string | null {
   const parentId = branch.parentBranchId ?? branch.startAnchor?.branchId ?? null;
   return parentId && branchIds.has(parentId) ? parentId : null;
+}
+
+function snapValueToGrid(value: number, gridSize = GRID_SIZE) {
+  return Math.round(value / gridSize) * gridSize;
+}
+
+function snapPointToGrid(point: Point): Point {
+  return {
+    x: snapValueToGrid(point.x),
+    y: snapValueToGrid(point.y),
+  };
 }
 
 export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeChange }: TimelineCanvasProps) {
@@ -495,7 +510,7 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
   );
 
   const startBranchDrag = useCallback(
-    (branchId: string, handle: BranchHandle) => {
+    (branchId: string, handle: BranchHandle, startPointerPos?: Point, preserveSelection = false) => {
       const branch = branches.find((entry) => entry.id === branchId);
       if (!branch) return false;
       const cp = branchCPMap.get(branchId);
@@ -507,6 +522,8 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
         origStartPos: cp.p0,
         origEndPos: cp.p3,
         origBend: branch.geometry?.bend ?? 0.25,
+        origLaneOffset: branch.geometry?.laneOffset ?? branchLaneOffsets.get(branch.id) ?? 0,
+        startPointerPos: startPointerPos ?? cubicBezierPoint(cp.p0, cp.p1, cp.p2, cp.p3, 0.5),
         origStartAnchor: branch.startAnchor ?? null,
         origEndAnchor: resolveBranchEndAnchor(branch),
         snapTarget: null,
@@ -515,11 +532,13 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
       branchDragStateRef.current = nextState;
       setBranchDragState(nextState);
       setBranchContextMenu(null);
-      setSelectedEntity('timeline_branch', branchId);
+      if (!preserveSelection) {
+        setSelectedEntity('timeline_branch', branchId);
+      }
       setMode('branch-drag');
       return true;
     },
-    [branches, branchCPMap, setSelectedEntity],
+    [branches, branchCPMap, branchLaneOffsets, setSelectedEntity],
   );
 
   const findAttachedEndpoint = useCallback(
@@ -713,7 +732,12 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
           }
           return target.kind === 'branch-anchor-end' && target.branchId === branchDragState.branchId;
         });
-        const nextPos = snapTarget?.point ?? canvasPt;
+        const oppositePos = branchDragState.handle === 'start' ? branchDragState.origEndPos : branchDragState.origStartPos;
+        const gridPos = snapPointToGrid(canvasPt);
+        const nextPos = snapTarget?.point ?? {
+          ...gridPos,
+          y: e.shiftKey ? oppositePos.y : gridPos.y,
+        };
         setBranchDragState((prev) => {
           const nextState = prev ? { ...prev, snapTarget } : null;
           branchDragStateRef.current = nextState;
@@ -740,21 +764,28 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
             endAnchor: nextEndAnchor,
           });
         }
-      } else if (branchDragState.handle === 'bend') {
+      } else if (branchDragState.handle === 'bend' || branchDragState.handle === 'segment') {
         setBranchDragState((prev) => {
           const nextState = prev ? { ...prev, snapTarget: null } : null;
           branchDragStateRef.current = nextState;
           return nextState;
         });
-        // Map Y position to bend value (0.05 - 0.95)
+
         const cp = branchCPMap.get(branchDragState.branchId);
         if (!cp) return;
         const totalWidth = cp.p3.x - cp.p0.x;
         if (totalWidth <= 0) return;
         const relX = Math.max(0, Math.min(1, (canvasPt.x - cp.p0.x) / totalWidth));
-        const newBend = Math.max(0.05, Math.min(0.95, relX));
+        const newBend =
+          branchDragState.handle === 'segment' || e.shiftKey
+            ? branchDragState.origBend
+            : Math.max(0.05, Math.min(0.95, relX));
+        const nextLaneOffset =
+          branchDragState.handle === 'segment'
+            ? branchDragState.origLaneOffset + (canvasPt.y - branchDragState.startPointerPos.y)
+            : canvasPt.y;
         setTimelineBranchGeometry(branchDragState.branchId, {
-          laneOffset: canvasPt.y,
+          laneOffset: snapValueToGrid(nextLaneOffset),
           bend: newBend,
           thickness: branch.geometry?.thickness ?? 1,
         });
@@ -791,9 +822,51 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
   const handleBranchHandlePointerDown = useCallback(
     (branchId: string, handle: BranchHandle, e: React.PointerEvent) => {
       e.stopPropagation();
-      startBranchDrag(branchId, handle);
+      const canvasPt = getCanvasPoint(e);
+      if (!canvasPt) return;
+      startBranchDrag(branchId, handle, canvasPt, e.metaKey || e.ctrlKey);
     },
-    [startBranchDrag]
+    [getCanvasPoint, startBranchDrag]
+  );
+
+  const handleBranchSegmentPointerDown = useCallback(
+    (branchId: string, e: React.PointerEvent<SVGPathElement>) => {
+      if (e.button !== 0) return;
+      e.stopPropagation();
+      const canvasPt = getCanvasPoint(e);
+      if (!canvasPt) return;
+
+      const branch = branches.find((entry) => entry.id === branchId);
+      const cp = branchCPMap.get(branchId);
+      if (!branch || !cp) return;
+
+      if (e.altKey) {
+        const totalWidth = cp.p3.x - cp.p0.x;
+        const relX = totalWidth === 0 ? branch.geometry?.bend ?? 0.25 : (canvasPt.x - cp.p0.x) / totalWidth;
+        setTimelineBranchGeometry(branchId, {
+          laneOffset: snapValueToGrid(canvasPt.y),
+          bend: Math.max(0.05, Math.min(0.95, relX)),
+          thickness: branch.geometry?.thickness ?? 1,
+        });
+        if (!e.metaKey && !e.ctrlKey) {
+          setSelectedEntity('timeline_branch', branchId);
+        }
+        setLastActionStatus(t('timeline.controlPointInserted', 'Branch control point adjusted'));
+        return;
+      }
+
+      startBranchDrag(branchId, 'segment', canvasPt, e.metaKey || e.ctrlKey);
+    },
+    [
+      branchCPMap,
+      branches,
+      getCanvasPoint,
+      setLastActionStatus,
+      setSelectedEntity,
+      setTimelineBranchGeometry,
+      startBranchDrag,
+      t,
+    ],
   );
 
   // ── Background pointer events (pan) ─────────────────────────
@@ -1107,15 +1180,53 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
             ))}
           </g>
 
+          {/* Segment drag overlays sit above BranchEdge hitareas without changing BranchEdge ownership. */}
+          <g id="branch-segment-handles">
+            {branchRenderEntries.map((entry) => (
+              <path
+                key={`segment-${entry.branch.id}`}
+                d={buildSVGPath(entry.controlPoints)}
+                fill="none"
+                stroke="transparent"
+                strokeWidth={12}
+                pointerEvents="stroke"
+                style={{ cursor: 'move' }}
+                onPointerDown={(e) => handleBranchSegmentPointerDown(entry.branch.id, e)}
+                data-testid={`timeline-branch-segment-${entry.branch.id}`}
+              />
+            ))}
+          </g>
+
           {/* Branch reshape handles — always visible, shown as draggable dots */}
           <g id="branch-handles">
             {branchRenderEntries.map((entry) => {
               const cp = entry.controlPoints;
               const color = entry.branch.color || '#38bdf8';
-              const midX = (cp.p0.x + cp.p3.x) / 2;
-              const midY = (cp.p0.y + cp.p3.y) / 2;
+              const middlePoint = cubicBezierPoint(cp.p0, cp.p1, cp.p2, cp.p3, 0.5);
               return (
                 <g key={`handle-${entry.branch.id}`}>
+                  <line
+                    x1={cp.p0.x}
+                    y1={cp.p0.y}
+                    x2={cp.p1.x}
+                    y2={cp.p1.y}
+                    stroke={color}
+                    strokeWidth={1}
+                    strokeDasharray="3 4"
+                    opacity={0.28}
+                    pointerEvents="none"
+                  />
+                  <line
+                    x1={cp.p3.x}
+                    y1={cp.p3.y}
+                    x2={cp.p2.x}
+                    y2={cp.p2.y}
+                    stroke={color}
+                    strokeWidth={1}
+                    strokeDasharray="3 4"
+                    opacity={0.28}
+                    pointerEvents="none"
+                  />
                   {/* Start anchor */}
                   <circle
                     cx={cp.p0.x} cy={cp.p0.y} r={6}
@@ -1136,16 +1247,44 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
                     data-position-x={cp.p3.x}
                     data-position-y={cp.p3.y}
                   />
-                  {/* Bend handle (mid of curve) */}
+                  {/* Native-feeling curve control affordances without expanding the branch schema. */}
                   <circle
-                    cx={midX} cy={midY} r={5}
+                    cx={cp.p1.x} cy={cp.p1.y} r={4}
+                    fill={color} opacity={0.32} stroke="white" strokeWidth={1}
+                    style={{ cursor: 'move' }}
+                    onPointerDown={(e) => handleBranchHandlePointerDown(entry.branch.id, 'bend', e)}
+                    data-testid={`timeline-branch-control-in-${entry.branch.id}`}
+                    data-position-x={cp.p1.x}
+                    data-position-y={cp.p1.y}
+                  />
+                  <circle
+                    cx={cp.p2.x} cy={cp.p2.y} r={4}
+                    fill={color} opacity={0.32} stroke="white" strokeWidth={1}
+                    style={{ cursor: 'move' }}
+                    onPointerDown={(e) => handleBranchHandlePointerDown(entry.branch.id, 'bend', e)}
+                    data-testid={`timeline-branch-control-out-${entry.branch.id}`}
+                    data-position-x={cp.p2.x}
+                    data-position-y={cp.p2.y}
+                  />
+                  {/* Middle handle drags the editable branch segment; Shift locks bend while dragging. */}
+                  <circle
+                    cx={middlePoint.x} cy={middlePoint.y} r={6}
                     fill="none" stroke={color} strokeWidth={2} opacity={0.6}
                     strokeDasharray="2 2"
-                    style={{ cursor: 'ns-resize' }}
+                    style={{ cursor: 'move' }}
+                    onPointerDown={(e) => handleBranchHandlePointerDown(entry.branch.id, 'bend', e)}
+                    data-testid={`timeline-branch-handle-middle-${entry.branch.id}`}
+                    data-position-x={middlePoint.x}
+                    data-position-y={middlePoint.y}
+                  />
+                  <circle
+                    cx={middlePoint.x} cy={middlePoint.y} r={10}
+                    fill="transparent"
+                    style={{ cursor: 'move' }}
                     onPointerDown={(e) => handleBranchHandlePointerDown(entry.branch.id, 'bend', e)}
                     data-testid={`timeline-branch-handle-bend-${entry.branch.id}`}
-                    data-position-x={midX}
-                    data-position-y={midY}
+                    data-position-x={middlePoint.x}
+                    data-position-y={middlePoint.y}
                   />
                 </g>
               );
