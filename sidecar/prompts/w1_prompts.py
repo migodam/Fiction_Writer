@@ -113,8 +113,15 @@ If no new world elements appear, output: {{"world_mentions": []}}
 """
 
 W1_EXTRACT_CHARACTERS_DEEP: str = """
-You are processing chunk {chunk_id} of {total_chunks} from a novel import pipeline.
-Your job is to extract REVIEWABLE CHARACTER CARD DRAFTS from this text chunk.
+You are DeepSeek V4 Pro acting as the W1 Import Character Compiler for a long-form novel.
+You are processing chunk {chunk_id} of {total_chunks}. Your output feeds a reducer, not the user-facing canon.
+Extract compact, reviewable character-card evidence while protecting the project from duplicate people,
+wrong cast grouping, translated aliases, and bloated biographies.
+
+## Project Digest Input Placeholders
+The workflow currently supplies the rolling entity registry below. Integration Manager may later replace
+or augment it with {{project_digest}}, {{project_character_digest}}, {{project_group_digest}}, and
+{{project_alias_digest}}. Treat this section as the authoritative project digest for this chunk.
 
 ## Entity Registry
 {entity_registry_summary}
@@ -123,10 +130,23 @@ Your job is to extract REVIEWABLE CHARACTER CARD DRAFTS from this text chunk.
 {chunk_content}
 
 ## LANGUAGE RULE
-All text fields MUST be written in the same language as the source text chunk. Do NOT translate or add parallel translations.
+All prose text fields MUST use the dominant language of the source text chunk.
+- Do NOT translate Chinese names, sect titles, honorifics, or epithets into English.
+- Do NOT mix English summaries into Chinese source chunks or Chinese summaries into English chunks.
+- Preserve canonical surface forms exactly as the source writes them unless the registry already has a stronger canonical name.
 
-## ALIAS-FIRST RULE
-Before creating any new character, check ALL existing registry entries for any name, alias, title, or honorific match. In cultivation novels a single character may appear under: childhood name, courtesy name, cultivation title (e.g. 炼气期弟子), sect rank, given name + surname, and nicknames — these ALL refer to ONE entity. Only create a new character if the reference genuinely cannot be reconciled with any registry entry after exhaustive checking.
+## IDENTITY AND ALIAS RECONCILIATION
+Before creating a new character, exhaustively check every registry entry for:
+- exact canonical name matches
+- aliases, nicknames, childhood names, courtesy names, translated names, romanizations, and title variants
+- role or kinship epithets such as 三叔, 韩父, 韩母, 小妹, 墨大夫, 厉师兄
+- sect ranks, professional titles, cultivation titles, honorifics, and enemy labels
+- nearby relationship evidence that proves two surface forms refer to the same person
+
+If a surface form can be reconciled to an existing character, put it in existing_character_updates.
+Only create a new character when the chunk gives enough evidence that the person is distinct.
+If uncertain, update the closest existing candidate with an open question instead of creating a duplicate.
+Never create separate characters for translated aliases or title-only references to an already-known person.
 
 ## CONFIDENCE CALIBRATION
 - 0.9–1.0: Named character with dialogue or direct action in this chunk
@@ -134,15 +154,46 @@ Before creating any new character, check ALL existing registry entries for any n
 - 0.6–0.74: Unnamed role (e.g. "an elder", "a servant") — use the role as canonical_name
 - Below 0.6: Do not output this character
 
-## CHARACTER CARD RULE
+## STORY FUNCTION CLASSIFICATION
+Every new character and every importance update MUST include story_function using exactly one of:
+- protagonist: the main POV/central destiny driver
+- mentor: teacher, guide, patron, trainer, elder who materially shapes the protagonist
+- antagonist: active opposing force, coercer, villain, hostile rival, or hidden threat
+- ally: helper, friend, family supporter, faction partner, rescuer, or loyal companion
+- minor: background, one-scene, unnamed, utility, or low-recurrence figure
+
+Do not confuse story_function with importance. A mentor can be major or supporting; an antagonist can be major
+or minor. Use evidence from the chunk plus registry recurrence signals.
+
+## IMPORTANCE AND GROUPKEY CALIBRATION
+Use exactly one importance value: core | major | supporting | minor.
+- core: protagonist or central POV character whose choices drive the imported arc
+- major: recurring named character with repeated agency, plot leverage, or a meaningful arc
+- supporting: named character with a defined function but limited agency or limited scene count
+- minor: single-scene, background, kinship-only, title-only, or utility character
+
+Every new character SHOULD include groupKey using one of:
+- main_characters: core protagonist or central recurring arc driver
+- mentors_antagonists: mentors, coercers, villains, hostile masters, major rivals, hidden threats
+- allies_family: family, companions, benefactors, faction allies, friends
+- minor_characters: background, single-scene, utility, unnamed, or low-recurrence characters
+
+Wrong group hints are expensive. Do not put parents, unnamed siblings, servants, shopkeepers, or one-scene elders
+in main_characters just because they appear near the protagonist. If groupKey is uncertain, choose minor_characters
+and add an open question.
+
+## COMPACT CHARACTER CARD RULE
 Import is not a biography-writing pass. Output only a compact character card draft:
 - identity and aliases
-- story function or role if directly supported
-- first evidence seen in this chunk
-- up to 3 grounded tags/traits
-- open questions when identity, role, or motivation is uncertain
+- story_function and groupKey
+- source-grounded role_in_story
+- one concise summary that can replace or improve the existing card, not append a biography
+- up to 3 grounded traits/tags
+- open questions only when identity, role, or motivation is uncertain
 
-Do NOT invent deep psychology. Do NOT fill goals, fears, secrets, speech style, arc, or full background unless the source text explicitly states them. Those belong to a later enrichment workflow.
+Do NOT invent deep psychology. Do NOT fill goals, fears, secrets, speech style, arc, or full background unless
+the source text explicitly states them and the field is requested. Those belong to a later enrichment workflow.
+Prefer empty strings and empty arrays over unsupported inference.
 
 ## LENGTH LIMITS (strictly enforced — truncate before output)
 - summary: ≤ 1 sentence, ≤ 25 words
@@ -152,12 +203,13 @@ Do NOT invent deep psychology. Do NOT fill goals, fears, secrets, speech style, 
 - grounded_tags: ≤ 3 tags total
 - open_questions: ≤ 2 questions total
 
-## IMPORTANCE VALUES
-Use exactly one of: core | major | supporting | minor
-- core: protagonist or POV character present in >50% of chapters
-- major: recurring named character with a significant arc
-- supporting: named character with a defined role but limited scenes
-- minor: named but single-scene or purely functional character
+## ANTI-SUMMARY-BLOAT RULES
+- Do not restate old registry summaries unless the chunk adds a new, stronger fact.
+- Do not append long life histories across chunks.
+- For an existing character, provide only the delta from this chunk.
+- For a repeated fact, output no summary_update.
+- If a prior English summary exists but the source chunk is Chinese, do not repeat or translate it.
+- Avoid generic traits such as "brave", "kind", or "mysterious" unless the chunk directly proves them.
 
 ## Instructions
 Extract named characters from this chunk using the alias-first rule above.
@@ -166,6 +218,7 @@ Extract named characters from this chunk using the alias-first rule above.
 - Prefer empty strings or empty arrays over unsupported inference
 - Keep every field concise, factual, and source-grounded
 - Obey LENGTH LIMITS — do not write novel-length descriptions
+- Include important missing major characters even if this chunk only strengthens their role; use existing updates
 
 Output valid JSON only:
 {{
@@ -180,6 +233,9 @@ Output valid JSON only:
       "new_personality_traits": ["<grounded tag or trait>"],
       "open_questions": ["<question for later review>"],
       "importance_update": "<core|major|supporting|minor>",
+      "story_function_update": "<protagonist|mentor|antagonist|ally|minor>",
+      "groupKey_update": "<main_characters|mentors_antagonists|allies_family|minor_characters>",
+      "alias_reconciliation_rationale": "<brief reason this update belongs to the existing character>",
       "confidence": <0.6-1.0>
     }}
   ],
@@ -198,8 +254,11 @@ Output valid JSON only:
       "speech_style": "",
       "arc_notes": "",
       "importance": "<core|major|supporting|minor>",
+      "story_function": "<protagonist|mentor|antagonist|ally|minor>",
+      "groupKey": "<main_characters|mentors_antagonists|allies_family|minor_characters>",
       "notes": ["<evidence-grounded note>"],
       "open_questions": ["<question for later enrichment>"],
+      "alias_reconciliation_rationale": "<why this is not an existing character>",
       "confidence": <0.6-1.0>
     }}
   ]
@@ -209,8 +268,9 @@ If there are no characters, return: {{"existing_character_updates": [], "new_cha
 """
 
 W1_EXTRACT_EVENTS_DEEP: str = """
-You are processing chunk {chunk_id} of {total_chunks} from a novel import pipeline.
-Your job is to perform deep event extraction from this text chunk.
+You are DeepSeek V4 Pro acting as the W1 Import Timeline Scout for a long-form novel.
+You are processing chunk {chunk_id} of {total_chunks}. Your output feeds Timeline Architect,
+which needs canonical-vs-scene-beat decisions, dedupe keys, branch hints, and causal topology.
 
 ## Entity Registry
 {entity_registry_summary}
@@ -221,11 +281,44 @@ Your job is to perform deep event extraction from this text chunk.
 ## LANGUAGE RULE
 All text fields (title, description, stakes) MUST be written in the same language as the source text chunk. Do NOT translate.
 
+## PROJECT DIGEST PLACEHOLDERS
+The workflow currently supplies the rolling registry above. Integration Manager may later add
+{{project_digest}}, {{existing_event_digest}}, {{timeline_branch_digest}}, and {{chapter_digest}}.
+Use the available registry as the digest and avoid emitting events already represented there.
+
 ## TEMPORAL ANCHOR RULE
 Every event MUST include the most specific time reference available: chapter number, arc stage, cultivation milestone, season, or relative marker like "three days later". Use this as temporal_hint. If no anchor exists, use "unknown" — never leave temporal_hint empty.
 
-## DEDUP RULE
-Do NOT emit an event that is semantically equivalent to one already in the Entity Registry (same participants + same action). If this chunk adds new detail to an existing registry event, skip it — updating existing events is not supported at this stage.
+## CANONICAL VS SCENE-BEAT DECISION
+Every candidate MUST explicitly choose:
+- timelineClass = canonical_event when the beat changes world state, relationship state, power status, faction alignment, major knowledge, survival stakes, or arc direction.
+- timelineClass = scene_beat when it is travel, training repetition, conversation texture, atmosphere, minor tactical movement, repeated explanation, or a sub-beat inside a larger canonical event.
+
+Only canonical_event candidates are expected to survive as timeline proposals. scene_beat candidates may be used
+for merge recommendations or scene summaries. Do not promote every action to a canonical event.
+
+## EVENT CLASS TAXONOMY
+Every event MUST include eventClass using exactly one:
+- inciting_choice
+- journey_departure
+- test_or_trial
+- discovery
+- training_breakthrough
+- confrontation
+- betrayal_or_reveal
+- alliance_or_bond
+- power_shift
+- injury_or_death
+- escape_or_pursuit
+- faction_move
+- scene_beat
+- other
+
+## DEDUPE AND MERGE RULE
+Do NOT emit a canonical event that is semantically equivalent to one already in the Entity Registry
+(same participants + same action + same consequence), even if wording differs.
+For near duplicates inside this chunk, emit one stronger event and list the weaker beat in mergeCandidateTitles.
+Every event MUST include dedupeKey: a short stable key made from normalized participants, action, consequence, and chapterRange.
 
 ## STRUCTURAL BEATS ONLY
 Extract only major plot-turning events: breakthroughs, confrontations, deaths, revelations, alliance formations, betrayals, power shifts, key arrivals/departures. Do NOT extract travel, daily training, minor conversations, or scene descriptions that do not directly advance the main conflict or a character arc.
@@ -241,6 +334,12 @@ Extract only events that significantly advance the plot or mark a turning point.
 - Prefer canonical character ids from the registry; fall back to character_names for unresolved references
 - One event per distinct plot beat — do not split a single scene into multiple events
 - Keep titles short and specific (max 6 words)
+- Use arcId to group recurring lanes such as protagonist_origin, sect_entry, mentor_control, bottle_secret, cultivation_progress, faction_conflict, or antagonist_scheme
+- timelineLaneHint should be a human-readable lane such as Main Arc, Mentor Threat, Sect Conflict, Bottle Mystery, Family Origin, or Rival Ally
+- causalPredecessorHints should name earlier events/titles this event depends on, if visible in the chunk or registry
+- forkMergeHint must be one of root, fork, merge, parallel, callback, unknown
+- chapterRange must be an object with start and end strings, not a prose-only field
+- importanceScore must be 1-100; 80+ means canonical story-turning event, 50-79 means useful branch event, below 50 should normally be scene_beat
 
 Output valid JSON only:
 {{
@@ -248,12 +347,22 @@ Output valid JSON only:
     {{
       "title": "<short event title>",
       "description": "<1-2 sentence summary>",
+      "eventClass": "<inciting_choice|journey_departure|test_or_trial|discovery|training_breakthrough|confrontation|betrayal_or_reveal|alliance_or_bond|power_shift|injury_or_death|escape_or_pursuit|faction_move|scene_beat|other>",
+      "timelineClass": "<canonical_event|scene_beat>",
+      "arcId": "<stable snake_case arc id>",
+      "timelineLaneHint": "<branch/lane hint>",
+      "causalPredecessorHints": ["<earlier event title or empty>"],
+      "forkMergeHint": "<root|fork|merge|parallel|callback|unknown>",
+      "dedupeKey": "<participants::action::consequence::chapterRange>",
+      "chapterRange": {{"start": "<chapter/segment start>", "end": "<chapter/segment end>"}},
+      "importanceScore": <1-100>,
       "character_ids": ["<canonical_id if known>"],
       "character_names": ["<name if not yet resolved>"],
       "location_hint": "<location or empty string>",
       "temporal_hint": "<chapter/arc/time anchor — required>",
       "chunk_position": "<early|middle|late>",
       "stakes": "<why this matters to the story>",
+      "mergeCandidateTitles": ["<near-duplicate title from this chunk>"],
       "confidence": <0.6-1.0>
     }}
   ]
@@ -299,7 +408,8 @@ If no world elements are found, return: {{"world_mentions": []}}
 
 W1_EXTRACT_RELATIONSHIPS_CHUNK: str = """
 You are processing chunk {chunk_id} of {total_chunks} from a novel import pipeline.
-Your job is to extract relationship evidence from this text chunk.
+Your job is to extract relationship evidence that helps cross-validate character identity,
+role grouping, aliases, and timeline topology.
 
 ## Entity Registry
 {entity_registry_summary}
@@ -312,6 +422,9 @@ Extract relationship signals between characters mentioned in this chunk.
 - Use character names, not ids, in this output
 - Include only relationships supported by explicit interaction, dialogue, internal thought, or narration
 - Evidence should be short, direct snippets or paraphrases from this chunk
+- Include aliasEvidence when a kinship term, title, or epithet proves identity
+- Include topologyRole so Timeline Architect can distinguish mentor pressure, antagonist conflict, ally support, and family background
+- Flag contradictions when the chunk appears to use one alias for multiple people or multiple aliases for one person
 
 Output valid JSON only:
 {{
@@ -324,6 +437,9 @@ Output valid JSON only:
       "category": "<alliance|conflict|family|romance|political|mentor|rivalry|other>",
       "directionality": "<bidirectional|source_to_target|target_to_source>",
       "status": "<active|strained|broken|unknown>",
+      "topologyRole": "<mentor_pressure|antagonist_conflict|ally_support|family_context|rival_pressure|faction_link|unknown>",
+      "aliasEvidence": ["<title/kinship/epithet evidence linking identities>"],
+      "contradictionHint": "<possible alias/group contradiction or empty string>",
       "evidence": ["<evidence 1>", "<evidence 2>"],
       "confidence": <0.6-1.0>
     }}
@@ -335,7 +451,8 @@ If no relationship evidence appears, return: {{"relationships": []}}
 
 W1_EXTRACT_SCENE_SUMMARIES: str = """
 You are processing chunk {chunk_id} of {total_chunks} from a novel import pipeline.
-Your job is to identify scene boundaries and summarize scenes in this text chunk.
+Your job is to identify scene boundaries and summarize scenes in this text chunk so cross-validation
+can distinguish true timeline events from scene beats.
 
 ## Entity Registry
 {entity_registry_summary}
@@ -351,6 +468,10 @@ Infer one or more scene units from the chunk.
 - Keep scenes in reading order
 - If there is no clear chapter title, infer a practical chapter hint
 - Use concise summaries grounded in the text
+- Include canonicalEventRefs for scene-level evidence that supports a canonical event title
+- Include sceneBeatRefs for important but non-canonical beats that should merge into a larger event
+- Include timelineLaneHint and arcId when the scene clearly belongs to a branch/lane
+- Use chapterRange to preserve timeline-ready placement
 
 Output valid JSON only:
 {{
@@ -362,6 +483,11 @@ Output valid JSON only:
       "location_hint": "<location or empty string>",
       "time_hint": "<time clue or empty string>",
       "character_names": ["<characters in the scene>"],
+      "arcId": "<stable snake_case arc id or empty string>",
+      "timelineLaneHint": "<timeline lane hint or empty string>",
+      "chapterRange": {{"start": "<chapter/segment start>", "end": "<chapter/segment end>"}},
+      "canonicalEventRefs": ["<canonical event title supported by this scene>"],
+      "sceneBeatRefs": ["<scene beat that should not become a standalone canonical event>"],
       "purpose": "<what the scene accomplishes>",
       "confidence": <0.6-1.0>
     }}
@@ -370,6 +496,94 @@ Output valid JSON only:
 
 If no clear scenes can be isolated, return:
 {{"chapter_hint": "{chapter_hint}", "scenes": []}}
+"""
+
+W1_CROSS_VALIDATE_IMPORT: str = """
+You are DeepSeek V4 Pro acting as the W1 Import Cross-Validation Reviewer.
+You receive compact artifacts from character, event, relationship, scene, reducer, and timeline passes.
+Your job is not to create canon. Your job is to identify merge risks and missing high-value entities before
+Workbench proposals are accepted.
+
+## Project Digest Placeholders
+- {{project_digest}}: existing project characters, groups, aliases, timeline branches, and accepted events
+- {{character_candidates_json}}: character card candidates and existing updates
+- {{event_candidates_json}}: timeline event candidates with eventClass, timelineClass, dedupeKey, arcId, and chapterRange
+- {{relationship_candidates_json}}: relationship evidence and alias evidence
+- {{scene_candidates_json}}: scene summaries with canonicalEventRefs and sceneBeatRefs
+- {{reducer_artifact_json}}: deterministic reducer matches and warnings
+- {{timeline_architecture_json}}: branch assignments, discarded duplicates, and density warnings
+
+## Review Rules
+- duplicate_characters: flag likely same-person records caused by aliases, translations, titles, kinship terms, or romanization drift.
+- duplicate_events: flag semantically repeated events even if titles differ or chunks overlap.
+- missing_major_characters: flag characters who appear central in events/relationships/scenes but are absent, minor, or misclassified.
+- suspicious_groups: flag wrong groupKey or importance hints, especially minor family/background figures in main_characters or mentors/antagonists hidden as minor.
+- contradictory_aliases: flag one alias assigned to multiple people or mutually inconsistent names for one canonical person.
+- event_merge_recommendations: recommend canonical event merges, scene-beat demotions, branch/lane changes, and causal predecessor corrections.
+- Use conservative evidence labels. If uncertain, say why and keep confidence below 0.75.
+- Keep all rationale in the source language when tied to source text; field names stay English.
+
+Output valid JSON only:
+{{
+  "duplicate_characters": [
+    {{
+      "candidate_ids": ["<character id or candidate name>"],
+      "canonical_preference": "<preferred id/name>",
+      "reason": "<why they likely duplicate>",
+      "evidence": ["<alias/title/relationship clue>"],
+      "confidence": <0.0-1.0>
+    }}
+  ],
+  "duplicate_events": [
+    {{
+      "event_ids": ["<event id/title>"],
+      "dedupeKey": "<shared or recommended dedupe key>",
+      "canonical_preference": "<preferred event id/title>",
+      "reason": "<same participants/action/consequence/chapterRange>",
+      "confidence": <0.0-1.0>
+    }}
+  ],
+  "missing_major_characters": [
+    {{
+      "name_or_alias": "<missing or underclassified character>",
+      "observed_role": "<protagonist|mentor|antagonist|ally|minor>",
+      "suggested_importance": "<core|major|supporting|minor>",
+      "suggested_groupKey": "<main_characters|mentors_antagonists|allies_family|minor_characters>",
+      "evidence": ["<event/relationship/scene clue>"],
+      "confidence": <0.0-1.0>
+    }}
+  ],
+  "suspicious_groups": [
+    {{
+      "character_id_or_name": "<character id/name>",
+      "current_groupKey": "<current group>",
+      "suggested_groupKey": "<suggested group>",
+      "reason": "<why group or importance looks wrong>",
+      "confidence": <0.0-1.0>
+    }}
+  ],
+  "contradictory_aliases": [
+    {{
+      "alias": "<alias/title/epithet>",
+      "conflicting_ids_or_names": ["<id/name>"],
+      "reason": "<contradiction>",
+      "confidence": <0.0-1.0>
+    }}
+  ],
+  "event_merge_recommendations": [
+    {{
+      "primary_event_id_or_title": "<event to keep>",
+      "merge_event_ids_or_titles": ["<events to merge/demote>"],
+      "recommended_timelineClass": "<canonical_event|scene_beat>",
+      "recommended_arcId": "<arc id>",
+      "recommended_timelineLaneHint": "<lane hint>",
+      "causalPredecessorHints": ["<predecessor title>"],
+      "reason": "<merge/topology rationale>",
+      "confidence": <0.0-1.0>
+    }}
+  ],
+  "warnings": ["<review-level warning>"]
+}}
 """
 
 W1_SYNTHESIZE_RELATIONSHIPS: str = """

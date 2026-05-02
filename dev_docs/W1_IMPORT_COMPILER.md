@@ -7,14 +7,16 @@ W1 import now uses a Hybrid Compiler spine for long novel imports. The runtime s
 1. Segment Manifest: split source text into stable chunk/segment records with hashes, spans, prompt profile, model, and artifact path.
 2. Scout Evidence: convert chunk extraction output into non-canonical evidence cards. Evidence cards preserve source provenance and must not be treated as final project entities.
 3. Entity Reconciliation: compare imported candidates with existing project characters, tags, and relationships before creating proposals.
-4. Timeline Architect: deduplicate imported event candidates, classify dense/duplicate beats, infer semantic branches, assign branch-local `orderIndex`, and fill frontend-required timeline fields.
-5. Proposal Review: write `review_report.json` with warnings, duplicate merges, failed chunks, safe batch-accept ids, low-confidence items, model/profile metadata, artifact paths, and proposal counts.
-6. Proposal Write: only reviewed candidates become Workbench proposals.
+4. Cross-Validation Review: compare character, event, relationship, scene, reducer, and timeline evidence to flag duplicate characters/events, missing major characters, suspicious groups, contradictory aliases, and event merge recommendations.
+5. Timeline Architect: deduplicate imported event candidates, classify dense/duplicate beats, infer semantic branches, assign branch-local `orderIndex`, and fill frontend-required timeline fields.
+6. Proposal Review: write `review_report.json` with warnings, duplicate merges, failed chunks, safe batch-accept ids, low-confidence items, model/profile metadata, artifact paths, and proposal counts.
+7. Proposal Write: only reviewed candidates become Workbench proposals.
 
 ## Artifact Contracts
 - `ImportRunManifest`: `system/imports/<import_run_id>/manifest.json`; source hash, segments, prompt profile, model, and artifact directory.
 - `EvidenceCard`: `evidence_cards.json`; raw candidate evidence with source segment, confidence, candidate names/ids, and uncertainty.
 - `ReducerArtifact`: `reducer_artifact.json`; existing-project matches, skipped duplicates, dependency edges, and warnings.
+- `CrossValidationArtifact`: `cross_validation.json`; duplicate characters/events, missing major characters, suspicious groups, contradictory aliases, event merge recommendations, and warnings.
 - `TimelineArchitectureArtifact`: `timeline_architecture.json`; branch list, canonical events, discarded duplicate/scene-beat events, density policy, fork/merge-ready branch metadata, and layout hints.
 - `ImportReviewReport`: `review_report.json`; pass/warning/fail status, warnings/errors, proposal counts, safe accept ids, blocked ids, failed chunks, duplicate merges, low-confidence items, model/profile, and artifact paths.
 - `PromptProfile`: `fast`, `balanced`, `deep`, or `custom`; controls per-prompt text budget and is recorded in the manifest.
@@ -22,8 +24,24 @@ W1 import now uses a Hybrid Compiler spine for long novel imports. The runtime s
 ## Timeline Requirements
 Imported timeline event proposals must include `branchId`, branch-local `orderIndex`, `locationIds`, `participantCharacterIds`, `linkedSceneIds`, `linkedWorldItemIds`, and `tags`. If the project has no root branch, W1 proposes `branch_import_main` before event proposals. Dense imports must not put every event on the root branch when semantic branch signals are available.
 
+Event extraction prompts must emit timeline-ready scout fields before architecture: `eventClass`, `timelineClass`, `arcId`, `timelineLaneHint`, `causalPredecessorHints`, `forkMergeHint`, `dedupeKey`, `chapterRange`, `importanceScore`, and merge candidate hints. The model must explicitly separate canonical story-turning events from scene beats so Timeline Architect can merge/demote duplicates instead of importing every beat as a root-branch event.
+
 ## Character Card Requirements
 W1 import creates compact character-card drafts only. It may fill identity, aliases, role, concise summary, grounded tags/traits, evidence notes, confidence, and open questions. Deep fields such as goals, fears, secrets, speech style, and arc should remain empty unless a later enrichment workflow explicitly owns them.
+
+Character extraction prompts must include project digest placeholders, alias/epithet reconciliation, source-language normalization, protagonist/mentor/antagonist/ally/minor story-function classification, `groupKey` hints, importance calibration, and anti-summary-bloat rules. Group hints are advisory until reducer/workflow plumbing consumes them, but the prompt contract must preserve `main_characters`, `mentors_antagonists`, `allies_family`, and `minor_characters`.
+
+## Cross-Validation Requirements
+Cross-validation is a prompt and artifact contract for the Integration Manager to wire into the reducer pipeline. It must report:
+- `duplicate_characters`
+- `duplicate_events`
+- `missing_major_characters`
+- `suspicious_groups`
+- `contradictory_aliases`
+- `event_merge_recommendations`
+- `warnings`
+
+The review is non-canonical: it may recommend merges, demotions, group corrections, and missing major entities, but it must not directly mutate project storage or bypass Workbench proposal review.
 
 ## JSON Robustness Requirements
 Chunk prompt parsing must tolerate fenced JSON, trailing commas, and recoverable malformed model output. Failed extraction categories must write failure artifacts and must not be cached as successful empty prompt outputs.

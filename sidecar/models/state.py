@@ -133,6 +133,17 @@ class TimelineArchitectureArtifact(TypedDict, total=False):
     warnings: List[str]
 
 
+class CrossValidationArtifact(TypedDict, total=False):
+    import_run_id: str
+    duplicate_characters: List[dict]
+    duplicate_events: List[dict]
+    missing_major_characters: List[dict]
+    suspicious_groups: List[dict]
+    contradictory_aliases: List[dict]
+    event_merge_recommendations: List[dict]
+    warnings: List[str]
+
+
 class ImportReviewReport(TypedDict, total=False):
     import_run_id: str
     status: Literal["pass", "warning", "fail"]
@@ -162,6 +173,7 @@ class ImportState(TypedDict, total=False):
     evidence_cards: List[EvidenceCard]
     reducer_artifact: ReducerArtifact
     timeline_architecture: TimelineArchitectureArtifact
+    cross_validation: CrossValidationArtifact
     import_review_report: ImportReviewReport
     entity_registry: dict
     chunk_extractions: List[ChunkExtraction]
