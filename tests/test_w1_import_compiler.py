@@ -25,14 +25,79 @@ def test_import_manifest_is_deterministic(tmp_path):
     assert first["segments"][0]["id"] == second["segments"][0]["id"]
 
 
-def test_prompt_profile_bounds_chunk_content():
-    state = {"prompt_profile": "fast", "context": {}}
-    content = "A" * 80_000
+def test_prompt_window_preserves_complete_normal_chapter(tmp_path):
+    state = {"project_path": str(tmp_path), "prompt_profile": "deep", "context": {}}
+    digest = {
+        "content": '{"characters":[],"relationships":[]}',
+        "estimated_tokens": 10,
+        "counts": {},
+    }
+    content = "Chapter 1\n" + ("A complete scene.\n\n" * 100)
 
-    bounded = w1_import._bounded_chunk_content(state, content)
+    windows = w1_import._build_prompt_windows(
+        state,
+        [{"chunk_id": 0, "chapter_hint": "Chapter 1", "manuscript_content": content, "source_span": {"start": 0, "end": len(content)}}],
+        digest,
+    )
 
-    assert len(bounded) < len(content)
-    assert "middle omitted by W1 prompt profile context budget" in bounded
+    assert len(windows) == 1
+    assert windows[0]["split_reason"] == "complete_chapter"
+    assert content in windows[0]["text"]
+    assert "middle omitted by W1 prompt profile context budget" not in windows[0]["text"]
+
+
+def test_prompt_window_splits_only_single_oversized_chapter_by_budget(tmp_path):
+    state = {"project_path": str(tmp_path), "prompt_profile": "deep", "context": {}}
+    digest = {
+        "content": '{"characters":[],"relationships":[]}',
+        "estimated_tokens": 10,
+        "counts": {},
+    }
+    paragraph = "A" * 250_000
+    content = "\n\n".join([paragraph, paragraph, paragraph, paragraph])
+
+    windows = w1_import._build_prompt_windows(
+        state,
+        [{"chunk_id": 0, "chapter_hint": "Chapter Huge", "manuscript_content": content, "source_span": {"start": 0, "end": len(content)}}],
+        digest,
+    )
+
+    assert len(windows) > 1
+    assert {window["split_reason"] for window in windows} == {"single_oversized_chapter_paragraph_split"}
+    assert all(window["estimated_tokens"] <= 256_000 for window in windows)
+    assert sum(window["source_chars"] for window in windows) == len(content)
+
+
+def test_project_structure_digest_includes_existing_project_context(tmp_path):
+    chars = tmp_path / "entities" / "characters"
+    chars.mkdir(parents=True)
+    (chars / "char_lin.json").write_text(
+        '{"id":"char_lin","name":"Lin","summary":"Existing hero","tagIds":["tag_core"],"importImportance":"core"}',
+        encoding="utf-8",
+    )
+    world = tmp_path / "entities" / "world"
+    world.mkdir(parents=True)
+    (world / "containers.json").write_text('[{"id":"cont_lore","name":"Lore","type":"notebook"}]', encoding="utf-8")
+    (world / "world_city.json").write_text('{"id":"world_city","name":"Capital","description":"Central city"}', encoding="utf-8")
+    timeline = tmp_path / "entities" / "timeline"
+    timeline.mkdir(parents=True)
+    (timeline / "branches.json").write_text('[{"id":"branch_main","name":"Main"}]', encoding="utf-8")
+    (tmp_path / "entities" / "relationships.json").write_text(
+        '[{"id":"rel_1","sourceId":"char_lin","targetId":"char_mei","type":"ally"}]',
+        encoding="utf-8",
+    )
+    system = tmp_path / "system"
+    system.mkdir()
+    (system / "issues.json").write_text('[{"severity":"HIGH"}]', encoding="utf-8")
+    (system / "inbox.json").write_text('[{"status":"pending","riskLevel":"medium"}]', encoding="utf-8")
+
+    digest = w1_import._build_project_structure_digest({"project_path": str(tmp_path)}, "import_test")
+
+    assert digest["counts"]["characters"] == 1
+    assert digest["counts"]["world_containers"] == 1
+    assert digest["counts"]["world_items"] == 1
+    assert '"proposal_risk_summary"' in digest["content"]
+    assert '"Lin"' in digest["content"]
 
 
 def test_parse_json_response_repairs_common_model_drift():
