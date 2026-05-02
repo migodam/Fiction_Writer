@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 
+from sidecar.models import state as sidecar_state
+from sidecar.prompts import w1_prompts
 from sidecar.workflows import w1_import
 
 
@@ -244,3 +246,90 @@ def test_timeline_architect_creates_semantic_branches_for_dense_import(tmp_path)
     assert len(branches) > 1
     assert assigned_branch_ids != {"branch_import_main"}
     assert result["timeline_architecture"]["density_policy"]["max_events_per_branch"] == 24
+
+
+def test_character_prompt_preserves_identity_group_and_card_contract():
+    prompt = w1_prompts.W1_EXTRACT_CHARACTERS_DEEP
+
+    required_terms = [
+        "Project Digest Input Placeholders",
+        "{{project_digest}}",
+        "story_function",
+        "protagonist",
+        "mentor",
+        "antagonist",
+        "ally",
+        "groupKey",
+        "main_characters",
+        "mentors_antagonists",
+        "allies_family",
+        "minor_characters",
+        "alias_reconciliation_rationale",
+        "ANTI-SUMMARY-BLOAT RULES",
+        "Do NOT translate",
+        "existing_character_updates",
+        "new_characters",
+    ]
+
+    for term in required_terms:
+        assert term in prompt
+
+
+def test_event_prompt_preserves_timeline_topology_contract():
+    prompt = w1_prompts.W1_EXTRACT_EVENTS_DEEP
+
+    required_terms = [
+        "CANONICAL VS SCENE-BEAT DECISION",
+        "eventClass",
+        "timelineClass",
+        "arcId",
+        "timelineLaneHint",
+        "causalPredecessorHints",
+        "forkMergeHint",
+        "dedupeKey",
+        "chapterRange",
+        "importanceScore",
+        "mergeCandidateTitles",
+        "canonical_event",
+        "scene_beat",
+    ]
+
+    for term in required_terms:
+        assert term in prompt
+
+
+def test_relationship_and_scene_prompts_support_cross_validation():
+    relationship_prompt = w1_prompts.W1_EXTRACT_RELATIONSHIPS_CHUNK
+    scene_prompt = w1_prompts.W1_EXTRACT_SCENE_SUMMARIES
+
+    for term in ["topologyRole", "aliasEvidence", "contradictionHint"]:
+        assert term in relationship_prompt
+
+    for term in [
+        "canonicalEventRefs",
+        "sceneBeatRefs",
+        "timelineLaneHint",
+        "arcId",
+        "chapterRange",
+    ]:
+        assert term in scene_prompt
+
+
+def test_cross_validation_prompt_and_artifact_contract_are_stable():
+    prompt = w1_prompts.W1_CROSS_VALIDATE_IMPORT
+    annotations = sidecar_state.CrossValidationArtifact.__annotations__
+
+    required_fields = [
+        "duplicate_characters",
+        "duplicate_events",
+        "missing_major_characters",
+        "suspicious_groups",
+        "contradictory_aliases",
+        "event_merge_recommendations",
+    ]
+
+    for field in required_fields:
+        assert field in prompt
+        assert field in annotations
+
+    assert "cross_validation" in sidecar_state.ImportState.__annotations__
