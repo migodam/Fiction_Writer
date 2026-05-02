@@ -172,3 +172,45 @@ export function tFromOrderIndex(totalOnBranch: number, index: number): number {
   const pad = 0.08;
   return pad + (index / (totalOnBranch - 1)) * (1 - 2 * pad);
 }
+
+export function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(1, Math.max(0, value));
+}
+
+export function pointOnPolyline(points: Point[], t: number): Point {
+  if (points.length === 0) return { x: 0, y: 0 };
+  if (points.length === 1) return points[0];
+
+  const clamped = clamp01(t);
+  const segmentCount = points.length - 1;
+  const rawIndex = clamped * segmentCount;
+  const index = Math.min(segmentCount - 1, Math.floor(rawIndex));
+  const localT = rawIndex - index;
+  const start = points[index];
+  const end = points[index + 1];
+
+  return {
+    x: start.x + (end.x - start.x) * localT,
+    y: start.y + (end.y - start.y) * localT,
+  };
+}
+
+export function buildSegmentedSPath(points: Point[]): string {
+  if (points.length === 0) return '';
+  if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
+
+  const commands = [`M ${points[0].x} ${points[0].y}`];
+  for (let index = 1; index < points.length; index++) {
+    const start = points[index - 1];
+    const end = points[index];
+    const dx = end.x - start.x;
+    // One-third control handles keep long dense branches smooth without making
+    // later segments reverse direction.
+    const c1: Point = { x: start.x + dx / 3, y: start.y };
+    const c2: Point = { x: end.x - dx / 3, y: end.y };
+    commands.push(`C ${c1.x} ${c1.y} ${c2.x} ${c2.y} ${end.x} ${end.y}`);
+  }
+
+  return commands.join(' ');
+}
