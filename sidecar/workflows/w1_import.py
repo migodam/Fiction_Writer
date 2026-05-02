@@ -17,6 +17,7 @@ import asyncio
 import difflib
 import hashlib
 import json
+import math
 import re
 import uuid
 from json import JSONDecodeError
@@ -475,6 +476,8 @@ def _read_chunk_prompt_cache(state: ImportState, chunk: dict) -> dict | None:
         return None
     if payload.get("prompt_profile") != (state.get("prompt_profile") or "balanced"):
         return None
+    if payload.get("prompt_window_contract") != "chapter_window_v1":
+        return None
     prompts = payload.get("prompt_outputs")
     return prompts if isinstance(prompts, dict) else None
 
@@ -493,6 +496,7 @@ def _write_chunk_prompt_cache(state: ImportState, chunk: dict, prompt_outputs: d
             "segment_id": chunk.get("segment_id"),
             "chunk_hash": _sha256_text(raw),
             "prompt_profile": state.get("prompt_profile") or "balanced",
+            "prompt_window_contract": "chapter_window_v1",
             "written_at": _now_iso(),
             "prompt_outputs": prompt_outputs,
         }, f, ensure_ascii=False, indent=2)
@@ -528,6 +532,28 @@ def _profile_text_budget(profile: str) -> int:
     return budgets.get(profile, budgets["balanced"])
 
 
+_DEEP_PROMPT_TOTAL_TOKEN_BUDGET = 256_000
+_SCHEMA_POLICY_RESERVE_TOKENS = 24_000
+_DIGEST_RESERVE_TOKENS = 24_000
+_VALIDATION_RESERVE_TOKENS = 8_000
+
+
+def _estimate_tokens(text: str) -> int:
+    """Cheap mixed English/CJK token estimate for prompt accounting."""
+    if not text:
+        return 0
+    cjk_chars = len(re.findall(r"[\u3400-\u9fff]", text))
+    non_cjk_chars = max(len(text) - cjk_chars, 0)
+    return max(1, math.ceil(cjk_chars + (non_cjk_chars / 4)))
+
+
+def _prompt_total_token_budget(profile: str) -> int:
+    if profile in {"deep", "custom"}:
+        return _DEEP_PROMPT_TOTAL_TOKEN_BUDGET
+    # Keep smaller profiles bounded while moving away from head/tail truncation.
+    return max(_profile_text_budget(profile) // 2, 16_000)
+
+
 def _bounded_chunk_content(state: ImportState, chunk_content: str) -> str:
     budget = _profile_text_budget(state.get("prompt_profile") or state.get("context", {}).get("prompt_profile", "balanced"))
     if len(chunk_content) <= budget:
@@ -558,26 +584,300 @@ def _read_json_files(path: Path) -> list[dict]:
     return items
 
 
+def _read_json_list(path: Path) -> list[dict]:
+    value = _safe_read_json(path, [])
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
 def _load_existing_project_snapshot(project_path: str | Path) -> dict:
     """Load a compact project snapshot for deterministic import reconciliation."""
     root = Path(project_path)
     entities = root / "entities"
     timeline_dir = entities / "timeline"
     writing_dir = root / "writing"
+    world_dir = entities / "world"
     snapshot = {
         "characters": _read_json_files(entities / "characters"),
         "character_tags": _safe_read_json(entities / "character_tags.json", []),
         "relationships": _safe_read_json(entities / "relationships.json", []),
-        "world_items": _read_json_files(entities / "world"),
+        "world_items": [
+            item for item in _read_json_files(world_dir)
+            if item.get("id") and not str(item.get("id", "")).startswith(("cont_", "map_"))
+        ],
+        "world_containers": _read_json_list(world_dir / "containers.json"),
         "timeline_events": _read_json_files(timeline_dir),
         "timeline_branches": _safe_read_json(timeline_dir / "branches.json", []),
         "chapters": _read_json_files(writing_dir / "chapters"),
         "scenes": _read_json_files(writing_dir / "scenes"),
+        "issues": _safe_read_json(root / "system" / "issues.json", []),
+        "inbox": _safe_read_json(root / "system" / "inbox.json", []),
     }
     for key, value in list(snapshot.items()):
         if not isinstance(value, list):
             snapshot[key] = []
     return snapshot
+
+
+def _clip_text(value: Any, limit: int = 240) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "..."
+
+
+def _project_proposal_risk_summary(snapshot: dict) -> dict:
+    inbox = snapshot.get("inbox", [])
+    issues = snapshot.get("issues", [])
+    statuses: dict[str, int] = {}
+    severities: dict[str, int] = {}
+    for item in inbox:
+        status = str(item.get("status") or item.get("state") or "unknown")
+        statuses[status] = statuses.get(status, 0) + 1
+        risk = str(item.get("risk_level") or item.get("riskLevel") or "")
+        if risk:
+            severities[risk] = severities.get(risk, 0) + 1
+    for issue in issues:
+        severity = str(issue.get("severity") or "unknown")
+        severities[severity] = severities.get(severity, 0) + 1
+    return {
+        "open_inbox_items": len(inbox),
+        "open_issues": len(issues),
+        "statuses": statuses,
+        "risk_or_severity": severities,
+    }
+
+
+def _build_project_structure_digest(state: ImportState, import_run_id: str) -> dict:
+    """Assemble a compact import context from existing project structure."""
+    snapshot = _load_existing_project_snapshot(state["project_path"])
+    characters = []
+    for character in snapshot.get("characters", [])[:80]:
+        characters.append({
+            "id": character.get("id") or character.get("canonical_id"),
+            "name": character.get("name") or character.get("canonical_name"),
+            "aliases": character.get("aliases", [])[:6],
+            "tagIds": character.get("tagIds") or character.get("tag_ids") or [],
+            "group": character.get("groupId") or character.get("group") or character.get("importImportance") or character.get("importance"),
+            "summary": _clip_text(character.get("summary"), 220),
+        })
+
+    character_groups: dict[str, int] = {}
+    for character in snapshot.get("characters", []):
+        group = str(character.get("groupId") or character.get("group") or character.get("importImportance") or character.get("importance") or "ungrouped")
+        character_groups[group] = character_groups.get(group, 0) + 1
+
+    relationships = []
+    for relationship in snapshot.get("relationships", [])[:80]:
+        relationships.append({
+            "id": relationship.get("id"),
+            "sourceId": relationship.get("sourceId") or relationship.get("source_character_id"),
+            "targetId": relationship.get("targetId") or relationship.get("target_character_id"),
+            "type": relationship.get("type"),
+            "category": relationship.get("category"),
+            "status": relationship.get("status"),
+            "description": _clip_text(relationship.get("description"), 180),
+        })
+
+    timeline_branches = []
+    for branch in snapshot.get("timeline_branches", [])[:40]:
+        timeline_branches.append({
+            "id": branch.get("id"),
+            "name": branch.get("name"),
+            "parentBranchId": branch.get("parentBranchId"),
+            "mode": branch.get("mode"),
+            "description": _clip_text(branch.get("description"), 180),
+        })
+
+    world_containers = []
+    for container in snapshot.get("world_containers", [])[:40]:
+        world_containers.append({
+            "id": container.get("id"),
+            "name": container.get("name"),
+            "type": container.get("type"),
+            "description": _clip_text(container.get("description"), 180),
+        })
+
+    world_items = []
+    for item in snapshot.get("world_items", [])[:100]:
+        world_items.append({
+            "id": item.get("id"),
+            "name": item.get("name") or item.get("title"),
+            "type": item.get("type") or item.get("category"),
+            "containerId": item.get("containerId"),
+            "summary": _clip_text(item.get("summary") or item.get("description"), 180),
+        })
+
+    digest_payload = {
+        "version": 1,
+        "import_run_id": import_run_id,
+        "counts": {
+            "characters": len(snapshot.get("characters", [])),
+            "character_tags": len(snapshot.get("character_tags", [])),
+            "relationships": len(snapshot.get("relationships", [])),
+            "timeline_branches": len(snapshot.get("timeline_branches", [])),
+            "world_containers": len(snapshot.get("world_containers", [])),
+            "world_items": len(snapshot.get("world_items", [])),
+            "open_inbox_items": len(snapshot.get("inbox", [])),
+            "open_issues": len(snapshot.get("issues", [])),
+        },
+        "characters": characters,
+        "character_groups": character_groups,
+        "character_tags": snapshot.get("character_tags", [])[:80],
+        "relationships": relationships,
+        "timeline_branches": timeline_branches,
+        "world_containers": world_containers,
+        "world_items": world_items,
+        "proposal_risk_summary": _project_proposal_risk_summary(snapshot),
+    }
+    content = json.dumps(digest_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return {
+        "import_run_id": import_run_id,
+        "artifact_path": str(_artifact_dir(state["project_path"], import_run_id) / "project_structure_digest.json"),
+        "content": content,
+        "estimated_tokens": _estimate_tokens(content),
+        "counts": digest_payload["counts"],
+    }
+
+
+def _previous_validation_summary(state: ImportState) -> str:
+    report = state.get("import_review_report") or {}
+    if not report:
+        return json.dumps({"status": "none", "warnings": [], "errors": []}, separators=(",", ":"))
+    payload = {
+        "status": report.get("status", "unknown"),
+        "warnings": report.get("warnings", [])[:20],
+        "errors": report.get("errors", [])[:20],
+        "failed_chunks": report.get("failed_chunks", [])[:20],
+        "low_confidence_items": report.get("low_confidence_items", [])[:20],
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _fit_text_to_token_budget(text: str, token_budget: int) -> str:
+    if _estimate_tokens(text) <= token_budget:
+        return text
+    if token_budget <= 0:
+        return ""
+    char_budget = max(token_budget * 2, 1)
+    clipped = text[:char_budget].rstrip()
+    while clipped and _estimate_tokens(clipped) > token_budget:
+        clipped = clipped[: max(len(clipped) - 256, 0)].rstrip()
+    return clipped + "\n[...digest clipped to prompt reserve...]"
+
+
+def _split_text_by_paragraph_budget(text: str, token_budget: int) -> list[str]:
+    if _estimate_tokens(text) <= token_budget:
+        return [text]
+    paragraphs = re.split(r"(\n{2,}|(?<=。)\s*|(?<=\.)\s+)", text)
+    units: list[str] = []
+    for i in range(0, len(paragraphs), 2):
+        unit = paragraphs[i]
+        if i + 1 < len(paragraphs):
+            unit += paragraphs[i + 1]
+        if unit:
+            units.append(unit)
+    if not units:
+        units = [text]
+
+    windows: list[str] = []
+    current = ""
+    for unit in units:
+        if current and _estimate_tokens(current + unit) > token_budget:
+            windows.append(current)
+            current = ""
+        if _estimate_tokens(unit) > token_budget:
+            char_budget = max(token_budget, 1)
+            for start in range(0, len(unit), char_budget):
+                part = unit[start:start + char_budget]
+                if part:
+                    windows.append(part)
+            continue
+        current += unit
+    if current:
+        windows.append(current)
+    return windows or [text]
+
+
+def _build_prompt_windows(state: ImportState, chunks: list[dict], digest: dict) -> list[dict]:
+    profile = state.get("prompt_profile") or state.get("context", {}).get("prompt_profile", "balanced")
+    total_budget = _prompt_total_token_budget(profile)
+    validation_summary = _previous_validation_summary(state)
+    digest_content = _fit_text_to_token_budget(str(digest.get("content", "")), _DIGEST_RESERVE_TOKENS)
+    validation_content = _fit_text_to_token_budget(validation_summary, _VALIDATION_RESERVE_TOKENS)
+    digest_tokens = _estimate_tokens(digest_content)
+    validation_tokens = _estimate_tokens(validation_content)
+    source_budget = max(total_budget - _SCHEMA_POLICY_RESERVE_TOKENS - digest_tokens - validation_tokens, 1_000)
+    windows: list[dict] = []
+
+    for chunk in chunks:
+        chunk_id = int(chunk.get("chunk_id", len(windows)) or 0)
+        source_text = chunk.get("manuscript_content") or chunk.get("raw_content") or chunk.get("content", "")
+        chapter_hint = str(chunk.get("chapter_hint") or f"Segment {chunk_id + 1}")
+        parts = _split_text_by_paragraph_budget(source_text, source_budget)
+        for part_index, part in enumerate(parts):
+            split_reason = "complete_chapter"
+            if len(parts) > 1:
+                split_reason = "single_oversized_chapter_paragraph_split"
+            header = (
+                "PROJECT_STRUCTURE_DIGEST:\n"
+                f"{digest_content}\n\n"
+                "PREVIOUS_VALIDATION_SUMMARY:\n"
+                f"{validation_content}\n\n"
+                "PROMPT_WINDOW_POLICY:\n"
+                f"total_estimated_token_budget={total_budget}; "
+                f"schema_policy_reserve_tokens={_SCHEMA_POLICY_RESERVE_TOKENS}; "
+                f"source_budget_tokens={source_budget}; "
+                "preserve complete chapters; only paragraph-split a single oversized chapter.\n\n"
+                f"SOURCE_CHAPTERS [{chapter_hint}]:\n"
+            )
+            window_text = header + part
+            source_start = int(chunk.get("source_span", {}).get("start", chunk.get("char_start", 0)) or 0)
+            windows.append({
+                "id": _stable_id("pwin", state.get("import_run_id") or "import", chunk_id, part_index, _sha256_text(part)[:16]),
+                "chunk_ids": [chunk_id],
+                "chapter_range": chapter_hint if len(parts) == 1 else f"{chapter_hint} part {part_index + 1}/{len(parts)}",
+                "text": window_text,
+                "estimated_tokens": _estimate_tokens(window_text) + _SCHEMA_POLICY_RESERVE_TOKENS,
+                "source_chars": len(part),
+                "digest_token_estimate": digest_tokens,
+                "validation_token_estimate": validation_tokens,
+                "split_reason": split_reason,
+                "source_span": {"start": source_start, "end": source_start + len(source_text)},
+            })
+    return windows
+
+
+def _prompt_window_manifest_entry(window: dict) -> dict:
+    return {
+        "id": window.get("id"),
+        "chapter_range": window.get("chapter_range"),
+        "chunk_ids": window.get("chunk_ids", []),
+        "estimated_tokens": window.get("estimated_tokens", 0),
+        "source_chars": window.get("source_chars", 0),
+        "digest_token_estimate": window.get("digest_token_estimate", 0),
+        "validation_token_estimate": window.get("validation_token_estimate", 0),
+        "split_reason": window.get("split_reason", ""),
+        "source_span": window.get("source_span", {}),
+    }
+
+
+def _merge_prompt_outputs(outputs: list[dict]) -> dict:
+    merged: dict[str, Any] = {}
+    for output in outputs:
+        if not isinstance(output, dict):
+            continue
+        for key, value in output.items():
+            if isinstance(value, list):
+                merged.setdefault(key, [])
+                merged[key].extend(value)
+            elif isinstance(value, dict):
+                merged.setdefault(key, {})
+                merged[key].update(value)
+            elif key not in merged or not merged.get(key):
+                merged[key] = value
+    return merged
 
 
 def _build_import_manifest(state: ImportState, text: str, chunks: list[dict]) -> dict:
@@ -872,6 +1172,40 @@ async def node_split_chunks(state: ImportState) -> dict:
         chunk["chunk_id"] = i
 
     manifest = _build_import_manifest(state, text, chunks)
+    digest = _build_project_structure_digest({**state, "import_run_id": manifest["import_run_id"]}, manifest["import_run_id"])
+    prompt_windows = _build_prompt_windows(
+        {**state, "import_run_id": manifest["import_run_id"], "import_run_manifest": manifest},
+        chunks,
+        digest,
+    )
+    _write_import_artifact(
+        state["project_path"],
+        manifest["import_run_id"],
+        "project_structure_digest.json",
+        {key: value for key, value in digest.items() if key != "content"} | {"content": digest.get("content", "")},
+    )
+    _write_import_artifact(
+        state["project_path"],
+        manifest["import_run_id"],
+        "prompt_windows.json",
+        [_prompt_window_manifest_entry(window) | {"text_hash": _sha256_text(window.get("text", ""))} for window in prompt_windows],
+    )
+    manifest["project_structure_digest"] = {
+        "artifact_path": digest["artifact_path"],
+        "estimated_tokens": digest["estimated_tokens"],
+        "counts": digest.get("counts", {}),
+    }
+    manifest["prompt_window_budget"] = {
+        "total_estimated_tokens": _prompt_total_token_budget(manifest["prompt_profile"]),
+        "schema_policy_reserve_tokens": _SCHEMA_POLICY_RESERVE_TOKENS,
+        "digest_reserve_tokens": _DIGEST_RESERVE_TOKENS,
+        "validation_reserve_tokens": _VALIDATION_RESERVE_TOKENS,
+    }
+    manifest["prompt_windows"] = [_prompt_window_manifest_entry(window) for window in prompt_windows]
+    manifest["artifact_paths"] = {
+        "project_structure_digest": str(_artifact_dir(state["project_path"], manifest["import_run_id"]) / "project_structure_digest.json"),
+        "prompt_windows": str(_artifact_dir(state["project_path"], manifest["import_run_id"]) / "prompt_windows.json"),
+    }
     _write_import_artifact(state["project_path"], manifest["import_run_id"], "manifest.json", manifest)
 
     return {
@@ -879,6 +1213,8 @@ async def node_split_chunks(state: ImportState) -> dict:
         "import_run_id": manifest["import_run_id"],
         "prompt_profile": manifest["prompt_profile"],
         "import_run_manifest": manifest,
+        "project_structure_digest": digest,
+        "prompt_windows": prompt_windows,
         "progress": 0.1,
     }
 
@@ -2418,6 +2754,10 @@ async def node_process_chunks(state: ImportState) -> dict:
 
     llm = _get_llm(state)
     chunk_index_by_id = {chunk.get("chunk_id", i): i for i, chunk in enumerate(chunks)}
+    windows_by_chunk: dict[int, list[dict]] = {}
+    for window in state.get("prompt_windows", []):
+        for window_chunk_id in window.get("chunk_ids", []):
+            windows_by_chunk.setdefault(int(window_chunk_id), []).append(window)
 
     for chunk in chunks:
         chunk_id = chunk.get("chunk_id", 0)
@@ -2425,7 +2765,10 @@ async def node_process_chunks(state: ImportState) -> dict:
             continue
 
         chunk_content = chunk.get("content", "")
-        prompt_chunk_content = _bounded_chunk_content(state, chunk_content)
+        prompt_windows = windows_by_chunk.get(int(chunk_id), [])
+        if not prompt_windows:
+            digest = state.get("project_structure_digest") or _build_project_structure_digest(state, state.get("import_run_id", "import"))
+            prompt_windows = _build_prompt_windows(state, [chunk], digest)
         chunk_notes: list[str] = []
         chunk_raw_relationships: list[dict] = []
         world_mentions_detailed: list[dict] = []
@@ -2448,71 +2791,87 @@ async def node_process_chunks(state: ImportState) -> dict:
                 scene_data = cached_outputs.get("scene", {})
                 chunk_notes.append("Loaded Scout prompt outputs from import artifact cache.")
             else:
-                results = await asyncio.gather(
-                    _invoke_json_prompt(
-                        llm,
-                        W1_EXTRACT_CHARACTERS_DEEP,
-                        chunk_content=prompt_chunk_content,
-                        chunk_id=chunk_id,
-                        total_chunks=total,
-                        entity_registry_summary=registry_summary,
-                    ),
-                    _invoke_json_prompt(
-                        llm,
-                        W1_EXTRACT_EVENTS_DEEP,
-                        chunk_content=prompt_chunk_content,
-                        chunk_id=chunk_id,
-                        total_chunks=total,
-                        entity_registry_summary=registry_summary,
-                    ),
-                    _invoke_json_prompt(
-                        llm,
-                        W1_EXTRACT_WORLD_DEEP,
-                        chunk_content=prompt_chunk_content,
-                        chunk_id=chunk_id,
-                        total_chunks=total,
-                        entity_registry_summary=registry_summary,
-                    ),
-                    _invoke_json_prompt(
-                        llm,
-                        W1_EXTRACT_RELATIONSHIPS_CHUNK,
-                        chunk_content=prompt_chunk_content,
-                        chunk_id=chunk_id,
-                        total_chunks=total,
-                        entity_registry_summary=registry_summary,
-                    ),
-                    _invoke_json_prompt(
-                        llm,
-                        W1_EXTRACT_SCENE_SUMMARIES,
-                        chunk_content=prompt_chunk_content,
-                        chunk_id=chunk_id,
-                        total_chunks=total,
-                        entity_registry_summary=registry_summary,
-                        chapter_hint=scene_hint,
-                    ),
-                    return_exceptions=True,
-                )
-
+                window_outputs: dict[str, list[dict]] = {
+                    "character": [],
+                    "event": [],
+                    "world": [],
+                    "relationship": [],
+                    "scene": [],
+                }
                 prompt_failures: list[dict] = []
 
-                def _coerce_result(index: int, label: str) -> dict:
+                def _coerce_result(results: list[Any], index: int, label: str, window: dict) -> dict:
                     result = results[index]
                     if isinstance(result, Exception):
-                        chunk_notes.append(f"{label} extraction failed: {result}")
-                        errors.append(f"Chunk {chunk_id} {label} extraction failed: {result}")
+                        window_id = window.get("id", "window")
+                        chunk_notes.append(f"{label} extraction failed in {window_id}: {result}")
+                        errors.append(f"Chunk {chunk_id} {label} extraction failed in {window_id}: {result}")
                         prompt_failures.append({
                             "label": label,
                             "error": str(result),
                             "chunk_id": chunk_id,
+                            "prompt_window_id": window_id,
                         })
                         return {}
                     return result
 
-                char_data = _coerce_result(0, "character")
-                event_data = _coerce_result(1, "event")
-                world_data = _coerce_result(2, "world")
-                relationship_data = _coerce_result(3, "relationship")
-                scene_data = _coerce_result(4, "scene")
+                for prompt_window in prompt_windows:
+                    prompt_chunk_content = str(prompt_window.get("text", ""))
+                    results = await asyncio.gather(
+                        _invoke_json_prompt(
+                            llm,
+                            W1_EXTRACT_CHARACTERS_DEEP,
+                            chunk_content=prompt_chunk_content,
+                            chunk_id=chunk_id,
+                            total_chunks=total,
+                            entity_registry_summary=registry_summary,
+                        ),
+                        _invoke_json_prompt(
+                            llm,
+                            W1_EXTRACT_EVENTS_DEEP,
+                            chunk_content=prompt_chunk_content,
+                            chunk_id=chunk_id,
+                            total_chunks=total,
+                            entity_registry_summary=registry_summary,
+                        ),
+                        _invoke_json_prompt(
+                            llm,
+                            W1_EXTRACT_WORLD_DEEP,
+                            chunk_content=prompt_chunk_content,
+                            chunk_id=chunk_id,
+                            total_chunks=total,
+                            entity_registry_summary=registry_summary,
+                        ),
+                        _invoke_json_prompt(
+                            llm,
+                            W1_EXTRACT_RELATIONSHIPS_CHUNK,
+                            chunk_content=prompt_chunk_content,
+                            chunk_id=chunk_id,
+                            total_chunks=total,
+                            entity_registry_summary=registry_summary,
+                        ),
+                        _invoke_json_prompt(
+                            llm,
+                            W1_EXTRACT_SCENE_SUMMARIES,
+                            chunk_content=prompt_chunk_content,
+                            chunk_id=chunk_id,
+                            total_chunks=total,
+                            entity_registry_summary=registry_summary,
+                            chapter_hint=prompt_window.get("chapter_range") or scene_hint,
+                        ),
+                        return_exceptions=True,
+                    )
+                    window_outputs["character"].append(_coerce_result(results, 0, "character", prompt_window))
+                    window_outputs["event"].append(_coerce_result(results, 1, "event", prompt_window))
+                    window_outputs["world"].append(_coerce_result(results, 2, "world", prompt_window))
+                    window_outputs["relationship"].append(_coerce_result(results, 3, "relationship", prompt_window))
+                    window_outputs["scene"].append(_coerce_result(results, 4, "scene", prompt_window))
+
+                char_data = _merge_prompt_outputs(window_outputs["character"])
+                event_data = _merge_prompt_outputs(window_outputs["event"])
+                world_data = _merge_prompt_outputs(window_outputs["world"])
+                relationship_data = _merge_prompt_outputs(window_outputs["relationship"])
+                scene_data = _merge_prompt_outputs(window_outputs["scene"])
                 prompt_outputs = {
                     "character": char_data,
                     "event": event_data,
@@ -2965,6 +3324,8 @@ async def run(project_path: str, config: dict) -> dict:
         "reducer_artifact": {},
         "timeline_architecture": {},
         "import_review_report": {},
+        "project_structure_digest": {},
+        "prompt_windows": [],
         "entity_registry": {},
         "chunk_extractions": [],
         "raw_relationships": [],
@@ -3005,6 +3366,8 @@ async def run_streaming(project_path: str, config: dict):
         "reducer_artifact": {},
         "timeline_architecture": {},
         "import_review_report": {},
+        "project_structure_digest": {},
+        "prompt_windows": [],
         "entity_registry": {},
         "chunk_extractions": [],
         "raw_relationships": [],

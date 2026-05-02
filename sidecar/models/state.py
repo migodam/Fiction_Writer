@@ -96,6 +96,10 @@ class ImportRunManifest(TypedDict, total=False):
     segment_count: int
     artifact_dir: str
     segments: List[dict]
+    project_structure_digest: dict
+    prompt_window_budget: dict
+    prompt_windows: List[dict]
+    artifact_paths: Dict[str, str]
 
 
 class EvidenceCard(TypedDict, total=False):
@@ -149,6 +153,27 @@ class ImportReviewReport(TypedDict, total=False):
     low_confidence_items: List[dict]
 
 
+class ProjectStructureDigest(TypedDict, total=False):
+    import_run_id: str
+    artifact_path: str
+    content: str
+    estimated_tokens: int
+    counts: Dict[str, int]
+
+
+class PromptWindow(TypedDict, total=False):
+    id: str
+    chunk_ids: List[int]
+    chapter_range: str
+    text: str
+    estimated_tokens: int
+    source_chars: int
+    digest_token_estimate: int
+    validation_token_estimate: int
+    split_reason: str
+    source_span: dict
+
+
 class ImportState(TypedDict, total=False):
     project_path: str
     workflow_id: str
@@ -163,6 +188,8 @@ class ImportState(TypedDict, total=False):
     reducer_artifact: ReducerArtifact
     timeline_architecture: TimelineArchitectureArtifact
     import_review_report: ImportReviewReport
+    project_structure_digest: ProjectStructureDigest
+    prompt_windows: List[PromptWindow]
     entity_registry: dict
     chunk_extractions: List[ChunkExtraction]
     # Per-chunk raw relationship candidates (resolved post-loop)

@@ -13,11 +13,16 @@ W1 import now uses a Hybrid Compiler spine for long novel imports. The runtime s
 
 ## Artifact Contracts
 - `ImportRunManifest`: `system/imports/<import_run_id>/manifest.json`; source hash, segments, prompt profile, model, and artifact directory.
+- `ProjectStructureDigest`: `project_structure_digest.json`; compact existing-project context for import prompts, including characters, character groups/tags, relationships, timeline branches, world containers/items, and proposal/issue risk counts.
+- `PromptWindows`: `prompt_windows.json` plus manifest `prompt_windows`; chapter-aware prompt input windows with chunk ids, chapter range, estimated tokens, source chars, digest/validation token estimates, source span, and split reason.
 - `EvidenceCard`: `evidence_cards.json`; raw candidate evidence with source segment, confidence, candidate names/ids, and uncertainty.
 - `ReducerArtifact`: `reducer_artifact.json`; existing-project matches, skipped duplicates, dependency edges, and warnings.
 - `TimelineArchitectureArtifact`: `timeline_architecture.json`; branch list, canonical events, discarded duplicate/scene-beat events, density policy, fork/merge-ready branch metadata, and layout hints.
 - `ImportReviewReport`: `review_report.json`; pass/warning/fail status, warnings/errors, proposal counts, safe accept ids, blocked ids, failed chunks, duplicate merges, low-confidence items, model/profile, and artifact paths.
 - `PromptProfile`: `fast`, `balanced`, `deep`, or `custom`; controls per-prompt text budget and is recorded in the manifest.
+
+## Prompt Window Requirements
+For `deep` and `custom`, W1 uses a 256k estimated-token total input budget per prompt window. The budget includes schema/prompt-policy reserve, `ProjectStructureDigest`, previous validation summary, and source chapter text. Normal chapters must remain complete in a window whenever they fit after reserves; W1 must not head/tail truncate normal chapters. If a single chapter is oversized after reserves, W1 may split only that chapter by paragraph/scene boundaries and must record `split_reason: single_oversized_chapter_paragraph_split`.
 
 ## Timeline Requirements
 Imported timeline event proposals must include `branchId`, branch-local `orderIndex`, `locationIds`, `participantCharacterIds`, `linkedSceneIds`, `linkedWorldItemIds`, and `tags`. If the project has no root branch, W1 proposes `branch_import_main` before event proposals. Dense imports must not put every event on the root branch when semantic branch signals are available.
