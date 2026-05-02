@@ -17,6 +17,7 @@ import asyncio
 import difflib
 import hashlib
 import json
+import math
 import re
 import uuid
 from json import JSONDecodeError
@@ -360,6 +361,73 @@ def _merge_text_field(existing: str, incoming: Any) -> str:
     return f"{existing.rstrip()}\n{cleaned}"
 
 
+_CHARACTER_CARD_TEXT_LIMITS: dict[str, int] = {
+    "summary": 180,
+    "background": 160,
+    "role_in_story": 120,
+    "physical_description": 120,
+    "speech_style": 100,
+    "arc_notes": 140,
+}
+_CHARACTER_CARD_TRAIT_LIMIT = 10
+_CHARACTER_CARD_OPEN_QUESTION_LIMIT = 4
+
+
+def _compact_text_value(value: Any, limit: int) -> str:
+    """Keep character cards reviewable even after many chapter updates."""
+    if not isinstance(value, str):
+        return ""
+    cleaned_lines: list[str] = []
+    for line in value.splitlines():
+        cleaned = re.sub(r"\s+", " ", line).strip()
+        if cleaned and cleaned not in cleaned_lines:
+            cleaned_lines.append(cleaned)
+    if not cleaned_lines:
+        return ""
+    text = "；".join(cleaned_lines)
+    if len(text) <= limit:
+        return text
+    return text[: max(limit - 1, 0)].rstrip("；,，.。 ") + "…"
+
+
+def _compact_character_traits(values: Any, limit: int = _CHARACTER_CARD_TRAIT_LIMIT) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    compacted: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        cleaned = re.sub(r"\s+", " ", value).strip(" -•\t\r\n")
+        if not cleaned:
+            continue
+        # Traits should be labels, not evidence sentences.
+        if len(cleaned) > 24:
+            cleaned = cleaned[:23].rstrip("，,。.;； ") + "…"
+        key = _normal_key(cleaned)
+        if key and key not in seen:
+            seen.add(key)
+            compacted.append(cleaned)
+        if len(compacted) >= limit:
+            break
+    return compacted
+
+
+def _compact_character_card(entry: dict) -> dict:
+    """Final reducer guardrail: import creates character-card drafts, not dossiers."""
+    for field, limit in _CHARACTER_CARD_TEXT_LIMITS.items():
+        entry[field] = _compact_text_value(entry.get(field, ""), limit)
+    entry["personality_traits"] = _compact_character_traits(entry.get("personality_traits", []))
+    entry["open_questions"] = _compact_character_traits(
+        entry.get("open_questions", []),
+        _CHARACTER_CARD_OPEN_QUESTION_LIMIT,
+    )
+    for field in ("goals", "fears", "secrets"):
+        # Import should not hallucinate deep psychology; later action workflows enrich these.
+        entry[field] = []
+    return entry
+
+
 def _resolve_character_id(reference: Any, registry: dict) -> str | None:
     """Resolve a canonical id, canonical name, or alias into a character id."""
     if not isinstance(reference, str):
@@ -475,6 +543,8 @@ def _read_chunk_prompt_cache(state: ImportState, chunk: dict) -> dict | None:
         return None
     if payload.get("prompt_profile") != (state.get("prompt_profile") or "balanced"):
         return None
+    if payload.get("prompt_window_contract") != "chapter_window_v1":
+        return None
     prompts = payload.get("prompt_outputs")
     return prompts if isinstance(prompts, dict) else None
 
@@ -493,6 +563,7 @@ def _write_chunk_prompt_cache(state: ImportState, chunk: dict, prompt_outputs: d
             "segment_id": chunk.get("segment_id"),
             "chunk_hash": _sha256_text(raw),
             "prompt_profile": state.get("prompt_profile") or "balanced",
+            "prompt_window_contract": "chapter_window_v1",
             "written_at": _now_iso(),
             "prompt_outputs": prompt_outputs,
         }, f, ensure_ascii=False, indent=2)
@@ -528,6 +599,28 @@ def _profile_text_budget(profile: str) -> int:
     return budgets.get(profile, budgets["balanced"])
 
 
+_DEEP_PROMPT_TOTAL_TOKEN_BUDGET = 256_000
+_SCHEMA_POLICY_RESERVE_TOKENS = 24_000
+_DIGEST_RESERVE_TOKENS = 24_000
+_VALIDATION_RESERVE_TOKENS = 8_000
+
+
+def _estimate_tokens(text: str) -> int:
+    """Cheap mixed English/CJK token estimate for prompt accounting."""
+    if not text:
+        return 0
+    cjk_chars = len(re.findall(r"[\u3400-\u9fff]", text))
+    non_cjk_chars = max(len(text) - cjk_chars, 0)
+    return max(1, math.ceil(cjk_chars + (non_cjk_chars / 4)))
+
+
+def _prompt_total_token_budget(profile: str) -> int:
+    if profile in {"deep", "custom"}:
+        return _DEEP_PROMPT_TOTAL_TOKEN_BUDGET
+    # Keep smaller profiles bounded while moving away from head/tail truncation.
+    return max(_profile_text_budget(profile) // 2, 16_000)
+
+
 def _bounded_chunk_content(state: ImportState, chunk_content: str) -> str:
     budget = _profile_text_budget(state.get("prompt_profile") or state.get("context", {}).get("prompt_profile", "balanced"))
     if len(chunk_content) <= budget:
@@ -558,26 +651,300 @@ def _read_json_files(path: Path) -> list[dict]:
     return items
 
 
+def _read_json_list(path: Path) -> list[dict]:
+    value = _safe_read_json(path, [])
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
 def _load_existing_project_snapshot(project_path: str | Path) -> dict:
     """Load a compact project snapshot for deterministic import reconciliation."""
     root = Path(project_path)
     entities = root / "entities"
     timeline_dir = entities / "timeline"
     writing_dir = root / "writing"
+    world_dir = entities / "world"
     snapshot = {
         "characters": _read_json_files(entities / "characters"),
         "character_tags": _safe_read_json(entities / "character_tags.json", []),
         "relationships": _safe_read_json(entities / "relationships.json", []),
-        "world_items": _read_json_files(entities / "world"),
+        "world_items": [
+            item for item in _read_json_files(world_dir)
+            if item.get("id") and not str(item.get("id", "")).startswith(("cont_", "map_"))
+        ],
+        "world_containers": _read_json_list(world_dir / "containers.json"),
         "timeline_events": _read_json_files(timeline_dir),
         "timeline_branches": _safe_read_json(timeline_dir / "branches.json", []),
         "chapters": _read_json_files(writing_dir / "chapters"),
         "scenes": _read_json_files(writing_dir / "scenes"),
+        "issues": _safe_read_json(root / "system" / "issues.json", []),
+        "inbox": _safe_read_json(root / "system" / "inbox.json", []),
     }
     for key, value in list(snapshot.items()):
         if not isinstance(value, list):
             snapshot[key] = []
     return snapshot
+
+
+def _clip_text(value: Any, limit: int = 240) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "..."
+
+
+def _project_proposal_risk_summary(snapshot: dict) -> dict:
+    inbox = snapshot.get("inbox", [])
+    issues = snapshot.get("issues", [])
+    statuses: dict[str, int] = {}
+    severities: dict[str, int] = {}
+    for item in inbox:
+        status = str(item.get("status") or item.get("state") or "unknown")
+        statuses[status] = statuses.get(status, 0) + 1
+        risk = str(item.get("risk_level") or item.get("riskLevel") or "")
+        if risk:
+            severities[risk] = severities.get(risk, 0) + 1
+    for issue in issues:
+        severity = str(issue.get("severity") or "unknown")
+        severities[severity] = severities.get(severity, 0) + 1
+    return {
+        "open_inbox_items": len(inbox),
+        "open_issues": len(issues),
+        "statuses": statuses,
+        "risk_or_severity": severities,
+    }
+
+
+def _build_project_structure_digest(state: ImportState, import_run_id: str) -> dict:
+    """Assemble a compact import context from existing project structure."""
+    snapshot = _load_existing_project_snapshot(state["project_path"])
+    characters = []
+    for character in snapshot.get("characters", [])[:80]:
+        characters.append({
+            "id": character.get("id") or character.get("canonical_id"),
+            "name": character.get("name") or character.get("canonical_name"),
+            "aliases": character.get("aliases", [])[:6],
+            "tagIds": character.get("tagIds") or character.get("tag_ids") or [],
+            "group": character.get("groupId") or character.get("group") or character.get("importImportance") or character.get("importance"),
+            "summary": _clip_text(character.get("summary"), 220),
+        })
+
+    character_groups: dict[str, int] = {}
+    for character in snapshot.get("characters", []):
+        group = str(character.get("groupId") or character.get("group") or character.get("importImportance") or character.get("importance") or "ungrouped")
+        character_groups[group] = character_groups.get(group, 0) + 1
+
+    relationships = []
+    for relationship in snapshot.get("relationships", [])[:80]:
+        relationships.append({
+            "id": relationship.get("id"),
+            "sourceId": relationship.get("sourceId") or relationship.get("source_character_id"),
+            "targetId": relationship.get("targetId") or relationship.get("target_character_id"),
+            "type": relationship.get("type"),
+            "category": relationship.get("category"),
+            "status": relationship.get("status"),
+            "description": _clip_text(relationship.get("description"), 180),
+        })
+
+    timeline_branches = []
+    for branch in snapshot.get("timeline_branches", [])[:40]:
+        timeline_branches.append({
+            "id": branch.get("id"),
+            "name": branch.get("name"),
+            "parentBranchId": branch.get("parentBranchId"),
+            "mode": branch.get("mode"),
+            "description": _clip_text(branch.get("description"), 180),
+        })
+
+    world_containers = []
+    for container in snapshot.get("world_containers", [])[:40]:
+        world_containers.append({
+            "id": container.get("id"),
+            "name": container.get("name"),
+            "type": container.get("type"),
+            "description": _clip_text(container.get("description"), 180),
+        })
+
+    world_items = []
+    for item in snapshot.get("world_items", [])[:100]:
+        world_items.append({
+            "id": item.get("id"),
+            "name": item.get("name") or item.get("title"),
+            "type": item.get("type") or item.get("category"),
+            "containerId": item.get("containerId"),
+            "summary": _clip_text(item.get("summary") or item.get("description"), 180),
+        })
+
+    digest_payload = {
+        "version": 1,
+        "import_run_id": import_run_id,
+        "counts": {
+            "characters": len(snapshot.get("characters", [])),
+            "character_tags": len(snapshot.get("character_tags", [])),
+            "relationships": len(snapshot.get("relationships", [])),
+            "timeline_branches": len(snapshot.get("timeline_branches", [])),
+            "world_containers": len(snapshot.get("world_containers", [])),
+            "world_items": len(snapshot.get("world_items", [])),
+            "open_inbox_items": len(snapshot.get("inbox", [])),
+            "open_issues": len(snapshot.get("issues", [])),
+        },
+        "characters": characters,
+        "character_groups": character_groups,
+        "character_tags": snapshot.get("character_tags", [])[:80],
+        "relationships": relationships,
+        "timeline_branches": timeline_branches,
+        "world_containers": world_containers,
+        "world_items": world_items,
+        "proposal_risk_summary": _project_proposal_risk_summary(snapshot),
+    }
+    content = json.dumps(digest_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return {
+        "import_run_id": import_run_id,
+        "artifact_path": str(_artifact_dir(state["project_path"], import_run_id) / "project_structure_digest.json"),
+        "content": content,
+        "estimated_tokens": _estimate_tokens(content),
+        "counts": digest_payload["counts"],
+    }
+
+
+def _previous_validation_summary(state: ImportState) -> str:
+    report = state.get("import_review_report") or {}
+    if not report:
+        return json.dumps({"status": "none", "warnings": [], "errors": []}, separators=(",", ":"))
+    payload = {
+        "status": report.get("status", "unknown"),
+        "warnings": report.get("warnings", [])[:20],
+        "errors": report.get("errors", [])[:20],
+        "failed_chunks": report.get("failed_chunks", [])[:20],
+        "low_confidence_items": report.get("low_confidence_items", [])[:20],
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _fit_text_to_token_budget(text: str, token_budget: int) -> str:
+    if _estimate_tokens(text) <= token_budget:
+        return text
+    if token_budget <= 0:
+        return ""
+    char_budget = max(token_budget * 2, 1)
+    clipped = text[:char_budget].rstrip()
+    while clipped and _estimate_tokens(clipped) > token_budget:
+        clipped = clipped[: max(len(clipped) - 256, 0)].rstrip()
+    return clipped + "\n[...digest clipped to prompt reserve...]"
+
+
+def _split_text_by_paragraph_budget(text: str, token_budget: int) -> list[str]:
+    if _estimate_tokens(text) <= token_budget:
+        return [text]
+    paragraphs = re.split(r"(\n{2,}|(?<=。)\s*|(?<=\.)\s+)", text)
+    units: list[str] = []
+    for i in range(0, len(paragraphs), 2):
+        unit = paragraphs[i]
+        if i + 1 < len(paragraphs):
+            unit += paragraphs[i + 1]
+        if unit:
+            units.append(unit)
+    if not units:
+        units = [text]
+
+    windows: list[str] = []
+    current = ""
+    for unit in units:
+        if current and _estimate_tokens(current + unit) > token_budget:
+            windows.append(current)
+            current = ""
+        if _estimate_tokens(unit) > token_budget:
+            char_budget = max(token_budget, 1)
+            for start in range(0, len(unit), char_budget):
+                part = unit[start:start + char_budget]
+                if part:
+                    windows.append(part)
+            continue
+        current += unit
+    if current:
+        windows.append(current)
+    return windows or [text]
+
+
+def _build_prompt_windows(state: ImportState, chunks: list[dict], digest: dict) -> list[dict]:
+    profile = state.get("prompt_profile") or state.get("context", {}).get("prompt_profile", "balanced")
+    total_budget = _prompt_total_token_budget(profile)
+    validation_summary = _previous_validation_summary(state)
+    digest_content = _fit_text_to_token_budget(str(digest.get("content", "")), _DIGEST_RESERVE_TOKENS)
+    validation_content = _fit_text_to_token_budget(validation_summary, _VALIDATION_RESERVE_TOKENS)
+    digest_tokens = _estimate_tokens(digest_content)
+    validation_tokens = _estimate_tokens(validation_content)
+    source_budget = max(total_budget - _SCHEMA_POLICY_RESERVE_TOKENS - digest_tokens - validation_tokens, 1_000)
+    windows: list[dict] = []
+
+    for chunk in chunks:
+        chunk_id = int(chunk.get("chunk_id", len(windows)) or 0)
+        source_text = chunk.get("manuscript_content") or chunk.get("raw_content") or chunk.get("content", "")
+        chapter_hint = str(chunk.get("chapter_hint") or f"Segment {chunk_id + 1}")
+        parts = _split_text_by_paragraph_budget(source_text, source_budget)
+        for part_index, part in enumerate(parts):
+            split_reason = "complete_chapter"
+            if len(parts) > 1:
+                split_reason = "single_oversized_chapter_paragraph_split"
+            header = (
+                "PROJECT_STRUCTURE_DIGEST:\n"
+                f"{digest_content}\n\n"
+                "PREVIOUS_VALIDATION_SUMMARY:\n"
+                f"{validation_content}\n\n"
+                "PROMPT_WINDOW_POLICY:\n"
+                f"total_estimated_token_budget={total_budget}; "
+                f"schema_policy_reserve_tokens={_SCHEMA_POLICY_RESERVE_TOKENS}; "
+                f"source_budget_tokens={source_budget}; "
+                "preserve complete chapters; only paragraph-split a single oversized chapter.\n\n"
+                f"SOURCE_CHAPTERS [{chapter_hint}]:\n"
+            )
+            window_text = header + part
+            source_start = int(chunk.get("source_span", {}).get("start", chunk.get("char_start", 0)) or 0)
+            windows.append({
+                "id": _stable_id("pwin", state.get("import_run_id") or "import", chunk_id, part_index, _sha256_text(part)[:16]),
+                "chunk_ids": [chunk_id],
+                "chapter_range": chapter_hint if len(parts) == 1 else f"{chapter_hint} part {part_index + 1}/{len(parts)}",
+                "text": window_text,
+                "estimated_tokens": _estimate_tokens(window_text) + _SCHEMA_POLICY_RESERVE_TOKENS,
+                "source_chars": len(part),
+                "digest_token_estimate": digest_tokens,
+                "validation_token_estimate": validation_tokens,
+                "split_reason": split_reason,
+                "source_span": {"start": source_start, "end": source_start + len(source_text)},
+            })
+    return windows
+
+
+def _prompt_window_manifest_entry(window: dict) -> dict:
+    return {
+        "id": window.get("id"),
+        "chapter_range": window.get("chapter_range"),
+        "chunk_ids": window.get("chunk_ids", []),
+        "estimated_tokens": window.get("estimated_tokens", 0),
+        "source_chars": window.get("source_chars", 0),
+        "digest_token_estimate": window.get("digest_token_estimate", 0),
+        "validation_token_estimate": window.get("validation_token_estimate", 0),
+        "split_reason": window.get("split_reason", ""),
+        "source_span": window.get("source_span", {}),
+    }
+
+
+def _merge_prompt_outputs(outputs: list[dict]) -> dict:
+    merged: dict[str, Any] = {}
+    for output in outputs:
+        if not isinstance(output, dict):
+            continue
+        for key, value in output.items():
+            if isinstance(value, list):
+                merged.setdefault(key, [])
+                merged[key].extend(value)
+            elif isinstance(value, dict):
+                merged.setdefault(key, {})
+                merged[key].update(value)
+            elif key not in merged or not merged.get(key):
+                merged[key] = value
+    return merged
 
 
 def _build_import_manifest(state: ImportState, text: str, chunks: list[dict]) -> dict:
@@ -872,6 +1239,40 @@ async def node_split_chunks(state: ImportState) -> dict:
         chunk["chunk_id"] = i
 
     manifest = _build_import_manifest(state, text, chunks)
+    digest = _build_project_structure_digest({**state, "import_run_id": manifest["import_run_id"]}, manifest["import_run_id"])
+    prompt_windows = _build_prompt_windows(
+        {**state, "import_run_id": manifest["import_run_id"], "import_run_manifest": manifest},
+        chunks,
+        digest,
+    )
+    _write_import_artifact(
+        state["project_path"],
+        manifest["import_run_id"],
+        "project_structure_digest.json",
+        {key: value for key, value in digest.items() if key != "content"} | {"content": digest.get("content", "")},
+    )
+    _write_import_artifact(
+        state["project_path"],
+        manifest["import_run_id"],
+        "prompt_windows.json",
+        [_prompt_window_manifest_entry(window) | {"text_hash": _sha256_text(window.get("text", ""))} for window in prompt_windows],
+    )
+    manifest["project_structure_digest"] = {
+        "artifact_path": digest["artifact_path"],
+        "estimated_tokens": digest["estimated_tokens"],
+        "counts": digest.get("counts", {}),
+    }
+    manifest["prompt_window_budget"] = {
+        "total_estimated_tokens": _prompt_total_token_budget(manifest["prompt_profile"]),
+        "schema_policy_reserve_tokens": _SCHEMA_POLICY_RESERVE_TOKENS,
+        "digest_reserve_tokens": _DIGEST_RESERVE_TOKENS,
+        "validation_reserve_tokens": _VALIDATION_RESERVE_TOKENS,
+    }
+    manifest["prompt_windows"] = [_prompt_window_manifest_entry(window) for window in prompt_windows]
+    manifest["artifact_paths"] = {
+        "project_structure_digest": str(_artifact_dir(state["project_path"], manifest["import_run_id"]) / "project_structure_digest.json"),
+        "prompt_windows": str(_artifact_dir(state["project_path"], manifest["import_run_id"]) / "prompt_windows.json"),
+    }
     _write_import_artifact(state["project_path"], manifest["import_run_id"], "manifest.json", manifest)
 
     return {
@@ -879,6 +1280,8 @@ async def node_split_chunks(state: ImportState) -> dict:
         "import_run_id": manifest["import_run_id"],
         "prompt_profile": manifest["prompt_profile"],
         "import_run_manifest": manifest,
+        "project_structure_digest": digest,
+        "prompt_windows": prompt_windows,
         "progress": 0.1,
     }
 
@@ -1352,6 +1755,65 @@ def _event_signature(event: dict) -> str:
     return "|".join(parts)
 
 
+_TIMELINE_SEMANTIC_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
+    ("han_li_leave_home", ("离家", "告别父母", "离开村", "离开家", "前往青牛镇", "随三叔离家", "踏上旅程")),
+    ("third_uncle_sect_offer", ("三叔提议", "韩胖子提议", "参加七玄门", "七玄门考验", "七玄门测试", "送韩立入七玄门", "内门弟子考验")),
+    ("join_seven_mysteries", ("加入七玄门", "进入七玄门", "抵达七玄门", "七玄门选拔", "正式进入七玄门", "前往七玄门")),
+    ("doctor_mo_accepts_disciple", ("墨大夫收徒", "墨大夫收为弟子", "拜墨大夫", "成为墨大夫弟子", "收韩立为徒")),
+    ("cultivation_breakthrough", ("突破", "练成", "功法大成", "修为提升", "cultivation breakthrough")),
+    ("mentor_threat", ("墨大夫威胁", "师父威胁", "mentor threat", "doctor mo threatens")),
+    ("faction_conflict", ("冲突", "伏击", "争斗", "敌袭", "ambush", "conflict")),
+]
+
+
+def _timeline_chapter_anchor(value: Any) -> str:
+    if isinstance(value, dict):
+        value = value.get("start") or value.get("end") or ""
+    text = str(value or "").strip()
+    match = re.search(r"(第[一二三四五六七八九十百零\d]+[章节回]|chapter\s*\d+|\b\d+\b)", text, re.IGNORECASE)
+    return _normal_key(match.group(1) if match else text)[:24]
+
+
+def _timeline_event_participant_key(event: dict) -> str:
+    participants = event.get("participantCharacterIds") or event.get("character_ids") or event.get("character_names") or []
+    return ",".join(sorted(_normal_key(participant) for participant in participants if _normal_key(participant)))
+
+
+def _timeline_semantic_title_key(event: dict) -> str:
+    """Reduce title variants into stable semantic beats before proposal write."""
+    text = " ".join([
+        str(event.get("dedupeKey", "")),
+        str(event.get("title", "")),
+        str(event.get("description", "")),
+        str(event.get("stakes", "")),
+    ]).lower()
+    for semantic_key, patterns in _TIMELINE_SEMANTIC_PATTERNS:
+        if any(pattern.lower() in text for pattern in patterns):
+            return semantic_key
+    title_key = _normal_key(event.get("title", ""))
+    tokens = re.findall(r"[\u4e00-\u9fff]{2,}|[a-z0-9]+", str(event.get("title", "")).lower())
+    if not tokens:
+        return title_key[:48]
+    # Keep the title signal compact enough for near-duplicate variants to meet.
+    return _normal_key("".join(tokens[:4]))[:48] or title_key[:48]
+
+
+def _event_semantic_signature(event: dict) -> str:
+    dedupe_key = _normal_key(event.get("dedupeKey", ""))
+    participants = _timeline_event_participant_key(event)
+    chapter = _timeline_chapter_anchor(event.get("chapterRange") or event.get("temporal_hint", ""))
+    semantic_title = _timeline_semantic_title_key(event)
+    if dedupe_key:
+        return f"dedupe:{dedupe_key}|p:{participants}|c:{chapter}|t:{semantic_title}"
+    return f"semantic:{semantic_title}|p:{participants}|c:{chapter}"
+
+
+def _event_loose_semantic_signature(event: dict) -> str:
+    participants = _timeline_event_participant_key(event)
+    chapter = _timeline_chapter_anchor(event.get("chapterRange") or event.get("temporal_hint", ""))
+    return f"loose:{_timeline_semantic_title_key(event)}|p:{participants}|c:{chapter}"
+
+
 def _event_sequence_key(event: dict) -> tuple[int, int, str]:
     position_rank = {"early": 0, "middle": 1, "late": 2}
     return (
@@ -1382,6 +1844,47 @@ def _safe_branch_slug(value: str) -> str:
     return slug[:36] or uuid.uuid4().hex[:8]
 
 
+def _timeline_lane_key(event: dict) -> tuple[str, str, str]:
+    raw_arc_id = str(event.get("arcId", "")).strip()
+    arc_id = _safe_branch_slug(raw_arc_id) if raw_arc_id else ""
+    lane_hint = str(event.get("timelineLaneHint", "")).strip()
+    fork_hint = str(event.get("forkMergeHint", "")).strip().lower()
+    importance = float(event.get("importanceScore", 0) or 0)
+    if arc_id and arc_id not in {"main", "main_arc", "root", "unknown"}:
+        return ("arc", arc_id, lane_hint or arc_id.replace("_", " ").title())
+    if lane_hint and _normal_key(lane_hint) not in {"mainarc", "mainplot", "maintimeline"}:
+        return ("lane", _safe_branch_slug(lane_hint), lane_hint)
+    if fork_hint == "root" and importance >= 80:
+        return ("root", "main", "Main Plot")
+    theme_kind, theme_key, theme_name = _timeline_theme_key(event)
+    if theme_key != "main":
+        return (theme_kind, theme_key, theme_name)
+    location = str(event.get("location_hint", "")).strip()
+    if location:
+        return ("location", _safe_branch_slug(location), f"Location: {location}")
+    participants = event.get("participantCharacterIds", [])
+    if participants and importance < 85:
+        participant_id = str(participants[0])
+        return ("character", _safe_branch_slug(participant_id), f"Character Arc: {participant_id}")
+    return ("root", "main", "Main Plot")
+
+
+def _timeline_candidate_class(event: dict) -> tuple[str, str]:
+    explicit = str(event.get("timelineClass", "")).strip()
+    event_class = str(event.get("eventClass", "")).strip()
+    importance = float(event.get("importanceScore", 0) or 0)
+    confidence = float(event.get("confidence", 0.7) or 0.7)
+    if explicit == "scene_beat" or event_class == "scene_beat":
+        return ("scene_beat", "model classified candidate as scene_beat")
+    if explicit == "background_reference":
+        return ("background_reference", "model classified candidate as background_reference")
+    if importance and importance < 50:
+        return ("background_reference", f"importanceScore {importance:g} is below canonical threshold")
+    if confidence < 0.75:
+        return ("background_reference", f"confidence {confidence:.2f} is below canonical threshold")
+    return ("canonical_event", "candidate preserves story state, causal, or arc-level change")
+
+
 def _timeline_branch_color(index: int) -> str:
     colors = ["#38bdf8", "#f97316", "#22c55e", "#a855f7", "#eab308", "#ec4899", "#14b8a6"]
     return colors[index % len(colors)]
@@ -1396,6 +1899,10 @@ async def node_architect_timeline(state: ImportState) -> dict:
     character_id_map = registry.get("character_id_map", {})
     discarded_duplicates: list[dict] = []
     warnings: list[str] = []
+    event_classifications: list[dict] = []
+    scene_beats: list[dict] = []
+    background_references: list[dict] = []
+    fork_merge_anchors: list[dict] = []
 
     existing_branches = snapshot.get("timeline_branches", [])
     root_branch = next((branch for branch in existing_branches if branch.get("mode") == "root"), None) or (existing_branches[0] if existing_branches else None)
@@ -1418,7 +1925,10 @@ async def node_architect_timeline(state: ImportState) -> dict:
         "endMode": (root_branch or {}).get("endMode", "open"),
         "mergeTargetBranchId": (root_branch or {}).get("mergeTargetBranchId"),
         "geometry": {**root_geometry, "laneOffset": 0, "bend": root_geometry.get("bend", 0.25), "thickness": 2},
-        "layoutHint": {"eventBudget": 24, "clusterOverflow": True},
+        "rankStart": 0,
+        "rankEnd": 0,
+        "laneId": "lane_0_main",
+        "layoutHint": {"eventBudget": 24, "clusterOverflow": False, "densityClass": "normal"},
     }]
 
     existing_event_keys = {
@@ -1426,6 +1936,7 @@ async def node_architect_timeline(state: ImportState) -> dict:
         for event in snapshot.get("timeline_events", [])
     }
     seen_signatures: dict[str, str] = {}
+    seen_loose_signatures: dict[str, str] = {}
     canonical_events: dict[str, dict] = {}
     chunk_event_counts: dict[int, int] = {}
     density_limit_per_chunk = 3
@@ -1441,21 +1952,58 @@ async def node_architect_timeline(state: ImportState) -> dict:
         if existing_key in existing_event_keys:
             discarded_duplicates.append({"event_id": event_id, "title": title, "timelineClass": "discarded_duplicate", "reason": "matches existing timeline event"})
             continue
+        candidate_class, class_reason = _timeline_candidate_class(event)
+        event_classifications.append({
+            "event_id": event_id,
+            "title": title,
+            "classification": candidate_class,
+            "reason": class_reason,
+            "dedupeKey": event.get("dedupeKey", ""),
+            "semanticTitleKey": _timeline_semantic_title_key(event),
+        })
+        if candidate_class == "scene_beat":
+            item = {"event_id": event_id, "title": title, "timelineClass": "scene_beat", "reason": class_reason}
+            scene_beats.append(item)
+            discarded_duplicates.append(item)
+            continue
+        if candidate_class == "background_reference":
+            item = {"event_id": event_id, "title": title, "timelineClass": "background_reference", "reason": class_reason}
+            background_references.append(item)
+            discarded_duplicates.append(item)
+            continue
         chunk_id = int(event.get("chunk_id", 0) or 0)
         chunk_event_counts[chunk_id] = chunk_event_counts.get(chunk_id, 0) + 1
         if chunk_event_counts[chunk_id] > density_limit_per_chunk and float(event.get("confidence", 0.7)) < 0.9:
             discarded_duplicates.append({"event_id": event_id, "title": title, "timelineClass": "scene_beat", "reason": "demoted by density policy"})
             continue
         signature = _event_signature(event)
-        if signature in seen_signatures:
-            primary_id = seen_signatures[signature]
+        semantic_signature = _event_semantic_signature(event)
+        loose_signature = _event_loose_semantic_signature(event)
+        primary_id = seen_signatures.get(signature) or seen_signatures.get(semantic_signature) or seen_loose_signatures.get(loose_signature)
+        if primary_id:
             primary = prelim_events[primary_id]
             primary.setdefault("mergedEventIds", []).append(event_id)
+            primary.setdefault("mergeReasons", []).append(
+                f"Merged '{title}' by semantic signature {loose_signature}; participants/chapter/semantic title overlap."
+            )
             primary["summary"] = _merge_text_field(primary.get("summary", ""), event.get("description", ""))
-            discarded_duplicates.append({"event_id": event_id, "merged_into": primary_id, "title": title, "timelineClass": "discarded_duplicate", "reason": "duplicate event signature"})
+            primary["confidence"] = max(float(primary.get("confidence", 0.7)), float(event.get("confidence", 0.7)))
+            primary["importanceScore"] = max(int(primary.get("importanceScore", 0) or 0), int(event.get("importanceScore", 0) or 0))
+            discarded_duplicates.append({
+                "event_id": event_id,
+                "merged_into": primary_id,
+                "title": title,
+                "timelineClass": "discarded_duplicate",
+                "reason": "semantic duplicate: same dedupe/participants/chapter/normalized title",
+                "dedupeKey": event.get("dedupeKey", ""),
+                "semanticSignature": loose_signature,
+            })
             continue
         seen_signatures[signature] = event_id
+        seen_signatures[semantic_signature] = event_id
+        seen_loose_signatures[loose_signature] = event_id
         participant_ids = [character_id_map.get(cid, cid) for cid in event.get("character_ids", [])]
+        importance_score = int(event.get("importanceScore", 0) or 0)
         prelim_events[event_id] = {
             **event,
             "event_id": event_id,
@@ -1466,29 +2014,24 @@ async def node_architect_timeline(state: ImportState) -> dict:
             "linkedWorldItemIds": [],
             "tags": ["imported"],
             "sharedBranchIds": [],
-            "importance": "major" if float(event.get("confidence", 0.7)) >= 0.86 else "minor",
+            "importance": "critical" if importance_score >= 90 else ("high" if importance_score >= 75 or float(event.get("confidence", 0.7)) >= 0.86 else "medium"),
             "timelineClass": "canonical_event",
+            "classificationReason": class_reason,
             "mergedEventIds": [],
+            "mergeReasons": [],
             "_sequence": _event_sequence_key(event),
         }
 
-    location_counts: dict[str, int] = {}
-    participant_counts: dict[str, int] = {}
-    theme_counts: dict[str, int] = {}
+    lane_counts: dict[tuple[str, str, str], int] = {}
     for event in prelim_events.values():
-        location_key = _normal_key(event.get("location_hint", ""))
-        if location_key:
-            location_counts[location_key] = location_counts.get(location_key, 0) + 1
-        for participant_id in event.get("participantCharacterIds", [])[:2]:
-            participant_counts[participant_id] = participant_counts.get(participant_id, 0) + 1
-        _, theme_key, _ = _timeline_theme_key(event)
-        theme_counts[theme_key] = theme_counts.get(theme_key, 0) + 1
+        lane_key = _timeline_lane_key(event)
+        lane_counts[lane_key] = lane_counts.get(lane_key, 0) + 1
 
     total_events = len(prelim_events)
     branch_threshold = 2 if total_events >= 10 else 3
     branch_defs: dict[str, dict] = {root_branch_id: timeline_branches[0]}
 
-    def _ensure_branch(branch_id: str, name: str, reason: str) -> None:
+    def _ensure_branch(branch_id: str, name: str, reason: str, *, lane_key: str = "") -> None:
         if branch_id in branch_defs or len(branch_defs) >= 7:
             return
         idx = len(branch_defs)
@@ -1507,7 +2050,10 @@ async def node_architect_timeline(state: ImportState) -> dict:
             "endMode": "open",
             "mergeTargetBranchId": root_branch_id,
             "geometry": {"laneOffset": idx * 140, "bend": 0.18 + (idx % 3) * 0.08, "thickness": 2},
-            "layoutHint": {"eventBudget": branch_event_budget, "clusterOverflow": True},
+            "rankStart": 0,
+            "rankEnd": 0,
+            "laneId": lane_key or f"lane_{idx}_{_safe_branch_slug(name)}",
+            "layoutHint": {"eventBudget": branch_event_budget, "clusterOverflow": False, "densityClass": "normal"},
         }
         branch_defs[branch_id] = branch
         timeline_branches.append(branch)
@@ -1522,35 +2068,30 @@ async def node_architect_timeline(state: ImportState) -> dict:
                 "sortOrder": branch.get("sortOrder", idx),
                 "mode": branch.get("mode", "forked"),
                 "geometry": {**branch.get("geometry", {}), "laneOffset": branch.get("geometry", {}).get("laneOffset", idx * 140)},
-                "layoutHint": {**branch.get("layoutHint", {}), "eventBudget": branch_event_budget, "clusterOverflow": True},
+                "rankStart": branch.get("rankStart", 0),
+                "rankEnd": branch.get("rankEnd", 0),
+                "laneId": branch.get("laneId", f"lane_{idx}_{_safe_branch_slug(branch.get('name', branch_id))}"),
+                "layoutHint": {**branch.get("layoutHint", {}), "eventBudget": branch_event_budget, "clusterOverflow": False},
             }
             timeline_branches.append(branch_defs[branch_id])
 
-    for theme_key, count in theme_counts.items():
-        if theme_key != "main" and count >= branch_threshold:
-            _ensure_branch(f"branch_import_{theme_key}", _timeline_theme_key({"title": theme_key})[2] if theme_key == "main" else theme_key.replace("_", " ").title(), f"{count} {theme_key} events")
-
-    for location_key, count in sorted(location_counts.items(), key=lambda item: item[1], reverse=True)[:3]:
+    for lane_tuple, count in sorted(lane_counts.items(), key=lambda item: item[1], reverse=True):
+        lane_kind, lane_key, lane_name = lane_tuple
+        if lane_kind == "root":
+            continue
         if count >= branch_threshold:
-            _ensure_branch(f"branch_loc_{_safe_branch_slug(location_key)}", f"Location: {location_key}", f"{count} events at this location")
-
-    for participant_id, count in sorted(participant_counts.items(), key=lambda item: item[1], reverse=True)[:2]:
-        if count >= max(branch_threshold + 1, 3):
-            _ensure_branch(f"branch_char_{_safe_branch_slug(participant_id)}", f"Character Arc: {participant_id}", f"{count} events for one participant")
+            _ensure_branch(
+                f"branch_{lane_kind}_{_safe_branch_slug(lane_key)}",
+                lane_name,
+                f"{count} events on {lane_kind} lane '{lane_name}'",
+                lane_key=f"lane_{lane_kind}_{_safe_branch_slug(lane_key)}",
+            )
 
     def _select_branch(event: dict) -> str:
-        _, theme_key, _ = _timeline_theme_key(event)
-        theme_branch_id = f"branch_import_{theme_key}"
-        if theme_branch_id in branch_defs and theme_key != "main":
-            return theme_branch_id
-        location_key = _normal_key(event.get("location_hint", ""))
-        location_branch_id = f"branch_loc_{_safe_branch_slug(location_key)}" if location_key else ""
-        if location_branch_id in branch_defs:
-            return location_branch_id
-        for participant_id in event.get("participantCharacterIds", [])[:2]:
-            participant_branch_id = f"branch_char_{_safe_branch_slug(participant_id)}"
-            if participant_branch_id in branch_defs:
-                return participant_branch_id
+        lane_kind, lane_key, _ = _timeline_lane_key(event)
+        lane_branch_id = f"branch_{lane_kind}_{_safe_branch_slug(lane_key)}"
+        if lane_branch_id in branch_defs:
+            return lane_branch_id
         return root_branch_id
 
     branch_buckets: dict[str, list[tuple[str, dict]]] = {}
@@ -1563,10 +2104,22 @@ async def node_architect_timeline(state: ImportState) -> dict:
         branch_events.sort(key=lambda item: item[1].get("_sequence", (0, 0, "")))
         if len(branch_events) > branch_event_budget:
             warnings.append(f"Branch {branch_id} has {len(branch_events)} canonical events; lower-importance events were converted to scene beats.")
+            branch_defs[branch_id]["layoutHint"]["clusterOverflow"] = True
+            branch_defs[branch_id]["layoutHint"]["densityClass"] = "overflow"
+            branch_defs[branch_id]["layoutHint"]["overflowCount"] = len(branch_events) - branch_event_budget
+        else:
+            branch_defs[branch_id]["layoutHint"]["densityClass"] = "dense" if len(branch_events) > max(branch_event_budget // 2, 1) else "normal"
         visible_index = 0
         for event_id, event in branch_events:
-            if visible_index >= branch_event_budget and event.get("importance") != "major":
-                discarded_duplicates.append({"event_id": event_id, "title": event.get("title", ""), "timelineClass": "scene_beat", "reason": "branch event budget overflow"})
+            if visible_index >= branch_event_budget:
+                item = {
+                    "event_id": event_id,
+                    "title": event.get("title", ""),
+                    "timelineClass": "scene_beat",
+                    "reason": f"branch event budget overflow on {branch_id}",
+                }
+                scene_beats.append(item)
+                discarded_duplicates.append(item)
                 continue
             cleaned = {k: v for k, v in event.items() if not k.startswith("_")}
             cleaned["branchId"] = branch_id
@@ -1577,6 +2130,30 @@ async def node_architect_timeline(state: ImportState) -> dict:
             canonical_events[event_id] = cleaned
             visible_index += 1
             global_order_index += 1
+        branch_defs[branch_id]["rankStart"] = 0
+        branch_defs[branch_id]["rankEnd"] = max(visible_index - 1, 0)
+
+    for branch_id, branch in branch_defs.items():
+        if branch_id == root_branch_id:
+            continue
+        branch_events = sorted(
+            [event for event in canonical_events.values() if event.get("branchId") == branch_id],
+            key=lambda event: event.get("orderIndex", 0),
+        )
+        if not branch_events:
+            continue
+        branch["forkEventId"] = branch.get("forkEventId") or branch_events[0].get("event_id")
+        merge_event = next((event for event in reversed(branch_events) if str(event.get("forkMergeHint", "")).lower() in {"merge", "callback"}), None)
+        if merge_event:
+            branch["mergeEventId"] = branch.get("mergeEventId") or merge_event.get("event_id")
+            branch["endMode"] = "merge"
+        fork_merge_anchors.append({
+            "branchId": branch_id,
+            "parentBranchId": branch.get("parentBranchId"),
+            "forkEventId": branch.get("forkEventId"),
+            "mergeEventId": branch.get("mergeEventId"),
+            "reason": "deterministic first canonical event fork anchor with optional model merge/callback hint",
+        })
 
     registry["events"] = canonical_events
     artifact = {
@@ -1584,17 +2161,24 @@ async def node_architect_timeline(state: ImportState) -> dict:
         "root_branch_id": root_branch_id,
         "branches": timeline_branches,
         "canonical_events": list(canonical_events.values()),
+        "event_classifications": event_classifications,
         "discarded_duplicates": discarded_duplicates,
+        "scene_beats": scene_beats,
+        "background_references": background_references,
+        "fork_merge_anchors": fork_merge_anchors,
         "density_policy": {
             "max_events_per_chunk": density_limit_per_chunk,
             "max_events_per_branch": branch_event_budget,
             "branch_threshold": branch_threshold,
             "low_confidence_threshold": 0.9,
+            "canonical_classes": ["canonical_event"],
+            "noncanonical_classes": ["scene_beat", "background_reference", "discarded_duplicate"],
         },
         "layout_hints": {
             "strategy": "semantic_branch_topology",
             "max_branch_count": 7,
             "branch_lane_spacing": 140,
+            "root_branch_policy": "mainline only for arc-level turning points or deterministic fallback",
         },
         "warnings": warnings,
     }
@@ -1691,6 +2275,7 @@ async def node_write_to_project(state: ImportState) -> dict:
     for cid, entry in registry.get("characters", {}).items():
         if entry.get("skip_create"):
             continue
+        entry = _compact_character_card(dict(entry))
         op = {
             "op_type": "create",
             "entity_type": "character",
@@ -1794,14 +2379,20 @@ async def node_write_to_project(state: ImportState) -> dict:
         seen_event_title_norms.append(title_key)
         deduped_events[eid] = entry
 
-    # Sort by temporal_hint for stable orderIndex assignment
+    # Keep Timeline Architect's branch-local orderIndex when present. Falling
+    # back to temporal hints preserves legacy behavior for older checkpoints.
     sorted_events = sorted(
         deduped_events.items(),
-        key=lambda kv: kv[1].get("temporal_hint", "") or "",
+        key=lambda kv: (
+            kv[1].get("branchId", default_branch_id),
+            int(kv[1].get("orderIndex", 10_000) or 0),
+            kv[1].get("temporal_hint", "") or "",
+        ),
     )
 
     # Write event proposals
-    for order_idx, (eid, entry) in enumerate(sorted_events):
+    for fallback_order_idx, (eid, entry) in enumerate(sorted_events):
+        order_index = int(entry.get("orderIndex", fallback_order_idx) or 0)
         op = {
             "op_type": "create",
             "entity_type": "timeline_event",
@@ -1811,7 +2402,7 @@ async def node_write_to_project(state: ImportState) -> dict:
                 "title": entry.get("title", ""),
                 "summary": entry.get("summary", entry.get("description", "")),
                 "branchId": entry.get("branchId") or default_branch_id,
-                "orderIndex": order_idx,
+                "orderIndex": order_index,
                 "locationIds": entry.get("locationIds", []),
                 "participantCharacterIds": entry.get("participantCharacterIds")
                     or [character_id_map.get(cid, cid) for cid in entry.get("character_ids", [])],
@@ -1824,6 +2415,7 @@ async def node_write_to_project(state: ImportState) -> dict:
                 "importConfidence": entry.get("confidence", 0.7),
                 "importRunId": state.get("import_run_id", ""),
                 "mergedEventIds": entry.get("mergedEventIds", []),
+                "layoutHints": entry.get("layoutHints", {}),
             },
             "source_workflow": "W1_import",
             "confidence": 0.75,
@@ -2418,6 +3010,10 @@ async def node_process_chunks(state: ImportState) -> dict:
 
     llm = _get_llm(state)
     chunk_index_by_id = {chunk.get("chunk_id", i): i for i, chunk in enumerate(chunks)}
+    windows_by_chunk: dict[int, list[dict]] = {}
+    for window in state.get("prompt_windows", []):
+        for window_chunk_id in window.get("chunk_ids", []):
+            windows_by_chunk.setdefault(int(window_chunk_id), []).append(window)
 
     for chunk in chunks:
         chunk_id = chunk.get("chunk_id", 0)
@@ -2425,7 +3021,10 @@ async def node_process_chunks(state: ImportState) -> dict:
             continue
 
         chunk_content = chunk.get("content", "")
-        prompt_chunk_content = _bounded_chunk_content(state, chunk_content)
+        prompt_windows = windows_by_chunk.get(int(chunk_id), [])
+        if not prompt_windows:
+            digest = state.get("project_structure_digest") or _build_project_structure_digest(state, state.get("import_run_id", "import"))
+            prompt_windows = _build_prompt_windows(state, [chunk], digest)
         chunk_notes: list[str] = []
         chunk_raw_relationships: list[dict] = []
         world_mentions_detailed: list[dict] = []
@@ -2448,71 +3047,87 @@ async def node_process_chunks(state: ImportState) -> dict:
                 scene_data = cached_outputs.get("scene", {})
                 chunk_notes.append("Loaded Scout prompt outputs from import artifact cache.")
             else:
-                results = await asyncio.gather(
-                    _invoke_json_prompt(
-                        llm,
-                        W1_EXTRACT_CHARACTERS_DEEP,
-                        chunk_content=prompt_chunk_content,
-                        chunk_id=chunk_id,
-                        total_chunks=total,
-                        entity_registry_summary=registry_summary,
-                    ),
-                    _invoke_json_prompt(
-                        llm,
-                        W1_EXTRACT_EVENTS_DEEP,
-                        chunk_content=prompt_chunk_content,
-                        chunk_id=chunk_id,
-                        total_chunks=total,
-                        entity_registry_summary=registry_summary,
-                    ),
-                    _invoke_json_prompt(
-                        llm,
-                        W1_EXTRACT_WORLD_DEEP,
-                        chunk_content=prompt_chunk_content,
-                        chunk_id=chunk_id,
-                        total_chunks=total,
-                        entity_registry_summary=registry_summary,
-                    ),
-                    _invoke_json_prompt(
-                        llm,
-                        W1_EXTRACT_RELATIONSHIPS_CHUNK,
-                        chunk_content=prompt_chunk_content,
-                        chunk_id=chunk_id,
-                        total_chunks=total,
-                        entity_registry_summary=registry_summary,
-                    ),
-                    _invoke_json_prompt(
-                        llm,
-                        W1_EXTRACT_SCENE_SUMMARIES,
-                        chunk_content=prompt_chunk_content,
-                        chunk_id=chunk_id,
-                        total_chunks=total,
-                        entity_registry_summary=registry_summary,
-                        chapter_hint=scene_hint,
-                    ),
-                    return_exceptions=True,
-                )
-
+                window_outputs: dict[str, list[dict]] = {
+                    "character": [],
+                    "event": [],
+                    "world": [],
+                    "relationship": [],
+                    "scene": [],
+                }
                 prompt_failures: list[dict] = []
 
-                def _coerce_result(index: int, label: str) -> dict:
+                def _coerce_result(results: list[Any], index: int, label: str, window: dict) -> dict:
                     result = results[index]
                     if isinstance(result, Exception):
-                        chunk_notes.append(f"{label} extraction failed: {result}")
-                        errors.append(f"Chunk {chunk_id} {label} extraction failed: {result}")
+                        window_id = window.get("id", "window")
+                        chunk_notes.append(f"{label} extraction failed in {window_id}: {result}")
+                        errors.append(f"Chunk {chunk_id} {label} extraction failed in {window_id}: {result}")
                         prompt_failures.append({
                             "label": label,
                             "error": str(result),
                             "chunk_id": chunk_id,
+                            "prompt_window_id": window_id,
                         })
                         return {}
                     return result
 
-                char_data = _coerce_result(0, "character")
-                event_data = _coerce_result(1, "event")
-                world_data = _coerce_result(2, "world")
-                relationship_data = _coerce_result(3, "relationship")
-                scene_data = _coerce_result(4, "scene")
+                for prompt_window in prompt_windows:
+                    prompt_chunk_content = str(prompt_window.get("text", ""))
+                    results = await asyncio.gather(
+                        _invoke_json_prompt(
+                            llm,
+                            W1_EXTRACT_CHARACTERS_DEEP,
+                            chunk_content=prompt_chunk_content,
+                            chunk_id=chunk_id,
+                            total_chunks=total,
+                            entity_registry_summary=registry_summary,
+                        ),
+                        _invoke_json_prompt(
+                            llm,
+                            W1_EXTRACT_EVENTS_DEEP,
+                            chunk_content=prompt_chunk_content,
+                            chunk_id=chunk_id,
+                            total_chunks=total,
+                            entity_registry_summary=registry_summary,
+                        ),
+                        _invoke_json_prompt(
+                            llm,
+                            W1_EXTRACT_WORLD_DEEP,
+                            chunk_content=prompt_chunk_content,
+                            chunk_id=chunk_id,
+                            total_chunks=total,
+                            entity_registry_summary=registry_summary,
+                        ),
+                        _invoke_json_prompt(
+                            llm,
+                            W1_EXTRACT_RELATIONSHIPS_CHUNK,
+                            chunk_content=prompt_chunk_content,
+                            chunk_id=chunk_id,
+                            total_chunks=total,
+                            entity_registry_summary=registry_summary,
+                        ),
+                        _invoke_json_prompt(
+                            llm,
+                            W1_EXTRACT_SCENE_SUMMARIES,
+                            chunk_content=prompt_chunk_content,
+                            chunk_id=chunk_id,
+                            total_chunks=total,
+                            entity_registry_summary=registry_summary,
+                            chapter_hint=prompt_window.get("chapter_range") or scene_hint,
+                        ),
+                        return_exceptions=True,
+                    )
+                    window_outputs["character"].append(_coerce_result(results, 0, "character", prompt_window))
+                    window_outputs["event"].append(_coerce_result(results, 1, "event", prompt_window))
+                    window_outputs["world"].append(_coerce_result(results, 2, "world", prompt_window))
+                    window_outputs["relationship"].append(_coerce_result(results, 3, "relationship", prompt_window))
+                    window_outputs["scene"].append(_coerce_result(results, 4, "scene", prompt_window))
+
+                char_data = _merge_prompt_outputs(window_outputs["character"])
+                event_data = _merge_prompt_outputs(window_outputs["event"])
+                world_data = _merge_prompt_outputs(window_outputs["world"])
+                relationship_data = _merge_prompt_outputs(window_outputs["relationship"])
+                scene_data = _merge_prompt_outputs(window_outputs["scene"])
                 prompt_outputs = {
                     "character": char_data,
                     "event": event_data,
@@ -2568,6 +3183,7 @@ async def node_process_chunks(state: ImportState) -> dict:
                     raw_imp = update["importance_update"].strip()
                     entry["importance"] = IMPORTANCE_MAP.get(raw_imp, raw_imp)
                 entry["confidence"] = max(float(entry.get("confidence", 0.7)), float(update.get("confidence", 0.7)))
+                _compact_character_card(entry)
 
             for nc in char_data.get("new_characters", []):
                 name = str(nc.get("canonical_name", "")).strip()
@@ -2624,13 +3240,14 @@ async def node_process_chunks(state: ImportState) -> dict:
                         raw_imp = nc["importance"].strip()
                         entry["importance"] = IMPORTANCE_MAP.get(raw_imp, raw_imp)
                     entry["confidence"] = max(float(entry.get("confidence", 0.7)), float(nc.get("confidence", 0.7)))
+                    _compact_character_card(entry)
                     continue
 
                 char_id = f"char_{uuid.uuid4().hex[:8]}"
                 aliases: list[str] = []
                 _append_unique_strings(aliases, nc.get("aliases", []))
                 raw_importance = str(nc.get("importance", "")).strip()
-                registry["characters"][char_id] = _truncate_text_fields({
+                registry["characters"][char_id] = _compact_character_card(_truncate_text_fields({
                     "canonical_id": char_id,
                     "canonical_name": name,
                     "aliases": aliases,
@@ -2650,7 +3267,7 @@ async def node_process_chunks(state: ImportState) -> dict:
                     "importance": IMPORTANCE_MAP.get(raw_importance, raw_importance or "supporting"),
                     "tag_ids": [],
                     "open_questions": [question.strip() for question in nc.get("open_questions", []) if isinstance(question, str) and question.strip()][:2],
-                })
+                }))
                 new_chars.append(registry["characters"][char_id])
 
             # Enforce confidence floor and density cap per chunk
@@ -2662,15 +3279,32 @@ async def node_process_chunks(state: ImportState) -> dict:
                 event_id = f"event_{uuid.uuid4().hex[:8]}"
                 character_refs = list(ev.get("character_ids", [])) + list(ev.get("character_names", []))
                 resolved_character_ids = _resolve_character_ids(character_refs, registry)
+                chapter_range = ev.get("chapterRange", {})
+                if not isinstance(chapter_range, dict):
+                    chapter_range = {"start": str(chapter_range), "end": str(chapter_range)}
                 registry["events"][event_id] = {
                     "event_id": event_id,
                     "title": str(ev.get("title", "")).strip(),
                     "description": str(ev.get("description", "")).strip(),
+                    "eventClass": str(ev.get("eventClass", "")).strip(),
+                    "timelineClass": str(ev.get("timelineClass", "")).strip(),
+                    "arcId": str(ev.get("arcId", "")).strip(),
+                    "timelineLaneHint": str(ev.get("timelineLaneHint", "")).strip(),
+                    "causalPredecessorHints": [str(item).strip() for item in ev.get("causalPredecessorHints", []) if str(item).strip()],
+                    "forkMergeHint": str(ev.get("forkMergeHint", "")).strip(),
+                    "dedupeKey": str(ev.get("dedupeKey", "")).strip(),
+                    "chapterRange": {
+                        "start": str(chapter_range.get("start", "")).strip(),
+                        "end": str(chapter_range.get("end", "")).strip(),
+                    },
+                    "importanceScore": int(float(ev.get("importanceScore", 0) or 0)),
                     "character_ids": resolved_character_ids,
+                    "character_names": [str(name).strip() for name in ev.get("character_names", []) if str(name).strip()],
                     "location_hint": str(ev.get("location_hint", "")).strip() or None,
                     "temporal_hint": str(ev.get("temporal_hint", "")).strip() or None,
                     "chunk_position": str(ev.get("chunk_position", "")).strip(),
                     "stakes": str(ev.get("stakes", "")).strip(),
+                    "mergeCandidateTitles": [str(item).strip() for item in ev.get("mergeCandidateTitles", []) if str(item).strip()],
                     "confidence": float(ev.get("confidence", 0.7)),
                     "chunk_id": chunk_id,
                 }
@@ -2965,6 +3599,8 @@ async def run(project_path: str, config: dict) -> dict:
         "reducer_artifact": {},
         "timeline_architecture": {},
         "import_review_report": {},
+        "project_structure_digest": {},
+        "prompt_windows": [],
         "entity_registry": {},
         "chunk_extractions": [],
         "raw_relationships": [],
@@ -3005,6 +3641,8 @@ async def run_streaming(project_path: str, config: dict):
         "reducer_artifact": {},
         "timeline_architecture": {},
         "import_review_report": {},
+        "project_structure_digest": {},
+        "prompt_windows": [],
         "entity_registry": {},
         "chunk_extractions": [],
         "raw_relationships": [],

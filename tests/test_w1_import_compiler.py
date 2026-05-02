@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 
+from sidecar.models import state as sidecar_state
+from sidecar.prompts import w1_prompts
 from sidecar.workflows import w1_import
 
 
@@ -25,14 +27,79 @@ def test_import_manifest_is_deterministic(tmp_path):
     assert first["segments"][0]["id"] == second["segments"][0]["id"]
 
 
-def test_prompt_profile_bounds_chunk_content():
-    state = {"prompt_profile": "fast", "context": {}}
-    content = "A" * 80_000
+def test_prompt_window_preserves_complete_normal_chapter(tmp_path):
+    state = {"project_path": str(tmp_path), "prompt_profile": "deep", "context": {}}
+    digest = {
+        "content": '{"characters":[],"relationships":[]}',
+        "estimated_tokens": 10,
+        "counts": {},
+    }
+    content = "Chapter 1\n" + ("A complete scene.\n\n" * 100)
 
-    bounded = w1_import._bounded_chunk_content(state, content)
+    windows = w1_import._build_prompt_windows(
+        state,
+        [{"chunk_id": 0, "chapter_hint": "Chapter 1", "manuscript_content": content, "source_span": {"start": 0, "end": len(content)}}],
+        digest,
+    )
 
-    assert len(bounded) < len(content)
-    assert "middle omitted by W1 prompt profile context budget" in bounded
+    assert len(windows) == 1
+    assert windows[0]["split_reason"] == "complete_chapter"
+    assert content in windows[0]["text"]
+    assert "middle omitted by W1 prompt profile context budget" not in windows[0]["text"]
+
+
+def test_prompt_window_splits_only_single_oversized_chapter_by_budget(tmp_path):
+    state = {"project_path": str(tmp_path), "prompt_profile": "deep", "context": {}}
+    digest = {
+        "content": '{"characters":[],"relationships":[]}',
+        "estimated_tokens": 10,
+        "counts": {},
+    }
+    paragraph = "A" * 250_000
+    content = "\n\n".join([paragraph, paragraph, paragraph, paragraph])
+
+    windows = w1_import._build_prompt_windows(
+        state,
+        [{"chunk_id": 0, "chapter_hint": "Chapter Huge", "manuscript_content": content, "source_span": {"start": 0, "end": len(content)}}],
+        digest,
+    )
+
+    assert len(windows) > 1
+    assert {window["split_reason"] for window in windows} == {"single_oversized_chapter_paragraph_split"}
+    assert all(window["estimated_tokens"] <= 256_000 for window in windows)
+    assert sum(window["source_chars"] for window in windows) == len(content)
+
+
+def test_project_structure_digest_includes_existing_project_context(tmp_path):
+    chars = tmp_path / "entities" / "characters"
+    chars.mkdir(parents=True)
+    (chars / "char_lin.json").write_text(
+        '{"id":"char_lin","name":"Lin","summary":"Existing hero","tagIds":["tag_core"],"importImportance":"core"}',
+        encoding="utf-8",
+    )
+    world = tmp_path / "entities" / "world"
+    world.mkdir(parents=True)
+    (world / "containers.json").write_text('[{"id":"cont_lore","name":"Lore","type":"notebook"}]', encoding="utf-8")
+    (world / "world_city.json").write_text('{"id":"world_city","name":"Capital","description":"Central city"}', encoding="utf-8")
+    timeline = tmp_path / "entities" / "timeline"
+    timeline.mkdir(parents=True)
+    (timeline / "branches.json").write_text('[{"id":"branch_main","name":"Main"}]', encoding="utf-8")
+    (tmp_path / "entities" / "relationships.json").write_text(
+        '[{"id":"rel_1","sourceId":"char_lin","targetId":"char_mei","type":"ally"}]',
+        encoding="utf-8",
+    )
+    system = tmp_path / "system"
+    system.mkdir()
+    (system / "issues.json").write_text('[{"severity":"HIGH"}]', encoding="utf-8")
+    (system / "inbox.json").write_text('[{"status":"pending","riskLevel":"medium"}]', encoding="utf-8")
+
+    digest = w1_import._build_project_structure_digest({"project_path": str(tmp_path)}, "import_test")
+
+    assert digest["counts"]["characters"] == 1
+    assert digest["counts"]["world_containers"] == 1
+    assert digest["counts"]["world_items"] == 1
+    assert '"proposal_risk_summary"' in digest["content"]
+    assert '"Lin"' in digest["content"]
 
 
 def test_parse_json_response_repairs_common_model_drift():
@@ -104,6 +171,35 @@ def test_character_card_proposals_stay_slim_by_default(tmp_path, monkeypatch):
     assert data is None or data.get("goals", []) == []
     assert data is None or data.get("fears", []) == []
     assert data is None or data.get("secrets", []) == []
+
+
+def test_character_card_compaction_caps_long_running_import_fields():
+    entry = {
+        "summary": "\n".join(f"第{i}章新增经历，韩立继续成长并面对新的压力。" for i in range(20)),
+        "background": "\n".join(f"背景补充 {i}，用于证明不应无限追加。" for i in range(12)),
+        "role_in_story": "主角\n主角\n承担修炼线、瓶子线、墨大夫威胁线的核心视角。",
+        "physical_description": "普通农家少年。\n普通农家少年。",
+        "speech_style": "谨慎少言。\n谨慎少言。",
+        "arc_notes": "\n".join(f"arc note {i}" for i in range(20)),
+        "personality_traits": [f"谨慎但会在复杂压力下观察局势变化 {i}" for i in range(30)],
+        "open_questions": [f"问题 {i}" for i in range(10)],
+        "goals": ["become immortal"],
+        "fears": ["failure"],
+        "secrets": ["hidden bloodline"],
+    }
+
+    compacted = w1_import._compact_character_card(entry)
+
+    assert len(compacted["summary"]) <= 180
+    assert len(compacted["background"]) <= 160
+    assert len(compacted["role_in_story"]) <= 120
+    assert len(compacted["arc_notes"]) <= 140
+    assert len(compacted["personality_traits"]) == 10
+    assert all(len(trait) <= 24 for trait in compacted["personality_traits"])
+    assert len(compacted["open_questions"]) == 4
+    assert compacted["goals"] == []
+    assert compacted["fears"] == []
+    assert compacted["secrets"] == []
 
 
 def test_timeline_architect_dedupes_and_fills_required_fields(tmp_path):
@@ -179,3 +275,193 @@ def test_timeline_architect_creates_semantic_branches_for_dense_import(tmp_path)
     assert len(branches) > 1
     assert assigned_branch_ids != {"branch_import_main"}
     assert result["timeline_architecture"]["density_policy"]["max_events_per_branch"] == 24
+
+
+def test_timeline_architect_merges_han_li_origin_variants_and_demotes_scene_beats(tmp_path):
+    variants = [
+        ("event_offer_a", "三叔提议韩立参加七玄门考验", "三叔建议韩立参加一个月后的七玄门考验。", "canonical_event", 92),
+        ("event_offer_b", "三叔提议韩立参加七玄门测试", "韩胖子说服韩父同意韩立参加七玄门测试。", "canonical_event", 89),
+        ("event_offer_c", "三叔提议送韩立入七玄门", "三叔提议带韩立参加内门弟子考验。", "canonical_event", 88),
+        ("event_leave_a", "韩立离家前往七玄门", "韩立告别父母，随三叔离开村子。", "canonical_event", 91),
+        ("event_leave_b", "韩立随三叔离家", "韩立乘马车离开家乡前往青牛镇。", "canonical_event", 86),
+        ("event_join", "韩立加入七玄门", "韩立通过安排正式进入七玄门。", "canonical_event", 82),
+        ("event_mo", "墨大夫收徒", "墨大夫将韩立收为弟子。", "canonical_event", 84),
+        ("event_training", "韩立每日练功", "韩立重复练习口诀。", "scene_beat", 35),
+    ]
+    events = {}
+    for idx, (event_id, title, description, timeline_class, score) in enumerate(variants):
+        events[event_id] = {
+            "title": title,
+            "description": description,
+            "eventClass": "journey_departure" if "离家" in title else "inciting_choice",
+            "timelineClass": timeline_class,
+            "arcId": "protagonist_origin",
+            "timelineLaneHint": "Family Origin",
+            "dedupeKey": "",
+            "chapterRange": {"start": "第一章", "end": "第一章"},
+            "importanceScore": score,
+            "character_ids": ["char_han", "char_uncle"],
+            "location_hint": "山边小村",
+            "temporal_hint": "第一章",
+            "confidence": 0.95,
+            "chunk_id": idx,
+        }
+    state = {
+        "project_path": str(tmp_path),
+        "import_run_id": "import_han_li_variants",
+        "entity_registry": {"events": events},
+        "timeline_branches": [],
+        "errors": [],
+    }
+
+    result = asyncio.run(w1_import.node_architect_timeline(state))
+    canonical_titles = {event["title"] for event in result["entity_registry"]["events"].values()}
+    discarded = result["timeline_architecture"]["discarded_duplicates"]
+
+    assert len(canonical_titles) == 4
+    assert "韩立每日练功" not in canonical_titles
+    assert any(item.get("merged_into") == "event_offer_a" for item in discarded)
+    assert any(item.get("merged_into") == "event_leave_a" for item in discarded)
+    assert any(item.get("timelineClass") == "scene_beat" and item.get("event_id") == "event_training" for item in discarded)
+    assert all(event["branchId"] != "branch_import_main" for event in result["entity_registry"]["events"].values())
+
+
+def test_timeline_architect_distributes_dense_lanes_and_enforces_branch_budget(tmp_path):
+    events = {}
+    for idx in range(26):
+        events[f"mentor_{idx}"] = {
+            "title": f"墨大夫威胁升级 {idx}",
+            "description": "墨大夫对韩立施压，推动师徒威胁线升级。",
+            "timelineClass": "canonical_event",
+            "eventClass": "confrontation",
+            "arcId": "mentor_control",
+            "timelineLaneHint": "Mentor Threat",
+            "chapterRange": {"start": f"第{idx + 1}章", "end": f"第{idx + 1}章"},
+            "importanceScore": 72,
+            "character_ids": ["char_han", "char_mo"],
+            "location_hint": "神手谷",
+            "temporal_hint": f"第{idx + 1}章",
+            "confidence": 0.91,
+            "chunk_id": idx,
+        }
+    for idx in range(8):
+        events[f"sect_{idx}"] = {
+            "title": f"七玄门冲突 {idx}",
+            "description": "七玄门内部势力冲突影响韩立处境。",
+            "timelineClass": "canonical_event",
+            "eventClass": "faction_move",
+            "arcId": "sect_conflict",
+            "timelineLaneHint": "Sect Conflict",
+            "chapterRange": {"start": f"第{idx + 1}章", "end": f"第{idx + 1}章"},
+            "importanceScore": 74,
+            "character_ids": ["char_han"],
+            "location_hint": "七玄门",
+            "temporal_hint": f"第{idx + 1}章",
+            "confidence": 0.91,
+            "chunk_id": idx + 40,
+        }
+    state = {
+        "project_path": str(tmp_path),
+        "import_run_id": "import_dense_lanes",
+        "entity_registry": {"events": events},
+        "timeline_branches": [],
+        "errors": [],
+    }
+
+    result = asyncio.run(w1_import.node_architect_timeline(state))
+    canonical_events = list(result["entity_registry"]["events"].values())
+    branch_counts = {}
+    for event in canonical_events:
+        branch_counts[event["branchId"]] = branch_counts.get(event["branchId"], 0) + 1
+
+    assert len(branch_counts) >= 2
+    assert max(branch_counts.values()) <= result["timeline_architecture"]["density_policy"]["max_events_per_branch"]
+    assert any(item.get("reason", "").startswith("branch event budget overflow") for item in result["timeline_architecture"]["scene_beats"])
+    assert all("laneId" in branch and "rankStart" in branch and "rankEnd" in branch for branch in result["timeline_architecture"]["branches"])
+
+
+def test_character_prompt_preserves_identity_group_and_card_contract():
+    prompt = w1_prompts.W1_EXTRACT_CHARACTERS_DEEP
+
+    required_terms = [
+        "Project Digest Input Placeholders",
+        "{{project_digest}}",
+        "story_function",
+        "protagonist",
+        "mentor",
+        "antagonist",
+        "ally",
+        "groupKey",
+        "main_characters",
+        "mentors_antagonists",
+        "allies_family",
+        "minor_characters",
+        "alias_reconciliation_rationale",
+        "ANTI-SUMMARY-BLOAT RULES",
+        "Do NOT translate",
+        "existing_character_updates",
+        "new_characters",
+    ]
+
+    for term in required_terms:
+        assert term in prompt
+
+
+def test_event_prompt_preserves_timeline_topology_contract():
+    prompt = w1_prompts.W1_EXTRACT_EVENTS_DEEP
+
+    required_terms = [
+        "CANONICAL VS SCENE-BEAT DECISION",
+        "eventClass",
+        "timelineClass",
+        "arcId",
+        "timelineLaneHint",
+        "causalPredecessorHints",
+        "forkMergeHint",
+        "dedupeKey",
+        "chapterRange",
+        "importanceScore",
+        "mergeCandidateTitles",
+        "canonical_event",
+        "scene_beat",
+    ]
+
+    for term in required_terms:
+        assert term in prompt
+
+
+def test_relationship_and_scene_prompts_support_cross_validation():
+    relationship_prompt = w1_prompts.W1_EXTRACT_RELATIONSHIPS_CHUNK
+    scene_prompt = w1_prompts.W1_EXTRACT_SCENE_SUMMARIES
+
+    for term in ["topologyRole", "aliasEvidence", "contradictionHint"]:
+        assert term in relationship_prompt
+
+    for term in [
+        "canonicalEventRefs",
+        "sceneBeatRefs",
+        "timelineLaneHint",
+        "arcId",
+        "chapterRange",
+    ]:
+        assert term in scene_prompt
+
+
+def test_cross_validation_prompt_and_artifact_contract_are_stable():
+    prompt = w1_prompts.W1_CROSS_VALIDATE_IMPORT
+    annotations = sidecar_state.CrossValidationArtifact.__annotations__
+
+    required_fields = [
+        "duplicate_characters",
+        "duplicate_events",
+        "missing_major_characters",
+        "suspicious_groups",
+        "contradictory_aliases",
+        "event_merge_recommendations",
+    ]
+
+    for field in required_fields:
+        assert field in prompt
+        assert field in annotations
+
+    assert "cross_validation" in sidecar_state.ImportState.__annotations__

@@ -140,6 +140,13 @@ add-branch-btn
 timeline-zoom-slider
 
 timeline-branch-<branchId>
+timeline-branch-segment-<branchId>
+timeline-branch-handle-start-<branchId>
+timeline-branch-handle-end-<branchId>
+timeline-branch-handle-middle-<branchId>
+timeline-branch-handle-bend-<branchId>
+timeline-branch-control-in-<branchId>
+timeline-branch-control-out-<branchId>
 timeline-node-<eventId>
 
 event-title-input

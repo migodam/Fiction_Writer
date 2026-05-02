@@ -96,6 +96,10 @@ class ImportRunManifest(TypedDict, total=False):
     segment_count: int
     artifact_dir: str
     segments: List[dict]
+    project_structure_digest: dict
+    prompt_window_budget: dict
+    prompt_windows: List[dict]
+    artifact_paths: Dict[str, str]
 
 
 class EvidenceCard(TypedDict, total=False):
@@ -128,8 +132,24 @@ class TimelineArchitectureArtifact(TypedDict, total=False):
     root_branch_id: str
     branches: List[dict]
     canonical_events: List[dict]
+    event_classifications: List[dict]
     discarded_duplicates: List[dict]
+    scene_beats: List[dict]
+    background_references: List[dict]
+    fork_merge_anchors: List[dict]
     density_policy: dict
+    layout_hints: dict
+    warnings: List[str]
+
+
+class CrossValidationArtifact(TypedDict, total=False):
+    import_run_id: str
+    duplicate_characters: List[dict]
+    duplicate_events: List[dict]
+    missing_major_characters: List[dict]
+    suspicious_groups: List[dict]
+    contradictory_aliases: List[dict]
+    event_merge_recommendations: List[dict]
     warnings: List[str]
 
 
@@ -149,6 +169,27 @@ class ImportReviewReport(TypedDict, total=False):
     low_confidence_items: List[dict]
 
 
+class ProjectStructureDigest(TypedDict, total=False):
+    import_run_id: str
+    artifact_path: str
+    content: str
+    estimated_tokens: int
+    counts: Dict[str, int]
+
+
+class PromptWindow(TypedDict, total=False):
+    id: str
+    chunk_ids: List[int]
+    chapter_range: str
+    text: str
+    estimated_tokens: int
+    source_chars: int
+    digest_token_estimate: int
+    validation_token_estimate: int
+    split_reason: str
+    source_span: dict
+
+
 class ImportState(TypedDict, total=False):
     project_path: str
     workflow_id: str
@@ -162,7 +203,10 @@ class ImportState(TypedDict, total=False):
     evidence_cards: List[EvidenceCard]
     reducer_artifact: ReducerArtifact
     timeline_architecture: TimelineArchitectureArtifact
+    cross_validation: CrossValidationArtifact
     import_review_report: ImportReviewReport
+    project_structure_digest: ProjectStructureDigest
+    prompt_windows: List[PromptWindow]
     entity_registry: dict
     chunk_extractions: List[ChunkExtraction]
     # Per-chunk raw relationship candidates (resolved post-loop)
