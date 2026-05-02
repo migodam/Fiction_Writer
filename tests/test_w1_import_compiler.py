@@ -173,6 +173,35 @@ def test_character_card_proposals_stay_slim_by_default(tmp_path, monkeypatch):
     assert data is None or data.get("secrets", []) == []
 
 
+def test_character_card_compaction_caps_long_running_import_fields():
+    entry = {
+        "summary": "\n".join(f"第{i}章新增经历，韩立继续成长并面对新的压力。" for i in range(20)),
+        "background": "\n".join(f"背景补充 {i}，用于证明不应无限追加。" for i in range(12)),
+        "role_in_story": "主角\n主角\n承担修炼线、瓶子线、墨大夫威胁线的核心视角。",
+        "physical_description": "普通农家少年。\n普通农家少年。",
+        "speech_style": "谨慎少言。\n谨慎少言。",
+        "arc_notes": "\n".join(f"arc note {i}" for i in range(20)),
+        "personality_traits": [f"谨慎但会在复杂压力下观察局势变化 {i}" for i in range(30)],
+        "open_questions": [f"问题 {i}" for i in range(10)],
+        "goals": ["become immortal"],
+        "fears": ["failure"],
+        "secrets": ["hidden bloodline"],
+    }
+
+    compacted = w1_import._compact_character_card(entry)
+
+    assert len(compacted["summary"]) <= 180
+    assert len(compacted["background"]) <= 160
+    assert len(compacted["role_in_story"]) <= 120
+    assert len(compacted["arc_notes"]) <= 140
+    assert len(compacted["personality_traits"]) == 10
+    assert all(len(trait) <= 24 for trait in compacted["personality_traits"])
+    assert len(compacted["open_questions"]) == 4
+    assert compacted["goals"] == []
+    assert compacted["fears"] == []
+    assert compacted["secrets"] == []
+
+
 def test_timeline_architect_dedupes_and_fills_required_fields(tmp_path):
     state = {
         "project_path": str(tmp_path),

@@ -361,6 +361,73 @@ def _merge_text_field(existing: str, incoming: Any) -> str:
     return f"{existing.rstrip()}\n{cleaned}"
 
 
+_CHARACTER_CARD_TEXT_LIMITS: dict[str, int] = {
+    "summary": 180,
+    "background": 160,
+    "role_in_story": 120,
+    "physical_description": 120,
+    "speech_style": 100,
+    "arc_notes": 140,
+}
+_CHARACTER_CARD_TRAIT_LIMIT = 10
+_CHARACTER_CARD_OPEN_QUESTION_LIMIT = 4
+
+
+def _compact_text_value(value: Any, limit: int) -> str:
+    """Keep character cards reviewable even after many chapter updates."""
+    if not isinstance(value, str):
+        return ""
+    cleaned_lines: list[str] = []
+    for line in value.splitlines():
+        cleaned = re.sub(r"\s+", " ", line).strip()
+        if cleaned and cleaned not in cleaned_lines:
+            cleaned_lines.append(cleaned)
+    if not cleaned_lines:
+        return ""
+    text = "；".join(cleaned_lines)
+    if len(text) <= limit:
+        return text
+    return text[: max(limit - 1, 0)].rstrip("；,，.。 ") + "…"
+
+
+def _compact_character_traits(values: Any, limit: int = _CHARACTER_CARD_TRAIT_LIMIT) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    compacted: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        cleaned = re.sub(r"\s+", " ", value).strip(" -•\t\r\n")
+        if not cleaned:
+            continue
+        # Traits should be labels, not evidence sentences.
+        if len(cleaned) > 24:
+            cleaned = cleaned[:23].rstrip("，,。.;； ") + "…"
+        key = _normal_key(cleaned)
+        if key and key not in seen:
+            seen.add(key)
+            compacted.append(cleaned)
+        if len(compacted) >= limit:
+            break
+    return compacted
+
+
+def _compact_character_card(entry: dict) -> dict:
+    """Final reducer guardrail: import creates character-card drafts, not dossiers."""
+    for field, limit in _CHARACTER_CARD_TEXT_LIMITS.items():
+        entry[field] = _compact_text_value(entry.get(field, ""), limit)
+    entry["personality_traits"] = _compact_character_traits(entry.get("personality_traits", []))
+    entry["open_questions"] = _compact_character_traits(
+        entry.get("open_questions", []),
+        _CHARACTER_CARD_OPEN_QUESTION_LIMIT,
+    )
+    for field in ("goals", "fears", "secrets"):
+        # Import should not hallucinate deep psychology; later action workflows enrich these.
+        entry[field] = []
+    return entry
+
+
 def _resolve_character_id(reference: Any, registry: dict) -> str | None:
     """Resolve a canonical id, canonical name, or alias into a character id."""
     if not isinstance(reference, str):
@@ -2208,6 +2275,7 @@ async def node_write_to_project(state: ImportState) -> dict:
     for cid, entry in registry.get("characters", {}).items():
         if entry.get("skip_create"):
             continue
+        entry = _compact_character_card(dict(entry))
         op = {
             "op_type": "create",
             "entity_type": "character",
@@ -3115,6 +3183,7 @@ async def node_process_chunks(state: ImportState) -> dict:
                     raw_imp = update["importance_update"].strip()
                     entry["importance"] = IMPORTANCE_MAP.get(raw_imp, raw_imp)
                 entry["confidence"] = max(float(entry.get("confidence", 0.7)), float(update.get("confidence", 0.7)))
+                _compact_character_card(entry)
 
             for nc in char_data.get("new_characters", []):
                 name = str(nc.get("canonical_name", "")).strip()
@@ -3171,13 +3240,14 @@ async def node_process_chunks(state: ImportState) -> dict:
                         raw_imp = nc["importance"].strip()
                         entry["importance"] = IMPORTANCE_MAP.get(raw_imp, raw_imp)
                     entry["confidence"] = max(float(entry.get("confidence", 0.7)), float(nc.get("confidence", 0.7)))
+                    _compact_character_card(entry)
                     continue
 
                 char_id = f"char_{uuid.uuid4().hex[:8]}"
                 aliases: list[str] = []
                 _append_unique_strings(aliases, nc.get("aliases", []))
                 raw_importance = str(nc.get("importance", "")).strip()
-                registry["characters"][char_id] = _truncate_text_fields({
+                registry["characters"][char_id] = _compact_character_card(_truncate_text_fields({
                     "canonical_id": char_id,
                     "canonical_name": name,
                     "aliases": aliases,
@@ -3197,7 +3267,7 @@ async def node_process_chunks(state: ImportState) -> dict:
                     "importance": IMPORTANCE_MAP.get(raw_importance, raw_importance or "supporting"),
                     "tag_ids": [],
                     "open_questions": [question.strip() for question in nc.get("open_questions", []) if isinstance(question, str) and question.strip()][:2],
-                })
+                }))
                 new_chars.append(registry["characters"][char_id])
 
             # Enforce confidence floor and density cap per chunk
