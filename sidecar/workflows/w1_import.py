@@ -1688,6 +1688,65 @@ def _event_signature(event: dict) -> str:
     return "|".join(parts)
 
 
+_TIMELINE_SEMANTIC_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
+    ("han_li_leave_home", ("离家", "告别父母", "离开村", "离开家", "前往青牛镇", "随三叔离家", "踏上旅程")),
+    ("third_uncle_sect_offer", ("三叔提议", "韩胖子提议", "参加七玄门", "七玄门考验", "七玄门测试", "送韩立入七玄门", "内门弟子考验")),
+    ("join_seven_mysteries", ("加入七玄门", "进入七玄门", "抵达七玄门", "七玄门选拔", "正式进入七玄门", "前往七玄门")),
+    ("doctor_mo_accepts_disciple", ("墨大夫收徒", "墨大夫收为弟子", "拜墨大夫", "成为墨大夫弟子", "收韩立为徒")),
+    ("cultivation_breakthrough", ("突破", "练成", "功法大成", "修为提升", "cultivation breakthrough")),
+    ("mentor_threat", ("墨大夫威胁", "师父威胁", "mentor threat", "doctor mo threatens")),
+    ("faction_conflict", ("冲突", "伏击", "争斗", "敌袭", "ambush", "conflict")),
+]
+
+
+def _timeline_chapter_anchor(value: Any) -> str:
+    if isinstance(value, dict):
+        value = value.get("start") or value.get("end") or ""
+    text = str(value or "").strip()
+    match = re.search(r"(第[一二三四五六七八九十百零\d]+[章节回]|chapter\s*\d+|\b\d+\b)", text, re.IGNORECASE)
+    return _normal_key(match.group(1) if match else text)[:24]
+
+
+def _timeline_event_participant_key(event: dict) -> str:
+    participants = event.get("participantCharacterIds") or event.get("character_ids") or event.get("character_names") or []
+    return ",".join(sorted(_normal_key(participant) for participant in participants if _normal_key(participant)))
+
+
+def _timeline_semantic_title_key(event: dict) -> str:
+    """Reduce title variants into stable semantic beats before proposal write."""
+    text = " ".join([
+        str(event.get("dedupeKey", "")),
+        str(event.get("title", "")),
+        str(event.get("description", "")),
+        str(event.get("stakes", "")),
+    ]).lower()
+    for semantic_key, patterns in _TIMELINE_SEMANTIC_PATTERNS:
+        if any(pattern.lower() in text for pattern in patterns):
+            return semantic_key
+    title_key = _normal_key(event.get("title", ""))
+    tokens = re.findall(r"[\u4e00-\u9fff]{2,}|[a-z0-9]+", str(event.get("title", "")).lower())
+    if not tokens:
+        return title_key[:48]
+    # Keep the title signal compact enough for near-duplicate variants to meet.
+    return _normal_key("".join(tokens[:4]))[:48] or title_key[:48]
+
+
+def _event_semantic_signature(event: dict) -> str:
+    dedupe_key = _normal_key(event.get("dedupeKey", ""))
+    participants = _timeline_event_participant_key(event)
+    chapter = _timeline_chapter_anchor(event.get("chapterRange") or event.get("temporal_hint", ""))
+    semantic_title = _timeline_semantic_title_key(event)
+    if dedupe_key:
+        return f"dedupe:{dedupe_key}|p:{participants}|c:{chapter}|t:{semantic_title}"
+    return f"semantic:{semantic_title}|p:{participants}|c:{chapter}"
+
+
+def _event_loose_semantic_signature(event: dict) -> str:
+    participants = _timeline_event_participant_key(event)
+    chapter = _timeline_chapter_anchor(event.get("chapterRange") or event.get("temporal_hint", ""))
+    return f"loose:{_timeline_semantic_title_key(event)}|p:{participants}|c:{chapter}"
+
+
 def _event_sequence_key(event: dict) -> tuple[int, int, str]:
     position_rank = {"early": 0, "middle": 1, "late": 2}
     return (
@@ -1718,6 +1777,47 @@ def _safe_branch_slug(value: str) -> str:
     return slug[:36] or uuid.uuid4().hex[:8]
 
 
+def _timeline_lane_key(event: dict) -> tuple[str, str, str]:
+    raw_arc_id = str(event.get("arcId", "")).strip()
+    arc_id = _safe_branch_slug(raw_arc_id) if raw_arc_id else ""
+    lane_hint = str(event.get("timelineLaneHint", "")).strip()
+    fork_hint = str(event.get("forkMergeHint", "")).strip().lower()
+    importance = float(event.get("importanceScore", 0) or 0)
+    if arc_id and arc_id not in {"main", "main_arc", "root", "unknown"}:
+        return ("arc", arc_id, lane_hint or arc_id.replace("_", " ").title())
+    if lane_hint and _normal_key(lane_hint) not in {"mainarc", "mainplot", "maintimeline"}:
+        return ("lane", _safe_branch_slug(lane_hint), lane_hint)
+    if fork_hint == "root" and importance >= 80:
+        return ("root", "main", "Main Plot")
+    theme_kind, theme_key, theme_name = _timeline_theme_key(event)
+    if theme_key != "main":
+        return (theme_kind, theme_key, theme_name)
+    location = str(event.get("location_hint", "")).strip()
+    if location:
+        return ("location", _safe_branch_slug(location), f"Location: {location}")
+    participants = event.get("participantCharacterIds", [])
+    if participants and importance < 85:
+        participant_id = str(participants[0])
+        return ("character", _safe_branch_slug(participant_id), f"Character Arc: {participant_id}")
+    return ("root", "main", "Main Plot")
+
+
+def _timeline_candidate_class(event: dict) -> tuple[str, str]:
+    explicit = str(event.get("timelineClass", "")).strip()
+    event_class = str(event.get("eventClass", "")).strip()
+    importance = float(event.get("importanceScore", 0) or 0)
+    confidence = float(event.get("confidence", 0.7) or 0.7)
+    if explicit == "scene_beat" or event_class == "scene_beat":
+        return ("scene_beat", "model classified candidate as scene_beat")
+    if explicit == "background_reference":
+        return ("background_reference", "model classified candidate as background_reference")
+    if importance and importance < 50:
+        return ("background_reference", f"importanceScore {importance:g} is below canonical threshold")
+    if confidence < 0.75:
+        return ("background_reference", f"confidence {confidence:.2f} is below canonical threshold")
+    return ("canonical_event", "candidate preserves story state, causal, or arc-level change")
+
+
 def _timeline_branch_color(index: int) -> str:
     colors = ["#38bdf8", "#f97316", "#22c55e", "#a855f7", "#eab308", "#ec4899", "#14b8a6"]
     return colors[index % len(colors)]
@@ -1732,6 +1832,10 @@ async def node_architect_timeline(state: ImportState) -> dict:
     character_id_map = registry.get("character_id_map", {})
     discarded_duplicates: list[dict] = []
     warnings: list[str] = []
+    event_classifications: list[dict] = []
+    scene_beats: list[dict] = []
+    background_references: list[dict] = []
+    fork_merge_anchors: list[dict] = []
 
     existing_branches = snapshot.get("timeline_branches", [])
     root_branch = next((branch for branch in existing_branches if branch.get("mode") == "root"), None) or (existing_branches[0] if existing_branches else None)
@@ -1754,7 +1858,10 @@ async def node_architect_timeline(state: ImportState) -> dict:
         "endMode": (root_branch or {}).get("endMode", "open"),
         "mergeTargetBranchId": (root_branch or {}).get("mergeTargetBranchId"),
         "geometry": {**root_geometry, "laneOffset": 0, "bend": root_geometry.get("bend", 0.25), "thickness": 2},
-        "layoutHint": {"eventBudget": 24, "clusterOverflow": True},
+        "rankStart": 0,
+        "rankEnd": 0,
+        "laneId": "lane_0_main",
+        "layoutHint": {"eventBudget": 24, "clusterOverflow": False, "densityClass": "normal"},
     }]
 
     existing_event_keys = {
@@ -1762,6 +1869,7 @@ async def node_architect_timeline(state: ImportState) -> dict:
         for event in snapshot.get("timeline_events", [])
     }
     seen_signatures: dict[str, str] = {}
+    seen_loose_signatures: dict[str, str] = {}
     canonical_events: dict[str, dict] = {}
     chunk_event_counts: dict[int, int] = {}
     density_limit_per_chunk = 3
@@ -1777,21 +1885,58 @@ async def node_architect_timeline(state: ImportState) -> dict:
         if existing_key in existing_event_keys:
             discarded_duplicates.append({"event_id": event_id, "title": title, "timelineClass": "discarded_duplicate", "reason": "matches existing timeline event"})
             continue
+        candidate_class, class_reason = _timeline_candidate_class(event)
+        event_classifications.append({
+            "event_id": event_id,
+            "title": title,
+            "classification": candidate_class,
+            "reason": class_reason,
+            "dedupeKey": event.get("dedupeKey", ""),
+            "semanticTitleKey": _timeline_semantic_title_key(event),
+        })
+        if candidate_class == "scene_beat":
+            item = {"event_id": event_id, "title": title, "timelineClass": "scene_beat", "reason": class_reason}
+            scene_beats.append(item)
+            discarded_duplicates.append(item)
+            continue
+        if candidate_class == "background_reference":
+            item = {"event_id": event_id, "title": title, "timelineClass": "background_reference", "reason": class_reason}
+            background_references.append(item)
+            discarded_duplicates.append(item)
+            continue
         chunk_id = int(event.get("chunk_id", 0) or 0)
         chunk_event_counts[chunk_id] = chunk_event_counts.get(chunk_id, 0) + 1
         if chunk_event_counts[chunk_id] > density_limit_per_chunk and float(event.get("confidence", 0.7)) < 0.9:
             discarded_duplicates.append({"event_id": event_id, "title": title, "timelineClass": "scene_beat", "reason": "demoted by density policy"})
             continue
         signature = _event_signature(event)
-        if signature in seen_signatures:
-            primary_id = seen_signatures[signature]
+        semantic_signature = _event_semantic_signature(event)
+        loose_signature = _event_loose_semantic_signature(event)
+        primary_id = seen_signatures.get(signature) or seen_signatures.get(semantic_signature) or seen_loose_signatures.get(loose_signature)
+        if primary_id:
             primary = prelim_events[primary_id]
             primary.setdefault("mergedEventIds", []).append(event_id)
+            primary.setdefault("mergeReasons", []).append(
+                f"Merged '{title}' by semantic signature {loose_signature}; participants/chapter/semantic title overlap."
+            )
             primary["summary"] = _merge_text_field(primary.get("summary", ""), event.get("description", ""))
-            discarded_duplicates.append({"event_id": event_id, "merged_into": primary_id, "title": title, "timelineClass": "discarded_duplicate", "reason": "duplicate event signature"})
+            primary["confidence"] = max(float(primary.get("confidence", 0.7)), float(event.get("confidence", 0.7)))
+            primary["importanceScore"] = max(int(primary.get("importanceScore", 0) or 0), int(event.get("importanceScore", 0) or 0))
+            discarded_duplicates.append({
+                "event_id": event_id,
+                "merged_into": primary_id,
+                "title": title,
+                "timelineClass": "discarded_duplicate",
+                "reason": "semantic duplicate: same dedupe/participants/chapter/normalized title",
+                "dedupeKey": event.get("dedupeKey", ""),
+                "semanticSignature": loose_signature,
+            })
             continue
         seen_signatures[signature] = event_id
+        seen_signatures[semantic_signature] = event_id
+        seen_loose_signatures[loose_signature] = event_id
         participant_ids = [character_id_map.get(cid, cid) for cid in event.get("character_ids", [])]
+        importance_score = int(event.get("importanceScore", 0) or 0)
         prelim_events[event_id] = {
             **event,
             "event_id": event_id,
@@ -1802,29 +1947,24 @@ async def node_architect_timeline(state: ImportState) -> dict:
             "linkedWorldItemIds": [],
             "tags": ["imported"],
             "sharedBranchIds": [],
-            "importance": "major" if float(event.get("confidence", 0.7)) >= 0.86 else "minor",
+            "importance": "critical" if importance_score >= 90 else ("high" if importance_score >= 75 or float(event.get("confidence", 0.7)) >= 0.86 else "medium"),
             "timelineClass": "canonical_event",
+            "classificationReason": class_reason,
             "mergedEventIds": [],
+            "mergeReasons": [],
             "_sequence": _event_sequence_key(event),
         }
 
-    location_counts: dict[str, int] = {}
-    participant_counts: dict[str, int] = {}
-    theme_counts: dict[str, int] = {}
+    lane_counts: dict[tuple[str, str, str], int] = {}
     for event in prelim_events.values():
-        location_key = _normal_key(event.get("location_hint", ""))
-        if location_key:
-            location_counts[location_key] = location_counts.get(location_key, 0) + 1
-        for participant_id in event.get("participantCharacterIds", [])[:2]:
-            participant_counts[participant_id] = participant_counts.get(participant_id, 0) + 1
-        _, theme_key, _ = _timeline_theme_key(event)
-        theme_counts[theme_key] = theme_counts.get(theme_key, 0) + 1
+        lane_key = _timeline_lane_key(event)
+        lane_counts[lane_key] = lane_counts.get(lane_key, 0) + 1
 
     total_events = len(prelim_events)
     branch_threshold = 2 if total_events >= 10 else 3
     branch_defs: dict[str, dict] = {root_branch_id: timeline_branches[0]}
 
-    def _ensure_branch(branch_id: str, name: str, reason: str) -> None:
+    def _ensure_branch(branch_id: str, name: str, reason: str, *, lane_key: str = "") -> None:
         if branch_id in branch_defs or len(branch_defs) >= 7:
             return
         idx = len(branch_defs)
@@ -1843,7 +1983,10 @@ async def node_architect_timeline(state: ImportState) -> dict:
             "endMode": "open",
             "mergeTargetBranchId": root_branch_id,
             "geometry": {"laneOffset": idx * 140, "bend": 0.18 + (idx % 3) * 0.08, "thickness": 2},
-            "layoutHint": {"eventBudget": branch_event_budget, "clusterOverflow": True},
+            "rankStart": 0,
+            "rankEnd": 0,
+            "laneId": lane_key or f"lane_{idx}_{_safe_branch_slug(name)}",
+            "layoutHint": {"eventBudget": branch_event_budget, "clusterOverflow": False, "densityClass": "normal"},
         }
         branch_defs[branch_id] = branch
         timeline_branches.append(branch)
@@ -1858,35 +2001,30 @@ async def node_architect_timeline(state: ImportState) -> dict:
                 "sortOrder": branch.get("sortOrder", idx),
                 "mode": branch.get("mode", "forked"),
                 "geometry": {**branch.get("geometry", {}), "laneOffset": branch.get("geometry", {}).get("laneOffset", idx * 140)},
-                "layoutHint": {**branch.get("layoutHint", {}), "eventBudget": branch_event_budget, "clusterOverflow": True},
+                "rankStart": branch.get("rankStart", 0),
+                "rankEnd": branch.get("rankEnd", 0),
+                "laneId": branch.get("laneId", f"lane_{idx}_{_safe_branch_slug(branch.get('name', branch_id))}"),
+                "layoutHint": {**branch.get("layoutHint", {}), "eventBudget": branch_event_budget, "clusterOverflow": False},
             }
             timeline_branches.append(branch_defs[branch_id])
 
-    for theme_key, count in theme_counts.items():
-        if theme_key != "main" and count >= branch_threshold:
-            _ensure_branch(f"branch_import_{theme_key}", _timeline_theme_key({"title": theme_key})[2] if theme_key == "main" else theme_key.replace("_", " ").title(), f"{count} {theme_key} events")
-
-    for location_key, count in sorted(location_counts.items(), key=lambda item: item[1], reverse=True)[:3]:
+    for lane_tuple, count in sorted(lane_counts.items(), key=lambda item: item[1], reverse=True):
+        lane_kind, lane_key, lane_name = lane_tuple
+        if lane_kind == "root":
+            continue
         if count >= branch_threshold:
-            _ensure_branch(f"branch_loc_{_safe_branch_slug(location_key)}", f"Location: {location_key}", f"{count} events at this location")
-
-    for participant_id, count in sorted(participant_counts.items(), key=lambda item: item[1], reverse=True)[:2]:
-        if count >= max(branch_threshold + 1, 3):
-            _ensure_branch(f"branch_char_{_safe_branch_slug(participant_id)}", f"Character Arc: {participant_id}", f"{count} events for one participant")
+            _ensure_branch(
+                f"branch_{lane_kind}_{_safe_branch_slug(lane_key)}",
+                lane_name,
+                f"{count} events on {lane_kind} lane '{lane_name}'",
+                lane_key=f"lane_{lane_kind}_{_safe_branch_slug(lane_key)}",
+            )
 
     def _select_branch(event: dict) -> str:
-        _, theme_key, _ = _timeline_theme_key(event)
-        theme_branch_id = f"branch_import_{theme_key}"
-        if theme_branch_id in branch_defs and theme_key != "main":
-            return theme_branch_id
-        location_key = _normal_key(event.get("location_hint", ""))
-        location_branch_id = f"branch_loc_{_safe_branch_slug(location_key)}" if location_key else ""
-        if location_branch_id in branch_defs:
-            return location_branch_id
-        for participant_id in event.get("participantCharacterIds", [])[:2]:
-            participant_branch_id = f"branch_char_{_safe_branch_slug(participant_id)}"
-            if participant_branch_id in branch_defs:
-                return participant_branch_id
+        lane_kind, lane_key, _ = _timeline_lane_key(event)
+        lane_branch_id = f"branch_{lane_kind}_{_safe_branch_slug(lane_key)}"
+        if lane_branch_id in branch_defs:
+            return lane_branch_id
         return root_branch_id
 
     branch_buckets: dict[str, list[tuple[str, dict]]] = {}
@@ -1899,10 +2037,22 @@ async def node_architect_timeline(state: ImportState) -> dict:
         branch_events.sort(key=lambda item: item[1].get("_sequence", (0, 0, "")))
         if len(branch_events) > branch_event_budget:
             warnings.append(f"Branch {branch_id} has {len(branch_events)} canonical events; lower-importance events were converted to scene beats.")
+            branch_defs[branch_id]["layoutHint"]["clusterOverflow"] = True
+            branch_defs[branch_id]["layoutHint"]["densityClass"] = "overflow"
+            branch_defs[branch_id]["layoutHint"]["overflowCount"] = len(branch_events) - branch_event_budget
+        else:
+            branch_defs[branch_id]["layoutHint"]["densityClass"] = "dense" if len(branch_events) > max(branch_event_budget // 2, 1) else "normal"
         visible_index = 0
         for event_id, event in branch_events:
-            if visible_index >= branch_event_budget and event.get("importance") != "major":
-                discarded_duplicates.append({"event_id": event_id, "title": event.get("title", ""), "timelineClass": "scene_beat", "reason": "branch event budget overflow"})
+            if visible_index >= branch_event_budget:
+                item = {
+                    "event_id": event_id,
+                    "title": event.get("title", ""),
+                    "timelineClass": "scene_beat",
+                    "reason": f"branch event budget overflow on {branch_id}",
+                }
+                scene_beats.append(item)
+                discarded_duplicates.append(item)
                 continue
             cleaned = {k: v for k, v in event.items() if not k.startswith("_")}
             cleaned["branchId"] = branch_id
@@ -1913,6 +2063,30 @@ async def node_architect_timeline(state: ImportState) -> dict:
             canonical_events[event_id] = cleaned
             visible_index += 1
             global_order_index += 1
+        branch_defs[branch_id]["rankStart"] = 0
+        branch_defs[branch_id]["rankEnd"] = max(visible_index - 1, 0)
+
+    for branch_id, branch in branch_defs.items():
+        if branch_id == root_branch_id:
+            continue
+        branch_events = sorted(
+            [event for event in canonical_events.values() if event.get("branchId") == branch_id],
+            key=lambda event: event.get("orderIndex", 0),
+        )
+        if not branch_events:
+            continue
+        branch["forkEventId"] = branch.get("forkEventId") or branch_events[0].get("event_id")
+        merge_event = next((event for event in reversed(branch_events) if str(event.get("forkMergeHint", "")).lower() in {"merge", "callback"}), None)
+        if merge_event:
+            branch["mergeEventId"] = branch.get("mergeEventId") or merge_event.get("event_id")
+            branch["endMode"] = "merge"
+        fork_merge_anchors.append({
+            "branchId": branch_id,
+            "parentBranchId": branch.get("parentBranchId"),
+            "forkEventId": branch.get("forkEventId"),
+            "mergeEventId": branch.get("mergeEventId"),
+            "reason": "deterministic first canonical event fork anchor with optional model merge/callback hint",
+        })
 
     registry["events"] = canonical_events
     artifact = {
@@ -1920,17 +2094,24 @@ async def node_architect_timeline(state: ImportState) -> dict:
         "root_branch_id": root_branch_id,
         "branches": timeline_branches,
         "canonical_events": list(canonical_events.values()),
+        "event_classifications": event_classifications,
         "discarded_duplicates": discarded_duplicates,
+        "scene_beats": scene_beats,
+        "background_references": background_references,
+        "fork_merge_anchors": fork_merge_anchors,
         "density_policy": {
             "max_events_per_chunk": density_limit_per_chunk,
             "max_events_per_branch": branch_event_budget,
             "branch_threshold": branch_threshold,
             "low_confidence_threshold": 0.9,
+            "canonical_classes": ["canonical_event"],
+            "noncanonical_classes": ["scene_beat", "background_reference", "discarded_duplicate"],
         },
         "layout_hints": {
             "strategy": "semantic_branch_topology",
             "max_branch_count": 7,
             "branch_lane_spacing": 140,
+            "root_branch_policy": "mainline only for arc-level turning points or deterministic fallback",
         },
         "warnings": warnings,
     }
@@ -2130,14 +2311,20 @@ async def node_write_to_project(state: ImportState) -> dict:
         seen_event_title_norms.append(title_key)
         deduped_events[eid] = entry
 
-    # Sort by temporal_hint for stable orderIndex assignment
+    # Keep Timeline Architect's branch-local orderIndex when present. Falling
+    # back to temporal hints preserves legacy behavior for older checkpoints.
     sorted_events = sorted(
         deduped_events.items(),
-        key=lambda kv: kv[1].get("temporal_hint", "") or "",
+        key=lambda kv: (
+            kv[1].get("branchId", default_branch_id),
+            int(kv[1].get("orderIndex", 10_000) or 0),
+            kv[1].get("temporal_hint", "") or "",
+        ),
     )
 
     # Write event proposals
-    for order_idx, (eid, entry) in enumerate(sorted_events):
+    for fallback_order_idx, (eid, entry) in enumerate(sorted_events):
+        order_index = int(entry.get("orderIndex", fallback_order_idx) or 0)
         op = {
             "op_type": "create",
             "entity_type": "timeline_event",
@@ -2147,7 +2334,7 @@ async def node_write_to_project(state: ImportState) -> dict:
                 "title": entry.get("title", ""),
                 "summary": entry.get("summary", entry.get("description", "")),
                 "branchId": entry.get("branchId") or default_branch_id,
-                "orderIndex": order_idx,
+                "orderIndex": order_index,
                 "locationIds": entry.get("locationIds", []),
                 "participantCharacterIds": entry.get("participantCharacterIds")
                     or [character_id_map.get(cid, cid) for cid in entry.get("character_ids", [])],
@@ -2160,6 +2347,7 @@ async def node_write_to_project(state: ImportState) -> dict:
                 "importConfidence": entry.get("confidence", 0.7),
                 "importRunId": state.get("import_run_id", ""),
                 "mergedEventIds": entry.get("mergedEventIds", []),
+                "layoutHints": entry.get("layoutHints", {}),
             },
             "source_workflow": "W1_import",
             "confidence": 0.75,
@@ -3021,15 +3209,32 @@ async def node_process_chunks(state: ImportState) -> dict:
                 event_id = f"event_{uuid.uuid4().hex[:8]}"
                 character_refs = list(ev.get("character_ids", [])) + list(ev.get("character_names", []))
                 resolved_character_ids = _resolve_character_ids(character_refs, registry)
+                chapter_range = ev.get("chapterRange", {})
+                if not isinstance(chapter_range, dict):
+                    chapter_range = {"start": str(chapter_range), "end": str(chapter_range)}
                 registry["events"][event_id] = {
                     "event_id": event_id,
                     "title": str(ev.get("title", "")).strip(),
                     "description": str(ev.get("description", "")).strip(),
+                    "eventClass": str(ev.get("eventClass", "")).strip(),
+                    "timelineClass": str(ev.get("timelineClass", "")).strip(),
+                    "arcId": str(ev.get("arcId", "")).strip(),
+                    "timelineLaneHint": str(ev.get("timelineLaneHint", "")).strip(),
+                    "causalPredecessorHints": [str(item).strip() for item in ev.get("causalPredecessorHints", []) if str(item).strip()],
+                    "forkMergeHint": str(ev.get("forkMergeHint", "")).strip(),
+                    "dedupeKey": str(ev.get("dedupeKey", "")).strip(),
+                    "chapterRange": {
+                        "start": str(chapter_range.get("start", "")).strip(),
+                        "end": str(chapter_range.get("end", "")).strip(),
+                    },
+                    "importanceScore": int(float(ev.get("importanceScore", 0) or 0)),
                     "character_ids": resolved_character_ids,
+                    "character_names": [str(name).strip() for name in ev.get("character_names", []) if str(name).strip()],
                     "location_hint": str(ev.get("location_hint", "")).strip() or None,
                     "temporal_hint": str(ev.get("temporal_hint", "")).strip() or None,
                     "chunk_position": str(ev.get("chunk_position", "")).strip(),
                     "stakes": str(ev.get("stakes", "")).strip(),
+                    "mergeCandidateTitles": [str(item).strip() for item in ev.get("mergeCandidateTitles", []) if str(item).strip()],
                     "confidence": float(ev.get("confidence", 0.7)),
                     "chunk_id": chunk_id,
                 }
