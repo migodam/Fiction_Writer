@@ -132,8 +132,13 @@ class TimelineArchitectureArtifact(TypedDict, total=False):
     root_branch_id: str
     branches: List[dict]
     canonical_events: List[dict]
+    event_classifications: List[dict]
     discarded_duplicates: List[dict]
+    scene_beats: List[dict]
+    background_references: List[dict]
+    fork_merge_anchors: List[dict]
     density_policy: dict
+    layout_hints: dict
     warnings: List[str]
 
 

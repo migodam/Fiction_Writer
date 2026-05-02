@@ -248,6 +248,109 @@ def test_timeline_architect_creates_semantic_branches_for_dense_import(tmp_path)
     assert result["timeline_architecture"]["density_policy"]["max_events_per_branch"] == 24
 
 
+def test_timeline_architect_merges_han_li_origin_variants_and_demotes_scene_beats(tmp_path):
+    variants = [
+        ("event_offer_a", "三叔提议韩立参加七玄门考验", "三叔建议韩立参加一个月后的七玄门考验。", "canonical_event", 92),
+        ("event_offer_b", "三叔提议韩立参加七玄门测试", "韩胖子说服韩父同意韩立参加七玄门测试。", "canonical_event", 89),
+        ("event_offer_c", "三叔提议送韩立入七玄门", "三叔提议带韩立参加内门弟子考验。", "canonical_event", 88),
+        ("event_leave_a", "韩立离家前往七玄门", "韩立告别父母，随三叔离开村子。", "canonical_event", 91),
+        ("event_leave_b", "韩立随三叔离家", "韩立乘马车离开家乡前往青牛镇。", "canonical_event", 86),
+        ("event_join", "韩立加入七玄门", "韩立通过安排正式进入七玄门。", "canonical_event", 82),
+        ("event_mo", "墨大夫收徒", "墨大夫将韩立收为弟子。", "canonical_event", 84),
+        ("event_training", "韩立每日练功", "韩立重复练习口诀。", "scene_beat", 35),
+    ]
+    events = {}
+    for idx, (event_id, title, description, timeline_class, score) in enumerate(variants):
+        events[event_id] = {
+            "title": title,
+            "description": description,
+            "eventClass": "journey_departure" if "离家" in title else "inciting_choice",
+            "timelineClass": timeline_class,
+            "arcId": "protagonist_origin",
+            "timelineLaneHint": "Family Origin",
+            "dedupeKey": "",
+            "chapterRange": {"start": "第一章", "end": "第一章"},
+            "importanceScore": score,
+            "character_ids": ["char_han", "char_uncle"],
+            "location_hint": "山边小村",
+            "temporal_hint": "第一章",
+            "confidence": 0.95,
+            "chunk_id": idx,
+        }
+    state = {
+        "project_path": str(tmp_path),
+        "import_run_id": "import_han_li_variants",
+        "entity_registry": {"events": events},
+        "timeline_branches": [],
+        "errors": [],
+    }
+
+    result = asyncio.run(w1_import.node_architect_timeline(state))
+    canonical_titles = {event["title"] for event in result["entity_registry"]["events"].values()}
+    discarded = result["timeline_architecture"]["discarded_duplicates"]
+
+    assert len(canonical_titles) == 4
+    assert "韩立每日练功" not in canonical_titles
+    assert any(item.get("merged_into") == "event_offer_a" for item in discarded)
+    assert any(item.get("merged_into") == "event_leave_a" for item in discarded)
+    assert any(item.get("timelineClass") == "scene_beat" and item.get("event_id") == "event_training" for item in discarded)
+    assert all(event["branchId"] != "branch_import_main" for event in result["entity_registry"]["events"].values())
+
+
+def test_timeline_architect_distributes_dense_lanes_and_enforces_branch_budget(tmp_path):
+    events = {}
+    for idx in range(26):
+        events[f"mentor_{idx}"] = {
+            "title": f"墨大夫威胁升级 {idx}",
+            "description": "墨大夫对韩立施压，推动师徒威胁线升级。",
+            "timelineClass": "canonical_event",
+            "eventClass": "confrontation",
+            "arcId": "mentor_control",
+            "timelineLaneHint": "Mentor Threat",
+            "chapterRange": {"start": f"第{idx + 1}章", "end": f"第{idx + 1}章"},
+            "importanceScore": 72,
+            "character_ids": ["char_han", "char_mo"],
+            "location_hint": "神手谷",
+            "temporal_hint": f"第{idx + 1}章",
+            "confidence": 0.91,
+            "chunk_id": idx,
+        }
+    for idx in range(8):
+        events[f"sect_{idx}"] = {
+            "title": f"七玄门冲突 {idx}",
+            "description": "七玄门内部势力冲突影响韩立处境。",
+            "timelineClass": "canonical_event",
+            "eventClass": "faction_move",
+            "arcId": "sect_conflict",
+            "timelineLaneHint": "Sect Conflict",
+            "chapterRange": {"start": f"第{idx + 1}章", "end": f"第{idx + 1}章"},
+            "importanceScore": 74,
+            "character_ids": ["char_han"],
+            "location_hint": "七玄门",
+            "temporal_hint": f"第{idx + 1}章",
+            "confidence": 0.91,
+            "chunk_id": idx + 40,
+        }
+    state = {
+        "project_path": str(tmp_path),
+        "import_run_id": "import_dense_lanes",
+        "entity_registry": {"events": events},
+        "timeline_branches": [],
+        "errors": [],
+    }
+
+    result = asyncio.run(w1_import.node_architect_timeline(state))
+    canonical_events = list(result["entity_registry"]["events"].values())
+    branch_counts = {}
+    for event in canonical_events:
+        branch_counts[event["branchId"]] = branch_counts.get(event["branchId"], 0) + 1
+
+    assert len(branch_counts) >= 2
+    assert max(branch_counts.values()) <= result["timeline_architecture"]["density_policy"]["max_events_per_branch"]
+    assert any(item.get("reason", "").startswith("branch event budget overflow") for item in result["timeline_architecture"]["scene_beats"])
+    assert all("laneId" in branch and "rankStart" in branch and "rankEnd" in branch for branch in result["timeline_architecture"]["branches"])
+
+
 def test_character_prompt_preserves_identity_group_and_card_contract():
     prompt = w1_prompts.W1_EXTRACT_CHARACTERS_DEEP
 
