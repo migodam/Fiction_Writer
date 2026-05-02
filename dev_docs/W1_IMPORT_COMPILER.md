@@ -34,3 +34,12 @@ Future branches should treat this file and the artifact JSON files as the integr
 - Entity workstreams may extend `ReducerArtifact`, but must not bypass evidence cards.
 - Timeline workstreams may improve branch/fork/merge inference, but must keep required event fields populated.
 - Prompt/performance workstreams may add richer profile behavior, but must keep prompt profile values compatible with the four current values.
+
+## Import Quality Diagnostics
+Run the diagnostics tool directly against a Narrative IDE project when reviewing long-import quality:
+
+```bash
+python tools/w1_import_diagnostics.py /path/to/project --import-run-id import_x --format both
+```
+
+The command reads `system/inbox.json` plus the selected `system/imports/<import_run_id>/` artifacts and reports proposal counts, character-card compactness, trait noise, branch density, scene-beat discards, duplicate event clusters, and Import_Test6 symptom flags. Default diagnostics exit `0`; malformed input exits `2`; `--fail-on-threshold` exits `1` when any symptom flag is present.
