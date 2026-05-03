@@ -70,6 +70,32 @@ def test_prompt_window_splits_only_single_oversized_chapter_by_budget(tmp_path):
     assert sum(window["source_chars"] for window in windows) == len(content)
 
 
+def test_build_manuscript_orders_chapters_by_source_chunk_id(tmp_path):
+    state = {
+        "project_path": str(tmp_path),
+        "import_mode": "import_all",
+        "chunks": [
+            {"chunk_id": 2, "chapter_hint": "Chapter 3"},
+            {"chunk_id": 0, "chapter_hint": "Chapter 1"},
+            {"chunk_id": 1, "chapter_hint": "Chapter 2"},
+        ],
+        "chunk_extractions": [
+            {"chunk_id": 2, "manuscript_content": "third"},
+            {"chunk_id": 0, "manuscript_content": "first"},
+            {"chunk_id": 1, "manuscript_content": "second"},
+        ],
+    }
+
+    result = asyncio.run(w1_import.node_build_manuscript(state))
+
+    assert [chapter["title"] for chapter in result["manuscript_chapters"]] == [
+        "Chapter 1",
+        "Chapter 2",
+        "Chapter 3",
+    ]
+    assert [chapter["chunk_ids"] for chapter in result["manuscript_chapters"]] == [[0], [1], [2]]
+
+
 def test_project_structure_digest_includes_existing_project_context(tmp_path):
     chars = tmp_path / "entities" / "characters"
     chars.mkdir(parents=True)

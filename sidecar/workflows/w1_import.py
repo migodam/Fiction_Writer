@@ -476,6 +476,30 @@ def _stable_generated_id(prefix: str, label: str, used_ids: set[str]) -> str:
     return candidate
 
 
+def _chunk_sort_key(value: Any) -> tuple[int, str]:
+    try:
+        return (int(value), "")
+    except (TypeError, ValueError):
+        return (10_000_000, str(value or ""))
+
+
+def _min_chunk_sort_key(items: list[dict]) -> tuple[int, str]:
+    keys = [_chunk_sort_key(item.get("chunk_id")) for item in items]
+    return min(keys) if keys else (10_000_000, "")
+
+
+def _chapter_sort_key(chapter: dict) -> tuple[int, str]:
+    chunk_ids = chapter.get("chunk_ids", [])
+    if isinstance(chunk_ids, list) and chunk_ids:
+        return min(_chunk_sort_key(chunk_id) for chunk_id in chunk_ids)
+    return (10_000_000, str(chapter.get("title", "")))
+
+
+def _sort_manuscript_chapters(chapters: list[dict]) -> list[dict]:
+    """Keep imported chapters in source order even after async/cache/resume paths."""
+    return sorted(chapters, key=_chapter_sort_key)
+
+
 def _tag_color(index: int) -> str:
     """Return a deterministic fallback color for generated tags."""
     palette = [
@@ -1511,8 +1535,9 @@ async def node_build_manuscript(state: ImportState) -> dict:
             chapter_map[hint].append(chunk)
 
         manuscript_chapters: list[dict] = []
-        for hint in chapter_order:
-            chapter_chunks = chapter_map[hint]
+        ordered_hints = sorted(chapter_order, key=lambda hint: _min_chunk_sort_key(chapter_map[hint]))
+        for hint in ordered_hints:
+            chapter_chunks = sorted(chapter_map[hint], key=lambda chunk: _chunk_sort_key(chunk.get("chunk_id")))
             content = "\n\n".join(
                 c.get("manuscript_content", c.get("raw_content", c.get("content", ""))) for c in chapter_chunks
             )
@@ -1523,7 +1548,7 @@ async def node_build_manuscript(state: ImportState) -> dict:
                 "manuscript_content": content,
             })
 
-        return {"manuscript_chapters": manuscript_chapters, "progress": 0.88}
+        return {"manuscript_chapters": _sort_manuscript_chapters(manuscript_chapters), "progress": 0.88}
 
     # import_all path: build from chunk_extractions
     extractions = state.get("chunk_extractions", [])
@@ -1541,8 +1566,9 @@ async def node_build_manuscript(state: ImportState) -> dict:
         chapter_map2[hint].append(extraction)
 
     manuscript_chapters2: list[dict] = []
-    for hint in chapter_order2:
-        chapter_extractions = chapter_map2[hint]
+    ordered_hints2 = sorted(chapter_order2, key=lambda hint: _min_chunk_sort_key(chapter_map2[hint]))
+    for hint in ordered_hints2:
+        chapter_extractions = sorted(chapter_map2[hint], key=lambda extraction: _chunk_sort_key(extraction.get("chunk_id")))
         content = "\n\n".join(
             e.get("manuscript_content", "") for e in chapter_extractions
         )
@@ -1553,7 +1579,7 @@ async def node_build_manuscript(state: ImportState) -> dict:
             "manuscript_content": content,
         })
 
-    return {"manuscript_chapters": manuscript_chapters2, "progress": 0.88}
+    return {"manuscript_chapters": _sort_manuscript_chapters(manuscript_chapters2), "progress": 0.88}
 
 
 async def node_generate_import_todos(state: ImportState) -> dict:
@@ -2573,7 +2599,7 @@ async def node_write_to_project(state: ImportState) -> dict:
     # ── Chapter proposals ─────────────────────────────────────────────────────
     # manuscript_chapters are assembled by node_build_manuscript from chapter_hint grouping.
     # Each one becomes a Chapter entity proposal for user review.
-    for mc in state.get("manuscript_chapters", []):
+    for mc in _sort_manuscript_chapters(list(state.get("manuscript_chapters", []))):
         chap_id = mc.get("chapter_id") or f"chap_{uuid.uuid4().hex[:8]}"
         title = mc.get("title", "Untitled Chapter").strip()
         if not title:
