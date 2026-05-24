@@ -2802,10 +2802,34 @@ async def node_write_to_project(state: ImportState) -> dict:
             errors.append(f"Failed to propose event {eid}: {str(e)}")
 
     # Write world item proposals
+    # Pre-compute container_by_type from world_containers (already in state) so
+    # we can assign containerId to each world item before writing proposals.
+    _CATEGORY_TO_CONTAINER_TYPE: dict[str, str] = {
+        "location": "map",
+        "place": "map",
+        "organization": "notebook",
+        "object": "notebook",
+        "artifact": "notebook",
+        "concept": "notebook",
+        "rule": "notebook",
+        "culture": "notebook",
+    }
+    _container_by_type: dict[str, str] = {c.get("type", ""): c.get("id", "") for c in world_containers if c.get("id")}
+    _fallback_container_id: str = (
+        _container_by_type.get("notebook")
+        or _container_by_type.get("map")
+        or next(iter(_container_by_type.values()), "")
+    )
+
+    def _resolve_container_id(cat: str) -> str:
+        container_type = _CATEGORY_TO_CONTAINER_TYPE.get(str(cat).lower(), "notebook")
+        return _container_by_type.get(container_type) or _fallback_container_id
+
     world_detailed = registry.get("world_detailed", {})
     for name, category in registry.get("world", {}).items():
         wid = f"world_{uuid.uuid4().hex[:8]}"
         detail = world_detailed.get(name, {})
+        resolved_category = detail.get("category", category)
         op = {
             "op_type": "create",
             "entity_type": "world_item",
@@ -2813,7 +2837,8 @@ async def node_write_to_project(state: ImportState) -> dict:
             "data": {
                 "id": wid,
                 "name": name,
-                "category": detail.get("category", category),
+                "category": resolved_category,
+                "containerId": _resolve_container_id(resolved_category),
                 "description": detail.get("description", ""),
                 "attributes": detail.get("attributes", []),
             },
@@ -2946,7 +2971,7 @@ async def node_write_to_project(state: ImportState) -> dict:
     # ── Chapter proposals ─────────────────────────────────────────────────────
     # manuscript_chapters are assembled by node_build_manuscript from chapter_hint grouping.
     # Each one becomes a Chapter entity proposal for user review.
-    for mc in _sort_manuscript_chapters(list(state.get("manuscript_chapters", []))):
+    for idx, mc in enumerate(_sort_manuscript_chapters(list(state.get("manuscript_chapters", [])))):
         chap_id = mc.get("chapter_id") or f"chap_{uuid.uuid4().hex[:8]}"
         title = mc.get("title", "Untitled Chapter").strip()
         if not title:
@@ -2958,6 +2983,7 @@ async def node_write_to_project(state: ImportState) -> dict:
             "data": {
                 "id": chap_id,
                 "title": title,
+                "orderIndex": idx,
                 "summary": "",
                 "goal": "",
                 "notes": f"Imported from: {state.get('source_file_path', '')}",
