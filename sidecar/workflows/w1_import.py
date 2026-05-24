@@ -628,6 +628,10 @@ _SCHEMA_POLICY_RESERVE_TOKENS = 24_000
 _DIGEST_RESERVE_TOKENS = 24_000
 _VALIDATION_RESERVE_TOKENS = 8_000
 
+# Feature flag: when True, node_split_chunks uses chapter-count-aware windowing
+# instead of the greedy token packer.  Set to True only when use_supervisor=True.
+_USE_SUPERVISOR_WINDOWING: bool = False
+
 
 def _estimate_tokens(text: str) -> int:
     """Cheap mixed English/CJK token estimate for prompt accounting."""
@@ -937,6 +941,132 @@ def _build_prompt_windows(state: ImportState, chunks: list[dict], digest: dict) 
                 "split_reason": split_reason,
                 "source_span": {"start": source_start, "end": source_start + len(source_text)},
             })
+    return windows
+
+
+# ── Language detection ──────────────────────────────────────────────────────────
+
+def _detect_language(sample: str) -> str:
+    """Return ISO 639-1 language code detected from sample text.
+
+    Uses CJK character ratio: ≥ 0.30 → "zh", else "en".
+    """
+    if not sample:
+        return "en"
+    cjk_count = sum(1 for c in sample if "一" <= c <= "鿿")
+    return "zh" if cjk_count / max(len(sample), 1) >= 0.3 else "en"
+
+
+# ── Supervisor windowing ────────────────────────────────────────────────────────
+
+# Estimated output tokens per chapter used for pre-flight budget checking.
+# Formula: 1.5 chars × 120 tokens + 3 events × 80 tokens + 2 world × 50 tokens
+_SUPERVISOR_TOKENS_PER_CHAPTER: int = int(1.5 * 120 + 3 * 80 + 2 * 50)
+_SUPERVISOR_OUTPUT_BUDGET_THRESHOLD: int = 3_500
+
+
+def _estimate_window_output_tokens(window: dict, profile: str = "balanced") -> int:
+    """Estimate LLM output tokens for a supervised prompt window."""
+    from sidecar.models.state import PROFILE_CONFIGS
+    config = PROFILE_CONFIGS.get(profile, PROFILE_CONFIGS["balanced"])
+    chapters_per_window = config.get("chapters_per_window", 12)
+    chapter_count = len(window.get("chunk_ids", [])) or max(chapters_per_window, 1)
+    return chapter_count * _SUPERVISOR_TOKENS_PER_CHAPTER
+
+
+def _build_supervised_prompt_windows(state: ImportState, chunks: list[dict], digest: dict) -> list[dict]:
+    """Chapter-count-aware windowing for the supervisor path.
+
+    Primary constraint: chapters_per_window from profile_config.
+    Secondary constraint: input_window_budget source tokens (hard cap).
+
+    Differences from _build_prompt_windows:
+    - Groups chunks into batches of chapters_per_window instead of greedily
+      packing until the token budget is exhausted.
+    - Pre-flight: if a batch's estimated output tokens > _SUPERVISOR_OUTPUT_BUDGET_THRESHOLD,
+      halves the batch recursively until within budget.
+    - Writes output_token_budget onto each window dict.
+    """
+    from sidecar.models.state import PROFILE_CONFIGS
+
+    profile = state.get("prompt_profile") or state.get("context", {}).get("prompt_profile", "balanced")
+    profile_config = state.get("profile_config") or PROFILE_CONFIGS.get(profile, PROFILE_CONFIGS["balanced"])
+    chapters_per_window: int = profile_config.get("chapters_per_window", 12)
+    input_token_budget: int = profile_config.get("input_window_budget", 48_000)
+    output_token_budget: int = profile_config.get("output_token_budget", 3_000)
+
+    validation_summary = _previous_validation_summary(state)
+    digest_content = _fit_text_to_token_budget(str(digest.get("content", "")), _DIGEST_RESERVE_TOKENS)
+    validation_content = _fit_text_to_token_budget(validation_summary, _VALIDATION_RESERVE_TOKENS)
+    digest_tokens = _estimate_tokens(digest_content)
+    validation_tokens = _estimate_tokens(validation_content)
+
+    import_run_id = state.get("import_run_id") or "import"
+    source_hash = state.get("import_run_manifest", {}).get("source_hash", "")[:8]
+
+    windows: list[dict] = []
+
+    def _make_windows_from_batch(batch: list[dict], iteration: int = 0) -> list[dict]:
+        """Recursively split a chunk batch if it exceeds the output budget."""
+        if not batch:
+            return []
+        est_output = len(batch) * _SUPERVISOR_TOKENS_PER_CHAPTER
+        if est_output > _SUPERVISOR_OUTPUT_BUDGET_THRESHOLD and len(batch) > 1 and iteration < 4:
+            mid = max(1, len(batch) // 2)
+            return _make_windows_from_batch(batch[:mid], iteration + 1) + \
+                   _make_windows_from_batch(batch[mid:], iteration + 1)
+
+        chunk_ids = [int(c.get("chunk_id", 0)) for c in batch]
+        # Combine all source text for this batch
+        source_text = "\n\n".join(
+            c.get("manuscript_content") or c.get("raw_content") or c.get("content", "")
+            for c in batch
+        )
+        chapter_hints = [str(c.get("chapter_hint") or f"Segment {c.get('chunk_id', 0) + 1}") for c in batch]
+        chapter_range = f"{chapter_hints[0]}" if len(chapter_hints) == 1 else f"{chapter_hints[0]}–{chapter_hints[-1]}"
+
+        source_budget = max(input_token_budget - _SCHEMA_POLICY_RESERVE_TOKENS - digest_tokens - validation_tokens, 1_000)
+        parts = _split_text_by_paragraph_budget(source_text, source_budget)
+
+        batch_windows: list[dict] = []
+        for part_idx, part in enumerate(parts):
+            header = (
+                "PROJECT_STRUCTURE_DIGEST:\n"
+                f"{digest_content}\n\n"
+                "PREVIOUS_VALIDATION_SUMMARY:\n"
+                f"{validation_content}\n\n"
+                "PROMPT_WINDOW_POLICY:\n"
+                f"chapters_per_window={chapters_per_window}; "
+                f"input_window_budget={input_token_budget}; "
+                f"output_token_budget={output_token_budget}; "
+                "supervisor-managed windowing.\n\n"
+                f"SOURCE_CHAPTERS [{chapter_range}]:\n"
+            )
+            window_text = header + part
+            split_reason = "complete_chapter_batch" if len(parts) == 1 else "oversized_batch_paragraph_split"
+            win_id = _stable_id("pwin", import_run_id, *chunk_ids, part_idx, source_hash, iteration)
+            source_start = int(batch[0].get("source_span", {}).get("start", batch[0].get("char_start", 0)) or 0)
+            source_end = int(batch[-1].get("source_span", {}).get("end", batch[-1].get("char_end", source_start)) or source_start)
+            batch_windows.append({
+                "id": win_id,
+                "chunk_ids": chunk_ids,
+                "chapter_range": chapter_range if len(parts) == 1 else f"{chapter_range} part {part_idx + 1}/{len(parts)}",
+                "text": window_text,
+                "estimated_tokens": _estimate_tokens(window_text) + _SCHEMA_POLICY_RESERVE_TOKENS,
+                "source_chars": len(part),
+                "digest_token_estimate": digest_tokens,
+                "validation_token_estimate": validation_tokens,
+                "split_reason": split_reason,
+                "source_span": {"start": source_start, "end": source_end},
+                "output_token_budget": output_token_budget,
+            })
+        return batch_windows
+
+    # Group chunks into batches of chapters_per_window
+    for i in range(0, len(chunks), chapters_per_window):
+        batch = chunks[i: i + chapters_per_window]
+        windows.extend(_make_windows_from_batch(batch))
+
     return windows
 
 
@@ -1262,13 +1392,15 @@ async def node_split_chunks(state: ImportState) -> dict:
         chunk["manuscript_content"] = chunk.get("raw_content", chunk.get("content", ""))
         chunk["chunk_id"] = i
 
+    source_language = _detect_language(text[:8000])
     manifest = _build_import_manifest(state, text, chunks)
     digest = _build_project_structure_digest({**state, "import_run_id": manifest["import_run_id"]}, manifest["import_run_id"])
-    prompt_windows = _build_prompt_windows(
-        {**state, "import_run_id": manifest["import_run_id"], "import_run_manifest": manifest},
-        chunks,
-        digest,
-    )
+    windowing_state = {**state, "import_run_id": manifest["import_run_id"], "import_run_manifest": manifest, "source_language": source_language}
+    use_supervisor = bool(state.get("use_supervisor") or state.get("context", {}).get("use_supervisor"))
+    if use_supervisor and _USE_SUPERVISOR_WINDOWING:
+        prompt_windows = _build_supervised_prompt_windows(windowing_state, chunks, digest)
+    else:
+        prompt_windows = _build_prompt_windows(windowing_state, chunks, digest)
     _write_import_artifact(
         state["project_path"],
         manifest["import_run_id"],
@@ -1306,6 +1438,7 @@ async def node_split_chunks(state: ImportState) -> dict:
         "import_run_manifest": manifest,
         "project_structure_digest": digest,
         "prompt_windows": prompt_windows,
+        "source_language": source_language,
         "progress": 0.1,
     }
 
