@@ -70,6 +70,152 @@ def test_prompt_window_splits_only_single_oversized_chapter_by_budget(tmp_path):
     assert sum(window["source_chars"] for window in windows) == len(content)
 
 
+def test_prompt_window_packs_short_chapters_toward_256k_budget(tmp_path):
+    state = {"project_path": str(tmp_path), "prompt_profile": "deep", "context": {}}
+    digest = {
+        "content": '{"characters":[],"relationships":[]}',
+        "estimated_tokens": 10,
+        "counts": {},
+    }
+    chunks = []
+    for index in range(50):
+        content = f"第{index + 1}章\n" + ("韩" * 4000)
+        chunks.append({
+            "chunk_id": index,
+            "chapter_hint": f"第{index + 1}章",
+            "manuscript_content": content,
+            "source_span": {"start": index * len(content), "end": (index + 1) * len(content)},
+        })
+
+    windows = w1_import._build_prompt_windows(state, chunks, digest)
+
+    assert len(windows) < 50
+    assert len(windows[0]["chunk_ids"]) > 1
+    assert windows[0]["split_reason"] == "packed_complete_chapters"
+    assert windows[0]["estimated_tokens"] <= 256_000
+    assert windows[0]["total_token_budget"] == 256_000
+    assert windows[0]["source_budget_tokens"] > windows[0]["source_token_estimate"]
+    assert windows[0]["fill_ratio"] >= 0.8
+
+    refreshed = w1_import._refresh_prompt_window_text(
+        {
+            **state,
+            "cross_validation": {
+                "duplicate_events": [
+                    {"event_ids": [f"event_{i}", f"event_{i + 1}"], "reason": "重复事件" * 200}
+                    for i in range(20)
+                ],
+                "warnings": ["滚动校验摘要" * 200 for _ in range(20)],
+            },
+        },
+        windows[0],
+        digest,
+    )
+
+    assert refreshed["estimated_tokens"] <= 256_000
+
+
+def test_previous_validation_summary_prefers_rolling_cross_validation(tmp_path):
+    state = {
+        "project_path": str(tmp_path),
+        "cross_validation": {
+            "duplicate_events": [{"event_ids": ["a", "b"], "reason": "same beat"}],
+            "missing_major_characters": [{"name_or_alias": "韩立", "confidence": 0.95}],
+            "warnings": ["check protagonist group"],
+        },
+        "import_review_report": {"status": "pass"},
+    }
+
+    summary = w1_import._previous_validation_summary(state)
+
+    assert "rolling_cross_validation" in summary
+    assert "duplicate_events" in summary
+    assert "韩立" in summary
+
+
+def test_merge_cross_validation_artifacts_preserves_unique_bounded_items():
+    existing = {
+        "duplicate_events": [{"event_ids": ["a", "b"], "reason": "same beat"}],
+        "warnings": ["old warning"],
+    }
+    incoming = {
+        "duplicate_events": [
+            {"event_ids": ["a", "b"], "reason": "same beat"},
+            {"event_ids": ["c", "d"], "reason": "same departure"},
+        ],
+        "warnings": ["new warning"],
+    }
+
+    merged = w1_import._merge_cross_validation_artifacts(existing, incoming, "import_test")
+
+    assert merged["import_run_id"] == "import_test"
+    assert len(merged["duplicate_events"]) == 2
+    assert merged["warnings"] == ["old warning", "new warning"]
+
+
+def test_process_chunks_runs_packed_window_once_and_marks_all_covered_chunks(tmp_path, monkeypatch):
+    async def fake_invoke_json_prompt(_llm, prompt_template, **_kwargs):
+        if "W1 Import Character Compiler" in prompt_template:
+            return {"existing_character_updates": [], "new_characters": []}
+        if "W1 Import Timeline Scout" in prompt_template:
+            return {"events": []}
+        if "world extraction" in prompt_template:
+            return {"world_mentions": []}
+        if "relationship evidence" in prompt_template:
+            return {"relationships": []}
+        if "scene boundaries" in prompt_template:
+            return {"chapter_hint": "", "scenes": []}
+        return {}
+
+    async def fake_cross_validation(_llm, state, *, window, digest, prompt_outputs, cross_validation):
+        return {
+            "import_run_id": state["import_run_id"],
+            "duplicate_events": [{"event_ids": ["old", "new"], "reason": "same beat"}],
+            "warnings": [f"validated {window['id']}"],
+        }
+
+    monkeypatch.setattr(w1_import, "_invoke_json_prompt", fake_invoke_json_prompt)
+    monkeypatch.setattr(w1_import, "_run_cross_validation_for_window", fake_cross_validation)
+    monkeypatch.setattr(w1_import, "_get_llm", lambda _state: object())
+
+    chunks = [
+        {"chunk_id": 0, "chapter_hint": "Chapter 1", "manuscript_content": "first", "content": "first"},
+        {"chunk_id": 1, "chapter_hint": "Chapter 2", "manuscript_content": "second", "content": "second"},
+        {"chunk_id": 2, "chapter_hint": "Chapter 3", "manuscript_content": "third", "content": "third"},
+    ]
+    digest = {"content": '{"characters":[]}', "estimated_tokens": 4, "counts": {}}
+    windows = w1_import._build_prompt_windows(
+        {
+            "project_path": str(tmp_path),
+            "import_run_id": "import_test",
+            "prompt_profile": "deep",
+            "context": {},
+        },
+        chunks,
+        digest,
+    )
+
+    result = asyncio.run(w1_import.node_process_chunks({
+        "project_path": str(tmp_path),
+        "source_file_path": str(tmp_path / "novel.txt"),
+        "checkpoint_path": str(tmp_path / "import_progress.json"),
+        "import_run_id": "import_test",
+        "prompt_profile": "deep",
+        "context": {},
+        "chunks": chunks,
+        "prompt_windows": windows,
+        "project_structure_digest": digest,
+        "entity_registry": {"characters": {}, "events": {}, "world": {}},
+        "chunk_extractions": [],
+        "raw_relationships": [],
+        "errors": [],
+    }))
+
+    assert [item["chunk_id"] for item in result["chunk_extractions"]] == [0, 1, 2]
+    assert result["chunk_extractions"][1]["notes"] == ["Covered by packed prompt window anchored at chunk 0."]
+    assert result["cross_validation"]["warnings"] == [f"validated {windows[0]['id']}"]
+
+
 def test_build_manuscript_orders_chapters_by_source_chunk_id(tmp_path):
     state = {
         "project_path": str(tmp_path),
@@ -94,6 +240,79 @@ def test_build_manuscript_orders_chapters_by_source_chunk_id(tmp_path):
         "Chapter 3",
     ]
     assert [chapter["chunk_ids"] for chapter in result["manuscript_chapters"]] == [[0], [1], [2]]
+    assert [chapter["orderIndex"] for chapter in result["manuscript_chapters"]] == [0, 1, 2]
+    assert [chapter["manuscript_content"] for chapter in result["manuscript_chapters"]] == ["first", "second", "third"]
+
+
+def test_world_entity_candidates_are_routed_out_of_character_registry():
+    registry = {
+        "characters": {
+            "char_sect": {
+                "canonical_name": "七玄门",
+                "summary": "江湖门派。",
+                "confidence": 0.91,
+            },
+            "char_mo": {
+                "canonical_name": "墨大夫",
+                "summary": "神手谷医生。",
+                "confidence": 0.91,
+            },
+        },
+        "events": {
+            "event_1": {
+                "character_ids": ["char_sect", "char_mo"],
+                "character_names": ["七玄门", "墨大夫"],
+            }
+        },
+        "world": {},
+        "world_detailed": {},
+    }
+
+    removed = w1_import._remove_world_entities_from_character_registry(registry)
+
+    assert removed == {"char_sect": "七玄门"}
+    assert "char_sect" not in registry["characters"]
+    assert "char_mo" in registry["characters"]
+    assert registry["world"]["七玄门"] == "organization"
+    assert registry["world_detailed"]["七玄门"]["container_hint"] == "organizations"
+    assert registry["events"]["event_1"]["character_ids"] == ["char_mo"]
+    assert registry["events"]["event_1"]["character_names"] == ["墨大夫"]
+
+
+def test_seed_character_from_relationship_evidence_skips_world_entities():
+    registry = {"characters": {}, "world": {}, "world_detailed": {}}
+
+    seeded = w1_import._seed_character_from_name(
+        registry,
+        "墨大夫",
+        3,
+        "zh",
+        role_hint="师徒关系证据",
+        confidence=0.8,
+    )
+    skipped = w1_import._seed_character_from_name(
+        registry,
+        "七玄门",
+        3,
+        "zh",
+        role_hint="门派组织",
+        confidence=0.8,
+    )
+
+    assert seeded is not None
+    assert seeded["canonical_name"] == "墨大夫"
+    assert skipped is None
+    assert len(registry["characters"]) == 1
+
+
+def test_default_world_container_specs_are_semantic_and_localized():
+    specs = w1_import._default_world_container_specs("zh")
+    by_key = {spec["importCategoryKey"]: spec for spec in specs}
+
+    assert by_key["locations"]["name"] == "地点"
+    assert by_key["organizations"]["name"] == "组织与势力"
+    assert w1_import._normalize_world_category("七玄门", "sect") == "organization"
+    assert w1_import._world_container_key("organization") == "organizations"
 
 
 def test_project_structure_digest_includes_existing_project_context(tmp_path):
@@ -228,6 +447,76 @@ def test_character_card_compaction_caps_long_running_import_fields():
     assert compacted["secrets"] == []
 
 
+def test_write_to_project_preserves_chapter_content_and_world_container_routing(tmp_path, monkeypatch):
+    proposals = []
+
+    async def fake_propose_write(op, _project_path):
+        proposal = {
+            "id": f"proposal_{op['entity_id']}",
+            "operations": [{"entityType": op["entity_type"], "fields": op["data"]}],
+            "depends_on": op.get("depends_on", []),
+            "confidence": op["confidence"],
+        }
+        proposals.append(proposal)
+        return proposal
+
+    monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", fake_propose_write)
+    state = {
+        "project_path": str(tmp_path),
+        "source_file_path": str(tmp_path / "凡人修仙传_前50章.txt"),
+        "import_run_id": "import_quality",
+        "source_language": "zh",
+        "entity_registry": {
+            "characters": {},
+            "events": {},
+            "world": {
+                "七玄门": "organization",
+                "青牛镇": "location",
+                "长春功": "rule",
+            },
+            "world_detailed": {
+                "七玄门": {"category": "organization", "description": "江湖门派。"},
+                "青牛镇": {"category": "location", "description": "故事早期地点。"},
+                "长春功": {"category": "rule", "description": "修炼功法。"},
+            },
+        },
+        "manuscript_chapters": [
+            {"chapter_id": "chap_2", "title": "第二章", "orderIndex": 1, "chunk_ids": [1], "manuscript_content": "第二章正文"},
+            {"chapter_id": "chap_1", "title": "第一章", "orderIndex": 0, "chunk_ids": [0], "manuscript_content": "第一章正文"},
+        ],
+        "relationships": [],
+        "character_tags": [],
+        "timeline_branches": [],
+        "world_settings": {},
+        "world_containers": w1_import._default_world_container_specs("zh"),
+        "chunk_extractions": [],
+        "import_review_report": {},
+        "proposals": [],
+        "errors": [],
+    }
+
+    asyncio.run(w1_import.node_write_to_project(state))
+    world_items = [
+        proposal["operations"][0]["fields"]
+        for proposal in proposals
+        if proposal["operations"][0]["entityType"] == "world_item"
+    ]
+    chapters = [
+        proposal["operations"][0]["fields"]
+        for proposal in proposals
+        if proposal["operations"][0]["entityType"] == "chapter"
+    ]
+
+    by_name = {item["name"]: item for item in world_items}
+    assert by_name["七玄门"]["category"] == "organization"
+    assert by_name["七玄门"]["containerId"] == "cont_import_organizations"
+    assert by_name["青牛镇"]["containerId"] == "cont_import_locations"
+    assert by_name["长春功"]["containerId"] == "cont_import_rules"
+    assert [chapter["title"] for chapter in chapters] == ["第一章", "第二章"]
+    assert [chapter["content"] for chapter in chapters] == ["第一章正文", "第二章正文"]
+    assert chapters[0]["manuscriptContent"] == "第一章正文"
+
+
 def test_timeline_architect_dedupes_and_fills_required_fields(tmp_path):
     state = {
         "project_path": str(tmp_path),
@@ -300,7 +589,7 @@ def test_timeline_architect_creates_semantic_branches_for_dense_import(tmp_path)
 
     assert len(branches) > 1
     assert assigned_branch_ids != {"branch_import_main"}
-    assert result["timeline_architecture"]["density_policy"]["max_events_per_branch"] == 24
+    assert result["timeline_architecture"]["density_policy"]["max_events_per_branch"] == 36
 
 
 def test_timeline_architect_merges_han_li_origin_variants_and_demotes_scene_beats(tmp_path):
@@ -349,12 +638,12 @@ def test_timeline_architect_merges_han_li_origin_variants_and_demotes_scene_beat
     assert any(item.get("merged_into") == "event_offer_a" for item in discarded)
     assert any(item.get("merged_into") == "event_leave_a" for item in discarded)
     assert any(item.get("timelineClass") == "scene_beat" and item.get("event_id") == "event_training" for item in discarded)
-    assert all(event["branchId"] != "branch_import_main" for event in result["entity_registry"]["events"].values())
+    assert all(event["branchId"] == "branch_import_main" for event in result["entity_registry"]["events"].values())
 
 
 def test_timeline_architect_distributes_dense_lanes_and_enforces_branch_budget(tmp_path):
     events = {}
-    for idx in range(26):
+    for idx in range(40):
         events[f"mentor_{idx}"] = {
             "title": f"墨大夫威胁升级 {idx}",
             "description": "墨大夫对韩立施压，推动师徒威胁线升级。",

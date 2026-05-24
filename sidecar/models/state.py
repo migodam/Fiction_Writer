@@ -182,10 +182,17 @@ class PromptWindow(TypedDict, total=False):
     chunk_ids: List[int]
     chapter_range: str
     text: str
+    source_blocks: List[dict]
     estimated_tokens: int
+    total_token_budget: int
+    source_budget_tokens: int
+    source_token_estimate: int
     source_chars: int
     digest_token_estimate: int
     validation_token_estimate: int
+    schema_policy_reserve_tokens: int
+    target_fill_ratio: float
+    fill_ratio: float
     split_reason: str
     source_span: dict
     output_token_budget: int  # Supervisor: estimated max output tokens for this window

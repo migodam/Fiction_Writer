@@ -119,14 +119,15 @@ Extract compact, reviewable character-card evidence while protecting the project
 wrong cast grouping, translated aliases, and bloated biographies.
 
 ## Project Digest Input Placeholders
-The workflow currently supplies the rolling entity registry below. Integration Manager may later replace
-or augment it with {{project_digest}}, {{project_character_digest}}, {{project_group_digest}}, and
-{{project_alias_digest}}. Treat this section as the authoritative project digest for this chunk.
+The Text Chunk below is a packed compiler window. It may include multiple complete chapters and it begins
+with PROJECT_STRUCTURE_DIGEST and PREVIOUS_VALIDATION_SUMMARY. Treat those sections as authoritative project
+context, not story prose. They may include {{project_digest}}, {{project_character_digest}},
+{{project_group_digest}}, and {{project_alias_digest}} style records.
 
 ## Entity Registry
 {entity_registry_summary}
 
-## Text Chunk
+## Packed Text Window
 {chunk_content}
 
 ## LANGUAGE RULE
@@ -212,13 +213,17 @@ Prefer empty strings and empty arrays over unsupported inference.
 - Avoid generic traits such as "brave", "kind", or "mysterious" unless the chunk directly proves them.
 
 ## Instructions
-Extract named characters from this chunk using the alias-first rule above.
+Extract named characters from this packed window using the alias-first rule above.
 - Reuse an existing character (via existing_character_updates) whenever possible
 - Create a new character only when identity is genuinely distinct
 - Prefer empty strings or empty arrays over unsupported inference
 - Keep every field concise, factual, and source-grounded
 - Obey LENGTH LIMITS — do not write novel-length descriptions
 - Include important missing major characters even if this chunk only strengthens their role; use existing updates
+- Search across every SOURCE_CHAPTERS section before deciding a major character is absent
+- Use PROJECT_STRUCTURE_DIGEST groups/tags/relationships to avoid putting family/background figures into main_characters
+- Use PREVIOUS_VALIDATION_SUMMARY to correct prior duplicate, missing-major, or suspicious-group mistakes
+- Mention the supporting chapter evidence in notes/open_questions when groupKey is uncertain
 
 Output valid JSON only:
 {{
@@ -282,9 +287,10 @@ which needs canonical-vs-scene-beat decisions, dedupe keys, branch hints, and ca
 All text fields (title, description, stakes) MUST be written in the same language as the source text chunk. Do NOT translate.
 
 ## PROJECT DIGEST PLACEHOLDERS
-The workflow currently supplies the rolling registry above. Integration Manager may later add
-{{project_digest}}, {{existing_event_digest}}, {{timeline_branch_digest}}, and {{chapter_digest}}.
-Use the available registry as the digest and avoid emitting events already represented there.
+The Text Chunk below is a packed compiler window. It may include multiple complete chapters and it begins
+with PROJECT_STRUCTURE_DIGEST and PREVIOUS_VALIDATION_SUMMARY. Treat those sections as project context, not
+story events. The window may include {{project_digest}}, {{existing_event_digest}}, {{timeline_branch_digest}},
+and {{chapter_digest}} style records. Use that context to avoid re-emitting accepted/candidate events.
 
 ## TEMPORAL ANCHOR RULE
 Every event MUST include the most specific time reference available: chapter number, arc stage, cultivation milestone, season, or relative marker like "three days later". Use this as temporal_hint. If no anchor exists, use "unknown" — never leave temporal_hint empty.
@@ -319,12 +325,16 @@ Do NOT emit a canonical event that is semantically equivalent to one already in 
 (same participants + same action + same consequence), even if wording differs.
 For near duplicates inside this chunk, emit one stronger event and list the weaker beat in mergeCandidateTitles.
 Every event MUST include dedupeKey: a short stable key made from normalized participants, action, consequence, and chapterRange.
+Use PREVIOUS_VALIDATION_SUMMARY as a rolling reviewer: if it says a prior event should be merged/demoted, do not
+recreate it as a fresh canonical event in this window.
 
 ## STRUCTURAL BEATS ONLY
 Extract only major plot-turning events: breakthroughs, confrontations, deaths, revelations, alliance formations, betrayals, power shifts, key arrivals/departures. Do NOT extract travel, daily training, minor conversations, or scene descriptions that do not directly advance the main conflict or a character arc.
 
 ## DENSITY LIMIT
-Output at most 3 events per chunk. If more than 3 qualify, select the 3 highest-impact ones by confidence. For a 100-chapter novel the total event count should be 20–40, not hundreds.
+Output at most 3 canonical_event candidates per source chapter and at most 12 total events per packed window.
+If more qualify, select the highest-impact events by story consequence, causal leverage, and branch topology value.
+For a 100-chapter novel the total canonical event count should be 20–40, not hundreds.
 
 ## CONFIDENCE FLOOR
 Only output events with confidence ≥ 0.75. Skip anything below.
@@ -340,6 +350,8 @@ Extract only events that significantly advance the plot or mark a turning point.
 - forkMergeHint must be one of root, fork, merge, parallel, callback, unknown
 - chapterRange must be an object with start and end strings, not a prose-only field
 - importanceScore must be 1-100; 80+ means canonical story-turning event, 50-79 means useful branch event, below 50 should normally be scene_beat
+- For multi-chapter windows, chapterRange must point to the specific source chapter(s), not the whole packed window
+- Use arcId/timelineLaneHint consistently across chapters so Timeline Architect can build multi-lane topology
 
 Output valid JSON only:
 {{
@@ -425,6 +437,8 @@ Extract relationship signals between characters mentioned in this chunk.
 - Include aliasEvidence when a kinship term, title, or epithet proves identity
 - Include topologyRole so Timeline Architect can distinguish mentor pressure, antagonist conflict, ally support, and family background
 - Flag contradictions when the chunk appears to use one alias for multiple people or multiple aliases for one person
+- Use PROJECT_STRUCTURE_DIGEST and PREVIOUS_VALIDATION_SUMMARY inside the packed window to catch wrong character groups
+  and alias collisions before they become proposals
 
 Output valid JSON only:
 {{
@@ -468,6 +482,8 @@ Infer one or more scene units from the chunk.
 - Keep scenes in reading order
 - If there is no clear chapter title, infer a practical chapter hint
 - Use concise summaries grounded in the text
+- If the packed window contains multiple SOURCE_CHAPTERS sections, keep scene chapterRange tied to the exact chapter
+- Mark repetitive practice/travel/conversation as sceneBeatRefs unless it changes causal story state
 - Include canonicalEventRefs for scene-level evidence that supports a canonical event title
 - Include sceneBeatRefs for important but non-canonical beats that should merge into a larger event
 - Include timelineLaneHint and arcId when the scene clearly belongs to a branch/lane
@@ -679,6 +695,10 @@ You are inferring project-wide world settings from imported fiction text.
 
 ## Text Sample
 {text_sample}
+
+## Language Rule
+All user-facing `name` and `description` fields MUST be in {source_language_label} (matching the source text language).
+Internal keys such as `type` and `mode` may remain in English.
 
 ## Instructions
 Infer project-level settings and structural suggestions from the sample.

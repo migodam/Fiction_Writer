@@ -132,12 +132,12 @@ export const WorldWorkspace = () => {
               <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('world.entries', 'World Entries')}</div>
               <div className="text-sm font-black text-text">{t('world.containersAndEntries', 'Containers and Entries')}</div>
             </div>
-            <button type="button" className="rounded-xl border border-border p-2 text-brand hover:border-brand" onClick={() => addWorldContainer({ id: `cont_${Date.now()}`, name: t('world.newContainer', 'New Container'), type: 'notebook', sortOrder: worldContainers.length, isCollapsed: false })}>
+            <button type="button" data-testid="create-container-btn" className="rounded-xl border border-border p-2 text-brand hover:border-brand" onClick={() => addWorldContainer({ id: `cont_${Date.now()}`, name: t('world.newContainer', 'New Container'), type: 'notebook', sortOrder: worldContainers.length, isCollapsed: false })}>
               <Plus size={16} />
             </button>
           </div>
         </div>
-        <div className="h-full overflow-y-auto custom-scrollbar p-2">
+        <div className="h-full overflow-y-auto custom-scrollbar p-2" data-testid="world-container-list">
           {worldContainers.map((container) => (
             <button
               key={container.id}
@@ -204,7 +204,7 @@ export const WorldWorkspace = () => {
               <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{activeContainer?.type}</div>
               <div className="text-sm font-black text-text">{activeContainer?.name}</div>
             </div>
-            <button type="button" className="rounded-xl border border-border p-2 text-brand hover:border-brand" onClick={() => {
+            <button type="button" data-testid="add-world-item-btn" className="rounded-xl border border-border p-2 text-brand hover:border-brand" onClick={() => {
               if (!activeContainer) return;
               const itemId = `item_${Date.now()}`;
               addWorldItem({ id: itemId, containerId: activeContainer.id, type: activeContainer.id.includes('location') ? 'location' : 'note', name: t('world.newEntry', 'New Entry'), description: '', attributes: [], linkedCharacterIds: [], linkedEventIds: [], linkedSceneIds: [], mapMarkers: [], assetPath: null, tagIds: [] });
@@ -214,7 +214,7 @@ export const WorldWorkspace = () => {
             </button>
           </div>
         </div>
-        <div className="h-full overflow-y-auto custom-scrollbar">
+        <div className="h-full overflow-y-auto custom-scrollbar" data-testid="world-item-list">
           {containerItems.map((item) => (
             <button key={item.id} type="button" className={cn('w-full border-b border-divider px-4 py-4 text-left transition-colors', activeItemId === item.id ? 'bg-selected' : 'hover:bg-hover')} onClick={() => setActiveItemId(item.id)} onContextMenu={(e) => { e.preventDefault(); openContextMenu({ x: e.clientX, y: e.clientY, items: [{ id: 'delete', label: t('common.delete'), action: () => { deleteWorldItem(item.id); if (activeItemId === item.id) setActiveItemId(null); setLastActionStatus(t('world.itemDeleted', 'World item deleted')); }, destructive: true }] }); }}>
               <div className="text-sm font-black text-text">{item.name}</div>
@@ -229,24 +229,24 @@ export const WorldWorkspace = () => {
           <div className="mx-auto max-w-5xl space-y-8">
             <div>
               <div className="mb-2 text-[10px] font-black uppercase tracking-[0.3em] text-text-3">{t('world.entryName', 'Entry Name')}</div>
-              <input value={activeItem.name} onChange={(event) => updateWorldItem({ ...activeItem, name: event.target.value })} className="w-full bg-transparent text-5xl font-black tracking-tight outline-none" />
+              <input data-testid="world-item-name-input" value={activeItem.name} onChange={(event) => updateWorldItem({ ...activeItem, name: event.target.value })} className="w-full bg-transparent text-5xl font-black tracking-tight outline-none" />
             </div>
             <div>
               <div className="mb-2 text-[10px] font-black uppercase tracking-[0.3em] text-text-3">{t('world.descriptionLabel', 'Description')}</div>
-              <textarea value={activeItem.description} onChange={(event) => updateWorldItem({ ...activeItem, description: event.target.value })} className="h-40 w-full rounded-3xl border border-border bg-bg p-5 font-serif text-sm leading-relaxed text-text-2 outline-none" />
+              <textarea data-testid="world-item-description-input" value={activeItem.description} onChange={(event) => updateWorldItem({ ...activeItem, description: event.target.value })} className="h-40 w-full rounded-3xl border border-border bg-bg p-5 font-serif text-sm leading-relaxed text-text-2 outline-none" />
             </div>
             <div className="rounded-3xl border border-border bg-card p-6">
               <div className="mb-4 flex items-center justify-between">
                 <div className="text-[10px] font-black uppercase tracking-[0.3em] text-text-3">{t('world.attributes', 'Attributes')}</div>
-                <button type="button" className="rounded-xl border border-border px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-text-2 hover:border-brand" onClick={() => updateWorldItem({ ...activeItem, attributes: [...activeItem.attributes, { key: '', value: '' }] })}>
+                <button type="button" data-testid="dynamic-field-add-row" className="rounded-xl border border-border px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-text-2 hover:border-brand" onClick={() => updateWorldItem({ ...activeItem, attributes: [...activeItem.attributes, { key: '', value: '' }] })}>
                   {t('world.addRow', 'Add Row')}
                 </button>
               </div>
               <div className="space-y-3">
                 {activeItem.attributes.map((attribute, index) => (
                   <div key={`${attribute.key}-${index}`} className="flex gap-3">
-                    <input value={attribute.key} onChange={(event) => updateWorldItem({ ...activeItem, attributes: activeItem.attributes.map((entry, entryIndex) => entryIndex === index ? { ...entry, key: event.target.value } : entry) })} className="flex-1 rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('world.attribute', 'Attribute')} />
-                    <input value={attribute.value} onChange={(event) => updateWorldItem({ ...activeItem, attributes: activeItem.attributes.map((entry, entryIndex) => entryIndex === index ? { ...entry, value: event.target.value } : entry) })} className="flex-[1.4] rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('world.value', 'Value')} />
+                    <input data-testid="dynamic-field-key-input" value={attribute.key} onChange={(event) => updateWorldItem({ ...activeItem, attributes: activeItem.attributes.map((entry, entryIndex) => entryIndex === index ? { ...entry, key: event.target.value } : entry) })} className="flex-1 rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('world.attribute', 'Attribute')} />
+                    <input data-testid="dynamic-field-value-input" value={attribute.value} onChange={(event) => updateWorldItem({ ...activeItem, attributes: activeItem.attributes.map((entry, entryIndex) => entryIndex === index ? { ...entry, value: event.target.value } : entry) })} className="flex-[1.4] rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('world.value', 'Value')} />
                     <button type="button" className="rounded-2xl border border-red/40 px-3 text-red" onClick={() => updateWorldItem({ ...activeItem, attributes: activeItem.attributes.filter((_, entryIndex) => entryIndex !== index) })}>
                       <Trash2 size={14} />
                     </button>
@@ -254,6 +254,9 @@ export const WorldWorkspace = () => {
                 ))}
               </div>
             </div>
+            <button type="button" data-testid="inspector-save" className="rounded-xl bg-brand px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-white" onClick={() => setLastActionStatus('Saved')}>
+              {t('common.save', 'Save')}
+            </button>
             <div className="grid gap-6 lg:grid-cols-2">
               <LinkPanel title={t('world.linkedTimeline', 'Linked Timeline')} items={timelineEvents.filter((event) => event.linkedWorldItemIds.includes(activeItem.id) || event.locationIds.includes(activeItem.id)).map((event) => ({ id: event.id, label: event.title, onClick: () => navigate(`/timeline/timeline?event=${event.id}`) }))} />
               <LinkPanel title={t('world.linkedScenes', 'Linked Scenes')} items={scenes.filter((scene) => scene.linkedWorldItemIds.includes(activeItem.id)).map((scene) => ({ id: scene.id, label: scene.title, onClick: () => navigate(`/writing/scenes?scene=${scene.id}`) }))} />

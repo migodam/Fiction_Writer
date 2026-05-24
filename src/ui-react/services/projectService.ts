@@ -1101,14 +1101,20 @@ const buildProposalEntity = (
       return { id, name: title, description: '', color: '#f59e0b', sortOrder: project.timelineBranches.length, collapsed: false, mode: project.timelineBranches.length ? 'independent' : 'root', ...fields };
     case 'relationship':
       return { id, sourceId: '', targetId: '', type: 'related', description: '', ...fields };
-    case 'chapter':
-      return { id, title, summary: '', goal: '', notes: '', sceneIds: [], orderIndex: project.chapters.length, status: 'draft', ...fields };
+    case 'chapter': {
+      const chapterFields = { ...fields };
+      if (chapterFields.orderIndex == null) delete chapterFields.orderIndex;
+      return { id, title, summary: '', goal: '', notes: '', sceneIds: [], orderIndex: project.chapters.length, status: 'draft', ...chapterFields };
+    }
     case 'scene':
       return { id, chapterId: project.chapters[0]?.id || '', title, summary: '', content: '', orderIndex: project.scenes.length, povCharacterId: null, linkedCharacterIds: [], linkedEventIds: [], linkedWorldItemIds: [], status: 'draft', ...fields };
     case 'world_container':
       return { id, name: title, type: 'notebook', isDefault: false, sortOrder: project.worldContainers.length, ...fields };
-    case 'world_item':
-      return { id, containerId: project.worldContainers[0]?.id || '', type: 'note', name: title, description: '', attributes: [], linkedCharacterIds: [], linkedEventIds: [], linkedSceneIds: [], mapMarkers: [], ...fields };
+    case 'world_item': {
+      const worldItemFields = { ...fields };
+      if (worldItemFields.containerId == null) delete worldItemFields.containerId;
+      return { id, containerId: project.worldContainers[0]?.id || '', type: 'note', name: title, description: '', attributes: [], linkedCharacterIds: [], linkedEventIds: [], linkedSceneIds: [], mapMarkers: [], ...worldItemFields };
+    }
     default:
       return { id, ...fields };
   }

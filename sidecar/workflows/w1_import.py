@@ -44,6 +44,7 @@ from sidecar.prompts.w1_prompts import (
     W1_EXTRACT_SCENE_SUMMARIES,
     W1_EXTRACT_WORLD_DEEP,
     W1_EXTRACT_WORLD,
+    W1_CROSS_VALIDATE_IMPORT,
     W1_SYNTHESIZE_RELATIONSHIPS,
     W1_CLASSIFY_CHARACTER_TAGS,
     W1_INFER_WORLD_SETTINGS,
@@ -500,6 +501,250 @@ def _sort_manuscript_chapters(chapters: list[dict]) -> list[dict]:
     return sorted(chapters, key=_chapter_sort_key)
 
 
+def _detect_language(sample: str) -> str:
+    """Return ISO 639-1 language code inferred from a short text sample."""
+    if not sample:
+        return "en"
+    cjk_count = sum(1 for c in sample if '一' <= c <= '鿿')
+    return "zh" if cjk_count / max(len(sample), 1) >= 0.3 else "en"
+
+
+_WORLD_ENTITY_NAME_PATTERNS = (
+    "门", "派", "宗", "帮", "会", "盟", "阁", "殿", "宫", "谷", "山庄", "书院",
+    "城", "镇", "村", "谷", "山", "峰", "河", "湖", "岛", "国", "州", "府",
+)
+_ORGANIZATION_HINTS = ("门", "派", "宗", "帮", "会", "盟", "阁", "殿", "宫", "山庄", "书院")
+_LOCATION_HINTS = ("城", "镇", "村", "谷", "山", "峰", "河", "湖", "岛", "国", "州", "府", "岭", "洞")
+_MAINLINE_ARC_HINTS = {
+    "main",
+    "main_arc",
+    "main_story",
+    "main_plot",
+    "root",
+    "protagonist_origin",
+    "sect_entry",
+    "cultivation_progress",
+    "core_progression",
+    "journey",
+    "training_progress",
+}
+_SIDE_ARC_HINTS = {
+    "mentor_control",
+    "mentor_threat",
+    "faction_conflict",
+    "sect_conflict",
+    "bottle_secret",
+    "romance",
+    "rivalry",
+    "antagonist",
+    "family",
+    "world_lore",
+}
+_WORLD_CATEGORY_ALIASES: dict[str, str] = {
+    "place": "location",
+    "location": "location",
+    "map": "location",
+    "organization": "organization",
+    "organisation": "organization",
+    "faction": "organization",
+    "sect": "organization",
+    "clan": "organization",
+    "guild": "organization",
+    "object": "item",
+    "artifact": "item",
+    "item": "item",
+    "weapon": "item",
+    "treasure": "item",
+    "concept": "concept",
+    "lore": "concept",
+    "rule": "rule",
+    "system": "rule",
+    "magic": "rule",
+    "cultivation": "rule",
+    "culture": "culture",
+    "custom": "culture",
+}
+
+
+def _is_zh_state(state: ImportState | dict) -> bool:
+    return state.get("source_language") == "zh"
+
+
+def _localized_text(state_or_language: ImportState | dict | str, zh: str, en: str) -> str:
+    language = state_or_language if isinstance(state_or_language, str) else state_or_language.get("source_language", "en")
+    return zh if language == "zh" else en
+
+
+def _normalize_world_category(name: str, category: Any = "") -> str:
+    raw = str(category or "").strip().lower()
+    normalized = _WORLD_CATEGORY_ALIASES.get(raw)
+    if normalized:
+        return normalized
+    if any(token in raw for token in ("organization", "organisation", "faction", "sect", "clan", "guild", "组织", "势力", "门派", "宗门")):
+        return "organization"
+    if any(token in raw for token in ("location", "place", "map", "地点", "位置", "地理")):
+        return "location"
+    if any(token in raw for token in ("item", "artifact", "object", "物品", "法器", "道具")):
+        return "item"
+    if any(token in raw for token in ("rule", "system", "law", "规则", "体系", "修炼")):
+        return "rule"
+    if any(token in raw for token in ("culture", "custom", "文化", "习俗")):
+        return "culture"
+    if any(token in name for token in _ORGANIZATION_HINTS):
+        return "organization"
+    if any(token in name for token in _LOCATION_HINTS):
+        return "location"
+    return "concept"
+
+
+def _world_container_key(category: Any) -> str:
+    normalized = _normalize_world_category("", category)
+    if normalized == "location":
+        return "locations"
+    if normalized == "organization":
+        return "organizations"
+    if normalized == "item":
+        return "items"
+    if normalized == "rule":
+        return "rules"
+    if normalized == "culture":
+        return "culture"
+    return "concepts"
+
+
+def _default_world_container_specs(language: str) -> list[dict]:
+    zh = language == "zh"
+    labels = {
+        "locations": ("地点", "Locations", "map"),
+        "organizations": ("组织与势力", "Organizations & Factions", "notebook"),
+        "items": ("物品与法器", "Items & Artifacts", "notebook"),
+        "rules": ("规则与修炼体系", "Rules & Systems", "notebook"),
+        "concepts": ("概念与设定", "Concepts & Lore", "notebook"),
+        "culture": ("文化与习俗", "Culture", "notebook"),
+    }
+    specs: list[dict] = []
+    for index, (key, (zh_name, en_name, container_type)) in enumerate(labels.items()):
+        name = zh_name if zh else en_name
+        specs.append({
+            "id": f"cont_import_{key}",
+            "name": name,
+            "type": container_type,
+            "isDefault": index == 0,
+            "sortOrder": index,
+            "description": _localized_text(language, f"W1 导入的{name}条目。", f"W1 imported {name.lower()} entries."),
+            "importCategoryKey": key,
+        })
+    return specs
+
+
+def _is_world_entity_candidate(name: str, candidate: dict | None = None) -> bool:
+    cleaned = str(name or "").strip()
+    if not cleaned:
+        return False
+    candidate = candidate or {}
+    group_key = str(candidate.get("groupKey") or candidate.get("groupKey_update") or "").lower()
+    story_function = str(candidate.get("story_function") or candidate.get("story_function_update") or "").lower()
+    role_text = " ".join(str(candidate.get(field, "")) for field in ("role_in_story", "summary", "background", "notes"))
+    if group_key in {"organizations", "organization", "world", "locations"}:
+        return True
+    if story_function in {"organization", "location"}:
+        return True
+    if any(token in cleaned for token in _WORLD_ENTITY_NAME_PATTERNS):
+        # Personal names such as 墨大夫 or 厉飞雨 should not match these suffixes.
+        return len(cleaned) >= 3 and not any(title in cleaned for title in ("大夫", "师兄", "师姐", "师父", "师傅", "叔", "父", "母"))
+    return any(token in role_text.lower() for token in ("organization", "sect", "faction", "location", "门派", "组织", "地点"))
+
+
+def _add_world_candidate_to_registry(registry: dict, name: str, category: str, description: str = "", confidence: float = 0.72) -> None:
+    name = str(name or "").strip()
+    if not name:
+        return
+    normalized_category = _normalize_world_category(name, category)
+    registry.setdefault("world", {})
+    registry.setdefault("world_detailed", {})
+    registry["world"][name] = normalized_category
+    detail = registry["world_detailed"].setdefault(name, {
+        "name": name,
+        "category": normalized_category,
+        "description": "",
+        "container_hint": _world_container_key(normalized_category),
+        "attributes": [],
+        "confidence": confidence,
+    })
+    detail["category"] = _normalize_world_category(name, detail.get("category") or normalized_category)
+    detail["container_hint"] = detail.get("container_hint") or _world_container_key(detail["category"])
+    if description and not detail.get("description"):
+        detail["description"] = description
+    detail["confidence"] = max(float(detail.get("confidence", 0.7) or 0.7), confidence)
+
+
+def _remove_world_entities_from_character_registry(registry: dict) -> dict:
+    removed: dict[str, str] = {}
+    for cid, entry in list(registry.get("characters", {}).items()):
+        name = str(entry.get("canonical_name") or entry.get("name") or "").strip()
+        if not _is_world_entity_candidate(name, entry):
+            continue
+        category = _normalize_world_category(name, "organization")
+        _add_world_candidate_to_registry(
+            registry,
+            name,
+            category,
+            entry.get("summary") or entry.get("role_in_story") or "",
+            float(entry.get("confidence", 0.72) or 0.72),
+        )
+        removed[cid] = name
+        registry["characters"].pop(cid, None)
+    if removed:
+        for event in registry.get("events", {}).values():
+            event["character_ids"] = [cid for cid in event.get("character_ids", []) if cid not in removed]
+            event["character_names"] = [
+                name for name in event.get("character_names", [])
+                if _normal_key(name) not in {_normal_key(value) for value in removed.values()}
+            ]
+        registry.setdefault("world_entity_character_removals", {}).update(removed)
+    return removed
+
+
+def _seed_character_from_name(registry: dict, name: str, chunk_id: int, language: str, *, role_hint: str = "", confidence: float = 0.72) -> dict | None:
+    name = str(name or "").strip()
+    if not name or _resolve_character_id(name, registry) or _is_world_entity_candidate(name):
+        return None
+    char_id = f"char_{uuid.uuid4().hex[:8]}"
+    summary = f"{name}在导入文本中被多处提及，需要后续确认角色卡。" if language == "zh" else f"{name} is mentioned in imported evidence and needs review."
+    registry.setdefault("characters", {})[char_id] = _compact_character_card({
+        "canonical_id": char_id,
+        "canonical_name": name,
+        "aliases": [],
+        "first_seen_chunk": chunk_id,
+        "notes": [role_hint or (f"[chunk {chunk_id}] Evidence-derived character seed.")],
+        "confidence": confidence,
+        "summary": summary,
+        "background": "",
+        "role_in_story": role_hint[:80],
+        "physical_description": "",
+        "personality_traits": [],
+        "goals": [],
+        "fears": [],
+        "secrets": [],
+        "speech_style": "",
+        "arc_notes": "",
+        "importance": "supporting" if confidence >= 0.74 else "minor",
+        "groupKey": "allies_family" if any(token in role_hint for token in ("父", "母", "叔", "妹", "family")) else "minor_characters",
+        "tag_ids": [],
+        "open_questions": [f"确认{name}的角色功能与分组。" if language == "zh" else f"Confirm {name}'s role and group."],
+    })
+    return registry["characters"][char_id]
+
+
+def _importance_sort_value(event: dict) -> tuple[float, float, str]:
+    """Prefer high-impact events without letting confidence alone hide story beats."""
+    importance = float(event.get("importanceScore", 0) or 0)
+    confidence = float(event.get("confidence", 0) or 0)
+    timeline_class = str(event.get("timelineClass", "")).strip()
+    class_bonus = 8 if timeline_class == "canonical_event" else 0
+    return (importance + class_bonus, confidence, str(event.get("title", "")))
+
+
 def _tag_color(index: int) -> str:
     """Return a deterministic fallback color for generated tags."""
     palette = [
@@ -553,6 +798,10 @@ def _chunk_cache_path(project_path: str | Path, import_run_id: str, chunk_id: in
     return _artifact_dir(project_path, import_run_id) / "chunks" / f"chunk_{chunk_id}.json"
 
 
+def _prompt_window_cache_path(project_path: str | Path, import_run_id: str, window_id: str) -> Path:
+    return _artifact_dir(project_path, import_run_id) / "windows" / f"{window_id}.json"
+
+
 def _read_chunk_prompt_cache(state: ImportState, chunk: dict) -> dict | None:
     import_run_id = state.get("import_run_id")
     if not import_run_id:
@@ -567,7 +816,7 @@ def _read_chunk_prompt_cache(state: ImportState, chunk: dict) -> dict | None:
         return None
     if payload.get("prompt_profile") != (state.get("prompt_profile") or "balanced"):
         return None
-    if payload.get("prompt_window_contract") != "chapter_window_v1":
+    if payload.get("prompt_window_contract") not in {"chapter_window_v1", "packed_chapter_window_v2"}:
         return None
     prompts = payload.get("prompt_outputs")
     return prompts if isinstance(prompts, dict) else None
@@ -588,6 +837,54 @@ def _write_chunk_prompt_cache(state: ImportState, chunk: dict, prompt_outputs: d
             "chunk_hash": _sha256_text(raw),
             "prompt_profile": state.get("prompt_profile") or "balanced",
             "prompt_window_contract": "chapter_window_v1",
+            "written_at": _now_iso(),
+            "prompt_outputs": prompt_outputs,
+        }, f, ensure_ascii=False, indent=2)
+
+
+def _read_prompt_window_cache(state: ImportState, window: dict) -> dict | None:
+    import_run_id = state.get("import_run_id")
+    window_id = str(window.get("id") or "")
+    if not import_run_id or not window_id:
+        return None
+    path = _prompt_window_cache_path(state["project_path"], import_run_id, window_id)
+    payload = _safe_read_json(path, None)
+    if not isinstance(payload, dict):
+        return None
+    source_text = "".join(
+        str(block.get("text", ""))
+        for block in window.get("source_blocks", [])
+        if isinstance(block, dict)
+    )
+    if payload.get("source_hash") != _sha256_text(source_text):
+        return None
+    if payload.get("prompt_profile") != (state.get("prompt_profile") or "balanced"):
+        return None
+    if payload.get("prompt_window_contract") != "packed_chapter_window_v2":
+        return None
+    prompts = payload.get("prompt_outputs")
+    return prompts if isinstance(prompts, dict) else None
+
+
+def _write_prompt_window_cache(state: ImportState, window: dict, prompt_outputs: dict) -> None:
+    import_run_id = state.get("import_run_id")
+    window_id = str(window.get("id") or "")
+    if not import_run_id or not window_id:
+        return
+    source_text = "".join(
+        str(block.get("text", ""))
+        for block in window.get("source_blocks", [])
+        if isinstance(block, dict)
+    )
+    path = _prompt_window_cache_path(state["project_path"], import_run_id, window_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({
+            "prompt_window_id": window_id,
+            "chunk_ids": window.get("chunk_ids", []),
+            "source_hash": _sha256_text(source_text),
+            "prompt_profile": state.get("prompt_profile") or "balanced",
+            "prompt_window_contract": "packed_chapter_window_v2",
             "written_at": _now_iso(),
             "prompt_outputs": prompt_outputs,
         }, f, ensure_ascii=False, indent=2)
@@ -627,6 +924,7 @@ _DEEP_PROMPT_TOTAL_TOKEN_BUDGET = 256_000
 _SCHEMA_POLICY_RESERVE_TOKENS = 24_000
 _DIGEST_RESERVE_TOKENS = 24_000
 _VALIDATION_RESERVE_TOKENS = 8_000
+_PACKED_WINDOW_TARGET_FILL_RATIO = 0.88
 
 # Feature flag: when True, node_split_chunks uses chapter-count-aware windowing
 # instead of the greedy token packer.  Set to True only when use_supervisor=True.
@@ -837,6 +1135,20 @@ def _build_project_structure_digest(state: ImportState, import_run_id: str) -> d
 
 
 def _previous_validation_summary(state: ImportState) -> str:
+    cross_validation = state.get("cross_validation") or {}
+    if cross_validation:
+        payload = {
+            "status": "rolling_cross_validation",
+            "duplicate_characters": cross_validation.get("duplicate_characters", [])[:12],
+            "duplicate_events": cross_validation.get("duplicate_events", [])[:12],
+            "missing_major_characters": cross_validation.get("missing_major_characters", [])[:12],
+            "suspicious_groups": cross_validation.get("suspicious_groups", [])[:12],
+            "contradictory_aliases": cross_validation.get("contradictory_aliases", [])[:12],
+            "event_merge_recommendations": cross_validation.get("event_merge_recommendations", [])[:12],
+            "warnings": cross_validation.get("warnings", [])[:12],
+        }
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
     report = state.get("import_review_report") or {}
     if not report:
         return json.dumps({"status": "none", "warnings": [], "errors": []}, separators=(",", ":"))
@@ -895,6 +1207,152 @@ def _split_text_by_paragraph_budget(text: str, token_budget: int) -> list[str]:
     return windows or [text]
 
 
+def _chapter_range_label(blocks: list[dict]) -> str:
+    hints = [str(block.get("chapter_hint") or f"Segment {block.get('chunk_id', 0)}") for block in blocks]
+    if not hints:
+        return "Empty window"
+    if len(hints) == 1:
+        return hints[0]
+    return f"{hints[0]} – {hints[-1]}"
+
+
+def _render_prompt_window_text(
+    *,
+    digest_content: str,
+    validation_content: str,
+    total_budget: int,
+    source_budget: int,
+    source_blocks: list[dict],
+) -> str:
+    source_sections: list[str] = []
+    for block in source_blocks:
+        chapter_hint = str(block.get("chapter_hint") or f"Segment {block.get('chunk_id', 0)}")
+        source_sections.append(
+            f"### CHAPTER {block.get('chunk_id', '')}: {chapter_hint}\n"
+            f"{block.get('text', '')}"
+        )
+    header = (
+        "PROJECT_STRUCTURE_DIGEST:\n"
+        f"{digest_content}\n\n"
+        "PREVIOUS_VALIDATION_SUMMARY:\n"
+        f"{validation_content}\n\n"
+        "PROMPT_WINDOW_POLICY:\n"
+        f"total_estimated_token_budget={total_budget}; "
+        f"schema_policy_reserve_tokens={_SCHEMA_POLICY_RESERVE_TOKENS}; "
+        f"source_budget_tokens={source_budget}; "
+        "packed_chapter_window=true; preserve complete chapters; "
+        "only paragraph-split a single oversized chapter; every extracted item must carry chapterRange/source chapter evidence.\n\n"
+        f"SOURCE_CHAPTERS [{_chapter_range_label(source_blocks)}]:\n"
+    )
+    return header + "\n\n".join(source_sections)
+
+
+def _source_blocks_from_chunks(chunks: list[dict]) -> list[dict]:
+    blocks: list[dict] = []
+    for chunk in chunks:
+        chunk_id = int(chunk.get("chunk_id", len(blocks)) or 0)
+        source_text = chunk.get("manuscript_content") or chunk.get("raw_content") or chunk.get("content", "")
+        blocks.append({
+            "chunk_id": chunk_id,
+            "chapter_hint": str(chunk.get("chapter_hint") or f"Segment {chunk_id + 1}"),
+            "text": source_text,
+            "source_tokens": _estimate_tokens(source_text),
+            "source_chars": len(source_text),
+            "source_span": chunk.get("source_span") or {
+                "start": int(chunk.get("char_start", 0) or 0),
+                "end": int(chunk.get("char_start", 0) or 0) + len(source_text),
+            },
+        })
+    return blocks
+
+
+def _make_prompt_window(
+    state: ImportState,
+    *,
+    source_blocks: list[dict],
+    part_index: int,
+    split_reason: str,
+    digest_content: str,
+    validation_content: str,
+    total_budget: int,
+    source_budget: int,
+    digest_tokens: int,
+    validation_tokens: int,
+) -> dict:
+    window_text = _render_prompt_window_text(
+        digest_content=digest_content,
+        validation_content=validation_content,
+        total_budget=total_budget,
+        source_budget=source_budget,
+        source_blocks=source_blocks,
+    )
+    chunk_ids = [int(block.get("chunk_id", 0) or 0) for block in source_blocks]
+    source_spans = [block.get("source_span", {}) for block in source_blocks]
+    source_start = min([int(span.get("start", 0) or 0) for span in source_spans] or [0])
+    source_end = max([int(span.get("end", source_start) or source_start) for span in source_spans] or [source_start])
+    source_tokens = sum(int(block.get("source_tokens", 0) or 0) for block in source_blocks)
+    source_chars = sum(int(block.get("source_chars", 0) or 0) for block in source_blocks)
+    fill_ratio = round(source_tokens / max(source_budget, 1), 4)
+    return {
+        "id": _stable_id(
+            "pwin",
+            state.get("import_run_id") or "import",
+            ",".join(str(chunk_id) for chunk_id in chunk_ids),
+            part_index,
+            _sha256_text("".join(str(block.get("text", "")) for block in source_blocks))[:16],
+        ),
+        "chunk_ids": chunk_ids,
+        "chapter_range": _chapter_range_label(source_blocks),
+        "text": window_text,
+        "source_blocks": source_blocks,
+        "estimated_tokens": _estimate_tokens(window_text) + _SCHEMA_POLICY_RESERVE_TOKENS,
+        "source_token_estimate": source_tokens,
+        "source_chars": source_chars,
+        "digest_token_estimate": digest_tokens,
+        "validation_token_estimate": validation_tokens,
+        "schema_policy_reserve_tokens": _SCHEMA_POLICY_RESERVE_TOKENS,
+        "total_token_budget": total_budget,
+        "source_budget_tokens": source_budget,
+        "target_fill_ratio": _PACKED_WINDOW_TARGET_FILL_RATIO,
+        "fill_ratio": fill_ratio,
+        "split_reason": split_reason,
+        "source_span": {"start": source_start, "end": source_end},
+    }
+
+
+def _refresh_prompt_window_text(state: ImportState, window: dict, digest: dict) -> dict:
+    profile = state.get("prompt_profile") or state.get("context", {}).get("prompt_profile", "balanced")
+    total_budget = _prompt_total_token_budget(profile)
+    digest_content = _fit_text_to_token_budget(str(digest.get("content", "")), _DIGEST_RESERVE_TOKENS)
+    validation_content = _fit_text_to_token_budget(_previous_validation_summary(state), _VALIDATION_RESERVE_TOKENS)
+    source_budget = max(
+        total_budget
+        - _SCHEMA_POLICY_RESERVE_TOKENS
+        - _estimate_tokens(digest_content)
+        - _VALIDATION_RESERVE_TOKENS,
+        1_000,
+    )
+    source_blocks = [dict(block) for block in window.get("source_blocks", []) if isinstance(block, dict)]
+    if not source_blocks:
+        return dict(window)
+    refreshed = dict(window)
+    refreshed["text"] = _render_prompt_window_text(
+        digest_content=digest_content,
+        validation_content=validation_content,
+        total_budget=total_budget,
+        source_budget=source_budget,
+        source_blocks=source_blocks,
+    )
+    refreshed["validation_token_estimate"] = _estimate_tokens(validation_content)
+    refreshed["estimated_tokens"] = _estimate_tokens(refreshed["text"]) + _SCHEMA_POLICY_RESERVE_TOKENS
+    refreshed["source_budget_tokens"] = source_budget
+    refreshed["fill_ratio"] = round(
+        int(refreshed.get("source_token_estimate", 0) or 0) / max(source_budget, 1),
+        4,
+    )
+    return refreshed
+
+
 def _build_prompt_windows(state: ImportState, chunks: list[dict], digest: dict) -> list[dict]:
     profile = state.get("prompt_profile") or state.get("context", {}).get("prompt_profile", "balanced")
     total_budget = _prompt_total_token_budget(profile)
@@ -903,44 +1361,65 @@ def _build_prompt_windows(state: ImportState, chunks: list[dict], digest: dict) 
     validation_content = _fit_text_to_token_budget(validation_summary, _VALIDATION_RESERVE_TOKENS)
     digest_tokens = _estimate_tokens(digest_content)
     validation_tokens = _estimate_tokens(validation_content)
-    source_budget = max(total_budget - _SCHEMA_POLICY_RESERVE_TOKENS - digest_tokens - validation_tokens, 1_000)
+    # Pack against the full validation reserve, not the current summary length.
+    # Otherwise the first window can overfill source text and later rolling
+    # validation summaries can push refreshed prompts above the hard 256k cap.
+    source_budget = max(total_budget - _SCHEMA_POLICY_RESERVE_TOKENS - digest_tokens - _VALIDATION_RESERVE_TOKENS, 1_000)
     windows: list[dict] = []
 
-    for chunk in chunks:
-        chunk_id = int(chunk.get("chunk_id", len(windows)) or 0)
-        source_text = chunk.get("manuscript_content") or chunk.get("raw_content") or chunk.get("content", "")
-        chapter_hint = str(chunk.get("chapter_hint") or f"Segment {chunk_id + 1}")
-        parts = _split_text_by_paragraph_budget(source_text, source_budget)
-        for part_index, part in enumerate(parts):
-            split_reason = "complete_chapter"
-            if len(parts) > 1:
-                split_reason = "single_oversized_chapter_paragraph_split"
-            header = (
-                "PROJECT_STRUCTURE_DIGEST:\n"
-                f"{digest_content}\n\n"
-                "PREVIOUS_VALIDATION_SUMMARY:\n"
-                f"{validation_content}\n\n"
-                "PROMPT_WINDOW_POLICY:\n"
-                f"total_estimated_token_budget={total_budget}; "
-                f"schema_policy_reserve_tokens={_SCHEMA_POLICY_RESERVE_TOKENS}; "
-                f"source_budget_tokens={source_budget}; "
-                "preserve complete chapters; only paragraph-split a single oversized chapter.\n\n"
-                f"SOURCE_CHAPTERS [{chapter_hint}]:\n"
-            )
-            window_text = header + part
-            source_start = int(chunk.get("source_span", {}).get("start", chunk.get("char_start", 0)) or 0)
-            windows.append({
-                "id": _stable_id("pwin", state.get("import_run_id") or "import", chunk_id, part_index, _sha256_text(part)[:16]),
-                "chunk_ids": [chunk_id],
-                "chapter_range": chapter_hint if len(parts) == 1 else f"{chapter_hint} part {part_index + 1}/{len(parts)}",
-                "text": window_text,
-                "estimated_tokens": _estimate_tokens(window_text) + _SCHEMA_POLICY_RESERVE_TOKENS,
-                "source_chars": len(part),
-                "digest_token_estimate": digest_tokens,
-                "validation_token_estimate": validation_tokens,
-                "split_reason": split_reason,
-                "source_span": {"start": source_start, "end": source_start + len(source_text)},
-            })
+    current_blocks: list[dict] = []
+    current_tokens = 0
+
+    def flush_current() -> None:
+        nonlocal current_blocks, current_tokens
+        if not current_blocks:
+            return
+        windows.append(_make_prompt_window(
+            state,
+            source_blocks=current_blocks,
+            part_index=len(windows),
+            split_reason="packed_complete_chapters" if len(current_blocks) > 1 else "complete_chapter",
+            digest_content=digest_content,
+            validation_content=validation_content,
+            total_budget=total_budget,
+            source_budget=source_budget,
+            digest_tokens=digest_tokens,
+            validation_tokens=validation_tokens,
+        ))
+        current_blocks = []
+        current_tokens = 0
+
+    for block in _source_blocks_from_chunks(chunks):
+        block_tokens = int(block.get("source_tokens", 0) or 0)
+        if block_tokens > source_budget:
+            flush_current()
+            parts = _split_text_by_paragraph_budget(str(block.get("text", "")), source_budget)
+            for part_index, part in enumerate(parts):
+                part_block = dict(block)
+                part_block["text"] = part
+                part_block["source_tokens"] = _estimate_tokens(part)
+                part_block["source_chars"] = len(part)
+                part_block["chapter_hint"] = f"{block.get('chapter_hint')} part {part_index + 1}/{len(parts)}"
+                windows.append(_make_prompt_window(
+                    state,
+                    source_blocks=[part_block],
+                    part_index=part_index,
+                    split_reason="single_oversized_chapter_paragraph_split",
+                    digest_content=digest_content,
+                    validation_content=validation_content,
+                    total_budget=total_budget,
+                    source_budget=source_budget,
+                    digest_tokens=digest_tokens,
+                    validation_tokens=validation_tokens,
+                ))
+            continue
+
+        if current_blocks and current_tokens + block_tokens > source_budget:
+            flush_current()
+        current_blocks.append(block)
+        current_tokens += block_tokens
+
+    flush_current()
     return windows
 
 
@@ -1076,9 +1555,15 @@ def _prompt_window_manifest_entry(window: dict) -> dict:
         "chapter_range": window.get("chapter_range"),
         "chunk_ids": window.get("chunk_ids", []),
         "estimated_tokens": window.get("estimated_tokens", 0),
+        "total_token_budget": window.get("total_token_budget", 0),
+        "source_budget_tokens": window.get("source_budget_tokens", 0),
+        "source_token_estimate": window.get("source_token_estimate", 0),
         "source_chars": window.get("source_chars", 0),
         "digest_token_estimate": window.get("digest_token_estimate", 0),
         "validation_token_estimate": window.get("validation_token_estimate", 0),
+        "schema_policy_reserve_tokens": window.get("schema_policy_reserve_tokens", 0),
+        "target_fill_ratio": window.get("target_fill_ratio", 0),
+        "fill_ratio": window.get("fill_ratio", 0),
         "split_reason": window.get("split_reason", ""),
         "source_span": window.get("source_span", {}),
     }
@@ -1099,6 +1584,112 @@ def _merge_prompt_outputs(outputs: list[dict]) -> dict:
             elif key not in merged or not merged.get(key):
                 merged[key] = value
     return merged
+
+
+_CROSS_VALIDATION_FIELDS = (
+    "duplicate_characters",
+    "duplicate_events",
+    "missing_major_characters",
+    "suspicious_groups",
+    "contradictory_aliases",
+    "event_merge_recommendations",
+    "warnings",
+)
+
+
+def _json_for_prompt(value: Any, token_budget: int) -> str:
+    text = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return _fit_text_to_token_budget(text, token_budget)
+
+
+def _normalize_cross_validation_artifact(payload: dict, import_run_id: str, window: dict | None = None) -> dict:
+    artifact: dict[str, Any] = {"import_run_id": import_run_id}
+    window_id = window.get("id") if isinstance(window, dict) else None
+    for field in _CROSS_VALIDATION_FIELDS:
+        values = payload.get(field, [])
+        if isinstance(values, str):
+            values = [values]
+        if not isinstance(values, list):
+            values = []
+        normalized_values: list[Any] = []
+        for value in values:
+            if isinstance(value, dict) and window_id:
+                normalized_values.append({"source_prompt_window_id": window_id, **value})
+            else:
+                normalized_values.append(value)
+        artifact[field] = normalized_values
+    return artifact
+
+
+def _merge_cross_validation_artifacts(existing: dict | None, incoming: dict | None, import_run_id: str) -> dict:
+    merged: dict[str, Any] = {"import_run_id": import_run_id}
+    for field in _CROSS_VALIDATION_FIELDS:
+        seen: set[str] = set()
+        merged[field] = []
+        for source in (existing or {}, incoming or {}):
+            values = source.get(field, []) if isinstance(source, dict) else []
+            if isinstance(values, str):
+                values = [values]
+            if not isinstance(values, list):
+                continue
+            for value in values:
+                key = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged[field].append(value)
+        # Keep the rolling summary bounded; full prompt outputs remain in window artifacts.
+        merged[field] = merged[field][-40:]
+    return merged
+
+
+async def _run_cross_validation_for_window(
+    llm: ChatOpenAI,
+    state: ImportState,
+    *,
+    window: dict,
+    digest: dict,
+    prompt_outputs: dict,
+    cross_validation: dict | None,
+) -> dict:
+    import_run_id = state.get("import_run_id") or state.get("import_run_manifest", {}).get("import_run_id") or "import"
+    prompt_template = W1_CROSS_VALIDATE_IMPORT + """
+
+## Actual Artifacts For This Review
+PROJECT_DIGEST_JSON:
+{project_digest_json}
+
+PREVIOUS_VALIDATION_SUMMARY_JSON:
+{previous_validation_summary_json}
+
+PROMPT_WINDOW_MANIFEST_JSON:
+{prompt_window_manifest_json}
+
+CHARACTER_CANDIDATES_JSON:
+{character_candidates_json}
+
+EVENT_CANDIDATES_JSON:
+{event_candidates_json}
+
+RELATIONSHIP_CANDIDATES_JSON:
+{relationship_candidates_json}
+
+SCENE_CANDIDATES_JSON:
+{scene_candidates_json}
+"""
+    rendered_state = {**state, "cross_validation": cross_validation or {}}
+    raw_artifact = await _invoke_json_prompt(
+        llm,
+        prompt_template,
+        project_digest_json=_fit_text_to_token_budget(str(digest.get("content", "")), _DIGEST_RESERVE_TOKENS),
+        previous_validation_summary_json=_fit_text_to_token_budget(_previous_validation_summary(rendered_state), _VALIDATION_RESERVE_TOKENS),
+        prompt_window_manifest_json=_json_for_prompt(_prompt_window_manifest_entry(window), 2_000),
+        character_candidates_json=_json_for_prompt(prompt_outputs.get("character", {}), 12_000),
+        event_candidates_json=_json_for_prompt(prompt_outputs.get("event", {}), 12_000),
+        relationship_candidates_json=_json_for_prompt(prompt_outputs.get("relationship", {}), 8_000),
+        scene_candidates_json=_json_for_prompt(prompt_outputs.get("scene", {}), 8_000),
+    )
+    return _normalize_cross_validation_artifact(raw_artifact, import_run_id, window)
 
 
 def _build_import_manifest(state: ImportState, text: str, chunks: list[dict]) -> dict:
@@ -1431,6 +2022,8 @@ async def node_split_chunks(state: ImportState) -> dict:
     }
     _write_import_artifact(state["project_path"], manifest["import_run_id"], "manifest.json", manifest)
 
+    source_language = _detect_language(text[:500])
+
     return {
         "chunks": chunks,
         "import_run_id": manifest["import_run_id"],
@@ -1601,7 +2194,7 @@ async def _legacy_node_process_chunks(state: ImportState) -> dict:
             })
 
         # Save checkpoint after EVERY chunk
-        completed = len([e for e in extractions if e.get("chunk_id") is not None])
+        completed = len(completed_ids)
         try:
             checkpoint = {
                 "project_path": project_path,
@@ -1679,6 +2272,7 @@ async def node_build_manuscript(state: ImportState) -> dict:
                 "title": hint,
                 "chunk_ids": [c["chunk_id"] for c in chapter_chunks],
                 "manuscript_content": content,
+                "orderIndex": len(manuscript_chapters),
             })
 
         return {"manuscript_chapters": _sort_manuscript_chapters(manuscript_chapters), "progress": 0.88}
@@ -1710,6 +2304,7 @@ async def node_build_manuscript(state: ImportState) -> dict:
             "title": hint,
             "chunk_ids": [e["chunk_id"] for e in chapter_extractions],
             "manuscript_content": content,
+            "orderIndex": len(manuscript_chapters2),
         })
 
     return {"manuscript_chapters": _sort_manuscript_chapters(manuscript_chapters2), "progress": 0.88}
@@ -2009,6 +2604,10 @@ def _timeline_lane_key(event: dict) -> tuple[str, str, str]:
     lane_hint = str(event.get("timelineLaneHint", "")).strip()
     fork_hint = str(event.get("forkMergeHint", "")).strip().lower()
     importance = float(event.get("importanceScore", 0) or 0)
+    if arc_id in _MAINLINE_ARC_HINTS and importance >= 65:
+        return ("root", "main", "Main Plot")
+    if arc_id in _SIDE_ARC_HINTS:
+        return ("arc", arc_id, lane_hint or arc_id.replace("_", " ").title())
     if arc_id and arc_id not in {"main", "main_arc", "root", "unknown"}:
         return ("arc", arc_id, lane_hint or arc_id.replace("_", " ").title())
     if lane_hint and _normal_key(lane_hint) not in {"mainarc", "mainplot", "maintimeline"}:
@@ -2068,11 +2667,14 @@ async def node_architect_timeline(state: ImportState) -> dict:
     root_branch_id = root_branch.get("id") if root_branch else "branch_import_main"
     imported_branches = [branch for branch in state.get("timeline_branches", []) if branch.get("id")]
     root_geometry = (root_branch or {}).get("geometry") or {}
+    _source_lang = state.get("source_language", "en")
+    _default_branch_name = "主时间线" if _source_lang == "zh" else "Main Timeline"
+    _default_branch_desc = "主叙事时间线" if _source_lang == "zh" else "Primary narrative timeline."
     timeline_branches: list[dict] = [{
         **(root_branch or {}),
         "id": root_branch_id,
-        "name": (root_branch or {}).get("name", "Imported Main Timeline"),
-        "description": (root_branch or {}).get("description", "Primary imported narrative timeline."),
+        "name": (root_branch or {}).get("name", _default_branch_name),
+        "description": (root_branch or {}).get("description", _default_branch_desc),
         "parentBranchId": (root_branch or {}).get("parentBranchId"),
         "forkEventId": (root_branch or {}).get("forkEventId"),
         "mergeEventId": (root_branch or {}).get("mergeEventId"),
@@ -2087,7 +2689,7 @@ async def node_architect_timeline(state: ImportState) -> dict:
         "rankStart": 0,
         "rankEnd": 0,
         "laneId": "lane_0_main",
-        "layoutHint": {"eventBudget": 24, "clusterOverflow": False, "densityClass": "normal"},
+        "layoutHint": {"eventBudget": 36, "clusterOverflow": False, "densityClass": "normal"},
     }]
 
     existing_event_keys = {
@@ -2098,8 +2700,8 @@ async def node_architect_timeline(state: ImportState) -> dict:
     seen_loose_signatures: dict[str, str] = {}
     canonical_events: dict[str, dict] = {}
     chunk_event_counts: dict[int, int] = {}
-    density_limit_per_chunk = 3
-    branch_event_budget = 24
+    density_limit_per_chunk = 8
+    branch_event_budget = 36
     prelim_events: dict[str, dict] = {}
 
     for event_id, event in events.items():
@@ -2132,7 +2734,12 @@ async def node_architect_timeline(state: ImportState) -> dict:
             continue
         chunk_id = int(event.get("chunk_id", 0) or 0)
         chunk_event_counts[chunk_id] = chunk_event_counts.get(chunk_id, 0) + 1
-        if chunk_event_counts[chunk_id] > density_limit_per_chunk and float(event.get("confidence", 0.7)) < 0.9:
+        event_importance = float(event.get("importanceScore", 0) or 0)
+        if (
+            chunk_event_counts[chunk_id] > density_limit_per_chunk
+            and float(event.get("confidence", 0.7)) < 0.88
+            and event_importance < 82
+        ):
             discarded_duplicates.append({"event_id": event_id, "title": title, "timelineClass": "scene_beat", "reason": "demoted by density policy"})
             continue
         signature = _event_signature(event)
@@ -2191,7 +2798,7 @@ async def node_architect_timeline(state: ImportState) -> dict:
     branch_defs: dict[str, dict] = {root_branch_id: timeline_branches[0]}
 
     def _ensure_branch(branch_id: str, name: str, reason: str, *, lane_key: str = "") -> None:
-        if branch_id in branch_defs or len(branch_defs) >= 7:
+        if branch_id in branch_defs or len(branch_defs) >= 10:
             return
         idx = len(branch_defs)
         branch = {
@@ -2219,7 +2826,7 @@ async def node_architect_timeline(state: ImportState) -> dict:
 
     for branch in imported_branches:
         branch_id = branch.get("id")
-        if branch_id and branch_id not in branch_defs and len(branch_defs) < 7:
+        if branch_id and branch_id not in branch_defs and len(branch_defs) < 10:
             idx = len(branch_defs)
             branch_defs[branch_id] = {
                 **branch,
@@ -2335,7 +2942,7 @@ async def node_architect_timeline(state: ImportState) -> dict:
         },
         "layout_hints": {
             "strategy": "semantic_branch_topology",
-            "max_branch_count": 7,
+            "max_branch_count": 10,
             "branch_lane_spacing": 140,
             "root_branch_policy": "mainline only for arc-level turning points or deterministic fallback",
         },
@@ -2418,7 +3025,20 @@ async def node_write_to_project(state: ImportState) -> dict:
     character_tags = state.get("character_tags", [])
     world_settings = state.get("world_settings", {})
     timeline_branches = state.get("timeline_branches", [])
-    world_containers = state.get("world_containers", [])
+    source_language = state.get("source_language", "en")
+    world_containers = list(state.get("world_containers", []))
+    existing_container_keys = {
+        str(container.get("importCategoryKey", "")).strip()
+        for container in world_containers
+        if str(container.get("importCategoryKey", "")).strip()
+    }
+    existing_container_ids = {str(container.get("id", "")).strip() for container in world_containers if str(container.get("id", "")).strip()}
+    for spec in _default_world_container_specs(source_language):
+        if spec["importCategoryKey"] in existing_container_keys or spec["id"] in existing_container_ids:
+            continue
+        world_containers.append({**spec, "sortOrder": len(world_containers)})
+        existing_container_keys.add(spec["importCategoryKey"])
+        existing_container_ids.add(spec["id"])
     proposals: list[dict] = list(state.get("proposals", []))
     errors: list[str] = list(state.get("errors", []))
 
@@ -2485,11 +3105,12 @@ async def node_write_to_project(state: ImportState) -> dict:
     ) or next((b["id"] for b in timeline_branches), None)
 
     if not default_branch_id:
+        _wtp_lang = source_language
         default_branch_id = f"branch_{uuid.uuid4().hex[:8]}"
         timeline_branches = [{
             "id": default_branch_id,
-            "name": "Main Timeline",
-            "description": "Primary narrative timeline",
+            "name": "主时间线" if _wtp_lang == "zh" else "Main Timeline",
+            "description": "主叙事时间线" if _wtp_lang == "zh" else "Primary narrative timeline",
             "mode": "root",
             "color": "#38bdf8",
             "sortOrder": 0,
@@ -2588,10 +3209,33 @@ async def node_write_to_project(state: ImportState) -> dict:
             errors.append(f"Failed to propose event {eid}: {str(e)}")
 
     # Write world item proposals
+    # Route by semantic category, not just container type. This prevents
+    # organizations/rules/items from collapsing into the first map/notebook.
+    container_by_key: dict[str, str] = {}
+    for container in world_containers:
+        container_id = str(container.get("id", "")).strip()
+        if not container_id:
+            continue
+        key = str(container.get("importCategoryKey", "")).strip()
+        if not key:
+            key = _world_container_key(container.get("category") or container.get("name") or container.get("type"))
+        container_by_key.setdefault(key, container_id)
+    fallback_world_container_id = (
+        container_by_key.get("concepts")
+        or container_by_key.get("locations")
+        or next(iter(container_by_key.values()), "")
+    )
+
+    def _resolve_container_id(name: str, cat: str) -> tuple[str, str]:
+        resolved_category = _normalize_world_category(name, cat)
+        container_key = _world_container_key(resolved_category)
+        return resolved_category, container_by_key.get(container_key) or fallback_world_container_id
+
     world_detailed = registry.get("world_detailed", {})
     for name, category in registry.get("world", {}).items():
         wid = f"world_{uuid.uuid4().hex[:8]}"
         detail = world_detailed.get(name, {})
+        resolved_category, container_id = _resolve_container_id(name, detail.get("category", category))
         op = {
             "op_type": "create",
             "entity_type": "world_item",
@@ -2599,14 +3243,16 @@ async def node_write_to_project(state: ImportState) -> dict:
             "data": {
                 "id": wid,
                 "name": name,
-                "category": detail.get("category", category),
+                "category": resolved_category,
+                "type": resolved_category,
+                "containerId": container_id,
                 "description": detail.get("description", ""),
                 "attributes": detail.get("attributes", []),
             },
             "source_workflow": "W1_import",
             "confidence": 0.70,
             "auto_apply": False,
-            "depends_on": [],
+            "depends_on": [container_id] if container_id else [],
         }
         try:
             proposal = await s2_memory_writer.propose_write(op, str(project_path))
@@ -2732,7 +3378,7 @@ async def node_write_to_project(state: ImportState) -> dict:
     # ── Chapter proposals ─────────────────────────────────────────────────────
     # manuscript_chapters are assembled by node_build_manuscript from chapter_hint grouping.
     # Each one becomes a Chapter entity proposal for user review.
-    for mc in _sort_manuscript_chapters(list(state.get("manuscript_chapters", []))):
+    for idx, mc in enumerate(_sort_manuscript_chapters(list(state.get("manuscript_chapters", [])))):
         chap_id = mc.get("chapter_id") or f"chap_{uuid.uuid4().hex[:8]}"
         title = mc.get("title", "Untitled Chapter").strip()
         if not title:
@@ -2744,6 +3390,9 @@ async def node_write_to_project(state: ImportState) -> dict:
             "data": {
                 "id": chap_id,
                 "title": title,
+                "orderIndex": idx,
+                "content": mc.get("manuscript_content", ""),
+                "manuscriptContent": mc.get("manuscript_content", ""),
                 "summary": "",
                 "goal": "",
                 "notes": f"Imported from: {state.get('source_file_path', '')}",
@@ -3059,12 +3708,16 @@ async def node_infer_world_settings(state: ImportState) -> dict:
     if not text_sample:
         return {"world_settings": {}, "timeline_branches": [], "world_containers": [], "errors": errors, "progress": 0.91}
 
+    _infer_lang = state.get("source_language", "en")
+    _lang_label = "Chinese (Simplified)" if _infer_lang == "zh" else "English"
+
     llm = _get_llm(state)
     try:
         result = await _invoke_json_prompt(
             llm,
             W1_INFER_WORLD_SETTINGS,
             text_sample=text_sample,
+            source_language_label=_lang_label,
         )
     except Exception as e:
         errors.append(f"World settings inference failed: {str(e)}")
@@ -3081,8 +3734,10 @@ async def node_infer_world_settings(state: ImportState) -> dict:
     }
 
     allowed_container_types = {"notebook", "graph", "timeline", "map"}
+    default_container_specs = _default_world_container_specs(_infer_lang)
     world_containers: list[dict] = []
     used_container_ids: set[str] = set()
+    used_container_keys: set[str] = set()
     for index, container in enumerate(result.get("suggested_world_containers", [])):
         name = str(container.get("name", "")).strip()
         if not name:
@@ -3090,6 +3745,10 @@ async def node_infer_world_settings(state: ImportState) -> dict:
         container_type = str(container.get("type", "notebook")).strip().lower() or "notebook"
         if container_type not in allowed_container_types:
             container_type = "notebook"
+        import_key = str(container.get("importCategoryKey", "")).strip() or _world_container_key(
+            container.get("category") or name
+        )
+        used_container_keys.add(import_key)
         world_containers.append({
             "id": container.get("id") or _stable_generated_id("cont", name, used_container_ids),
             "name": name,
@@ -3097,7 +3756,14 @@ async def node_infer_world_settings(state: ImportState) -> dict:
             "isDefault": bool(container.get("is_default", container.get("isDefault", False))),
             "sortOrder": index,
             "description": str(container.get("description", "")).strip(),
+            "importCategoryKey": import_key,
         })
+    for spec in default_container_specs:
+        key = spec["importCategoryKey"]
+        if key in used_container_keys:
+            continue
+        world_containers.append({**spec, "sortOrder": len(world_containers)})
+        used_container_keys.add(key)
 
     raw_branches = result.get("inferred_timeline_branches", [])
     timeline_branches: list[dict] = []
@@ -3157,11 +3823,13 @@ async def node_process_chunks(state: ImportState) -> dict:
         "characters": {k: dict(v) for k, v in registry_seed.get("characters", {}).items()},
         "events": {k: dict(v) for k, v in registry_seed.get("events", {}).items()},
         "world": dict(registry_seed.get("world", {})),
+        "world_detailed": {k: dict(v) for k, v in registry_seed.get("world_detailed", {}).items()},
     }
     extractions: list[dict] = list(state.get("chunk_extractions", []))
     raw_relationships: list[dict] = list(state.get("raw_relationships", []))
     errors: list[str] = list(state.get("errors", []))
     project_path = state["project_path"]
+    source_language = state.get("source_language", "en")
     checkpoint_path = state.get("checkpoint_path", "")
     completed_ids: set[int] = {e.get("chunk_id", -1) for e in extractions}
     total = len(chunks)
@@ -3171,8 +3839,14 @@ async def node_process_chunks(state: ImportState) -> dict:
     chunk_index_by_id = {chunk.get("chunk_id", i): i for i, chunk in enumerate(chunks)}
     windows_by_chunk: dict[int, list[dict]] = {}
     for window in state.get("prompt_windows", []):
-        for window_chunk_id in window.get("chunk_ids", []):
-            windows_by_chunk.setdefault(int(window_chunk_id), []).append(window)
+        window_chunk_ids = [int(window_chunk_id) for window_chunk_id in window.get("chunk_ids", [])]
+        if not window_chunk_ids:
+            continue
+        # A packed window must run exactly once. Anchor it to the first not-yet
+        # completed source chunk, otherwise resume paths would repeat extraction.
+        anchor_id = next((window_chunk_id for window_chunk_id in window_chunk_ids if window_chunk_id not in completed_ids), window_chunk_ids[0])
+        windows_by_chunk.setdefault(anchor_id, []).append(window)
+    cross_validation: dict = dict(state.get("cross_validation") or {})
 
     for chunk in chunks:
         chunk_id = chunk.get("chunk_id", 0)
@@ -3184,6 +3858,15 @@ async def node_process_chunks(state: ImportState) -> dict:
         if not prompt_windows:
             digest = state.get("project_structure_digest") or _build_project_structure_digest(state, state.get("import_run_id", "import"))
             prompt_windows = _build_prompt_windows(state, [chunk], digest)
+        else:
+            digest = state.get("project_structure_digest") or _build_project_structure_digest(state, state.get("import_run_id", "import"))
+        covered_chunk_ids = sorted({
+            int(window_chunk_id)
+            for prompt_window in prompt_windows
+            for window_chunk_id in prompt_window.get("chunk_ids", [chunk_id])
+        }, key=lambda value: chunk_index_by_id.get(value, value))
+        if not covered_chunk_ids:
+            covered_chunk_ids = [int(chunk_id)]
         chunk_notes: list[str] = []
         chunk_raw_relationships: list[dict] = []
         world_mentions_detailed: list[dict] = []
@@ -3197,7 +3880,10 @@ async def node_process_chunks(state: ImportState) -> dict:
         scene_hint = chunk.get("chapter_hint") or ""
 
         try:
-            cached_outputs = _read_chunk_prompt_cache(state, chunk)
+            is_packed_window = any(len(prompt_window.get("chunk_ids", [])) > 1 for prompt_window in prompt_windows)
+            # Use window-level cache for the compiler path so cross-validation
+            # still runs once per prompt window, including single-chapter windows.
+            cached_outputs = None
             if cached_outputs:
                 char_data = cached_outputs.get("character", {})
                 event_data = cached_outputs.get("event", {})
@@ -3231,6 +3917,45 @@ async def node_process_chunks(state: ImportState) -> dict:
                     return result
 
                 for prompt_window in prompt_windows:
+                    prompt_window = _refresh_prompt_window_text(
+                        {**state, "cross_validation": cross_validation},
+                        prompt_window,
+                        digest,
+                    )
+                    window_cached_outputs = _read_prompt_window_cache(state, prompt_window)
+                    if window_cached_outputs:
+                        window_outputs["character"].append(window_cached_outputs.get("character", {}))
+                        window_outputs["event"].append(window_cached_outputs.get("event", {}))
+                        window_outputs["world"].append(window_cached_outputs.get("world", {}))
+                        window_outputs["relationship"].append(window_cached_outputs.get("relationship", {}))
+                        window_outputs["scene"].append(window_cached_outputs.get("scene", {}))
+                        chunk_notes.append(f"Loaded Scout prompt outputs from packed window cache {prompt_window.get('id')}.")
+                        try:
+                            incoming_cross_validation = await _run_cross_validation_for_window(
+                                llm,
+                                state,
+                                window=prompt_window,
+                                digest=digest,
+                                prompt_outputs=window_cached_outputs,
+                                cross_validation=cross_validation,
+                            )
+                            cross_validation = _merge_cross_validation_artifacts(
+                                cross_validation,
+                                incoming_cross_validation,
+                                state.get("import_run_id") or "import",
+                            )
+                            _write_import_artifact(
+                                state["project_path"],
+                                state.get("import_run_id") or "import",
+                                "cross_validation.json",
+                                cross_validation,
+                            )
+                        except Exception as validation_exc:
+                            warning = f"Cross-validation failed in cached {prompt_window.get('id', 'window')}: {validation_exc}"
+                            errors.append(warning)
+                            chunk_notes.append(warning)
+                        continue
+
                     prompt_chunk_content = str(prompt_window.get("text", ""))
                     results = await asyncio.gather(
                         _invoke_json_prompt(
@@ -3281,6 +4006,42 @@ async def node_process_chunks(state: ImportState) -> dict:
                     window_outputs["world"].append(_coerce_result(results, 2, "world", prompt_window))
                     window_outputs["relationship"].append(_coerce_result(results, 3, "relationship", prompt_window))
                     window_outputs["scene"].append(_coerce_result(results, 4, "scene", prompt_window))
+                    prompt_outputs_for_window = {
+                        "character": window_outputs["character"][-1],
+                        "event": window_outputs["event"][-1],
+                        "world": window_outputs["world"][-1],
+                        "relationship": window_outputs["relationship"][-1],
+                        "scene": window_outputs["scene"][-1],
+                    }
+                    if not any(
+                        failure.get("prompt_window_id") == prompt_window.get("id")
+                        for failure in prompt_failures
+                    ):
+                        _write_prompt_window_cache(state, prompt_window, prompt_outputs_for_window)
+                        try:
+                            incoming_cross_validation = await _run_cross_validation_for_window(
+                                llm,
+                                state,
+                                window=prompt_window,
+                                digest=digest,
+                                prompt_outputs=prompt_outputs_for_window,
+                                cross_validation=cross_validation,
+                            )
+                            cross_validation = _merge_cross_validation_artifacts(
+                                cross_validation,
+                                incoming_cross_validation,
+                                state.get("import_run_id") or "import",
+                            )
+                            _write_import_artifact(
+                                state["project_path"],
+                                state.get("import_run_id") or "import",
+                                "cross_validation.json",
+                                cross_validation,
+                            )
+                        except Exception as validation_exc:
+                            warning = f"Cross-validation failed in {prompt_window.get('id', 'window')}: {validation_exc}"
+                            errors.append(warning)
+                            chunk_notes.append(warning)
 
                 char_data = _merge_prompt_outputs(window_outputs["character"])
                 event_data = _merge_prompt_outputs(window_outputs["event"])
@@ -3296,7 +4057,7 @@ async def node_process_chunks(state: ImportState) -> dict:
                 }
                 if prompt_failures:
                     _write_chunk_prompt_failure(state, chunk, prompt_failures)
-                else:
+                elif not is_packed_window:
                     _write_chunk_prompt_cache(state, chunk, prompt_outputs)
 
             for update in char_data.get("existing_character_updates", []):
@@ -3347,6 +4108,17 @@ async def node_process_chunks(state: ImportState) -> dict:
             for nc in char_data.get("new_characters", []):
                 name = str(nc.get("canonical_name", "")).strip()
                 if not name:
+                    continue
+                if _is_world_entity_candidate(name, nc):
+                    _add_world_candidate_to_registry(
+                        registry,
+                        name,
+                        _normalize_world_category(name, "organization"),
+                        str(nc.get("summary") or nc.get("role_in_story") or "").strip(),
+                        float(nc.get("confidence", 0.72) or 0.72),
+                    )
+                    world_mentions.append(name)
+                    world_mentions_detailed.append(registry.get("world_detailed", {}).get(name, {"name": name}))
                     continue
 
                 matched_id = _resolve_character_id(name, registry)
@@ -3429,10 +4201,70 @@ async def node_process_chunks(state: ImportState) -> dict:
                 }))
                 new_chars.append(registry["characters"][char_id])
 
-            # Enforce confidence floor and density cap per chunk
+            # Seed thin character cards from relationship/event/scene evidence
+            # before event resolution, so missing-but-important names do not
+            # vanish just because the character scout was conservative.
+            for rel in relationship_data.get("relationships", []):
+                for field in ("source_character_name", "target_character_name", "source_name", "target_name", "source", "target"):
+                    candidate_name = str(rel.get(field, "")).strip()
+                    if candidate_name:
+                        seeded = _seed_character_from_name(
+                            registry,
+                            candidate_name,
+                            int(chunk_id),
+                            source_language,
+                            role_hint=str(rel.get("description") or rel.get("type") or "relationship evidence")[:100],
+                            confidence=float(rel.get("confidence", 0.72) or 0.72),
+                        )
+                        if seeded:
+                            new_chars.append(seeded)
+            for ev in event_data.get("events", []):
+                for candidate_name in ev.get("character_names", []):
+                    seeded = _seed_character_from_name(
+                        registry,
+                        str(candidate_name).strip(),
+                        int(chunk_id),
+                        source_language,
+                        role_hint=str(ev.get("title") or "timeline evidence")[:100],
+                        confidence=max(0.7, float(ev.get("confidence", 0.72) or 0.72) - 0.05),
+                    )
+                    if seeded:
+                        new_chars.append(seeded)
+            for scene in scene_data.get("scenes", []):
+                for candidate_name in scene.get("character_names", []):
+                    seeded = _seed_character_from_name(
+                        registry,
+                        str(candidate_name).strip(),
+                        int(chunk_id),
+                        source_language,
+                        role_hint=str(scene.get("title") or "scene evidence")[:100],
+                        confidence=max(0.68, float(scene.get("confidence", 0.72) or 0.72) - 0.08),
+                    )
+                    if seeded:
+                        new_chars.append(seeded)
+
+            for missing in cross_validation.get("missing_major_characters", []) if isinstance(cross_validation, dict) else []:
+                missing_name = str(missing.get("name_or_alias") or missing.get("name") or "").strip()
+                if not missing_name:
+                    continue
+                seeded = _seed_character_from_name(
+                    registry,
+                    missing_name,
+                    int(chunk_id),
+                    source_language,
+                    role_hint=str(missing.get("observed_role") or missing.get("suggested_groupKey") or "cross-validation missing major")[:100],
+                    confidence=max(0.72, float(missing.get("confidence", 0.72) or 0.72)),
+                )
+                if seeded:
+                    new_chars.append(seeded)
+
+            _remove_world_entities_from_character_registry(registry)
+
+            # Enforce confidence floor and density cap per packed source window.
             raw_events = event_data.get("events", [])
             raw_events = [e for e in raw_events if float(e.get("confidence", 0)) >= 0.75]
-            raw_events = sorted(raw_events, key=lambda e: float(e.get("confidence", 0)), reverse=True)[:3]
+            event_cap = min(24, max(8, len(covered_chunk_ids) * 4))
+            raw_events = sorted(raw_events, key=_importance_sort_value, reverse=True)[:event_cap]
 
             for ev in raw_events:
                 event_id = f"event_{uuid.uuid4().hex[:8]}"
@@ -3473,32 +4305,26 @@ async def node_process_chunks(state: ImportState) -> dict:
                 name = str(wm.get("name", "")).strip()
                 if not name:
                     continue
-                category = str(wm.get("category", "concept")).strip() or "concept"
+                category = _normalize_world_category(name, str(wm.get("category", "concept")).strip() or "concept")
                 description = str(wm.get("description", "")).strip()
-                if name not in registry.get("world", {}):
-                    registry["world"][name] = category
-                # Also store full detail in world_detailed for description passthrough
-                if "world_detailed" not in registry:
-                    registry["world_detailed"] = {}
-                if name not in registry["world_detailed"]:
-                    registry["world_detailed"][name] = {
-                        "name": name,
-                        "category": category,
-                        "description": description,
-                        "container_hint": str(wm.get("container_hint", "")).strip(),
-                        "attributes": wm.get("attributes", []),
-                        "confidence": float(wm.get("confidence", 0.7)),
-                    }
-                elif description and not registry["world_detailed"][name].get("description"):
-                    registry["world_detailed"][name]["description"] = description
+                _add_world_candidate_to_registry(
+                    registry,
+                    name,
+                    category,
+                    description,
+                    float(wm.get("confidence", 0.7) or 0.7),
+                )
+                detail = registry["world_detailed"][name]
+                if wm.get("attributes"):
+                    detail["attributes"] = wm.get("attributes", [])
                 world_mentions.append(name)
                 world_mentions_detailed.append({
                     "name": name,
-                    "category": category,
-                    "description": description,
-                    "container_hint": str(wm.get("container_hint", "")).strip(),
-                    "attributes": wm.get("attributes", []),
-                    "confidence": float(wm.get("confidence", 0.7)),
+                    "category": detail.get("category", category),
+                    "description": detail.get("description", description),
+                    "container_hint": detail.get("container_hint", _world_container_key(category)),
+                    "attributes": detail.get("attributes", []),
+                    "confidence": float(detail.get("confidence", 0.7) or 0.7),
                 })
 
             for rel in relationship_data.get("relationships", []):
@@ -3555,19 +4381,23 @@ async def node_process_chunks(state: ImportState) -> dict:
                     "confidence": float(scene.get("confidence", 0.7)),
                 })
 
-            extractions.append({
-                "chunk_id": chunk_id,
-                "new_characters": new_chars,
-                "updated_aliases": alias_updates,
-                "events": events,
-                "world_mentions": world_mentions,
-                "world_mentions_detailed": world_mentions_detailed,
-                "raw_relationships": chunk_raw_relationships,
-                "scenes": scenes,
-                "chapter_hint": chapter_hint,
-                "manuscript_content": chunk.get("manuscript_content", chunk_content),
-                "notes": chunk_notes,
-            })
+            for covered_chunk_id in covered_chunk_ids:
+                covered_chunk = chunks[chunk_index_by_id.get(covered_chunk_id, 0)] if chunks else chunk
+                is_primary_chunk = covered_chunk_id == chunk_id
+                extractions.append({
+                    "chunk_id": covered_chunk_id,
+                    "new_characters": new_chars if is_primary_chunk else [],
+                    "updated_aliases": alias_updates if is_primary_chunk else [],
+                    "events": events if is_primary_chunk else [],
+                    "world_mentions": world_mentions if is_primary_chunk else [],
+                    "world_mentions_detailed": world_mentions_detailed if is_primary_chunk else [],
+                    "raw_relationships": chunk_raw_relationships if is_primary_chunk else [],
+                    "scenes": scenes if is_primary_chunk else [],
+                    "chapter_hint": covered_chunk.get("chapter_hint") or chapter_hint,
+                    "manuscript_content": covered_chunk.get("manuscript_content", covered_chunk.get("content", "")),
+                    "notes": chunk_notes if is_primary_chunk else [f"Covered by packed prompt window anchored at chunk {chunk_id}."],
+                })
+                completed_ids.add(covered_chunk_id)
 
         except Exception as e:
             errors.append(f"Chunk {chunk_id} failed: {str(e)}")
@@ -3620,6 +4450,7 @@ async def node_process_chunks(state: ImportState) -> dict:
                 "entity_registry": registry,
                 "chunk_extractions": extractions,
                 "raw_relationships": raw_relationships,
+                "cross_validation": cross_validation,
                 "started_at": datetime.now(timezone.utc).isoformat(),
                 "last_updated": datetime.now(timezone.utc).isoformat(),
             }
@@ -3644,12 +4475,14 @@ async def node_process_chunks(state: ImportState) -> dict:
             pause_event.clear()
             await pause_event.wait()
 
+    completed = len(completed_ids)
     progress = 0.1 + (0.7 * (completed / max(total, 1)))
     return {
         "chunks": chunks,
         "entity_registry": registry,
         "chunk_extractions": extractions,
         "raw_relationships": raw_relationships,
+        "cross_validation": cross_validation,
         "errors": errors,
         "progress": progress,
     }
