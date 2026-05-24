@@ -204,6 +204,7 @@ class ImportState(TypedDict, total=False):
     import_mode: Literal["import_content_only", "import_all"]
     import_run_id: str
     prompt_profile: PromptProfile
+    source_language: str  # ISO 639-1 code detected from source text, e.g. "zh" or "en"
     context: dict
     chunks: List["Chunk"]
     import_run_manifest: ImportRunManifest

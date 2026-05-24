@@ -501,6 +501,14 @@ def _sort_manuscript_chapters(chapters: list[dict]) -> list[dict]:
     return sorted(chapters, key=_chapter_sort_key)
 
 
+def _detect_language(sample: str) -> str:
+    """Return ISO 639-1 language code inferred from a short text sample."""
+    if not sample:
+        return "en"
+    cjk_count = sum(1 for c in sample if '一' <= c <= '鿿')
+    return "zh" if cjk_count / max(len(sample), 1) >= 0.3 else "en"
+
+
 def _tag_color(index: int) -> str:
     """Return a deterministic fallback color for generated tags."""
     palette = [
@@ -1646,6 +1654,8 @@ async def node_split_chunks(state: ImportState) -> dict:
     }
     _write_import_artifact(state["project_path"], manifest["import_run_id"], "manifest.json", manifest)
 
+    source_language = _detect_language(text[:500])
+
     return {
         "chunks": chunks,
         "import_run_id": manifest["import_run_id"],
@@ -1653,6 +1663,7 @@ async def node_split_chunks(state: ImportState) -> dict:
         "import_run_manifest": manifest,
         "project_structure_digest": digest,
         "prompt_windows": prompt_windows,
+        "source_language": source_language,
         "progress": 0.1,
     }
 
@@ -2282,11 +2293,14 @@ async def node_architect_timeline(state: ImportState) -> dict:
     root_branch_id = root_branch.get("id") if root_branch else "branch_import_main"
     imported_branches = [branch for branch in state.get("timeline_branches", []) if branch.get("id")]
     root_geometry = (root_branch or {}).get("geometry") or {}
+    _source_lang = state.get("source_language", "en")
+    _default_branch_name = "主时间线" if _source_lang == "zh" else "Main Timeline"
+    _default_branch_desc = "主叙事时间线" if _source_lang == "zh" else "Primary narrative timeline."
     timeline_branches: list[dict] = [{
         **(root_branch or {}),
         "id": root_branch_id,
-        "name": (root_branch or {}).get("name", "Imported Main Timeline"),
-        "description": (root_branch or {}).get("description", "Primary imported narrative timeline."),
+        "name": (root_branch or {}).get("name", _default_branch_name),
+        "description": (root_branch or {}).get("description", _default_branch_desc),
         "parentBranchId": (root_branch or {}).get("parentBranchId"),
         "forkEventId": (root_branch or {}).get("forkEventId"),
         "mergeEventId": (root_branch or {}).get("mergeEventId"),
@@ -2699,11 +2713,12 @@ async def node_write_to_project(state: ImportState) -> dict:
     ) or next((b["id"] for b in timeline_branches), None)
 
     if not default_branch_id:
+        _wtp_lang = state.get("source_language", "en")
         default_branch_id = f"branch_{uuid.uuid4().hex[:8]}"
         timeline_branches = [{
             "id": default_branch_id,
-            "name": "Main Timeline",
-            "description": "Primary narrative timeline",
+            "name": "主时间线" if _wtp_lang == "zh" else "Main Timeline",
+            "description": "主叙事时间线" if _wtp_lang == "zh" else "Primary narrative timeline",
             "mode": "root",
             "color": "#38bdf8",
             "sortOrder": 0,
@@ -3299,12 +3314,16 @@ async def node_infer_world_settings(state: ImportState) -> dict:
     if not text_sample:
         return {"world_settings": {}, "timeline_branches": [], "world_containers": [], "errors": errors, "progress": 0.91}
 
+    _infer_lang = state.get("source_language", "en")
+    _lang_label = "Chinese (Simplified)" if _infer_lang == "zh" else "English"
+
     llm = _get_llm(state)
     try:
         result = await _invoke_json_prompt(
             llm,
             W1_INFER_WORLD_SETTINGS,
             text_sample=text_sample,
+            source_language_label=_lang_label,
         )
     except Exception as e:
         errors.append(f"World settings inference failed: {str(e)}")
