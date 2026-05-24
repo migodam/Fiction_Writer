@@ -44,6 +44,7 @@ from sidecar.prompts.w1_prompts import (
     W1_EXTRACT_SCENE_SUMMARIES,
     W1_EXTRACT_WORLD_DEEP,
     W1_EXTRACT_WORLD,
+    W1_CROSS_VALIDATE_IMPORT,
     W1_SYNTHESIZE_RELATIONSHIPS,
     W1_CLASSIFY_CHARACTER_TAGS,
     W1_INFER_WORLD_SETTINGS,
@@ -553,6 +554,10 @@ def _chunk_cache_path(project_path: str | Path, import_run_id: str, chunk_id: in
     return _artifact_dir(project_path, import_run_id) / "chunks" / f"chunk_{chunk_id}.json"
 
 
+def _prompt_window_cache_path(project_path: str | Path, import_run_id: str, window_id: str) -> Path:
+    return _artifact_dir(project_path, import_run_id) / "windows" / f"{window_id}.json"
+
+
 def _read_chunk_prompt_cache(state: ImportState, chunk: dict) -> dict | None:
     import_run_id = state.get("import_run_id")
     if not import_run_id:
@@ -567,7 +572,7 @@ def _read_chunk_prompt_cache(state: ImportState, chunk: dict) -> dict | None:
         return None
     if payload.get("prompt_profile") != (state.get("prompt_profile") or "balanced"):
         return None
-    if payload.get("prompt_window_contract") != "chapter_window_v1":
+    if payload.get("prompt_window_contract") not in {"chapter_window_v1", "packed_chapter_window_v2"}:
         return None
     prompts = payload.get("prompt_outputs")
     return prompts if isinstance(prompts, dict) else None
@@ -588,6 +593,54 @@ def _write_chunk_prompt_cache(state: ImportState, chunk: dict, prompt_outputs: d
             "chunk_hash": _sha256_text(raw),
             "prompt_profile": state.get("prompt_profile") or "balanced",
             "prompt_window_contract": "chapter_window_v1",
+            "written_at": _now_iso(),
+            "prompt_outputs": prompt_outputs,
+        }, f, ensure_ascii=False, indent=2)
+
+
+def _read_prompt_window_cache(state: ImportState, window: dict) -> dict | None:
+    import_run_id = state.get("import_run_id")
+    window_id = str(window.get("id") or "")
+    if not import_run_id or not window_id:
+        return None
+    path = _prompt_window_cache_path(state["project_path"], import_run_id, window_id)
+    payload = _safe_read_json(path, None)
+    if not isinstance(payload, dict):
+        return None
+    source_text = "".join(
+        str(block.get("text", ""))
+        for block in window.get("source_blocks", [])
+        if isinstance(block, dict)
+    )
+    if payload.get("source_hash") != _sha256_text(source_text):
+        return None
+    if payload.get("prompt_profile") != (state.get("prompt_profile") or "balanced"):
+        return None
+    if payload.get("prompt_window_contract") != "packed_chapter_window_v2":
+        return None
+    prompts = payload.get("prompt_outputs")
+    return prompts if isinstance(prompts, dict) else None
+
+
+def _write_prompt_window_cache(state: ImportState, window: dict, prompt_outputs: dict) -> None:
+    import_run_id = state.get("import_run_id")
+    window_id = str(window.get("id") or "")
+    if not import_run_id or not window_id:
+        return
+    source_text = "".join(
+        str(block.get("text", ""))
+        for block in window.get("source_blocks", [])
+        if isinstance(block, dict)
+    )
+    path = _prompt_window_cache_path(state["project_path"], import_run_id, window_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({
+            "prompt_window_id": window_id,
+            "chunk_ids": window.get("chunk_ids", []),
+            "source_hash": _sha256_text(source_text),
+            "prompt_profile": state.get("prompt_profile") or "balanced",
+            "prompt_window_contract": "packed_chapter_window_v2",
             "written_at": _now_iso(),
             "prompt_outputs": prompt_outputs,
         }, f, ensure_ascii=False, indent=2)
@@ -627,6 +680,7 @@ _DEEP_PROMPT_TOTAL_TOKEN_BUDGET = 256_000
 _SCHEMA_POLICY_RESERVE_TOKENS = 24_000
 _DIGEST_RESERVE_TOKENS = 24_000
 _VALIDATION_RESERVE_TOKENS = 8_000
+_PACKED_WINDOW_TARGET_FILL_RATIO = 0.88
 
 
 def _estimate_tokens(text: str) -> int:
@@ -833,6 +887,20 @@ def _build_project_structure_digest(state: ImportState, import_run_id: str) -> d
 
 
 def _previous_validation_summary(state: ImportState) -> str:
+    cross_validation = state.get("cross_validation") or {}
+    if cross_validation:
+        payload = {
+            "status": "rolling_cross_validation",
+            "duplicate_characters": cross_validation.get("duplicate_characters", [])[:12],
+            "duplicate_events": cross_validation.get("duplicate_events", [])[:12],
+            "missing_major_characters": cross_validation.get("missing_major_characters", [])[:12],
+            "suspicious_groups": cross_validation.get("suspicious_groups", [])[:12],
+            "contradictory_aliases": cross_validation.get("contradictory_aliases", [])[:12],
+            "event_merge_recommendations": cross_validation.get("event_merge_recommendations", [])[:12],
+            "warnings": cross_validation.get("warnings", [])[:12],
+        }
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
     report = state.get("import_review_report") or {}
     if not report:
         return json.dumps({"status": "none", "warnings": [], "errors": []}, separators=(",", ":"))
@@ -891,6 +959,152 @@ def _split_text_by_paragraph_budget(text: str, token_budget: int) -> list[str]:
     return windows or [text]
 
 
+def _chapter_range_label(blocks: list[dict]) -> str:
+    hints = [str(block.get("chapter_hint") or f"Segment {block.get('chunk_id', 0)}") for block in blocks]
+    if not hints:
+        return "Empty window"
+    if len(hints) == 1:
+        return hints[0]
+    return f"{hints[0]} – {hints[-1]}"
+
+
+def _render_prompt_window_text(
+    *,
+    digest_content: str,
+    validation_content: str,
+    total_budget: int,
+    source_budget: int,
+    source_blocks: list[dict],
+) -> str:
+    source_sections: list[str] = []
+    for block in source_blocks:
+        chapter_hint = str(block.get("chapter_hint") or f"Segment {block.get('chunk_id', 0)}")
+        source_sections.append(
+            f"### CHAPTER {block.get('chunk_id', '')}: {chapter_hint}\n"
+            f"{block.get('text', '')}"
+        )
+    header = (
+        "PROJECT_STRUCTURE_DIGEST:\n"
+        f"{digest_content}\n\n"
+        "PREVIOUS_VALIDATION_SUMMARY:\n"
+        f"{validation_content}\n\n"
+        "PROMPT_WINDOW_POLICY:\n"
+        f"total_estimated_token_budget={total_budget}; "
+        f"schema_policy_reserve_tokens={_SCHEMA_POLICY_RESERVE_TOKENS}; "
+        f"source_budget_tokens={source_budget}; "
+        "packed_chapter_window=true; preserve complete chapters; "
+        "only paragraph-split a single oversized chapter; every extracted item must carry chapterRange/source chapter evidence.\n\n"
+        f"SOURCE_CHAPTERS [{_chapter_range_label(source_blocks)}]:\n"
+    )
+    return header + "\n\n".join(source_sections)
+
+
+def _source_blocks_from_chunks(chunks: list[dict]) -> list[dict]:
+    blocks: list[dict] = []
+    for chunk in chunks:
+        chunk_id = int(chunk.get("chunk_id", len(blocks)) or 0)
+        source_text = chunk.get("manuscript_content") or chunk.get("raw_content") or chunk.get("content", "")
+        blocks.append({
+            "chunk_id": chunk_id,
+            "chapter_hint": str(chunk.get("chapter_hint") or f"Segment {chunk_id + 1}"),
+            "text": source_text,
+            "source_tokens": _estimate_tokens(source_text),
+            "source_chars": len(source_text),
+            "source_span": chunk.get("source_span") or {
+                "start": int(chunk.get("char_start", 0) or 0),
+                "end": int(chunk.get("char_start", 0) or 0) + len(source_text),
+            },
+        })
+    return blocks
+
+
+def _make_prompt_window(
+    state: ImportState,
+    *,
+    source_blocks: list[dict],
+    part_index: int,
+    split_reason: str,
+    digest_content: str,
+    validation_content: str,
+    total_budget: int,
+    source_budget: int,
+    digest_tokens: int,
+    validation_tokens: int,
+) -> dict:
+    window_text = _render_prompt_window_text(
+        digest_content=digest_content,
+        validation_content=validation_content,
+        total_budget=total_budget,
+        source_budget=source_budget,
+        source_blocks=source_blocks,
+    )
+    chunk_ids = [int(block.get("chunk_id", 0) or 0) for block in source_blocks]
+    source_spans = [block.get("source_span", {}) for block in source_blocks]
+    source_start = min([int(span.get("start", 0) or 0) for span in source_spans] or [0])
+    source_end = max([int(span.get("end", source_start) or source_start) for span in source_spans] or [source_start])
+    source_tokens = sum(int(block.get("source_tokens", 0) or 0) for block in source_blocks)
+    source_chars = sum(int(block.get("source_chars", 0) or 0) for block in source_blocks)
+    fill_ratio = round(source_tokens / max(source_budget, 1), 4)
+    return {
+        "id": _stable_id(
+            "pwin",
+            state.get("import_run_id") or "import",
+            ",".join(str(chunk_id) for chunk_id in chunk_ids),
+            part_index,
+            _sha256_text("".join(str(block.get("text", "")) for block in source_blocks))[:16],
+        ),
+        "chunk_ids": chunk_ids,
+        "chapter_range": _chapter_range_label(source_blocks),
+        "text": window_text,
+        "source_blocks": source_blocks,
+        "estimated_tokens": _estimate_tokens(window_text) + _SCHEMA_POLICY_RESERVE_TOKENS,
+        "source_token_estimate": source_tokens,
+        "source_chars": source_chars,
+        "digest_token_estimate": digest_tokens,
+        "validation_token_estimate": validation_tokens,
+        "schema_policy_reserve_tokens": _SCHEMA_POLICY_RESERVE_TOKENS,
+        "total_token_budget": total_budget,
+        "source_budget_tokens": source_budget,
+        "target_fill_ratio": _PACKED_WINDOW_TARGET_FILL_RATIO,
+        "fill_ratio": fill_ratio,
+        "split_reason": split_reason,
+        "source_span": {"start": source_start, "end": source_end},
+    }
+
+
+def _refresh_prompt_window_text(state: ImportState, window: dict, digest: dict) -> dict:
+    profile = state.get("prompt_profile") or state.get("context", {}).get("prompt_profile", "balanced")
+    total_budget = _prompt_total_token_budget(profile)
+    digest_content = _fit_text_to_token_budget(str(digest.get("content", "")), _DIGEST_RESERVE_TOKENS)
+    validation_content = _fit_text_to_token_budget(_previous_validation_summary(state), _VALIDATION_RESERVE_TOKENS)
+    source_budget = max(
+        total_budget
+        - _SCHEMA_POLICY_RESERVE_TOKENS
+        - _estimate_tokens(digest_content)
+        - _VALIDATION_RESERVE_TOKENS,
+        1_000,
+    )
+    source_blocks = [dict(block) for block in window.get("source_blocks", []) if isinstance(block, dict)]
+    if not source_blocks:
+        return dict(window)
+    refreshed = dict(window)
+    refreshed["text"] = _render_prompt_window_text(
+        digest_content=digest_content,
+        validation_content=validation_content,
+        total_budget=total_budget,
+        source_budget=source_budget,
+        source_blocks=source_blocks,
+    )
+    refreshed["validation_token_estimate"] = _estimate_tokens(validation_content)
+    refreshed["estimated_tokens"] = _estimate_tokens(refreshed["text"]) + _SCHEMA_POLICY_RESERVE_TOKENS
+    refreshed["source_budget_tokens"] = source_budget
+    refreshed["fill_ratio"] = round(
+        int(refreshed.get("source_token_estimate", 0) or 0) / max(source_budget, 1),
+        4,
+    )
+    return refreshed
+
+
 def _build_prompt_windows(state: ImportState, chunks: list[dict], digest: dict) -> list[dict]:
     profile = state.get("prompt_profile") or state.get("context", {}).get("prompt_profile", "balanced")
     total_budget = _prompt_total_token_budget(profile)
@@ -899,44 +1113,65 @@ def _build_prompt_windows(state: ImportState, chunks: list[dict], digest: dict) 
     validation_content = _fit_text_to_token_budget(validation_summary, _VALIDATION_RESERVE_TOKENS)
     digest_tokens = _estimate_tokens(digest_content)
     validation_tokens = _estimate_tokens(validation_content)
-    source_budget = max(total_budget - _SCHEMA_POLICY_RESERVE_TOKENS - digest_tokens - validation_tokens, 1_000)
+    # Pack against the full validation reserve, not the current summary length.
+    # Otherwise the first window can overfill source text and later rolling
+    # validation summaries can push refreshed prompts above the hard 256k cap.
+    source_budget = max(total_budget - _SCHEMA_POLICY_RESERVE_TOKENS - digest_tokens - _VALIDATION_RESERVE_TOKENS, 1_000)
     windows: list[dict] = []
 
-    for chunk in chunks:
-        chunk_id = int(chunk.get("chunk_id", len(windows)) or 0)
-        source_text = chunk.get("manuscript_content") or chunk.get("raw_content") or chunk.get("content", "")
-        chapter_hint = str(chunk.get("chapter_hint") or f"Segment {chunk_id + 1}")
-        parts = _split_text_by_paragraph_budget(source_text, source_budget)
-        for part_index, part in enumerate(parts):
-            split_reason = "complete_chapter"
-            if len(parts) > 1:
-                split_reason = "single_oversized_chapter_paragraph_split"
-            header = (
-                "PROJECT_STRUCTURE_DIGEST:\n"
-                f"{digest_content}\n\n"
-                "PREVIOUS_VALIDATION_SUMMARY:\n"
-                f"{validation_content}\n\n"
-                "PROMPT_WINDOW_POLICY:\n"
-                f"total_estimated_token_budget={total_budget}; "
-                f"schema_policy_reserve_tokens={_SCHEMA_POLICY_RESERVE_TOKENS}; "
-                f"source_budget_tokens={source_budget}; "
-                "preserve complete chapters; only paragraph-split a single oversized chapter.\n\n"
-                f"SOURCE_CHAPTERS [{chapter_hint}]:\n"
-            )
-            window_text = header + part
-            source_start = int(chunk.get("source_span", {}).get("start", chunk.get("char_start", 0)) or 0)
-            windows.append({
-                "id": _stable_id("pwin", state.get("import_run_id") or "import", chunk_id, part_index, _sha256_text(part)[:16]),
-                "chunk_ids": [chunk_id],
-                "chapter_range": chapter_hint if len(parts) == 1 else f"{chapter_hint} part {part_index + 1}/{len(parts)}",
-                "text": window_text,
-                "estimated_tokens": _estimate_tokens(window_text) + _SCHEMA_POLICY_RESERVE_TOKENS,
-                "source_chars": len(part),
-                "digest_token_estimate": digest_tokens,
-                "validation_token_estimate": validation_tokens,
-                "split_reason": split_reason,
-                "source_span": {"start": source_start, "end": source_start + len(source_text)},
-            })
+    current_blocks: list[dict] = []
+    current_tokens = 0
+
+    def flush_current() -> None:
+        nonlocal current_blocks, current_tokens
+        if not current_blocks:
+            return
+        windows.append(_make_prompt_window(
+            state,
+            source_blocks=current_blocks,
+            part_index=len(windows),
+            split_reason="packed_complete_chapters" if len(current_blocks) > 1 else "complete_chapter",
+            digest_content=digest_content,
+            validation_content=validation_content,
+            total_budget=total_budget,
+            source_budget=source_budget,
+            digest_tokens=digest_tokens,
+            validation_tokens=validation_tokens,
+        ))
+        current_blocks = []
+        current_tokens = 0
+
+    for block in _source_blocks_from_chunks(chunks):
+        block_tokens = int(block.get("source_tokens", 0) or 0)
+        if block_tokens > source_budget:
+            flush_current()
+            parts = _split_text_by_paragraph_budget(str(block.get("text", "")), source_budget)
+            for part_index, part in enumerate(parts):
+                part_block = dict(block)
+                part_block["text"] = part
+                part_block["source_tokens"] = _estimate_tokens(part)
+                part_block["source_chars"] = len(part)
+                part_block["chapter_hint"] = f"{block.get('chapter_hint')} part {part_index + 1}/{len(parts)}"
+                windows.append(_make_prompt_window(
+                    state,
+                    source_blocks=[part_block],
+                    part_index=part_index,
+                    split_reason="single_oversized_chapter_paragraph_split",
+                    digest_content=digest_content,
+                    validation_content=validation_content,
+                    total_budget=total_budget,
+                    source_budget=source_budget,
+                    digest_tokens=digest_tokens,
+                    validation_tokens=validation_tokens,
+                ))
+            continue
+
+        if current_blocks and current_tokens + block_tokens > source_budget:
+            flush_current()
+        current_blocks.append(block)
+        current_tokens += block_tokens
+
+    flush_current()
     return windows
 
 
@@ -946,9 +1181,15 @@ def _prompt_window_manifest_entry(window: dict) -> dict:
         "chapter_range": window.get("chapter_range"),
         "chunk_ids": window.get("chunk_ids", []),
         "estimated_tokens": window.get("estimated_tokens", 0),
+        "total_token_budget": window.get("total_token_budget", 0),
+        "source_budget_tokens": window.get("source_budget_tokens", 0),
+        "source_token_estimate": window.get("source_token_estimate", 0),
         "source_chars": window.get("source_chars", 0),
         "digest_token_estimate": window.get("digest_token_estimate", 0),
         "validation_token_estimate": window.get("validation_token_estimate", 0),
+        "schema_policy_reserve_tokens": window.get("schema_policy_reserve_tokens", 0),
+        "target_fill_ratio": window.get("target_fill_ratio", 0),
+        "fill_ratio": window.get("fill_ratio", 0),
         "split_reason": window.get("split_reason", ""),
         "source_span": window.get("source_span", {}),
     }
@@ -969,6 +1210,112 @@ def _merge_prompt_outputs(outputs: list[dict]) -> dict:
             elif key not in merged or not merged.get(key):
                 merged[key] = value
     return merged
+
+
+_CROSS_VALIDATION_FIELDS = (
+    "duplicate_characters",
+    "duplicate_events",
+    "missing_major_characters",
+    "suspicious_groups",
+    "contradictory_aliases",
+    "event_merge_recommendations",
+    "warnings",
+)
+
+
+def _json_for_prompt(value: Any, token_budget: int) -> str:
+    text = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return _fit_text_to_token_budget(text, token_budget)
+
+
+def _normalize_cross_validation_artifact(payload: dict, import_run_id: str, window: dict | None = None) -> dict:
+    artifact: dict[str, Any] = {"import_run_id": import_run_id}
+    window_id = window.get("id") if isinstance(window, dict) else None
+    for field in _CROSS_VALIDATION_FIELDS:
+        values = payload.get(field, [])
+        if isinstance(values, str):
+            values = [values]
+        if not isinstance(values, list):
+            values = []
+        normalized_values: list[Any] = []
+        for value in values:
+            if isinstance(value, dict) and window_id:
+                normalized_values.append({"source_prompt_window_id": window_id, **value})
+            else:
+                normalized_values.append(value)
+        artifact[field] = normalized_values
+    return artifact
+
+
+def _merge_cross_validation_artifacts(existing: dict | None, incoming: dict | None, import_run_id: str) -> dict:
+    merged: dict[str, Any] = {"import_run_id": import_run_id}
+    for field in _CROSS_VALIDATION_FIELDS:
+        seen: set[str] = set()
+        merged[field] = []
+        for source in (existing or {}, incoming or {}):
+            values = source.get(field, []) if isinstance(source, dict) else []
+            if isinstance(values, str):
+                values = [values]
+            if not isinstance(values, list):
+                continue
+            for value in values:
+                key = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged[field].append(value)
+        # Keep the rolling summary bounded; full prompt outputs remain in window artifacts.
+        merged[field] = merged[field][-40:]
+    return merged
+
+
+async def _run_cross_validation_for_window(
+    llm: ChatOpenAI,
+    state: ImportState,
+    *,
+    window: dict,
+    digest: dict,
+    prompt_outputs: dict,
+    cross_validation: dict | None,
+) -> dict:
+    import_run_id = state.get("import_run_id") or state.get("import_run_manifest", {}).get("import_run_id") or "import"
+    prompt_template = W1_CROSS_VALIDATE_IMPORT + """
+
+## Actual Artifacts For This Review
+PROJECT_DIGEST_JSON:
+{project_digest_json}
+
+PREVIOUS_VALIDATION_SUMMARY_JSON:
+{previous_validation_summary_json}
+
+PROMPT_WINDOW_MANIFEST_JSON:
+{prompt_window_manifest_json}
+
+CHARACTER_CANDIDATES_JSON:
+{character_candidates_json}
+
+EVENT_CANDIDATES_JSON:
+{event_candidates_json}
+
+RELATIONSHIP_CANDIDATES_JSON:
+{relationship_candidates_json}
+
+SCENE_CANDIDATES_JSON:
+{scene_candidates_json}
+"""
+    rendered_state = {**state, "cross_validation": cross_validation or {}}
+    raw_artifact = await _invoke_json_prompt(
+        llm,
+        prompt_template,
+        project_digest_json=_fit_text_to_token_budget(str(digest.get("content", "")), _DIGEST_RESERVE_TOKENS),
+        previous_validation_summary_json=_fit_text_to_token_budget(_previous_validation_summary(rendered_state), _VALIDATION_RESERVE_TOKENS),
+        prompt_window_manifest_json=_json_for_prompt(_prompt_window_manifest_entry(window), 2_000),
+        character_candidates_json=_json_for_prompt(prompt_outputs.get("character", {}), 12_000),
+        event_candidates_json=_json_for_prompt(prompt_outputs.get("event", {}), 12_000),
+        relationship_candidates_json=_json_for_prompt(prompt_outputs.get("relationship", {}), 8_000),
+        scene_candidates_json=_json_for_prompt(prompt_outputs.get("scene", {}), 8_000),
+    )
+    return _normalize_cross_validation_artifact(raw_artifact, import_run_id, window)
 
 
 def _build_import_manifest(state: ImportState, text: str, chunks: list[dict]) -> dict:
@@ -1468,7 +1815,7 @@ async def _legacy_node_process_chunks(state: ImportState) -> dict:
             })
 
         # Save checkpoint after EVERY chunk
-        completed = len([e for e in extractions if e.get("chunk_id") is not None])
+        completed = len(completed_ids)
         try:
             checkpoint = {
                 "project_path": project_path,
@@ -3038,8 +3385,14 @@ async def node_process_chunks(state: ImportState) -> dict:
     chunk_index_by_id = {chunk.get("chunk_id", i): i for i, chunk in enumerate(chunks)}
     windows_by_chunk: dict[int, list[dict]] = {}
     for window in state.get("prompt_windows", []):
-        for window_chunk_id in window.get("chunk_ids", []):
-            windows_by_chunk.setdefault(int(window_chunk_id), []).append(window)
+        window_chunk_ids = [int(window_chunk_id) for window_chunk_id in window.get("chunk_ids", [])]
+        if not window_chunk_ids:
+            continue
+        # A packed window must run exactly once. Anchor it to the first not-yet
+        # completed source chunk, otherwise resume paths would repeat extraction.
+        anchor_id = next((window_chunk_id for window_chunk_id in window_chunk_ids if window_chunk_id not in completed_ids), window_chunk_ids[0])
+        windows_by_chunk.setdefault(anchor_id, []).append(window)
+    cross_validation: dict = dict(state.get("cross_validation") or {})
 
     for chunk in chunks:
         chunk_id = chunk.get("chunk_id", 0)
@@ -3051,6 +3404,15 @@ async def node_process_chunks(state: ImportState) -> dict:
         if not prompt_windows:
             digest = state.get("project_structure_digest") or _build_project_structure_digest(state, state.get("import_run_id", "import"))
             prompt_windows = _build_prompt_windows(state, [chunk], digest)
+        else:
+            digest = state.get("project_structure_digest") or _build_project_structure_digest(state, state.get("import_run_id", "import"))
+        covered_chunk_ids = sorted({
+            int(window_chunk_id)
+            for prompt_window in prompt_windows
+            for window_chunk_id in prompt_window.get("chunk_ids", [chunk_id])
+        }, key=lambda value: chunk_index_by_id.get(value, value))
+        if not covered_chunk_ids:
+            covered_chunk_ids = [int(chunk_id)]
         chunk_notes: list[str] = []
         chunk_raw_relationships: list[dict] = []
         world_mentions_detailed: list[dict] = []
@@ -3064,7 +3426,10 @@ async def node_process_chunks(state: ImportState) -> dict:
         scene_hint = chunk.get("chapter_hint") or ""
 
         try:
-            cached_outputs = _read_chunk_prompt_cache(state, chunk)
+            is_packed_window = any(len(prompt_window.get("chunk_ids", [])) > 1 for prompt_window in prompt_windows)
+            # Use window-level cache for the compiler path so cross-validation
+            # still runs once per prompt window, including single-chapter windows.
+            cached_outputs = None
             if cached_outputs:
                 char_data = cached_outputs.get("character", {})
                 event_data = cached_outputs.get("event", {})
@@ -3098,6 +3463,45 @@ async def node_process_chunks(state: ImportState) -> dict:
                     return result
 
                 for prompt_window in prompt_windows:
+                    prompt_window = _refresh_prompt_window_text(
+                        {**state, "cross_validation": cross_validation},
+                        prompt_window,
+                        digest,
+                    )
+                    window_cached_outputs = _read_prompt_window_cache(state, prompt_window)
+                    if window_cached_outputs:
+                        window_outputs["character"].append(window_cached_outputs.get("character", {}))
+                        window_outputs["event"].append(window_cached_outputs.get("event", {}))
+                        window_outputs["world"].append(window_cached_outputs.get("world", {}))
+                        window_outputs["relationship"].append(window_cached_outputs.get("relationship", {}))
+                        window_outputs["scene"].append(window_cached_outputs.get("scene", {}))
+                        chunk_notes.append(f"Loaded Scout prompt outputs from packed window cache {prompt_window.get('id')}.")
+                        try:
+                            incoming_cross_validation = await _run_cross_validation_for_window(
+                                llm,
+                                state,
+                                window=prompt_window,
+                                digest=digest,
+                                prompt_outputs=window_cached_outputs,
+                                cross_validation=cross_validation,
+                            )
+                            cross_validation = _merge_cross_validation_artifacts(
+                                cross_validation,
+                                incoming_cross_validation,
+                                state.get("import_run_id") or "import",
+                            )
+                            _write_import_artifact(
+                                state["project_path"],
+                                state.get("import_run_id") or "import",
+                                "cross_validation.json",
+                                cross_validation,
+                            )
+                        except Exception as validation_exc:
+                            warning = f"Cross-validation failed in cached {prompt_window.get('id', 'window')}: {validation_exc}"
+                            errors.append(warning)
+                            chunk_notes.append(warning)
+                        continue
+
                     prompt_chunk_content = str(prompt_window.get("text", ""))
                     results = await asyncio.gather(
                         _invoke_json_prompt(
@@ -3148,6 +3552,42 @@ async def node_process_chunks(state: ImportState) -> dict:
                     window_outputs["world"].append(_coerce_result(results, 2, "world", prompt_window))
                     window_outputs["relationship"].append(_coerce_result(results, 3, "relationship", prompt_window))
                     window_outputs["scene"].append(_coerce_result(results, 4, "scene", prompt_window))
+                    prompt_outputs_for_window = {
+                        "character": window_outputs["character"][-1],
+                        "event": window_outputs["event"][-1],
+                        "world": window_outputs["world"][-1],
+                        "relationship": window_outputs["relationship"][-1],
+                        "scene": window_outputs["scene"][-1],
+                    }
+                    if not any(
+                        failure.get("prompt_window_id") == prompt_window.get("id")
+                        for failure in prompt_failures
+                    ):
+                        _write_prompt_window_cache(state, prompt_window, prompt_outputs_for_window)
+                        try:
+                            incoming_cross_validation = await _run_cross_validation_for_window(
+                                llm,
+                                state,
+                                window=prompt_window,
+                                digest=digest,
+                                prompt_outputs=prompt_outputs_for_window,
+                                cross_validation=cross_validation,
+                            )
+                            cross_validation = _merge_cross_validation_artifacts(
+                                cross_validation,
+                                incoming_cross_validation,
+                                state.get("import_run_id") or "import",
+                            )
+                            _write_import_artifact(
+                                state["project_path"],
+                                state.get("import_run_id") or "import",
+                                "cross_validation.json",
+                                cross_validation,
+                            )
+                        except Exception as validation_exc:
+                            warning = f"Cross-validation failed in {prompt_window.get('id', 'window')}: {validation_exc}"
+                            errors.append(warning)
+                            chunk_notes.append(warning)
 
                 char_data = _merge_prompt_outputs(window_outputs["character"])
                 event_data = _merge_prompt_outputs(window_outputs["event"])
@@ -3163,7 +3603,7 @@ async def node_process_chunks(state: ImportState) -> dict:
                 }
                 if prompt_failures:
                     _write_chunk_prompt_failure(state, chunk, prompt_failures)
-                else:
+                elif not is_packed_window:
                     _write_chunk_prompt_cache(state, chunk, prompt_outputs)
 
             for update in char_data.get("existing_character_updates", []):
@@ -3422,19 +3862,23 @@ async def node_process_chunks(state: ImportState) -> dict:
                     "confidence": float(scene.get("confidence", 0.7)),
                 })
 
-            extractions.append({
-                "chunk_id": chunk_id,
-                "new_characters": new_chars,
-                "updated_aliases": alias_updates,
-                "events": events,
-                "world_mentions": world_mentions,
-                "world_mentions_detailed": world_mentions_detailed,
-                "raw_relationships": chunk_raw_relationships,
-                "scenes": scenes,
-                "chapter_hint": chapter_hint,
-                "manuscript_content": chunk.get("manuscript_content", chunk_content),
-                "notes": chunk_notes,
-            })
+            for covered_chunk_id in covered_chunk_ids:
+                covered_chunk = chunks[chunk_index_by_id.get(covered_chunk_id, 0)] if chunks else chunk
+                is_primary_chunk = covered_chunk_id == chunk_id
+                extractions.append({
+                    "chunk_id": covered_chunk_id,
+                    "new_characters": new_chars if is_primary_chunk else [],
+                    "updated_aliases": alias_updates if is_primary_chunk else [],
+                    "events": events if is_primary_chunk else [],
+                    "world_mentions": world_mentions if is_primary_chunk else [],
+                    "world_mentions_detailed": world_mentions_detailed if is_primary_chunk else [],
+                    "raw_relationships": chunk_raw_relationships if is_primary_chunk else [],
+                    "scenes": scenes if is_primary_chunk else [],
+                    "chapter_hint": covered_chunk.get("chapter_hint") or chapter_hint,
+                    "manuscript_content": covered_chunk.get("manuscript_content", covered_chunk.get("content", "")),
+                    "notes": chunk_notes if is_primary_chunk else [f"Covered by packed prompt window anchored at chunk {chunk_id}."],
+                })
+                completed_ids.add(covered_chunk_id)
 
         except Exception as e:
             errors.append(f"Chunk {chunk_id} failed: {str(e)}")
@@ -3487,6 +3931,7 @@ async def node_process_chunks(state: ImportState) -> dict:
                 "entity_registry": registry,
                 "chunk_extractions": extractions,
                 "raw_relationships": raw_relationships,
+                "cross_validation": cross_validation,
                 "started_at": datetime.now(timezone.utc).isoformat(),
                 "last_updated": datetime.now(timezone.utc).isoformat(),
             }
@@ -3511,12 +3956,14 @@ async def node_process_chunks(state: ImportState) -> dict:
             pause_event.clear()
             await pause_event.wait()
 
+    completed = len(completed_ids)
     progress = 0.1 + (0.7 * (completed / max(total, 1)))
     return {
         "chunks": chunks,
         "entity_registry": registry,
         "chunk_extractions": extractions,
         "raw_relationships": raw_relationships,
+        "cross_validation": cross_validation,
         "errors": errors,
         "progress": progress,
     }

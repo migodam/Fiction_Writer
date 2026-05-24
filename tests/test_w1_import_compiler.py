@@ -70,6 +70,152 @@ def test_prompt_window_splits_only_single_oversized_chapter_by_budget(tmp_path):
     assert sum(window["source_chars"] for window in windows) == len(content)
 
 
+def test_prompt_window_packs_short_chapters_toward_256k_budget(tmp_path):
+    state = {"project_path": str(tmp_path), "prompt_profile": "deep", "context": {}}
+    digest = {
+        "content": '{"characters":[],"relationships":[]}',
+        "estimated_tokens": 10,
+        "counts": {},
+    }
+    chunks = []
+    for index in range(50):
+        content = f"第{index + 1}章\n" + ("韩" * 4000)
+        chunks.append({
+            "chunk_id": index,
+            "chapter_hint": f"第{index + 1}章",
+            "manuscript_content": content,
+            "source_span": {"start": index * len(content), "end": (index + 1) * len(content)},
+        })
+
+    windows = w1_import._build_prompt_windows(state, chunks, digest)
+
+    assert len(windows) < 50
+    assert len(windows[0]["chunk_ids"]) > 1
+    assert windows[0]["split_reason"] == "packed_complete_chapters"
+    assert windows[0]["estimated_tokens"] <= 256_000
+    assert windows[0]["total_token_budget"] == 256_000
+    assert windows[0]["source_budget_tokens"] > windows[0]["source_token_estimate"]
+    assert windows[0]["fill_ratio"] >= 0.8
+
+    refreshed = w1_import._refresh_prompt_window_text(
+        {
+            **state,
+            "cross_validation": {
+                "duplicate_events": [
+                    {"event_ids": [f"event_{i}", f"event_{i + 1}"], "reason": "重复事件" * 200}
+                    for i in range(20)
+                ],
+                "warnings": ["滚动校验摘要" * 200 for _ in range(20)],
+            },
+        },
+        windows[0],
+        digest,
+    )
+
+    assert refreshed["estimated_tokens"] <= 256_000
+
+
+def test_previous_validation_summary_prefers_rolling_cross_validation(tmp_path):
+    state = {
+        "project_path": str(tmp_path),
+        "cross_validation": {
+            "duplicate_events": [{"event_ids": ["a", "b"], "reason": "same beat"}],
+            "missing_major_characters": [{"name_or_alias": "韩立", "confidence": 0.95}],
+            "warnings": ["check protagonist group"],
+        },
+        "import_review_report": {"status": "pass"},
+    }
+
+    summary = w1_import._previous_validation_summary(state)
+
+    assert "rolling_cross_validation" in summary
+    assert "duplicate_events" in summary
+    assert "韩立" in summary
+
+
+def test_merge_cross_validation_artifacts_preserves_unique_bounded_items():
+    existing = {
+        "duplicate_events": [{"event_ids": ["a", "b"], "reason": "same beat"}],
+        "warnings": ["old warning"],
+    }
+    incoming = {
+        "duplicate_events": [
+            {"event_ids": ["a", "b"], "reason": "same beat"},
+            {"event_ids": ["c", "d"], "reason": "same departure"},
+        ],
+        "warnings": ["new warning"],
+    }
+
+    merged = w1_import._merge_cross_validation_artifacts(existing, incoming, "import_test")
+
+    assert merged["import_run_id"] == "import_test"
+    assert len(merged["duplicate_events"]) == 2
+    assert merged["warnings"] == ["old warning", "new warning"]
+
+
+def test_process_chunks_runs_packed_window_once_and_marks_all_covered_chunks(tmp_path, monkeypatch):
+    async def fake_invoke_json_prompt(_llm, prompt_template, **_kwargs):
+        if "W1 Import Character Compiler" in prompt_template:
+            return {"existing_character_updates": [], "new_characters": []}
+        if "W1 Import Timeline Scout" in prompt_template:
+            return {"events": []}
+        if "world extraction" in prompt_template:
+            return {"world_mentions": []}
+        if "relationship evidence" in prompt_template:
+            return {"relationships": []}
+        if "scene boundaries" in prompt_template:
+            return {"chapter_hint": "", "scenes": []}
+        return {}
+
+    async def fake_cross_validation(_llm, state, *, window, digest, prompt_outputs, cross_validation):
+        return {
+            "import_run_id": state["import_run_id"],
+            "duplicate_events": [{"event_ids": ["old", "new"], "reason": "same beat"}],
+            "warnings": [f"validated {window['id']}"],
+        }
+
+    monkeypatch.setattr(w1_import, "_invoke_json_prompt", fake_invoke_json_prompt)
+    monkeypatch.setattr(w1_import, "_run_cross_validation_for_window", fake_cross_validation)
+    monkeypatch.setattr(w1_import, "_get_llm", lambda _state: object())
+
+    chunks = [
+        {"chunk_id": 0, "chapter_hint": "Chapter 1", "manuscript_content": "first", "content": "first"},
+        {"chunk_id": 1, "chapter_hint": "Chapter 2", "manuscript_content": "second", "content": "second"},
+        {"chunk_id": 2, "chapter_hint": "Chapter 3", "manuscript_content": "third", "content": "third"},
+    ]
+    digest = {"content": '{"characters":[]}', "estimated_tokens": 4, "counts": {}}
+    windows = w1_import._build_prompt_windows(
+        {
+            "project_path": str(tmp_path),
+            "import_run_id": "import_test",
+            "prompt_profile": "deep",
+            "context": {},
+        },
+        chunks,
+        digest,
+    )
+
+    result = asyncio.run(w1_import.node_process_chunks({
+        "project_path": str(tmp_path),
+        "source_file_path": str(tmp_path / "novel.txt"),
+        "checkpoint_path": str(tmp_path / "import_progress.json"),
+        "import_run_id": "import_test",
+        "prompt_profile": "deep",
+        "context": {},
+        "chunks": chunks,
+        "prompt_windows": windows,
+        "project_structure_digest": digest,
+        "entity_registry": {"characters": {}, "events": {}, "world": {}},
+        "chunk_extractions": [],
+        "raw_relationships": [],
+        "errors": [],
+    }))
+
+    assert [item["chunk_id"] for item in result["chunk_extractions"]] == [0, 1, 2]
+    assert result["chunk_extractions"][1]["notes"] == ["Covered by packed prompt window anchored at chunk 0."]
+    assert result["cross_validation"]["warnings"] == [f"validated {windows[0]['id']}"]
+
+
 def test_build_manuscript_orders_chapters_by_source_chunk_id(tmp_path):
     state = {
         "project_path": str(tmp_path),

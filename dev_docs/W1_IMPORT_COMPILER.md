@@ -5,17 +5,18 @@ W1 import now uses a Hybrid Compiler spine for long novel imports. The runtime s
 
 ## Runtime Stages
 1. Segment Manifest: split source text into stable chunk/segment records with hashes, spans, prompt profile, model, and artifact path.
-2. Scout Evidence: convert chunk extraction output into non-canonical evidence cards. Evidence cards preserve source provenance and must not be treated as final project entities.
-3. Entity Reconciliation: compare imported candidates with existing project characters, tags, and relationships before creating proposals.
-4. Cross-Validation Review: compare character, event, relationship, scene, reducer, and timeline evidence to flag duplicate characters/events, missing major characters, suspicious groups, contradictory aliases, and event merge recommendations.
-5. Timeline Architect: deduplicate imported event candidates, classify dense/duplicate beats, infer semantic branches, assign branch-local `orderIndex`, and fill frontend-required timeline fields.
-6. Proposal Review: write `review_report.json` with warnings, duplicate merges, failed chunks, safe batch-accept ids, low-confidence items, model/profile metadata, artifact paths, and proposal counts.
-7. Proposal Write: only reviewed candidates become Workbench proposals.
+2. Prompt Window Packing: pack complete chapter segments into 256k total-budget prompt windows for `deep` and `custom`, while reserving room for project digest, rolling validation, schema, and policy.
+3. Scout Evidence: convert packed-window extraction output into non-canonical evidence cards. Evidence cards preserve source provenance and must not be treated as final project entities.
+4. Rolling Cross-Validation Review: after each packed window, compare character, event, relationship, and scene outputs against the previous validation summary to flag duplicate characters/events, missing major characters, suspicious groups, contradictory aliases, and event merge recommendations for the next window.
+5. Entity Reconciliation: compare imported candidates with existing project characters, tags, and relationships before creating proposals.
+6. Timeline Architect: deduplicate imported event candidates, classify dense/duplicate beats, infer semantic branches, assign branch-local `orderIndex`, and fill frontend-required timeline fields.
+7. Proposal Review: write `review_report.json` with warnings, duplicate merges, failed chunks, safe batch-accept ids, low-confidence items, model/profile metadata, artifact paths, and proposal counts.
+8. Proposal Write: only reviewed candidates become Workbench proposals.
 
 ## Artifact Contracts
 - `ImportRunManifest`: `system/imports/<import_run_id>/manifest.json`; source hash, segments, prompt profile, model, and artifact directory.
 - `ProjectStructureDigest`: `project_structure_digest.json`; compact existing-project context for import prompts, including characters, character groups/tags, relationships, timeline branches, world containers/items, and proposal/issue risk counts.
-- `PromptWindows`: `prompt_windows.json` plus manifest `prompt_windows`; chapter-aware prompt input windows with chunk ids, chapter range, estimated tokens, source chars, digest/validation token estimates, source span, and split reason.
+- `PromptWindows`: `prompt_windows.json` plus manifest `prompt_windows`; packed chapter-aware prompt input windows with one or more chunk ids, chapter range, total/source budget, estimated tokens, source chars/tokens, fill ratio, digest/validation token estimates, source span, and split reason.
 - `EvidenceCard`: `evidence_cards.json`; raw candidate evidence with source segment, confidence, candidate names/ids, and uncertainty.
 - `ReducerArtifact`: `reducer_artifact.json`; existing-project matches, skipped duplicates, dependency edges, and warnings.
 - `CrossValidationArtifact`: `cross_validation.json`; duplicate characters/events, missing major characters, suspicious groups, contradictory aliases, event merge recommendations, and warnings.
@@ -24,7 +25,7 @@ W1 import now uses a Hybrid Compiler spine for long novel imports. The runtime s
 - `PromptProfile`: `fast`, `balanced`, `deep`, or `custom`; controls per-prompt text budget and is recorded in the manifest.
 
 ## Prompt Window Requirements
-For `deep` and `custom`, W1 uses a 256k estimated-token total input budget per prompt window. The budget includes schema/prompt-policy reserve, `ProjectStructureDigest`, previous validation summary, and source chapter text. Normal chapters must remain complete in a window whenever they fit after reserves; W1 must not head/tail truncate normal chapters. If a single chapter is oversized after reserves, W1 may split only that chapter by paragraph/scene boundaries and must record `split_reason: single_oversized_chapter_paragraph_split`.
+For `deep` and `custom`, W1 uses a 256k estimated-token total input budget per prompt window. The budget includes schema/prompt-policy reserve, `ProjectStructureDigest`, rolling previous validation summary, and source chapter text. W1 packs multiple complete chapters into one window until the next chapter would exceed the remaining source budget; target fill metadata records the 0.88 fill target, but the hard invariant is `estimated_tokens <= 256000`. Normal chapters must remain complete in a window whenever they fit after reserves; W1 must not head/tail truncate normal chapters. If a single chapter is oversized after reserves, W1 may split only that chapter by paragraph/scene boundaries and must record `split_reason: single_oversized_chapter_paragraph_split`.
 
 ## Timeline Requirements
 Imported timeline event proposals must include `branchId`, branch-local `orderIndex`, `locationIds`, `participantCharacterIds`, `linkedSceneIds`, `linkedWorldItemIds`, and `tags`. If the project has no root branch, W1 proposes `branch_import_main` before event proposals. Dense imports must not put every event on the root branch when semantic branch signals are available.
@@ -41,7 +42,7 @@ W1 import creates compact character-card drafts only. It may fill identity, alia
 Character extraction prompts must include project digest placeholders, alias/epithet reconciliation, source-language normalization, protagonist/mentor/antagonist/ally/minor story-function classification, `groupKey` hints, importance calibration, and anti-summary-bloat rules. Group hints are advisory until reducer/workflow plumbing consumes them, but the prompt contract must preserve `main_characters`, `mentors_antagonists`, `allies_family`, and `minor_characters`.
 
 ## Cross-Validation Requirements
-Cross-validation is a prompt and artifact contract for the Integration Manager to wire into the reducer pipeline. It must report:
+Cross-validation is wired into the packed-window scout loop. After each packed window, W1 runs the reviewer prompt against that window's character, event, relationship, and scene outputs plus the current project digest and previous validation summary. The merged `cross_validation.json` artifact is fed into the next window as `PREVIOUS_VALIDATION_SUMMARY`. It must report:
 - `duplicate_characters`
 - `duplicate_events`
 - `missing_major_characters`
