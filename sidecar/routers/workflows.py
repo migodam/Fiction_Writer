@@ -194,6 +194,7 @@ class W1StartRequest(BaseModel):
     api_key: str = ""
     model: str = "deepseek-chat"
     endpoint: str = "https://api.deepseek.com/v1"
+    use_supervisor: bool = False
 
 
 class W1StartResponse(BaseModel):
@@ -363,11 +364,13 @@ async def w1_start(body: W1StartRequest) -> W1StartResponse:
         "source_file_path": body.source_file_path,
         "import_mode": body.import_mode,
         "prompt_profile": body.prompt_profile,
+        "use_supervisor": body.use_supervisor,
         "context": {
             "api_key": body.api_key,
             "model": body.model,
             "endpoint": body.endpoint,
             "prompt_profile": body.prompt_profile,
+            "use_supervisor": body.use_supervisor,
         },
         "session_id": session_id,
     }
@@ -375,7 +378,12 @@ async def w1_start(body: W1StartRequest) -> W1StartResponse:
         "status": "running", "progress": 0.0, "errors": [],
         "completed_chunks": 0, "total_chunks": 0,
         "prompt_profile": body.prompt_profile,
-        "chunk_log": [],       # List[ChunkLogEntry dicts]
+        "use_supervisor": body.use_supervisor,
+        "supervisor_decisions": [],
+        "gate_failures": [],
+        "window_metrics": {},
+        "supervisor_iteration": 0,
+        "chunk_log": [],
         "paused": False,
         "breakpoint_chunk": None,
         "project_path": body.project_path,
@@ -392,6 +400,18 @@ async def w1_cancel(body: W1CancelRequest) -> W1CancelResponse:
     if session:
         _w1_sessions[body.session_id] = {**session, "status": "cancelled"}
     return W1CancelResponse(status="cancelled")
+
+
+@router.get("/workflow/w1/supervisor_status")
+async def w1_supervisor_status(session_id: str = "") -> dict:
+    """Return supervisor orchestration state for a running or completed session."""
+    session = _w1_sessions.get(session_id, {})
+    return {
+        "supervisor_decisions": session.get("supervisor_decisions", []),
+        "gate_failures": session.get("gate_failures", []),
+        "window_metrics": session.get("window_metrics", {}),
+        "supervisor_iteration": session.get("supervisor_iteration", 0),
+    }
 
 
 @router.get("/workflow/w1/console", response_model=W1ConsoleResponse)

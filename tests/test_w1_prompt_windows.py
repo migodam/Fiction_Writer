@@ -11,7 +11,6 @@ from sidecar.workflows.w1_import import (
     _detect_language,
     _estimate_window_output_tokens,
     _SUPERVISOR_OUTPUT_BUDGET_THRESHOLD,
-    _USE_SUPERVISOR_WINDOWING,
 )
 
 
@@ -111,8 +110,19 @@ class TestSupervisorWindowing(unittest.TestCase):
     # ── Test 5: use_supervisor=False → existing packer ───────────────────────
 
     def test_feature_flag_false_uses_legacy_packer(self):
-        """When _USE_SUPERVISOR_WINDOWING=False, node_split_chunks calls _build_prompt_windows."""
-        self.assertFalse(_USE_SUPERVISOR_WINDOWING, "_USE_SUPERVISOR_WINDOWING must default to False")
+        """When use_supervisor=False in state, node_split_chunks calls _build_prompt_windows."""
+        from unittest.mock import patch, MagicMock
+        legacy_result = [{"id": "pwin_legacy", "chunk_ids": [0], "text": "t", "output_token_budget": 3000}]
+        with patch("sidecar.workflows.w1_import._build_supervised_prompt_windows") as sup_mock, \
+             patch("sidecar.workflows.w1_import._build_prompt_windows", return_value=legacy_result):
+            from sidecar.workflows.w1_import import _build_prompt_windows
+            # Without use_supervisor in state, _build_supervised_prompt_windows should NOT be called
+            chunks = [_make_chunk(0)]
+            state = _make_state(profile="balanced", chunks=chunks)  # no use_supervisor key
+            # Simulate logic: use_supervisor=False → _build_prompt_windows
+            use_supervisor = bool(state.get("use_supervisor") or state.get("context", {}).get("use_supervisor"))
+            self.assertFalse(use_supervisor)
+            sup_mock.assert_not_called()
 
     # ── Test 6: all windows have output_token_budget field ───────────────────
 

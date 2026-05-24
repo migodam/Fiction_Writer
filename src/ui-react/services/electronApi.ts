@@ -52,6 +52,7 @@ export interface W1StartPayload {
   source_file_path: string;
   import_mode?: 'import_content_only' | 'import_all';
   prompt_profile?: 'fast' | 'balanced' | 'deep' | 'custom';
+  use_supervisor?: boolean;
   api_key?: string;
   model?: string;
   endpoint?: string;

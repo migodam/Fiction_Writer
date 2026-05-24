@@ -73,7 +73,7 @@ def _make_window(window_id: str, chunk_ids: list[int], chapters: int = 2) -> dic
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 # ── Test 1: segment_manifest idempotency ──────────────────────────────────────

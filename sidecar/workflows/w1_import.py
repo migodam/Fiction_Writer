@@ -926,9 +926,6 @@ _DIGEST_RESERVE_TOKENS = 24_000
 _VALIDATION_RESERVE_TOKENS = 8_000
 _PACKED_WINDOW_TARGET_FILL_RATIO = 0.88
 
-# Feature flag: when True, node_split_chunks uses chapter-count-aware windowing
-# instead of the greedy token packer.  Set to True only when use_supervisor=True.
-_USE_SUPERVISOR_WINDOWING: bool = False
 
 
 def _estimate_tokens(text: str) -> int:
@@ -1421,19 +1418,6 @@ def _build_prompt_windows(state: ImportState, chunks: list[dict], digest: dict) 
 
     flush_current()
     return windows
-
-
-# ── Language detection ──────────────────────────────────────────────────────────
-
-def _detect_language(sample: str) -> str:
-    """Return ISO 639-1 language code detected from sample text.
-
-    Uses CJK character ratio: ≥ 0.30 → "zh", else "en".
-    """
-    if not sample:
-        return "en"
-    cjk_count = sum(1 for c in sample if "一" <= c <= "鿿")
-    return "zh" if cjk_count / max(len(sample), 1) >= 0.3 else "en"
 
 
 # ── Supervisor windowing ────────────────────────────────────────────────────────
@@ -1988,7 +1972,7 @@ async def node_split_chunks(state: ImportState) -> dict:
     digest = _build_project_structure_digest({**state, "import_run_id": manifest["import_run_id"]}, manifest["import_run_id"])
     windowing_state = {**state, "import_run_id": manifest["import_run_id"], "import_run_manifest": manifest, "source_language": source_language}
     use_supervisor = bool(state.get("use_supervisor") or state.get("context", {}).get("use_supervisor"))
-    if use_supervisor and _USE_SUPERVISOR_WINDOWING:
+    if use_supervisor:
         prompt_windows = _build_supervised_prompt_windows(windowing_state, chunks, digest)
     else:
         prompt_windows = _build_prompt_windows(windowing_state, chunks, digest)
@@ -4619,6 +4603,12 @@ async def run_streaming(project_path: str, config: dict):
     Each yielded dict has: progress, errors, completed_chunks, total_chunks.
     The caller can use these to update a status endpoint in real time.
     """
+    if config.get("use_supervisor") or config.get("context", {}).get("use_supervisor"):
+        from sidecar.supervisor.policy import run_supervisor_streaming
+        async for update in run_supervisor_streaming(project_path, config):
+            yield update
+        return
+
     import_mode = config.get("import_mode", "import_all")
     initial_state: ImportState = {
         "project_path": project_path,

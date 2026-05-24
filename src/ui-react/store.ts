@@ -294,8 +294,13 @@ interface ProjectState {
   w1PromptProfile: 'fast' | 'balanced' | 'deep' | 'custom';
   w1ProposalCount: number;
   w1ImportReviewReport: import('./services/electronApi').W1ImportReviewReport | null;
+  w1UseSupervisor: boolean;
+  w1SupervisorDecisions: unknown[];
+  w1GateFailures: unknown[];
+  w1SupervisorIteration: number;
   setW1ImportMode: (mode: 'import_content_only' | 'import_all') => void;
   setW1PromptProfile: (profile: 'fast' | 'balanced' | 'deep' | 'custom') => void;
+  setW1UseSupervisor: (v: boolean) => void;
   setW1Breakpoint: (chunkId: number | null) => Promise<void>;
   resumeW1: () => Promise<void>;
   rewindW1: (toChunkId: number) => Promise<void>;
@@ -1474,8 +1479,13 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   w1PromptProfile: 'balanced',
   w1ProposalCount: 0,
   w1ImportReviewReport: null,
+  w1UseSupervisor: false,
+  w1SupervisorDecisions: [],
+  w1GateFailures: [],
+  w1SupervisorIteration: 0,
   setW1ImportMode: (mode) => set({ w1ImportMode: mode }),
   setW1PromptProfile: (profile) => set({ w1PromptProfile: profile }),
+  setW1UseSupervisor: (v) => set({ w1UseSupervisor: v }),
   setW1Breakpoint: async (chunkId) => {
     const { projectRoot, w1SessionId } = get();
     if (!projectRoot || !w1SessionId) return;
@@ -1497,7 +1507,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
   startImport: async (payload) => {
-    const { projectRoot, w1ImportMode, w1PromptProfile } = get();
+    const { projectRoot, w1ImportMode, w1PromptProfile, w1UseSupervisor } = get();
     const mode = payload.importMode ?? w1ImportMode;
     const effectiveRoot = projectRoot || payload.projectRoot;
     if (!effectiveRoot) {
@@ -1523,6 +1533,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           source_file_path: payload.sourceFilePath,
           import_mode: mode,
           prompt_profile: w1PromptProfile,
+          use_supervisor: w1UseSupervisor,
           api_key: providerProfile?.apiKey ?? '',
           model: modelProfile?.model ?? 'deepseek-chat',
           endpoint: providerProfile?.endpoint ?? 'https://api.deepseek.com/v1',

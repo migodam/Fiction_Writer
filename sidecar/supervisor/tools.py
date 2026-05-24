@@ -33,8 +33,10 @@ from sidecar.workflows.w1_import import (
     _estimate_tokens,
     _get_llm,
     _invoke_json_prompt,
+    _is_world_entity_candidate,
     _merge_prompt_outputs,
     _merge_text_field,
+    _normalize_world_category,
     _now_iso,
     _parse_json_response,
     _read_chunk_prompt_cache,
@@ -87,6 +89,15 @@ def window_exceeds_output_budget(window: dict, profile_config: dict) -> bool:
     """Return True when the window's estimated output exceeds the split threshold."""
     est = estimate_window_output_tokens(window, profile_config.get("chapters_per_window", 8))
     return est > _OUTPUT_BUDGET_SPLIT_THRESHOLD
+
+
+def _event_cap_from_profile(profile_config: dict, chapter_count: int) -> int:
+    density = profile_config.get("event_density", "chapter_level")
+    if density == "arc_level":
+        return max(2, chapter_count // 2)
+    if density == "scene_level":
+        return chapter_count * 5
+    return min(24, max(8, chapter_count * 3))
 
 
 # ── Symptom flags for qa_review ────────────────────────────────────────────────
@@ -216,6 +227,7 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
     registry.setdefault("world", {})
     registry.setdefault("world_detailed", {})
 
+    profile_config = state.get("profile_config") or PROFILE_CONFIGS.get(state.get("prompt_profile", "balanced"), PROFILE_CONFIGS["balanced"])
     chunk_ids = window.get("chunk_ids", [0])
     chunk_id = chunk_ids[0] if chunk_ids else 0
     total = len(state.get("chunks", [])) or 1
@@ -306,8 +318,9 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
         new_char_ids.append(char_id)
 
     # ── Register events ──────────────────────────────────────────────────────
+    event_cap = _event_cap_from_profile(profile_config, len(chunk_ids))
     raw_events = [e for e in event_data.get("events", []) if float(e.get("confidence", 0)) >= 0.75]
-    raw_events = sorted(raw_events, key=lambda e: float(e.get("confidence", 0)), reverse=True)[:3]
+    raw_events = sorted(raw_events, key=lambda e: float(e.get("confidence", 0)), reverse=True)[:event_cap]
     new_events: list[dict] = []
     for ev in raw_events:
         event_id = f"event_{uuid.uuid4().hex[:8]}"
@@ -688,17 +701,15 @@ async def minor_repair(state: ImportSupervisorState) -> dict:
         repair_log.append(f"groupKey_normalization: fixed {groupkey_fixed} characters")
 
     # 2. world/person boundary — migrate org-role chars to world_detailed
-    org_roles = {"organization", "org", "faction", "guild", "sect", "institution"}
     world_detailed: dict[str, dict] = dict(registry.get("world_detailed", {}))
     migrated = 0
     for cid, entry in list(chars.items()):
-        role = str(entry.get("role_in_story", "")).lower()
-        category = str(entry.get("category", "")).lower()
-        if any(kw in role for kw in org_roles) or any(kw in category for kw in org_roles):
-            name = entry.get("canonical_name", cid)
+        name = entry.get("canonical_name", cid)
+        if _is_world_entity_candidate(name, entry):
+            canonical_category = _normalize_world_category(name, entry.get("category", "organization"))
             if name not in world_detailed:
                 world_detailed[name] = {
-                    "name": name, "category": "organization",
+                    "name": name, "category": canonical_category,
                     "description": entry.get("summary", ""),
                     "attributes": entry.get("personality_traits", []),
                     "confidence": float(entry.get("confidence", 0.7)),
