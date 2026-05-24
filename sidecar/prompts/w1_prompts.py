@@ -680,6 +680,10 @@ You are inferring project-wide world settings from imported fiction text.
 ## Text Sample
 {text_sample}
 
+## Language Rule
+All user-facing `name` and `description` fields MUST be in {source_language_label} (matching the source text language).
+Internal keys such as `type` and `mode` may remain in English.
+
 ## Instructions
 Infer project-level settings and structural suggestions from the sample.
 - Keep every field concise and specific
