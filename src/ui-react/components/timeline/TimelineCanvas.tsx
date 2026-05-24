@@ -133,6 +133,7 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
   const [panX, setPanX] = useState(0);
   const [panY, setPanY] = useState(0);
   const [zoom, setZoom] = useState(1);
+  const [containerWidth, setContainerWidth] = useState(0);
 
   // Interaction
   const [mode, setMode] = useState<InteractionMode>('idle');
@@ -178,6 +179,17 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
     }
   }, [branches, selectedBranchId, setSelectedEntity]);
 
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) setContainerWidth(entry.contentRect.width);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   // ── Derived data ──────────────────────────────────────────
 
   const maxEventsOnAnyBranch = useMemo(() => {
@@ -188,7 +200,7 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
     return Math.max(1, ...counts.values());
   }, [events]);
   const svgWidth = Math.max(
-    TIMELINE_BASE_WIDTH,
+    containerWidth > 0 ? containerWidth : TIMELINE_BASE_WIDTH,
     maxEventsOnAnyBranch * MIN_EVENT_SPACING_PX + TIMELINE_EDGE_PADDING_PX,
   );
   const sortedBranches = useMemo(
