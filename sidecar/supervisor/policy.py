@@ -43,6 +43,43 @@ def _now_iso() -> str:
     return datetime.now(tz=timezone.utc).isoformat()
 
 
+def _merge_registries(base: dict, update: dict) -> dict:
+    """Union entity_registry sub-dicts. Base keys win — earlier windows are not clobbered."""
+    return {
+        "characters":     {**update.get("characters", {}),     **base.get("characters", {})},
+        "events":         {**update.get("events", {}),         **base.get("events", {})},
+        "world":          {**update.get("world", {}),          **base.get("world", {})},
+        "world_detailed": {**update.get("world_detailed", {}), **base.get("world_detailed", {})},
+    }
+
+
+def _merge_window_result(state: ImportSupervisorState, result: dict) -> ImportSupervisorState:
+    """Merge a single window result into accumulated state without replacing earlier data."""
+    base_decisions = state.get("supervisor_decisions", [])
+    result_decisions = result.get("supervisor_decisions", [])
+    new_decisions = base_decisions + [d for d in result_decisions if d not in base_decisions]
+
+    base_log = state.get("supervisor_log", [])
+    result_log = result.get("supervisor_log", [])
+    new_log = base_log + [l for l in result_log if l not in base_log]
+
+    base_errors = state.get("errors", [])
+    result_errors = result.get("errors", [])
+    new_errors = base_errors + [e for e in result_errors if e not in base_errors]
+
+    return {
+        **state,
+        "entity_registry": _merge_registries(
+            state.get("entity_registry", {}), result.get("entity_registry", {})
+        ),
+        "raw_relationships": list(state.get("raw_relationships", [])) + list(result.get("raw_relationships", [])),
+        "window_metrics": {**state.get("window_metrics", {}), **result.get("window_metrics", {})},
+        "supervisor_decisions": new_decisions,
+        "supervisor_log": new_log,
+        "errors": new_errors,
+    }
+
+
 def _record_decision(
     state: ImportSupervisorState,
     stage: str,
@@ -96,7 +133,7 @@ async def _process_window(
 
     # Extract
     update = await tools["extract_window"](state, window_id)
-    state = {**state, **update}
+    state = _merge_window_result(state, update)
     state = _record_decision(
         state, "extract_window", "extract_window", f"primary extraction for {window_id}",
         {}, {}, "proceed",
@@ -105,7 +142,7 @@ async def _process_window(
     # Cross-validate
     if validation != "off":
         cv_update = await tools["cross_validate_window"](state, window_id)
-        state = {**state, **cv_update}
+        state = _merge_window_result(state, cv_update)
         state = _record_decision(
             state, "cross_validate_window", "cross_validate_window",
             f"cross-validate {window_id}", {}, {}, "proceed",
@@ -125,22 +162,36 @@ async def _process_window(
         char_density = metrics.get("char_count_extracted", 0) / chapters
         missing_names = metrics.get("missing_majors", [])
 
-        # Choose strategy: split if char_density is very low and window has multiple chapters,
-        # otherwise augment with missing_char_names hint
         window = next((w for w in state.get("prompt_windows", []) if w.get("id") == window_id), {})
         can_split = len(window.get("chunk_ids", [])) > 1 and char_density < _CHAR_DENSITY_THRESHOLD
         strategy = "split" if can_split else "augment"
 
+        prev_window_ids = {w["id"] for w in state.get("prompt_windows", [])}
         rerun_update = await tools["rerun_window"](state, window_id, strategy, missing_names or None)
-        state = {**state, **rerun_update}
+        state = _merge_window_result(state, rerun_update)
+        # carry through any new prompt_windows added by rerun
+        if "prompt_windows" in rerun_update:
+            state = {**state, "prompt_windows": rerun_update["prompt_windows"]}
         state = _record_decision(
             state, "rerun_window", "rerun_window",
             f"gate failures: {reasons}; strategy={strategy}",
             {"reasons": reasons}, {}, "rerun", [window_id],
         )
 
-        metrics_dict = dict(state.get("window_metrics", {}))
-        metrics = metrics_dict.get(window_id, {})
+        if strategy == "split":
+            # Child windows were extracted inside rerun_window; qa_review evaluates them.
+            # Do not re-check parent metrics — they won't change after a split.
+            break
+
+        # For augment: read the new window's metrics (new window ID in rerun result)
+        new_window_ids = {w["id"] for w in state.get("prompt_windows", [])} - prev_window_ids
+        if new_window_ids:
+            new_id = next(iter(new_window_ids))
+            metrics_dict = dict(state.get("window_metrics", {}))
+            metrics = metrics_dict.get(new_id, metrics_dict.get(window_id, {}))
+        else:
+            metrics_dict = dict(state.get("window_metrics", {}))
+            metrics = metrics_dict.get(window_id, {})
         rerun_count += 1
 
     return state
@@ -175,15 +226,13 @@ async def run_supervisor_policy(
                 errs = list(state.get("errors", [])) + [str(result)]
                 state = {**state, "errors": errs}
             else:
-                # Merge window metrics and entity_registry updates back
-                state = {
-                    **state,
-                    "entity_registry": result.get("entity_registry", state.get("entity_registry", {})),
-                    "window_metrics": {**state.get("window_metrics", {}), **result.get("window_metrics", {})},
-                    "supervisor_decisions": result.get("supervisor_decisions", state.get("supervisor_decisions", [])),
-                    "supervisor_log": result.get("supervisor_log", state.get("supervisor_log", [])),
-                    "errors": result.get("errors", state.get("errors", [])),
-                }
+                state = _merge_window_result(state, result)
+                # Carry through any new prompt_windows added by reruns inside _process_window
+                if result.get("prompt_windows"):
+                    merged_windows = {w["id"]: w for w in state.get("prompt_windows", [])}
+                    for w in result["prompt_windows"]:
+                        merged_windows.setdefault(w["id"], w)
+                    state = {**state, "prompt_windows": list(merged_windows.values())}
 
     state = {**state, "current_stage": "extract_windows"}
 
@@ -373,14 +422,12 @@ async def run_supervisor_streaming(
                     errs = list(state.get("errors", [])) + [str(result)]
                     state = {**state, "errors": errs}
                 else:
-                    state = {
-                        **state,
-                        "entity_registry": result.get("entity_registry", state.get("entity_registry", {})),
-                        "window_metrics": {**state.get("window_metrics", {}), **result.get("window_metrics", {})},
-                        "supervisor_decisions": result.get("supervisor_decisions", state.get("supervisor_decisions", [])),
-                        "supervisor_log": result.get("supervisor_log", state.get("supervisor_log", [])),
-                        "errors": result.get("errors", state.get("errors", [])),
-                    }
+                    state = _merge_window_result(state, result)
+                    if result.get("prompt_windows"):
+                        merged_windows = {w["id"]: w for w in state.get("prompt_windows", [])}
+                        for w in result["prompt_windows"]:
+                            merged_windows.setdefault(w["id"], w)
+                        state = {**state, "prompt_windows": list(merged_windows.values())}
                 window_idx += 1
             progress = _PROGRESS_EXTRACT_START + (_PROGRESS_EXTRACT_END - _PROGRESS_EXTRACT_START) * (window_idx / total_w)
             _chunk_progress[project_path] = {"completed": window_idx, "total": total_w}

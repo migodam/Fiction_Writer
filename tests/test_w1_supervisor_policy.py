@@ -308,60 +308,235 @@ class TestPolicyLoop(unittest.TestCase):
         for stage in expected_stages:
             self.assertIn(stage, stages, f"Stage {stage!r} missing from supervisor_decisions")
 
-    # ── Test 7: use_supervisor=False → policy NOT called ─────────────────────
+    # ── Test 7 (replaced): run_streaming dispatches to supervisor when enabled ─
 
-    def test_use_supervisor_false_does_not_invoke_policy(self):
-        """run_streaming with use_supervisor=False must not call run_supervisor_streaming."""
-        called = []
+    def test_run_streaming_dispatches_supervisor_when_enabled(self):
+        """run_streaming(use_supervisor=True) must call run_supervisor_streaming."""
+        supervisor_calls = []
 
-        async def mock_supervisor_streaming(project_path, config):
-            called.append(True)
-            return
-            yield  # make it a generator
+        async def fake_supervisor(project_path, config):
+            supervisor_calls.append((project_path, config))
+            yield {
+                "progress": 1.0, "errors": [], "completed_chunks": 0,
+                "total_chunks": 0, "current_node": "done",
+                "import_review_report": {}, "proposals_count": 0,
+            }
 
         async def collect():
             from sidecar.workflows.w1_import import run_streaming
-            with patch("sidecar.workflows.w1_import.run_supervisor_streaming", mock_supervisor_streaming, create=True):
-                config = {"use_supervisor": False, "source_file_path": "/tmp/test.txt", "import_mode": "import_all"}
-                # We don't actually run the full graph — just check the dispatch logic
-                use_sup = config.get("use_supervisor") or config.get("context", {}).get("use_supervisor")
-                self.assertFalse(use_sup)
-                self.assertEqual(len(called), 0)
+            with patch("sidecar.supervisor.policy.run_supervisor_streaming", fake_supervisor):
+                results = []
+                async for update in run_streaming("/tmp/test", {
+                    "use_supervisor": True,
+                    "source_file_path": "/tmp/test.txt",
+                    "import_mode": "import_all",
+                }):
+                    results.append(update)
+            self.assertTrue(supervisor_calls, "run_supervisor_streaming was not called")
+            self.assertEqual(len(results), 1)
 
-        _run(collect())
+        asyncio.run(collect())
 
-    # ── Test 8: use_supervisor=True → supervised windowing used ──────────────
+    # ── Test 8 (replaced): run_streaming bypasses supervisor when disabled ────
 
-    def test_use_supervisor_true_uses_supervised_windowing(self):
-        """With use_supervisor=True and 50 chapters, _build_supervised_prompt_windows is called."""
-        from sidecar.workflows.w1_import import _build_supervised_prompt_windows, _build_prompt_windows
+    def test_run_streaming_bypasses_supervisor_when_disabled(self):
+        """run_streaming(use_supervisor=False) must NOT call run_supervisor_streaming."""
+        supervisor_calls = []
 
-        chunks = [{"chunk_id": i, "content": f"chapter {i} text " * 50,
-                   "manuscript_content": f"chapter {i} text " * 50,
-                   "raw_content": f"chapter {i} text " * 50,
-                   "chapter_hint": f"Ch {i+1}",
-                   "char_start": i * 900, "char_end": (i+1) * 900,
-                   "source_span": {"start": i*900, "end": (i+1)*900}}
-                  for i in range(50)]
-        state = {
-            "project_path": "/tmp/test",
-            "import_run_id": "test_sup_windowing",
-            "source_file_path": "/tmp/novel.txt",
-            "prompt_profile": "deep",
-            "profile_config": PROFILE_CONFIGS["deep"],
-            "import_mode": "import_all",
-            "source_language": "en",
-            "context": {},
-            "chunks": chunks,
-            "use_supervisor": True,
-            "import_run_manifest": {"source_hash": "abc", "import_run_id": "test_sup_windowing"},
+        async def fake_supervisor(project_path, config):
+            supervisor_calls.append(True)
+            yield {}
+
+        async def collect():
+            from sidecar.workflows.w1_import import run_streaming
+            with patch("sidecar.supervisor.policy.run_supervisor_streaming", fake_supervisor):
+                gen = run_streaming("/tmp/test", {
+                    "use_supervisor": False,
+                    "source_file_path": "/tmp/test.txt",
+                    "import_mode": "import_all",
+                    "context": {},
+                })
+                try:
+                    await asyncio.wait_for(gen.__anext__(), timeout=0.5)
+                except Exception:
+                    pass  # LangGraph will fail without real files; that's OK
+            self.assertFalse(supervisor_calls, "run_supervisor_streaming must NOT be called")
+
+        asyncio.run(collect())
+
+
+# ── Correctness regression tests ─────────────────────────────────────────────────
+
+class TestMergeCorrectness(unittest.TestCase):
+
+    # ── Fix 1: two-window batch preserves both registries ────────────────────
+
+    def test_two_window_batch_merges_both_registries(self):
+        """Characters from window 1 and window 2 must both appear in final registry."""
+        from sidecar.supervisor.policy import run_supervisor_policy
+
+        windows = [_make_window("pwin_a", [0]), _make_window("pwin_b", [1])]
+        state = _make_state(windows=windows)
+
+        registry_a = {
+            "characters": {"char_w1": {"canonical_name": "Alice", "canonical_id": "char_w1"}},
+            "events": {}, "world": {}, "world_detailed": {},
         }
-        digest = {"content": "(empty)", "estimated_tokens": 5, "artifact_path": "/tmp/x.json", "counts": {}}
+        registry_b = {
+            "characters": {"char_w2": {"canonical_name": "Bob", "canonical_id": "char_w2"}},
+            "events": {}, "world": {}, "world_detailed": {},
+        }
 
-        windows = _build_supervised_prompt_windows(state, chunks, digest)
+        async def extract_by_window(state, window_id):
+            reg = registry_a if window_id == "pwin_a" else registry_b
+            return {
+                "entity_registry": reg,
+                "window_metrics": _passing_metrics(window_id, 1),
+                "supervisor_log": [],
+            }
 
-        # 50 chapters with deep (chapters_per_window=8) → at least 4 windows
-        self.assertGreaterEqual(len(windows), 4, f"Expected ≥4 windows, got {len(windows)}")
+        async def passthrough_reduce(state):
+            return {"entity_registry": state.get("entity_registry", {})}
+
+        async def passthrough_repair(state):
+            return {"entity_registry": state.get("entity_registry", {}), "minor_repair_log": []}
+
+        tools = _make_tools(
+            segment_result={"prompt_windows": windows, "supervisor_log": []},
+        )
+        tools["extract_window"] = AsyncMock(side_effect=extract_by_window)
+        tools["reduce_entities"] = AsyncMock(side_effect=passthrough_reduce)
+        tools["minor_repair"] = AsyncMock(side_effect=passthrough_repair)
+
+        result = asyncio.run(run_supervisor_policy(state, tools))
+
+        chars = result.get("entity_registry", {}).get("characters", {})
+        self.assertIn("char_w1", chars, "Alice (window 1) lost after batch merge")
+        self.assertIn("char_w2", chars, "Bob (window 2) lost after batch merge")
+
+    # ── Fix 2: split rerun uses exactly one rerun call, not max_reruns ───────
+
+    def test_split_break_does_not_exhaust_reruns(self):
+        """After split strategy, rerun_window must be called only once per failure."""
+        from sidecar.supervisor.policy import run_supervisor_policy
+
+        windows = [_make_window("pwin_split", [0, 1])]
+        failing = {"pwin_split": {
+            "window_id": "pwin_split", "chapter_count": 2,
+            "char_count_extracted": 0,  # density 0 < 0.5
+            "event_count_extracted": 0,
+            "failed_prompts": [], "gate_passed": False, "rerun_count": 0,
+            "missing_majors": [], "missing_majors_count": 0,
+        }}
+
+        rerun_count = [0]
+        child_window = _make_window("pwin_child_a", [0])
+
+        async def mock_rerun(state, window_id, strategy="augment", missing=None):
+            rerun_count[0] += 1
+            child_metrics = _passing_metrics("pwin_child_a", 1)
+            new_windows = list(state.get("prompt_windows", [])) + [child_window]
+            return {
+                "entity_registry": state.get("entity_registry", {}),
+                "prompt_windows": new_windows,
+                "window_metrics": {**state.get("window_metrics", {}), **child_metrics},
+                "supervisor_log": [],
+            }
+
+        state = _make_state(windows=windows, metrics=failing)
+        tools = _make_tools(
+            segment_result={"prompt_windows": windows, "supervisor_log": []},
+            extract_result={"entity_registry": state["entity_registry"], "window_metrics": failing,
+                            "supervisor_log": []},
+            cross_validate_result={"window_metrics": failing},
+        )
+        tools["rerun_window"] = mock_rerun
+
+        asyncio.run(run_supervisor_policy(state, tools))
+
+        self.assertEqual(rerun_count[0], 1, f"Expected 1 rerun (split breaks loop), got {rerun_count[0]}")
+
+    # ── Fix 3: missing major names are passed to augment rerun ───────────────
+
+    def test_missing_major_names_passed_to_augment_rerun(self):
+        """cross_validate returns missing names; augment rerun receives them."""
+        from sidecar.supervisor.policy import run_supervisor_policy
+
+        windows = [_make_window("pwin_aug", [0])]
+        failing_no_chars = {"pwin_aug": {
+            "window_id": "pwin_aug", "chapter_count": 1,
+            "char_count_extracted": 0,  # density 0 < 0.5, single chunk → augment
+            "event_count_extracted": 0,
+            "failed_prompts": [], "gate_passed": False, "rerun_count": 0,
+            "missing_majors": [], "missing_majors_count": 0,
+        }}
+        cv_result_with_names = {
+            "window_metrics": {"pwin_aug": {
+                **failing_no_chars["pwin_aug"],
+                "missing_majors": ["Hero", "Villain"],
+                "missing_majors_count": 2,
+            }}
+        }
+
+        received_missing: list = []
+
+        async def mock_rerun(state, window_id, strategy="augment", missing=None):
+            received_missing.append(missing)
+            return {
+                "entity_registry": state.get("entity_registry", {}),
+                "window_metrics": _passing_metrics(window_id, 1),
+                "supervisor_log": [],
+            }
+
+        state = _make_state(windows=windows, metrics=failing_no_chars)
+        tools = _make_tools(
+            segment_result={"prompt_windows": windows, "supervisor_log": []},
+            extract_result={"entity_registry": state["entity_registry"],
+                            "window_metrics": failing_no_chars, "supervisor_log": []},
+            cross_validate_result=cv_result_with_names,
+        )
+        tools["rerun_window"] = mock_rerun
+
+        asyncio.run(run_supervisor_policy(state, tools))
+
+        self.assertGreater(len(received_missing), 0, "rerun_window was never called")
+        self.assertIn("Hero", received_missing[0] or [], "Hero not in missing names passed to rerun")
+        self.assertIn("Villain", received_missing[0] or [], "Villain not in missing names passed to rerun")
+
+    # ── Fix 4: proposal_write writes supervisor artifact files ───────────────
+
+    def test_proposal_write_writes_supervisor_artifacts(self):
+        """proposal_write must write supervisor_decisions.json and window_metrics.json."""
+        from sidecar.supervisor.tools import proposal_write
+
+        state = _make_state()
+        state = {
+            **state,
+            "import_run_id": "artifact_test_run",
+            "project_path": "/tmp/artifact_test",
+            "supervisor_decisions": [{"stage": "test"}],
+            "window_metrics": {"pwin_0": {"gate_passed": True}},
+        }
+
+        artifact_calls: list = []
+
+        async def mock_node(*args, **kwargs):
+            return {"proposals": [], "manuscript_chapters": [], "relationships": [],
+                    "character_tags": [], "world_settings": {}, "import_review_report": {}}
+
+        with patch("sidecar.supervisor.tools._write_import_artifact") as mock_write, \
+             patch("sidecar.supervisor.tools.node_build_manuscript", mock_node), \
+             patch("sidecar.supervisor.tools.node_synthesize_relationships", mock_node), \
+             patch("sidecar.supervisor.tools.node_classify_character_tags", mock_node), \
+             patch("sidecar.supervisor.tools.node_infer_world_settings", mock_node), \
+             patch("sidecar.supervisor.tools.node_write_to_project", mock_node):
+            asyncio.run(proposal_write(state))
+            artifact_calls = [call.args[2] for call in mock_write.call_args_list]
+
+        self.assertIn("supervisor_decisions.json", artifact_calls,
+                      "supervisor_decisions.json was not written by proposal_write")
+        self.assertIn("window_metrics.json", artifact_calls,
+                      "window_metrics.json was not written by proposal_write")
 
 
 if __name__ == "__main__":

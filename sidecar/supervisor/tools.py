@@ -468,12 +468,18 @@ async def cross_validate_window(state: ImportSupervisorState, window_id: str) ->
         log.append(f"cross_validate_window {window_id}: non-fatal error — {exc}")
         return {"supervisor_log": log}
 
-    missing_majors = len(result.get("missing_major_characters", []))
+    missing_major_entries = result.get("missing_major_characters", [])
+    missing_major_names = [
+        str(m.get("name") or m.get("canonical_name") or m.get("name_or_alias") or "").strip()
+        for m in missing_major_entries if isinstance(m, dict)
+        if str(m.get("name") or m.get("canonical_name") or m.get("name_or_alias") or "").strip()
+    ]
     duplicate_count = len(result.get("duplicate_characters", [])) + len(result.get("duplicate_events", []))
 
     window_metrics = dict(state.get("window_metrics", {}))
     wm = dict(window_metrics.get(window_id, {}))
-    wm["missing_majors_count"] = missing_majors
+    wm["missing_majors_count"] = len(missing_major_names)
+    wm["missing_majors"] = missing_major_names
     wm["duplicate_count"] = duplicate_count
     window_metrics[window_id] = wm
 
@@ -485,7 +491,7 @@ async def cross_validate_window(state: ImportSupervisorState, window_id: str) ->
         existing_cv[key].extend(result.get(key, []))
 
     log = list(state.get("supervisor_log", []))
-    log.append(f"cross_validate_window {window_id}: {missing_majors} missing majors, {duplicate_count} duplicates")
+    log.append(f"cross_validate_window {window_id}: {len(missing_major_names)} missing majors, {duplicate_count} duplicates")
 
     return {
         "cross_validation": existing_cv,
@@ -791,6 +797,18 @@ async def proposal_write(state: ImportSupervisorState) -> dict:
     proposals = write_result.get("proposals", [])
     log = list(state.get("supervisor_log", []))
     log.append(f"proposal_write: {len(proposals)} proposals written")
+
+    import_run_id = state.get("import_run_id", "")
+    project_path = state.get("project_path", "")
+    if import_run_id and project_path:
+        _write_import_artifact(
+            project_path, import_run_id, "supervisor_decisions.json",
+            state.get("supervisor_decisions", []),
+        )
+        _write_import_artifact(
+            project_path, import_run_id, "window_metrics.json",
+            state.get("window_metrics", {}),
+        )
 
     return {
         **manuscript_result,
