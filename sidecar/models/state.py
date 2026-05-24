@@ -188,6 +188,48 @@ class PromptWindow(TypedDict, total=False):
     validation_token_estimate: int
     split_reason: str
     source_span: dict
+    output_token_budget: int  # Supervisor: estimated max output tokens for this window
+
+
+class ImportProfileConfig(TypedDict, total=False):
+    """Multi-dimensional replacement for the flat PromptProfile string."""
+    character_granularity: Literal["major_only", "named_only", "all"]
+    event_density: Literal["arc_level", "chapter_level", "scene_level"]
+    world_strictness: Literal["named_only", "with_description", "full_attributes"]
+    timeline_topology_depth: Literal["flat", "branched", "full_dag"]
+    validation_strictness: Literal["off", "per_window", "per_arc"]
+    input_window_budget: int   # Max source tokens per window
+    output_token_budget: int   # Max expected output tokens per window
+    max_rerun_iterations: int  # Hard cap on supervisor reruns per window
+    chapters_per_window: int   # Primary windowing constraint
+
+
+class SupervisorDecision(TypedDict):
+    """One recorded decision made by the supervisor policy loop."""
+    iteration: int
+    stage: str
+    tool_called: str
+    reason: str
+    metrics_before: dict
+    metrics_after: dict
+    action: Literal["proceed", "rerun", "repair", "skip"]
+    rerun_targets: List[str]
+    timestamp: str
+
+
+class WindowExtractionMetrics(TypedDict):
+    """Per-window quality metrics produced by extract_window and cross_validate_window."""
+    window_id: str
+    chapter_count: int
+    char_count_extracted: int
+    event_count_extracted: int
+    world_count_extracted: int
+    failed_prompts: List[str]
+    confidence_distribution: dict
+    missing_majors_count: int
+    duplicate_count: int
+    rerun_count: int
+    gate_passed: bool
 
 
 class ImportState(TypedDict, total=False):
@@ -197,6 +239,7 @@ class ImportState(TypedDict, total=False):
     import_mode: Literal["import_content_only", "import_all"]
     import_run_id: str
     prompt_profile: PromptProfile
+    source_language: str  # ISO 639-1 code detected from source text, e.g. "zh" or "en"
     context: dict
     chunks: List["Chunk"]
     import_run_manifest: ImportRunManifest
@@ -223,6 +266,69 @@ class ImportState(TypedDict, total=False):
     progress: float
     errors: List[str]
     status: Literal["running", "done", "error", "cancelled"]
+
+
+# Canonical profile configurations for the supervisor path.
+PROFILE_CONFIGS: "Dict[str, ImportProfileConfig]" = {
+    "fast": {
+        "character_granularity": "major_only",
+        "event_density": "arc_level",
+        "world_strictness": "named_only",
+        "timeline_topology_depth": "flat",
+        "validation_strictness": "off",
+        "input_window_budget": 64_000,
+        "output_token_budget": 3000,
+        "max_rerun_iterations": 1,
+        "chapters_per_window": 20,
+    },
+    "balanced": {
+        "character_granularity": "named_only",
+        "event_density": "chapter_level",
+        "world_strictness": "with_description",
+        "timeline_topology_depth": "branched",
+        "validation_strictness": "per_window",
+        "input_window_budget": 48_000,
+        "output_token_budget": 3000,
+        "max_rerun_iterations": 2,
+        "chapters_per_window": 12,
+    },
+    "deep": {
+        "character_granularity": "all",
+        "event_density": "chapter_level",
+        "world_strictness": "full_attributes",
+        "timeline_topology_depth": "full_dag",
+        "validation_strictness": "per_window",
+        "input_window_budget": 32_000,
+        "output_token_budget": 3000,
+        "max_rerun_iterations": 2,
+        "chapters_per_window": 8,
+    },
+}
+
+
+class ImportSupervisorState(TypedDict, total=False):
+    """
+    Extends ImportState with supervisor orchestration fields.
+
+    All ImportState keys are valid here. The supervisor does NOT replace
+    the LangGraph graph — it wraps it with a policy loop when use_supervisor=True.
+    """
+    # ── All ImportState fields (not redeclared) ──
+    # project_path, workflow_id, source_file_path, import_mode, import_run_id,
+    # prompt_profile, source_language, context, chunks, import_run_manifest, ...
+
+    # ── Supervisor-only additions ──
+    use_supervisor: bool
+    profile_config: ImportProfileConfig
+    supervisor_decisions: List[SupervisorDecision]
+    current_stage: str
+    window_metrics: dict        # {window_id: WindowExtractionMetrics}
+    rerun_candidates: List[str]
+    gate_failures: List[dict]   # [{gate, value, threshold, windows}]
+    supervisor_iteration: int
+    max_supervisor_iterations: int
+    supervisor_log: List[str]
+    minor_repair_log: List[str]
 
 
 class DiffItem(TypedDict):

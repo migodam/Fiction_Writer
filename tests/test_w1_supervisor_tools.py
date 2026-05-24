@@ -1,0 +1,517 @@
+"""Tests for W1 Supervisor tool implementations (S1)."""
+from __future__ import annotations
+
+import asyncio
+import copy
+import unittest
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from sidecar.models.state import PROFILE_CONFIGS, ImportSupervisorState
+from sidecar.supervisor.tool_registry import build_tool_registry
+from sidecar.supervisor.tools import (
+    _symptom_flags,
+    extract_window,
+    cross_validate_window,
+    minor_repair,
+    qa_review,
+    reduce_entities,
+    rerun_window,
+    segment_manifest,
+    estimate_window_output_tokens,
+    window_exceeds_output_budget,
+    _OUTPUT_BUDGET_SPLIT_THRESHOLD,
+)
+
+
+# ── Fixtures ───────────────────────────────────────────────────────────────────
+
+def _make_state(**overrides) -> ImportSupervisorState:
+    base: ImportSupervisorState = {
+        "project_path": "/tmp/test_project",
+        "source_file_path": "/tmp/test_project/novel.txt",
+        "import_run_id": "import_test001",
+        "prompt_profile": "balanced",
+        "import_mode": "import_all",
+        "source_language": "en",
+        "profile_config": PROFILE_CONFIGS["balanced"],
+        "entity_registry": {"characters": {}, "events": {}, "world": {}, "world_detailed": {}},
+        "chunks": [
+            {"chunk_id": 0, "content": "Chapter 1 text.", "chapter_hint": "Chapter 1", "char_start": 0, "char_end": 100},
+            {"chunk_id": 1, "content": "Chapter 2 text.", "chapter_hint": "Chapter 2", "char_start": 100, "char_end": 200},
+        ],
+        "prompt_windows": [],
+        "window_metrics": {},
+        "supervisor_decisions": [],
+        "supervisor_log": [],
+        "minor_repair_log": [],
+        "supervisor_iteration": 0,
+        "max_supervisor_iterations": 3,
+        "gate_failures": [],
+        "rerun_candidates": [],
+        "raw_relationships": [],
+        "errors": [],
+        "import_run_manifest": {"source_hash": "abc123", "import_run_id": "import_test001"},
+        "project_structure_digest": {"content": "(empty)", "estimated_tokens": 5, "counts": {}},
+    }
+    base.update(overrides)
+    return base
+
+
+def _make_window(window_id: str, chunk_ids: list[int], chapters: int = 2) -> dict:
+    return {
+        "id": window_id,
+        "chunk_ids": chunk_ids,
+        "chapter_range": f"Ch {chunk_ids[0]+1}–{chunk_ids[-1]+1}",
+        "text": "PROJECT_STRUCTURE_DIGEST:\n(empty)\n\nSOURCE_CHAPTERS:\nsome text",
+        "estimated_tokens": 500,
+        "source_chars": 200,
+        "digest_token_estimate": 10,
+        "validation_token_estimate": 5,
+        "split_reason": "complete_chapter",
+        "output_token_budget": 3000,
+    }
+
+
+def _run(coro):
+    return asyncio.get_event_loop().run_until_complete(coro)
+
+
+# ── Test 1: segment_manifest idempotency ──────────────────────────────────────
+
+class TestSegmentManifest(unittest.TestCase):
+    def test_idempotency_skips_when_windows_exist(self):
+        win = _make_window("pwin_existing", [0])
+        state = _make_state(prompt_windows=[win])
+
+        with patch("sidecar.supervisor.tools._build_prompt_windows") as mock_build:
+            result = _run(segment_manifest(state))
+
+        # Should not rebuild — cache hit
+        mock_build.assert_not_called()
+        # Returns a log entry noting the cache hit
+        log_text = " ".join(result.get("supervisor_log", []))
+        self.assertIn("cache hit", log_text)
+
+    def test_builds_windows_when_none_exist(self):
+        state = _make_state()
+        built_win = _make_window("pwin_new", [0])
+
+        with patch("sidecar.supervisor.tools._build_prompt_windows", return_value=[built_win]):
+            result = _run(segment_manifest(state))
+
+        windows = result.get("prompt_windows", [])
+        self.assertGreater(len(windows), 0)
+
+
+# ── Test 2: extract_window metrics populated ─────────────────────────────────
+
+class TestExtractWindow(unittest.TestCase):
+    def test_metrics_populated_on_success(self):
+        win = _make_window("pwin_a", [0, 1])
+        state = _make_state(prompt_windows=[win])
+
+        char_output = {"new_characters": [{"canonical_name": "Alice", "confidence": 0.9, "importance": "core"}], "existing_character_updates": []}
+        event_output = {"events": [{"title": "Battle", "description": "A fight", "confidence": 0.85}]}
+        world_output = {"world_mentions": [{"name": "Rivendell", "category": "location"}]}
+        rel_output = {"relationships": []}
+        scene_output = {"scenes": []}
+
+        with (
+            patch("sidecar.supervisor.tools._get_llm", return_value=MagicMock()),
+            patch("sidecar.supervisor.tools._invoke_json_prompt", new_callable=AsyncMock) as mock_invoke,
+            patch("sidecar.supervisor.tools._write_import_artifact", return_value="/tmp/mock.json"),
+        ):
+            mock_invoke.side_effect = [char_output, event_output, world_output, rel_output, scene_output]
+            result = _run(extract_window(state, "pwin_a"))
+
+        metrics = result.get("window_metrics", {}).get("pwin_a", {})
+        self.assertEqual(metrics.get("window_id"), "pwin_a")
+        self.assertEqual(metrics.get("char_count_extracted"), 1)
+        self.assertEqual(metrics.get("event_count_extracted"), 1)
+        self.assertEqual(metrics.get("world_count_extracted"), 1)
+        self.assertIsInstance(metrics.get("failed_prompts"), list)
+
+    def test_failed_prompts_captured(self):
+        win = _make_window("pwin_b", [0])
+        state = _make_state(prompt_windows=[win])
+
+        with (
+            patch("sidecar.supervisor.tools._get_llm", return_value=MagicMock()),
+            patch("sidecar.supervisor.tools._invoke_json_prompt", new_callable=AsyncMock) as mock_invoke,
+            patch("sidecar.supervisor.tools._write_import_artifact", return_value="/tmp/mock.json"),
+        ):
+            mock_invoke.side_effect = [Exception("API Error"), {}, {}, {}, {}]
+            result = _run(extract_window(state, "pwin_b"))
+
+        metrics = result.get("window_metrics", {}).get("pwin_b", {})
+        self.assertGreater(len(metrics.get("failed_prompts", [])), 0)
+
+
+# ── Test 3: cross_validate non-fatal on failure ───────────────────────────────
+
+class TestCrossValidateWindow(unittest.TestCase):
+    def test_non_fatal_on_llm_failure(self):
+        state = _make_state()
+
+        with (
+            patch("sidecar.supervisor.tools._get_llm", return_value=MagicMock()),
+        ):
+            mock_llm = MagicMock()
+            mock_llm.ainvoke = AsyncMock(side_effect=Exception("LLM down"))
+            with patch("sidecar.supervisor.tools._get_llm", return_value=mock_llm):
+                result = _run(cross_validate_window(state, "pwin_x"))
+
+        # Should return without raising; may have a log entry
+        self.assertIsInstance(result, dict)
+        # cross_validation and window_metrics are NOT required in error path
+        log = result.get("supervisor_log", [])
+        self.assertTrue(any("non-fatal" in entry for entry in log))
+
+    def test_updates_window_metrics_on_success(self):
+        win = _make_window("pwin_c", [0])
+        state = _make_state(
+            prompt_windows=[win],
+            window_metrics={"pwin_c": {"window_id": "pwin_c", "chapter_count": 1}},
+        )
+        cv_result = {
+            "duplicate_characters": [{"candidate_ids": ["c1", "c2"], "confidence": 0.8}],
+            "duplicate_events": [],
+            "missing_major_characters": [{"name_or_alias": "Bob", "confidence": 0.7}],
+            "suspicious_groups": [], "contradictory_aliases": [],
+            "event_merge_recommendations": [], "warnings": [],
+        }
+
+        with patch("sidecar.supervisor.tools._get_llm", return_value=MagicMock()):
+            mock_llm = MagicMock()
+            mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content='{"duplicate_characters":[{"candidate_ids":["c1","c2"],"confidence":0.8}],"duplicate_events":[],"missing_major_characters":[{"name_or_alias":"Bob","confidence":0.7}],"suspicious_groups":[],"contradictory_aliases":[],"event_merge_recommendations":[],"warnings":[]}'))
+            with patch("sidecar.supervisor.tools._get_llm", return_value=mock_llm):
+                result = _run(cross_validate_window(state, "pwin_c"))
+
+        wm = result.get("window_metrics", {}).get("pwin_c", {})
+        self.assertEqual(wm.get("missing_majors_count"), 1)
+        self.assertEqual(wm.get("duplicate_count"), 1)
+
+
+# ── Test 4: rerun_window split creates two sub-windows ───────────────────────
+
+class TestRerunWindowSplit(unittest.TestCase):
+    def test_split_creates_two_sub_windows_with_new_ids(self):
+        parent = _make_window("pwin_parent", [0, 1, 2, 3])
+        state = _make_state(
+            prompt_windows=[parent],
+            chunks=[
+                {"chunk_id": 0, "content": "Ch1", "chapter_hint": "Chapter 1", "char_start": 0, "char_end": 50},
+                {"chunk_id": 1, "content": "Ch2", "chapter_hint": "Chapter 2", "char_start": 50, "char_end": 100},
+                {"chunk_id": 2, "content": "Ch3", "chapter_hint": "Chapter 3", "char_start": 100, "char_end": 150},
+                {"chunk_id": 3, "content": "Ch4", "chapter_hint": "Chapter 4", "char_start": 150, "char_end": 200},
+            ],
+        )
+
+        sub_win_a = _make_window("pwin_sub_a", [0, 1])
+        sub_win_b = _make_window("pwin_sub_b", [2, 3])
+
+        with (
+            patch("sidecar.supervisor.tools._build_prompt_windows") as mock_build,
+            patch("sidecar.supervisor.tools._get_llm", return_value=MagicMock()),
+            patch("sidecar.supervisor.tools._invoke_json_prompt", new_callable=AsyncMock, return_value={}),
+            patch("sidecar.supervisor.tools._write_import_artifact", return_value="/tmp/mock.json"),
+        ):
+            mock_build.side_effect = [[sub_win_a], [sub_win_b]]
+            result = _run(rerun_window(state, "pwin_parent", strategy="split"))
+
+        new_windows = result.get("prompt_windows", [])
+        new_ids = [w["id"] for w in new_windows if w["id"] != "pwin_parent"]
+        self.assertEqual(len(new_ids), 2, f"Expected 2 sub-windows, got {new_ids}")
+        # Both IDs must differ from the parent
+        for nid in new_ids:
+            self.assertNotEqual(nid, "pwin_parent")
+        # Both must differ from each other
+        self.assertNotEqual(new_ids[0], new_ids[1])
+
+
+# ── Test 5: rerun_window augment injects missing chars ───────────────────────
+
+class TestRerunWindowAugment(unittest.TestCase):
+    def test_augment_injects_supervisor_hint(self):
+        parent = _make_window("pwin_parent2", [0])
+        state = _make_state(prompt_windows=[parent])
+
+        with (
+            patch("sidecar.supervisor.tools._get_llm", return_value=MagicMock()),
+            patch("sidecar.supervisor.tools._invoke_json_prompt", new_callable=AsyncMock, return_value={}),
+            patch("sidecar.supervisor.tools._write_import_artifact", return_value="/tmp/mock.json"),
+        ):
+            result = _run(rerun_window(state, "pwin_parent2", strategy="augment", missing_char_names=["Alice", "Bob"]))
+
+        new_windows = result.get("prompt_windows", [])
+        augmented = [w for w in new_windows if w["id"] != "pwin_parent2"]
+        self.assertEqual(len(augmented), 1)
+        self.assertIn("SUPERVISOR_HINT", augmented[0].get("text", ""))
+        self.assertIn("Alice", augmented[0].get("text", ""))
+
+
+# ── Test 6: max rerun cap respected ──────────────────────────────────────────
+
+class TestRerunWindowMaxCap(unittest.TestCase):
+    def test_max_rerun_cap_returns_skip_action(self):
+        parent = _make_window("pwin_capped", [0])
+        profile_config = {**PROFILE_CONFIGS["balanced"], "max_rerun_iterations": 1}
+        state = _make_state(
+            prompt_windows=[parent],
+            profile_config=profile_config,
+            window_metrics={"pwin_capped": {"rerun_count": 1}},  # already at max
+        )
+
+        with patch("sidecar.supervisor.tools._invoke_json_prompt", new_callable=AsyncMock, return_value={}):
+            result = _run(rerun_window(state, "pwin_capped", strategy="augment"))
+
+        decisions = result.get("supervisor_decisions", [])
+        self.assertTrue(any(d.get("action") == "skip" for d in decisions))
+        # No new windows should have been added
+        new_windows = result.get("prompt_windows", [])
+        self.assertEqual(len(new_windows), 0)
+
+
+# ── Test 7: reduce_entities reports missing_groupkey_count ───────────────────
+
+class TestReduceEntities(unittest.TestCase):
+    def test_reports_missing_groupkey_count(self):
+        registry = {
+            "characters": {
+                "char_001": {"canonical_name": "Alice", "importance": "core", "confidence": 0.9},
+                "char_002": {"canonical_name": "Bob", "importance": "major", "confidence": 0.8, "groupKey": "Supporting Cast"},
+            },
+            "events": {}, "world": {}, "world_detailed": {},
+        }
+        state = _make_state(entity_registry=registry)
+
+        async def _mock_reconcile(s): return {"entity_registry": registry, "reducer_artifact": {}}
+        async def _mock_low_conf(s): return {"entity_registry": registry}
+
+        with (
+            patch("sidecar.supervisor.tools.node_reconcile_entities", new_callable=lambda: lambda: _mock_reconcile),
+            patch("sidecar.supervisor.tools.node_resolve_low_confidence", new_callable=lambda: lambda: _mock_low_conf),
+        ):
+            # Use actual node functions since the test registry doesn't need reconciliation
+            async def _fake_reconcile(s):
+                return {"entity_registry": s.get("entity_registry", {}), "reducer_artifact": {}}
+
+            async def _fake_low_conf(s):
+                return {"entity_registry": s.get("entity_registry", {})}
+
+            with (
+                patch("sidecar.supervisor.tools.node_reconcile_entities", _fake_reconcile),
+                patch("sidecar.supervisor.tools.node_resolve_low_confidence", _fake_low_conf),
+            ):
+                result = _run(reduce_entities(state))
+
+        log = " ".join(result.get("supervisor_log", []))
+        # char_001 is missing groupKey (char_002 has it)
+        self.assertIn("1 missing groupKey", log)
+
+
+# ── Test 8: minor_repair sets groupKey for all chars ─────────────────────────
+
+class TestMinorRepairGroupKey(unittest.TestCase):
+    def test_sets_groupkey_for_all_missing(self):
+        registry = {
+            "characters": {
+                "c1": {"canonical_name": "Alice", "importance": "core", "personality_traits": []},
+                "c2": {"canonical_name": "Bob", "importance": "minor", "personality_traits": []},
+                "c3": {"canonical_name": "Carol", "importance": "major", "groupKey": "Already Set", "personality_traits": []},
+            },
+            "events": {}, "world": {}, "world_detailed": {},
+        }
+        state = _make_state(entity_registry=registry)
+        result = _run(minor_repair(state))
+
+        chars = result.get("entity_registry", {}).get("characters", {})
+        self.assertEqual(chars["c1"].get("groupKey"), "Main Characters")
+        self.assertEqual(chars["c2"].get("groupKey"), "Minor Characters")
+        self.assertEqual(chars["c3"].get("groupKey"), "Already Set")  # unchanged
+
+
+# ── Test 9: minor_repair migrates orgs to world_detailed ─────────────────────
+
+class TestMinorRepairOrgMigration(unittest.TestCase):
+    def test_migrates_org_chars_to_world_detailed(self):
+        registry = {
+            "characters": {
+                "c_org": {
+                    "canonical_name": "Merchant Guild",
+                    "importance": "supporting",
+                    "role_in_story": "A major organization in the story",
+                    "summary": "The guild controls trade routes",
+                    "personality_traits": [],
+                },
+                "c_person": {
+                    "canonical_name": "Alice",
+                    "importance": "core",
+                    "role_in_story": "protagonist",
+                    "personality_traits": [],
+                },
+            },
+            "events": {}, "world": {}, "world_detailed": {},
+        }
+        state = _make_state(entity_registry=registry)
+        result = _run(minor_repair(state))
+
+        chars = result.get("entity_registry", {}).get("characters", {})
+        world_detailed = result.get("entity_registry", {}).get("world_detailed", {})
+
+        self.assertTrue(chars["c_org"].get("skip_create"), "org-char should be marked skip_create")
+        self.assertIn("Merchant Guild", world_detailed)
+        self.assertFalse(chars["c_person"].get("skip_create"))
+
+
+# ── Test 10: minor_repair strips Latin traits for zh source ──────────────────
+
+class TestMinorRepairLatinStrip(unittest.TestCase):
+    def test_strips_latin_dominant_traits_for_zh_source(self):
+        registry = {
+            "characters": {
+                "c_zh": {
+                    "canonical_name": "韩立",
+                    "importance": "core",
+                    "personality_traits": ["勤奋", "determined warrior", "聪明"],
+                    "role_in_story": "protagonist",
+                },
+            },
+            "events": {}, "world": {}, "world_detailed": {},
+        }
+        state = _make_state(entity_registry=registry, source_language="zh")
+        result = _run(minor_repair(state))
+
+        traits = result.get("entity_registry", {}).get("characters", {}).get("c_zh", {}).get("personality_traits", [])
+        trait_text = " ".join(traits)
+        self.assertIn("勤奋", trait_text)
+        self.assertIn("聪明", trait_text)
+        self.assertNotIn("determined warrior", trait_text)
+
+    def test_does_not_strip_for_en_source(self):
+        registry = {
+            "characters": {
+                "c_en": {
+                    "canonical_name": "John",
+                    "importance": "core",
+                    "personality_traits": ["determined warrior", "brave"],
+                    "role_in_story": "protagonist",
+                },
+            },
+            "events": {}, "world": {}, "world_detailed": {},
+        }
+        state = _make_state(entity_registry=registry, source_language="en")
+        result = _run(minor_repair(state))
+
+        traits = result.get("entity_registry", {}).get("characters", {}).get("c_en", {}).get("personality_traits", [])
+        self.assertIn("determined warrior", traits)
+
+
+# ── Test 11: qa_review gate_failures from symptom flags ──────────────────────
+
+class TestQaReview(unittest.TestCase):
+    def test_gate_failures_populated_from_symptom_flags(self):
+        registry = {
+            "characters": {
+                "c1": {"canonical_name": "Alice", "importance": "core"},  # missing groupKey
+            },
+            "events": {}, "world": {}, "world_detailed": {},
+        }
+        state = _make_state(entity_registry=registry)
+
+        async def _mock_review(s):
+            return {"import_review_report": {"status": "warning", "warnings": [], "errors": [], "proposal_counts": {}}}
+
+        with patch("sidecar.supervisor.tools.node_review_import", _mock_review):
+            result = _run(qa_review(state))
+
+        gate_failures = result.get("gate_failures", [])
+        gates = [gf["gate"] for gf in gate_failures]
+        self.assertIn("groupKey_coverage", gates)
+
+    def test_mixed_language_flag_triggers_gate(self):
+        registry = {
+            "characters": {
+                "c1": {
+                    "canonical_name": "韩立",
+                    "importance": "core",
+                    "groupKey": "Main Characters",
+                    "personality_traits": ["determined fighter", "勤奋"],
+                },
+            },
+            "events": {}, "world": {}, "world_detailed": {},
+        }
+        state = _make_state(entity_registry=registry, source_language="zh")
+
+        async def _mock_review(s):
+            return {"import_review_report": {"status": "pass", "warnings": [], "errors": [], "proposal_counts": {}}}
+
+        with patch("sidecar.supervisor.tools.node_review_import", _mock_review):
+            result = _run(qa_review(state))
+
+        gate_failures = result.get("gate_failures", [])
+        gates = [gf["gate"] for gf in gate_failures]
+        self.assertIn("language_consistency", gates)
+
+
+# ── Test 12: output_budget gate on estimated > 3500 ──────────────────────────
+
+class TestOutputBudgetGate(unittest.TestCase):
+    def test_estimate_scales_with_chapter_count(self):
+        win_8ch = _make_window("pwin_8ch", list(range(8)))
+        win_2ch = _make_window("pwin_2ch", [0, 1])
+
+        est_8 = estimate_window_output_tokens(win_8ch, chapters_per_window=8)
+        est_2 = estimate_window_output_tokens(win_2ch, chapters_per_window=8)
+
+        self.assertGreater(est_8, est_2)
+
+    def test_window_exceeds_budget_for_large_chapter_count(self):
+        win_12ch = _make_window("pwin_12ch", list(range(12)))
+        profile_config = PROFILE_CONFIGS["deep"]
+
+        result = window_exceeds_output_budget(win_12ch, profile_config)
+        self.assertTrue(result, "12-chapter window should exceed 3500-token output budget")
+
+    def test_window_within_budget_for_small_chapter_count(self):
+        win_2ch = _make_window("pwin_2ch", [0, 1])
+        profile_config = PROFILE_CONFIGS["deep"]
+
+        result = window_exceeds_output_budget(win_2ch, profile_config)
+        self.assertFalse(result, "2-chapter window should be within output budget")
+
+    def test_segment_manifest_splits_oversized_windows(self):
+        # A window with many chunks should trigger pre-flight split
+        large_chunks = [
+            {"chunk_id": i, "content": f"Chapter {i}", "chapter_hint": f"Chapter {i+1}", "char_start": i*100, "char_end": (i+1)*100}
+            for i in range(12)
+        ]
+        state = _make_state(chunks=large_chunks)
+
+        large_win = _make_window("pwin_large", list(range(12)))
+
+        with patch("sidecar.supervisor.tools._build_prompt_windows", return_value=[large_win]):
+            result = _run(segment_manifest(state))
+
+        windows = result.get("prompt_windows", [])
+        # Large window should have been split into smaller ones
+        self.assertGreater(len(windows), 1, "Pre-flight split should produce multiple windows")
+
+
+# ── Tool registry ─────────────────────────────────────────────────────────────
+
+class TestToolRegistry(unittest.TestCase):
+    def test_build_tool_registry_returns_all_nine_tools(self):
+        registry = build_tool_registry()
+        expected = {
+            "segment_manifest", "extract_window", "cross_validate_window",
+            "rerun_window", "reduce_entities", "architect_timeline",
+            "qa_review", "minor_repair", "proposal_write",
+        }
+        self.assertEqual(set(registry.keys()), expected)
+        for name, fn in registry.items():
+            self.assertTrue(callable(fn), f"{name} must be callable")
+
+
+if __name__ == "__main__":
+    unittest.main()
