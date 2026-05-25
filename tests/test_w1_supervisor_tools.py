@@ -624,5 +624,210 @@ class TestWorldDedupeKeyInPrompt(unittest.TestCase):
         self.assertIn("dedupeKey", W1_EXTRACT_WORLD_DEEP)
 
 
+# ── proposal_write early artifact write ────────────────────────────────────────
+
+class TestProposalWriteEarlyArtifacts(unittest.TestCase):
+    """Diagnostics artifacts must be written BEFORE node_write_to_project runs.
+
+    If node_write_to_project OOMs or raises, supervisor_decisions.json and
+    window_metrics.json must already be on disk.
+    """
+
+    def test_diagnostics_written_before_oom_crash(self):
+        import json, tempfile
+        from pathlib import Path
+        from sidecar.supervisor.tools import proposal_write
+
+        with tempfile.TemporaryDirectory() as td:
+            project_path = td
+            import_run_id = "test_oom_run"
+            artifact_dir = Path(project_path) / "system" / "imports" / import_run_id
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+
+            state = _make_state(
+                project_path=project_path,
+                import_run_id=import_run_id,
+                supervisor_decisions=[{"decision": "test"}],
+                window_metrics={"pwin_a": {"char_count_extracted": 5}},
+                judge_artifact={"score": 0.9, "passed": True, "failed_gates": []},
+                cross_validation={"duplicate_characters": [], "missing_major_characters": []},
+                entity_registry={"characters": {}, "events": {}, "world": {}, "world_detailed": {}},
+                manuscript_chapters=[],
+                timeline_branches=[],
+                relationships=[],
+                character_tags=[],
+                world_settings={},
+            )
+
+            async def _boom(*a, **kw):
+                raise MemoryError("simulated OOM")
+
+            # Patch node_write_to_project to raise after artifacts should be written
+            with (
+                patch("sidecar.supervisor.tools.node_build_manuscript", new=AsyncMock(return_value={})),
+                patch("sidecar.supervisor.tools.node_synthesize_relationships", new=AsyncMock(return_value={})),
+                patch("sidecar.supervisor.tools.node_classify_character_tags", new=AsyncMock(return_value={})),
+                patch("sidecar.supervisor.tools.node_infer_world_settings", new=AsyncMock(return_value={})),
+                patch("sidecar.supervisor.tools.node_write_to_project", new=AsyncMock(side_effect=MemoryError("simulated OOM"))),
+            ):
+                try:
+                    _run(proposal_write(state))
+                except MemoryError:
+                    pass  # expected — crash during proposal write
+
+            # Diagnostics must be on disk despite the crash
+            decisions_path = artifact_dir / "supervisor_decisions.json"
+            metrics_path = artifact_dir / "window_metrics.json"
+            judge_path = artifact_dir / "judge_artifact.json"
+            cv_path = artifact_dir / "cross_validation.json"
+
+            self.assertTrue(decisions_path.exists(), "supervisor_decisions.json must be written before OOM")
+            self.assertTrue(metrics_path.exists(), "window_metrics.json must be written before OOM")
+            self.assertTrue(judge_path.exists(), "judge_artifact.json must be written before OOM")
+            self.assertTrue(cv_path.exists(), "cross_validation.json must be written before OOM")
+
+            decisions = json.loads(decisions_path.read_text())
+            self.assertEqual(decisions, [{"decision": "test"}])
+
+
+# ── proposal_write returns compact state (no entity_registry) ─────────────────
+
+class TestProposalWriteCompactReturn(unittest.TestCase):
+    """proposal_write must not include entity_registry in its return dict."""
+
+    def test_entity_registry_not_in_return_dict(self):
+        import tempfile
+        from sidecar.supervisor.tools import proposal_write
+
+        with tempfile.TemporaryDirectory() as td:
+            state = _make_state(
+                project_path=td,
+                import_run_id="test_compact",
+                entity_registry={
+                    "characters": {"char_x": {"canonical_name": "X", "confidence": 0.8, "importance": "minor"}},
+                    "events": {},
+                    "world": {},
+                    "world_detailed": {},
+                },
+                manuscript_chapters=[],
+                timeline_branches=[],
+                relationships=[],
+                character_tags=[],
+                world_settings={},
+            )
+
+            with (
+                patch("sidecar.supervisor.tools.node_build_manuscript", new=AsyncMock(return_value={"manuscript_chapters": []})),
+                patch("sidecar.supervisor.tools.node_synthesize_relationships", new=AsyncMock(return_value={"relationships": []})),
+                patch("sidecar.supervisor.tools.node_classify_character_tags", new=AsyncMock(return_value={"character_tags": []})),
+                patch("sidecar.supervisor.tools.node_infer_world_settings", new=AsyncMock(return_value={"world_settings": {}})),
+                patch("sidecar.supervisor.tools.node_write_to_project", new=AsyncMock(return_value={
+                    "proposals": [{"id": "p1", "entity_type": "character", "status": "", "confidence": 0.75, "blocked": False}],
+                    "errors": [],
+                    "status": "done",
+                    "progress": 1.0,
+                })),
+            ):
+                result = _run(proposal_write(state))
+
+            # entity_registry must be evicted from the return dict
+            self.assertNotIn("entity_registry", result)
+            # proposals list must be present (compact receipts)
+            self.assertIn("proposals", result)
+
+
+# ── extract_window world entity cap ──────────────────────────────────────────
+
+class TestWorldEntityCapInExtractWindow(unittest.TestCase):
+    """world_mentions must be capped to 20 per chapter before registry merge."""
+
+    def test_world_mentions_capped_by_chapter_count(self):
+        win = _make_window("pwin_worldcap", [0, 1])  # 2 chunk_ids → 2 chapters → cap = 40
+        state = _make_state(prompt_windows=[win])
+
+        # Build 60 world mentions (exceeds cap of 2 × 20 = 40)
+        world_mentions = [
+            {"name": f"World_{i}", "category": "location", "confidence": 0.5 + (i / 200)}
+            for i in range(60)
+        ]
+        # Highest confidence items are indices 40-59 (confidence 0.7+)
+        world_output = {"world_mentions": world_mentions}
+
+        with (
+            patch("sidecar.supervisor.tools._get_llm", return_value=MagicMock()),
+            patch("sidecar.supervisor.tools._invoke_json_prompt", new_callable=AsyncMock) as mock_invoke,
+            patch("sidecar.supervisor.tools._write_import_artifact", return_value="/tmp/mock.json"),
+        ):
+            mock_invoke.side_effect = [
+                {"new_characters": [], "existing_character_updates": []},
+                {"events": []},
+                world_output,
+                {"relationships": []},
+                {"scenes": []},
+            ]
+            result = _run(extract_window(state, "pwin_worldcap"))
+
+        world_registry = result.get("entity_registry", {}).get("world", {})
+        # Cap is 2 chapters × 20 = 40; 60 mentions provided, so registry must have ≤ 40
+        self.assertLessEqual(len(world_registry), 40, f"Got {len(world_registry)} world entries, expected ≤ 40")
+
+    def test_world_mentions_below_cap_not_truncated(self):
+        win = _make_window("pwin_worldsmall", [0])  # 1 chunk → 1 chapter → cap = 20
+        state = _make_state(prompt_windows=[win])
+
+        world_mentions = [
+            {"name": f"Place_{i}", "category": "location", "confidence": 0.8}
+            for i in range(10)  # 10 < cap of 20
+        ]
+        world_output = {"world_mentions": world_mentions}
+
+        with (
+            patch("sidecar.supervisor.tools._get_llm", return_value=MagicMock()),
+            patch("sidecar.supervisor.tools._invoke_json_prompt", new_callable=AsyncMock) as mock_invoke,
+            patch("sidecar.supervisor.tools._write_import_artifact", return_value="/tmp/mock.json"),
+        ):
+            mock_invoke.side_effect = [
+                {"new_characters": [], "existing_character_updates": []},
+                {"events": []},
+                world_output,
+                {"relationships": []},
+                {"scenes": []},
+            ]
+            result = _run(extract_window(state, "pwin_worldsmall"))
+
+        world_registry = result.get("entity_registry", {}).get("world", {})
+        self.assertEqual(len(world_registry), 10, "10 mentions should all be registered when below cap")
+
+
+# ── Test: per-window world entity cap (TDD task 3) ───────────────────────────
+
+class TestExtractWindowWorldCap(unittest.TestCase):
+    @patch("sidecar.supervisor.tools._get_llm")
+    @patch("sidecar.supervisor.tools._invoke_json_prompt")
+    def test_world_cap_limits_per_window_registration(self, mock_invoke, mock_llm):
+        """World entities exceeding max_world_entities_per_chapter * chunk_count are dropped."""
+        mock_llm.return_value = MagicMock()
+        # 2 chunks, max 5/chapter → cap = 10. Return 15 world mentions.
+        world_mentions = [
+            {"name": f"Place{i}", "category": "location", "dedupeKey": f"place{i}::location",
+             "description": "a place", "confidence": 0.9 - i * 0.01}
+            for i in range(15)
+        ]
+        mock_invoke.side_effect = [
+            {"new_characters": []},
+            {"events": []},
+            {"world_mentions": world_mentions},
+            {"relationships": []},
+            {"scene_summaries": []},
+        ]
+        state = _make_state(
+            tool_operating_spec={"max_world_entities_per_chapter": 5},
+            prompt_windows=[_make_window("win1", [0, 1])],
+        )
+        result = asyncio.run(extract_window(state, "win1"))
+        registered = len(result.get("entity_registry", {}).get("world", {}))
+        self.assertLessEqual(registered, 10, f"Expected ≤10 world entities for 2-chunk window with cap 5/ch, got {registered}")
+
+
 if __name__ == "__main__":
     unittest.main()

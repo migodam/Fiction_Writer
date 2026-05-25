@@ -437,8 +437,18 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
         new_events.append(entry)
 
     # ── Register world mentions ──────────────────────────────────────────────
+    # Apply per-window world entity cap from TOS
+    tos = state.get("tool_operating_spec") or {}
+    _max_world_per_chapter = int(tos.get("max_world_entities_per_chapter", 5))
+    _world_window_cap = _max_world_per_chapter * max(len(chunk_ids), 1)
+    raw_world_mentions = sorted(
+        world_data.get("world_mentions", []),
+        key=lambda w: float(w.get("confidence", 0.7)),
+        reverse=True,
+    )[:_world_window_cap]
+
     new_world: list[str] = []
-    for wm in world_data.get("world_mentions", []):
+    for wm in raw_world_mentions:
         name = str(wm.get("name", "")).strip()
         if not name:
             continue
@@ -454,6 +464,10 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
         detail = registry["world_detailed"][name]
         if wm.get("attributes"):
             detail["attributes"] = wm.get("attributes", [])
+        # Store dedupeKey if model provided one
+        raw_dk = str(wm.get("dedupeKey", "")).strip()
+        if raw_dk and not detail.get("dedupeKey"):
+            detail["dedupeKey"] = raw_dk
         if not existed:
             new_world.append(name)
 
