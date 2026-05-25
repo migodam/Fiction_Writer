@@ -100,6 +100,7 @@ class ToolOperatingSpec(TypedDict, total=False):
     timeline_topology_target: Literal["flat", "branched", "full_dag"]
     orchestrator_enabled: bool
     supervisor_enabled: bool
+    max_world_entities_per_chapter: int
 
 
 class ConvergeTarget(TypedDict, total=False):
@@ -391,6 +392,7 @@ _TOS_DEFAULTS: "Dict[str, ToolOperatingSpec]" = {
         "timeline_topology_target": "flat",
         "orchestrator_enabled": False,
         "supervisor_enabled": False,
+        "max_world_entities_per_chapter": 3,
     },
     "balanced": {
         "min_characters_per_chapter": 0.75,
@@ -405,6 +407,7 @@ _TOS_DEFAULTS: "Dict[str, ToolOperatingSpec]" = {
         "timeline_topology_target": "branched",
         "orchestrator_enabled": False,
         "supervisor_enabled": False,
+        "max_world_entities_per_chapter": 4,
     },
     "deep": {
         "min_characters_per_chapter": 1.5,
@@ -419,6 +422,7 @@ _TOS_DEFAULTS: "Dict[str, ToolOperatingSpec]" = {
         "timeline_topology_target": "full_dag",
         "orchestrator_enabled": True,
         "supervisor_enabled": True,
+        "max_world_entities_per_chapter": 5,
     },
     "custom": {
         "min_characters_per_chapter": 1.5,
@@ -433,6 +437,7 @@ _TOS_DEFAULTS: "Dict[str, ToolOperatingSpec]" = {
         "timeline_topology_target": "full_dag",
         "orchestrator_enabled": True,
         "supervisor_enabled": True,
+        "max_world_entities_per_chapter": 5,
     },
 }
 

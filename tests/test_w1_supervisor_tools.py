@@ -604,5 +604,19 @@ class TestToolRegistry(unittest.TestCase):
             self.assertTrue(callable(fn), f"{name} must be callable")
 
 
+# ── TOS world entity cap ──────────────────────────────────────────────────────
+
+class TestTOSWorldCap(unittest.TestCase):
+    def test_deep_tos_has_world_entities_per_chapter(self):
+        from sidecar.models.state import plan_tool_operating_spec
+        spec = plan_tool_operating_spec("deep", "zh", 50)
+        self.assertEqual(spec["max_world_entities_per_chapter"], 5)
+
+    def test_fast_tos_has_world_entities_per_chapter(self):
+        from sidecar.models.state import plan_tool_operating_spec
+        spec = plan_tool_operating_spec("fast", "en", 10)
+        self.assertEqual(spec["max_world_entities_per_chapter"], 3)
+
+
 if __name__ == "__main__":
     unittest.main()
