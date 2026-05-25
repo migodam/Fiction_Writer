@@ -873,8 +873,8 @@ def _artifact_dir(project_path: str | Path, import_run_id: str) -> Path:
 
 def _write_import_artifact(project_path: str | Path, import_run_id: str, filename: str, payload: dict | list) -> str:
     directory = _artifact_dir(project_path, import_run_id)
-    directory.mkdir(parents=True, exist_ok=True)
     path = directory / filename
+    path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     return str(path)

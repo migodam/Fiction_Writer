@@ -292,7 +292,13 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
     chunk_ids = window.get("chunk_ids", [0])
     chunk_id = chunk_ids[0] if chunk_ids else 0
     total = len(state.get("chunks", [])) or 1
-    prompt_text = str(window.get("text", ""))
+    # Assemble source text from state chunks (windows store metadata only, not the text)
+    chunk_id_set = set(chunk_ids)
+    all_chunks_by_id = {c.get("chunk_id"): c for c in state.get("chunks", [])}
+    window_chunks = [all_chunks_by_id[cid] for cid in chunk_ids if cid in all_chunks_by_id]
+    prompt_text = "\n\n".join(str(c.get("content", c.get("text", ""))) for c in window_chunks)
+    if not prompt_text:
+        prompt_text = str(window.get("text", "") or window.get("source_text", ""))
     registry_summary = _registry_summary(registry)
     chapter_range = str(window.get("chapter_range") or f"chunk_{chunk_id}")
 
