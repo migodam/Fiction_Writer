@@ -149,7 +149,7 @@ def _alias_resolver(name: str, registry: dict) -> str | None:
     return None
 
 
-def _registry_summary(registry: dict, max_chars: int = 3000) -> str:
+def _registry_summary(registry: dict, max_chars: int = 3000, max_world_entries: int = 30) -> str:
     """Build a human-readable summary of the entity registry for prompts.
 
     Capped at max_chars to prevent prompt bloat on large registries.
@@ -161,6 +161,17 @@ def _registry_summary(registry: dict, max_chars: int = 3000) -> str:
             f"- [{cid}] {entry.get('canonical_name', 'Unknown')}"
             f" (aliases: {aliases})"
         )
+    # Append top-N world entries by confidence (name + category only)
+    world_detailed = registry.get("world_detailed", {})
+    if world_detailed:
+        top_world = sorted(
+            world_detailed.values(),
+            key=lambda w: float(w.get("confidence", 0.0)),
+            reverse=True,
+        )[:max_world_entries]
+        lines.append("\nKnown world entities:")
+        for wd in top_world:
+            lines.append(f"  - {wd.get('name', '?')} ({wd.get('category', 'concept')})")
     if not lines:
         return "(empty — no characters identified yet)"
     summary = "\n".join(lines)
