@@ -618,5 +618,11 @@ class TestTOSWorldCap(unittest.TestCase):
         self.assertEqual(spec["max_world_entities_per_chapter"], 3)
 
 
+class TestWorldDedupeKeyInPrompt(unittest.TestCase):
+    def test_world_deep_prompt_contains_dedupeKey_field(self):
+        from sidecar.prompts.w1_prompts import W1_EXTRACT_WORLD_DEEP
+        self.assertIn("dedupeKey", W1_EXTRACT_WORLD_DEEP)
+
+
 if __name__ == "__main__":
     unittest.main()

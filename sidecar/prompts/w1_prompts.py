@@ -413,6 +413,7 @@ Extract named world-building elements and explicit world rules grounded in this 
   门派/宗门/帮派 -> organization; 势力/阵营/联盟 -> faction; 功法/法术/修炼体系 -> system; 规则/法则 -> rule; 丹药/物品 -> item; 法器/宝物 -> artifact; 地名/地点 -> location.
 - Named sects such as 七玄门 are organizations or factions, never characters and never locations.
 - Prefer one entry per distinct mention
+- Include a dedupeKey for each entry: lowercase NFC-normalized name, two colons, then the category. Example: 七玄门::organization. Use this key consistently across chunks for the same entity.
 - Keep descriptions concise and text-grounded
 
 Output valid JSON only:
@@ -421,6 +422,7 @@ Output valid JSON only:
     {{
       "name": "<surface form from text>",
       "category": "<location|organization|faction|item|artifact|rule|system|concept|culture|custom>",
+      "dedupeKey": "<normalized_name::category — lowercase, no spaces, NFC-normalized. E.g. 七玄门::organization>",
       "description": "<one sentence description>",
       "container_hint": "<locations|organizations|items|lore|rules or empty string>",
       "attributes": [
