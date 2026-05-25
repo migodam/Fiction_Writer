@@ -50,6 +50,8 @@ W1 import creates compact character-card drafts only. It may fill identity, alia
 
 Character extraction prompts must include project digest placeholders, alias/epithet reconciliation, source-language normalization, protagonist/mentor/antagonist/ally/minor story-function classification, `groupKey` hints, importance calibration, and anti-summary-bloat rules. Group hints are advisory until reducer/workflow plumbing consumes them, but the prompt contract must preserve `main_characters`, `mentors_antagonists`, `allies_family`, and `minor_characters`.
 
+All five deep extraction prompts require `source_language_label` and `language_policy` template variables injected at call time from `state["source_language"]` and `tool_operating_spec["language_policy"]` respectively. This applies to both the supervisor path (`extract_window` in `sidecar/supervisor/tools.py`) and the legacy LangGraph path (`node_process_chunks` in `sidecar/workflows/w1_import.py`). The `minor_repair` tool strips personality traits containing ≥4 consecutive Latin characters when `source_language == "zh"`, aligned with the `_symptom_flags` detection threshold.
+
 ## Cross-Validation Requirements
 Cross-validation is wired into the packed-window scout loop. After each packed window, W1 runs the reviewer prompt against that window's character, event, relationship, and scene outputs plus the current project digest and previous validation summary. The merged `cross_validation.json` artifact is fed into the next window as `PREVIOUS_VALIDATION_SUMMARY`. It must report:
 - `duplicate_characters`

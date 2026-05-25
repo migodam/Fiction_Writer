@@ -305,33 +305,42 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
 
     failed_prompts: list[str] = []
 
+    _src_lang = state.get("source_language", "en")
+    _src_lang_label = "Chinese (Simplified)" if _src_lang == "zh" else "English"
+    _lang_policy = (state.get("tool_operating_spec") or {}).get("language_policy", "preserve_source")
+
     # 5-parallel extraction
     results = await asyncio.gather(
         _invoke_json_prompt(
             llm, W1_EXTRACT_CHARACTERS_DEEP,
             chunk_content=prompt_text, chunk_id=chunk_id,
             total_chunks=total, entity_registry_summary=registry_summary,
+            source_language_label=_src_lang_label, language_policy=_lang_policy,
         ),
         _invoke_json_prompt(
             llm, W1_EXTRACT_EVENTS_DEEP,
             chunk_content=prompt_text, chunk_id=chunk_id,
             total_chunks=total, entity_registry_summary=registry_summary,
+            source_language_label=_src_lang_label, language_policy=_lang_policy,
         ),
         _invoke_json_prompt(
             llm, W1_EXTRACT_WORLD_DEEP,
             chunk_content=prompt_text, chunk_id=chunk_id,
             total_chunks=total, entity_registry_summary=registry_summary,
+            source_language_label=_src_lang_label, language_policy=_lang_policy,
         ),
         _invoke_json_prompt(
             llm, W1_EXTRACT_RELATIONSHIPS_CHUNK,
             chunk_content=prompt_text, chunk_id=chunk_id,
             total_chunks=total, entity_registry_summary=registry_summary,
+            source_language_label=_src_lang_label, language_policy=_lang_policy,
         ),
         _invoke_json_prompt(
             llm, W1_EXTRACT_SCENE_SUMMARIES,
             chunk_content=prompt_text, chunk_id=chunk_id,
             total_chunks=total, entity_registry_summary=registry_summary,
             chapter_hint=chapter_range,
+            source_language_label=_src_lang_label, language_policy=_lang_policy,
         ),
         return_exceptions=True,
     )
@@ -340,12 +349,26 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
     outputs: list[dict] = []
     for i, (label, result) in enumerate(zip(labels, results)):
         if isinstance(result, Exception):
-            failed_prompts.append(f"{label}:{result}")
+            failed_prompts.append(f"{label}:{type(result).__name__}:{result}")
+            print(f"[extract_window] {window_id} {label} extraction FAILED: {result}", flush=True)
             outputs.append({})
         else:
             outputs.append(result if isinstance(result, dict) else {})
 
     char_data, event_data, world_data, rel_data, scene_data = outputs
+
+    # Cap world mentions to 20 per chapter to bound entity_registry growth across
+    # many windows. Sort by confidence descending so the best candidates survive.
+    chapter_count = len(chunk_ids) or 1
+    world_cap = chapter_count * 20
+    world_mentions_raw = world_data.get("world_mentions", [])
+    if len(world_mentions_raw) > world_cap:
+        world_mentions_raw = sorted(
+            world_mentions_raw,
+            key=lambda wm: float(wm.get("confidence", 0) or 0),
+            reverse=True,
+        )[:world_cap]
+        world_data = {**world_data, "world_mentions": world_mentions_raw}
 
     # ── Register new characters ──────────────────────────────────────────────
     new_char_ids: list[str] = []
@@ -1047,7 +1070,9 @@ async def minor_repair(state: ImportSupervisorState) -> dict:
     if resequenced:
         repair_log.append(f"orderIndex_resequencing: fixed {resequenced} events")
 
-    # 4. Language field validation: strip long Latin-only traits for zh source
+    # 4. Language field validation: strip Latin traits for zh source.
+    # Strip threshold aligns with _symptom_flags detection: any trait with >=4 consecutive
+    # Latin chars is flagged, so we must strip those to prevent gate false positives.
     source_lang = state.get("source_language", "en")
     latin_stripped = 0
     if source_lang == "zh":
@@ -1056,7 +1081,7 @@ async def minor_repair(state: ImportSupervisorState) -> dict:
                 continue
             cleaned_traits = []
             for trait in entry.get("personality_traits", []):
-                if isinstance(trait, str) and re.search(r"[A-Za-z]{4,}", trait) and len(trait) > 6:
+                if isinstance(trait, str) and re.search(r"[A-Za-z]{4,}", trait):
                     latin_stripped += 1
                 else:
                     cleaned_traits.append(trait)
@@ -1084,7 +1109,9 @@ async def minor_repair(state: ImportSupervisorState) -> dict:
 
 async def proposal_write(state: ImportSupervisorState) -> dict:
     """Run synthesis nodes then write proposals to the project."""
-    # Write diagnostics BEFORE proposal write so they survive an OOM crash
+    # Write diagnostics BEFORE proposal write so they survive an OOM crash.
+    # supervisor_decisions, window_metrics, and judge_artifact are complete by
+    # this stage and will not change during the write phase.
     import_run_id = state.get("import_run_id", "")
     project_path = state.get("project_path", "")
     if import_run_id and project_path:
@@ -1125,7 +1152,7 @@ async def proposal_write(state: ImportSupervisorState) -> dict:
     world_result = await node_infer_world_settings(merged)
     merged = {**merged, **world_result}
 
-    # Write proposals
+    # Write proposals — entity_registry cleared inside node_write_to_project
     write_result = await node_write_to_project(merged)
 
     proposals = write_result.get("proposals", [])
@@ -1141,6 +1168,7 @@ async def proposal_write(state: ImportSupervisorState) -> dict:
         "supervisor_log": log,
         "current_stage": "proposal_write",
     }
+    # Evict large blobs so the router/status-polling state stays compact.
     return_dict.pop("entity_registry", None)
     return_dict.pop("cross_validation", None)
     return return_dict

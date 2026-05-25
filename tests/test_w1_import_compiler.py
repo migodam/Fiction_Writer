@@ -792,10 +792,26 @@ def test_character_prompt_preserves_identity_group_and_card_contract():
         "Do NOT translate",
         "existing_character_updates",
         "new_characters",
+        "{source_language_label}",
+        "{language_policy}",
     ]
 
     for term in required_terms:
         assert term in prompt
+
+
+def test_all_five_deep_prompts_contain_language_policy_variables():
+    prompts = {
+        "W1_EXTRACT_CHARACTERS_DEEP": w1_prompts.W1_EXTRACT_CHARACTERS_DEEP,
+        "W1_EXTRACT_EVENTS_DEEP": w1_prompts.W1_EXTRACT_EVENTS_DEEP,
+        "W1_EXTRACT_WORLD_DEEP": w1_prompts.W1_EXTRACT_WORLD_DEEP,
+        "W1_EXTRACT_RELATIONSHIPS_CHUNK": w1_prompts.W1_EXTRACT_RELATIONSHIPS_CHUNK,
+        "W1_EXTRACT_SCENE_SUMMARIES": w1_prompts.W1_EXTRACT_SCENE_SUMMARIES,
+    }
+
+    for name, prompt in prompts.items():
+        assert "{source_language_label}" in prompt, f"{name} missing {{source_language_label}}"
+        assert "{language_policy}" in prompt, f"{name} missing {{language_policy}}"
 
 
 def test_event_prompt_preserves_timeline_topology_contract():

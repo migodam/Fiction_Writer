@@ -3386,8 +3386,10 @@ async def node_write_to_project(state: ImportState) -> dict:
                 character_event_links[cid].append(event_id)
     character_id_map = registry.get("character_id_map", {})
 
-    # Write character proposals
-    for cid, entry in registry.get("characters", {}).items():
+    # Write character proposals — pop from registry so payloads are GC-eligible.
+    chars_snapshot = dict(registry.pop("characters", {}))
+    print(f"[proposal_write] writing {len(chars_snapshot)} character proposals...", flush=True)
+    for cid, entry in chars_snapshot.items():
         if entry.get("skip_create"):
             continue
         entry = _compact_character_card(dict(entry))
@@ -3438,6 +3440,8 @@ async def node_write_to_project(state: ImportState) -> dict:
             })
         except Exception as e:
             errors.append(f"Failed to propose character {cid}: {str(e)}")
+    del chars_snapshot
+    print(f"[proposal_write] characters done ({len(receipts)} receipts)", flush=True)
 
     # Determine default branch for event assignment, creating one when the
     # compiler did not infer any timeline branches.
@@ -3488,6 +3492,7 @@ async def node_write_to_project(state: ImportState) -> dict:
             errors.append(f"Failed to propose timeline branch {branch_id}: {str(e)}")
 
     # Deduplicate events by title before writing proposals.
+    # Pop events from registry so the payload dicts are GC-eligible after dedup.
     def _is_duplicate_event(title: str, seen_titles: list[str]) -> bool:
         norm = re.sub(r'\s+', '', title).lower()
         for s in seen_titles:
@@ -3497,7 +3502,8 @@ async def node_write_to_project(state: ImportState) -> dict:
 
     seen_event_title_norms: list[str] = []
     deduped_events: dict[str, dict] = {}
-    for eid, entry in registry.get("events", {}).items():
+    events_snapshot = registry.pop("events", {})
+    for eid, entry in events_snapshot.items():
         title = entry.get("title", "")
         title_key = re.sub(r'\s+', '', title).lower()
         if not title_key:
@@ -3506,6 +3512,7 @@ async def node_write_to_project(state: ImportState) -> dict:
             continue
         seen_event_title_norms.append(title_key)
         deduped_events[eid] = entry
+    del events_snapshot
 
     # Keep Timeline Architect's branch-local orderIndex when present. Falling
     # back to temporal hints preserves legacy behavior for older checkpoints.
@@ -3519,6 +3526,7 @@ async def node_write_to_project(state: ImportState) -> dict:
     )
 
     # Write event proposals
+    print(f"[proposal_write] writing {len(sorted_events)} event proposals...", flush=True)
     for fallback_order_idx, (eid, entry) in enumerate(sorted_events):
         order_index = int(entry.get("orderIndex", fallback_order_idx) or 0)
         op = {
@@ -3561,6 +3569,8 @@ async def node_write_to_project(state: ImportState) -> dict:
             })
         except Exception as e:
             errors.append(f"Failed to propose event {eid}: {str(e)}")
+    del deduped_events, sorted_events
+    print(f"[proposal_write] events done ({len(receipts)} receipts)", flush=True)
 
     # Write world item proposals
     # Route by semantic category, not just container type. This prevents
@@ -3585,8 +3595,11 @@ async def node_write_to_project(state: ImportState) -> dict:
         container_key = _world_container_key(resolved_category)
         return resolved_category, container_by_key.get(container_key) or fallback_world_container_id
 
-    world_detailed = registry.get("world_detailed", {})
-    for name, category in registry.get("world", {}).items():
+    # Pop world dicts from registry — they can be large (366 entries × attributes).
+    world_detailed = registry.pop("world_detailed", {})
+    world_snapshot = registry.pop("world", {})
+    print(f"[proposal_write] writing {len(world_snapshot)} world item proposals...", flush=True)
+    for name, category in world_snapshot.items():
         wid = f"world_{uuid.uuid4().hex[:8]}"
         detail = world_detailed.get(name, {})
         resolved_category, container_id = _resolve_container_id(name, detail.get("category", category))
@@ -3619,6 +3632,8 @@ async def node_write_to_project(state: ImportState) -> dict:
             })
         except Exception as e:
             errors.append(f"Failed to propose world entry '{name}': {str(e)}")
+    del world_snapshot, world_detailed
+    print(f"[proposal_write] world items done ({len(receipts)} receipts)", flush=True)
 
     # Write relationship proposals
     for relationship in relationships:
@@ -4224,6 +4239,8 @@ async def node_process_chunks(state: ImportState) -> dict:
     errors: list[str] = list(state.get("errors", []))
     project_path = state["project_path"]
     source_language = state.get("source_language", "en")
+    _src_lang_label = "Chinese (Simplified)" if source_language == "zh" else "English"
+    _lang_policy = state.get("context", {}).get("language_policy", "preserve_source")
     checkpoint_path = state.get("checkpoint_path", "")
     completed_ids: set[int] = {e.get("chunk_id", -1) for e in extractions}
     total = len(chunks)
@@ -4359,6 +4376,8 @@ async def node_process_chunks(state: ImportState) -> dict:
                             chunk_id=chunk_id,
                             total_chunks=total,
                             entity_registry_summary=registry_summary,
+                            source_language_label=_src_lang_label,
+                            language_policy=_lang_policy,
                         ),
                         _invoke_json_prompt(
                             llm,
@@ -4367,6 +4386,8 @@ async def node_process_chunks(state: ImportState) -> dict:
                             chunk_id=chunk_id,
                             total_chunks=total,
                             entity_registry_summary=registry_summary,
+                            source_language_label=_src_lang_label,
+                            language_policy=_lang_policy,
                         ),
                         _invoke_json_prompt(
                             llm,
@@ -4375,6 +4396,8 @@ async def node_process_chunks(state: ImportState) -> dict:
                             chunk_id=chunk_id,
                             total_chunks=total,
                             entity_registry_summary=registry_summary,
+                            source_language_label=_src_lang_label,
+                            language_policy=_lang_policy,
                         ),
                         _invoke_json_prompt(
                             llm,
@@ -4383,6 +4406,8 @@ async def node_process_chunks(state: ImportState) -> dict:
                             chunk_id=chunk_id,
                             total_chunks=total,
                             entity_registry_summary=registry_summary,
+                            source_language_label=_src_lang_label,
+                            language_policy=_lang_policy,
                         ),
                         _invoke_json_prompt(
                             llm,
@@ -4392,6 +4417,8 @@ async def node_process_chunks(state: ImportState) -> dict:
                             total_chunks=total,
                             entity_registry_summary=registry_summary,
                             chapter_hint=prompt_window.get("chapter_range") or scene_hint,
+                            source_language_label=_src_lang_label,
+                            language_policy=_lang_policy,
                         ),
                         return_exceptions=True,
                     )

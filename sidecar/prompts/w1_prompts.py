@@ -130,11 +130,12 @@ context, not story prose. They may include {{project_digest}}, {{project_charact
 ## Packed Text Window
 {chunk_content}
 
-## LANGUAGE RULE
-All prose text fields MUST use the dominant language of the source text chunk.
-- Do NOT translate Chinese names, sect titles, honorifics, or epithets into English.
-- Do NOT mix English summaries into Chinese source chunks or Chinese summaries into English chunks.
-- Preserve canonical surface forms exactly as the source writes them unless the registry already has a stronger canonical name.
+## OUTPUT LANGUAGE
+[language_policy={language_policy}] OUTPUT LANGUAGE: {source_language_label}
+All prose text fields (summary, role_in_story, physical_description, personality_traits, notes, open_questions) MUST be written in {source_language_label}. Do NOT translate character names, sect titles, honorifics, or epithets into English.
+Do NOT mix English summaries into non-English source chunks or vice versa.
+Preserve canonical surface forms exactly as the source writes them unless the registry already has a stronger canonical name.
+Fields that MUST remain in English (internal enum keys): importance, story_function, groupKey.
 
 ## IDENTITY AND ALIAS RECONCILIATION
 Before creating a new character, exhaustively check every registry entry for:
@@ -283,8 +284,10 @@ which needs canonical-vs-scene-beat decisions, dedupe keys, branch hints, and ca
 ## Text Chunk
 {chunk_content}
 
-## LANGUAGE RULE
-All text fields (title, description, stakes) MUST be written in the same language as the source text chunk. Do NOT translate.
+## OUTPUT LANGUAGE
+[language_policy={language_policy}] OUTPUT LANGUAGE: {source_language_label}
+All user-visible text fields (title, description, stakes, temporal_hint, location_hint) MUST be written in {source_language_label}. Do NOT translate.
+Fields that MUST remain in English (enum/internal keys): eventClass, timelineClass, eventType, arcRole, causalRole, branchRole, forkMergeHint, arcId, timelineLaneHint, dedupeKey.
 
 ## PROJECT DIGEST PLACEHOLDERS
 The Text Chunk below is a packed compiler window. It may include multiple complete chapters and it begins
@@ -406,10 +409,15 @@ Your job is to perform deep world extraction from this text chunk.
 ## Text Chunk
 {chunk_content}
 
+## OUTPUT LANGUAGE
+[language_policy={language_policy}] OUTPUT LANGUAGE: {source_language_label}
+All user-visible text fields (name, description, attributes values) MUST be written in {source_language_label}.
+Fields that MUST remain in English (enum/internal keys): category, container_hint, attribute keys.
+
 ## Instructions
 Extract named world-building elements and explicit world rules grounded in this chunk.
 - Focus on locations, organizations/factions, items/artifacts, rules/systems, concepts, cultures, and custom terms
-- For Chinese source text, preserve Chinese labels and descriptions. Normalize common fiction terms deterministically:
+- Normalize common Chinese fiction terms deterministically:
   门派/宗门/帮派 -> organization; 势力/阵营/联盟 -> faction; 功法/法术/修炼体系 -> system; 规则/法则 -> rule; 丹药/物品 -> item; 法器/宝物 -> artifact; 地名/地点 -> location.
 - Named sects such as 七玄门 are organizations or factions, never characters and never locations.
 - Prefer one entry per distinct mention
@@ -446,6 +454,11 @@ role grouping, aliases, and timeline topology.
 
 ## Text Chunk
 {chunk_content}
+
+## OUTPUT LANGUAGE
+[language_policy={language_policy}] OUTPUT LANGUAGE: {source_language_label}
+All user-visible text fields (type, description, aliasEvidence, contradictionHint, evidence) MUST be written in {source_language_label}.
+Fields that MUST remain in English (enum/internal keys): category, directionality, status, topologyRole.
 
 ## Instructions
 Extract relationship signals between characters mentioned in this chunk.
@@ -494,6 +507,11 @@ can distinguish true timeline events from scene beats.
 
 ## Text Chunk
 {chunk_content}
+
+## OUTPUT LANGUAGE
+[language_policy={language_policy}] OUTPUT LANGUAGE: {source_language_label}
+All user-visible text fields (chapter_hint, title, summary, location_hint, time_hint, purpose, character_names) MUST be written in {source_language_label}.
+Fields that MUST remain in English (internal keys): arcId (snake_case arc identifier). canonicalEventRefs and sceneBeatRefs reference event titles — use the same language as those event titles.
 
 ## Instructions
 Infer one or more scene units from the chunk.

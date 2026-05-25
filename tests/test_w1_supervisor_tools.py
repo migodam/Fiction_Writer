@@ -589,6 +589,104 @@ class TestOutputBudgetGate(unittest.TestCase):
         self.assertGreater(len(windows), 1, "Pre-flight split should produce multiple windows")
 
 
+# ── Test 13: extract_window passes source_language_label to all prompts ───────
+
+class TestExtractWindowLanguageInjection(unittest.TestCase):
+    def test_extract_window_passes_source_language_label_to_prompts(self):
+        win = _make_window("pwin_zh", [0])
+        state = _make_state(
+            prompt_windows=[win],
+            source_language="zh",
+        )
+        captured_kwargs: list[dict] = []
+
+        async def _mock_invoke(_llm, _template, **kwargs):
+            captured_kwargs.append(dict(kwargs))
+            return {}
+
+        with (
+            patch("sidecar.supervisor.tools._get_llm", return_value=MagicMock()),
+            patch("sidecar.supervisor.tools._invoke_json_prompt", side_effect=_mock_invoke),
+            patch("sidecar.supervisor.tools._write_import_artifact", return_value="/tmp/mock.json"),
+        ):
+            _run(extract_window(state, "pwin_zh"))
+
+        self.assertEqual(len(captured_kwargs), 5, "Expected 5 prompt calls")
+        for call_kwargs in captured_kwargs:
+            self.assertEqual(
+                call_kwargs.get("source_language_label"), "Chinese (Simplified)",
+                f"source_language_label missing or wrong in call: {call_kwargs}",
+            )
+            self.assertIn("language_policy", call_kwargs, f"language_policy missing in call: {call_kwargs}")
+
+    def test_extract_window_uses_english_label_for_en_source(self):
+        win = _make_window("pwin_en", [0])
+        state = _make_state(prompt_windows=[win], source_language="en")
+        captured_kwargs: list[dict] = []
+
+        async def _mock_invoke(_llm, _template, **kwargs):
+            captured_kwargs.append(dict(kwargs))
+            return {}
+
+        with (
+            patch("sidecar.supervisor.tools._get_llm", return_value=MagicMock()),
+            patch("sidecar.supervisor.tools._invoke_json_prompt", side_effect=_mock_invoke),
+            patch("sidecar.supervisor.tools._write_import_artifact", return_value="/tmp/mock.json"),
+        ):
+            _run(extract_window(state, "pwin_en"))
+
+        for call_kwargs in captured_kwargs:
+            self.assertEqual(call_kwargs.get("source_language_label"), "English")
+
+
+# ── Test 14: minor_repair strips short Latin traits (4–6 chars) ──────────────
+
+class TestMinorRepairShortLatinStrip(unittest.TestCase):
+    def test_strips_short_latin_traits_for_zh(self):
+        registry = {
+            "characters": {
+                "c_zh": {
+                    "canonical_name": "韩立",
+                    "importance": "core",
+                    "personality_traits": ["brave", "勤奋", "calm", "kind"],
+                    "role_in_story": "protagonist",
+                },
+            },
+            "events": {}, "world": {}, "world_detailed": {},
+        }
+        state = _make_state(entity_registry=registry, source_language="zh")
+        result = _run(minor_repair(state))
+
+        traits = result["entity_registry"]["characters"]["c_zh"]["personality_traits"]
+        self.assertIn("勤奋", traits)
+        self.assertNotIn("brave", traits)
+        self.assertNotIn("calm", traits)
+        self.assertNotIn("kind", traits)
+
+    def test_language_gate_passes_after_minor_repair_cleans_all_traits(self):
+        registry = {
+            "characters": {
+                "c_zh": {
+                    "canonical_name": "韩立",
+                    "importance": "core",
+                    "groupKey": "Main Characters",
+                    "personality_traits": ["brave", "calm", "determined"],
+                    "role_in_story": "protagonist",
+                },
+            },
+            "events": {}, "world": {}, "world_detailed": {},
+        }
+        state = _make_state(entity_registry=registry, source_language="zh")
+        repaired = _run(minor_repair(state))
+        repaired_state = {**state, **repaired}
+        flags = _symptom_flags(repaired_state)
+
+        self.assertFalse(
+            flags["mixed_language_trait_sets"],
+            "language gate should pass after minor_repair strips all Latin traits",
+        )
+
+
 # ── Tool registry ─────────────────────────────────────────────────────────────
 
 class TestToolRegistry(unittest.TestCase):

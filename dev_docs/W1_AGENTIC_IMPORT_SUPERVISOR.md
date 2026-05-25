@@ -48,9 +48,13 @@ All five deep extraction prompts (`W1_EXTRACT_CHARACTERS_DEEP`, `W1_EXTRACT_EVEN
 | Variable | Source | Example (zh) |
 |----------|--------|--------------|
 | `source_language_label` | `"Chinese (Simplified)" if source_language == "zh" else "English"` | `"Chinese (Simplified)"` |
-| `language_policy` | `tool_operating_spec.get("language_policy", "passthrough")` | `"normalize_to_source"` |
+| `language_policy` | `tool_operating_spec.get("language_policy", "preserve_source")` | `"normalize_to_source"` |
 
-These are injected in `extract_window` (supervisor path) and `node_process_chunks` (legacy LangGraph path). Fields that intentionally remain in English (enum/internal keys): `eventClass`, `timelineClass`, `eventType`, `arcRole`, `causalRole`, `branchRole`, `forkMergeHint`, `arcId`, `category`, `importance`, `story_function`, `groupKey`, `directionality`, `status`, `topologyRole`, `container_hint`.
+Valid `language_policy` values: `preserve_source` \| `normalize_to_source` \| `allow_mixed`. Default is `preserve_source`.
+
+These are injected in `extract_window` (supervisor path) and `node_process_chunks` (legacy LangGraph path). Both paths derive `source_language` from `state["source_language"]`.
+
+Fields that intentionally remain in English (enum/internal keys): `eventClass`, `timelineClass`, `eventType`, `arcRole`, `causalRole`, `branchRole`, `forkMergeHint`, `arcId`, `category`, `importance`, `story_function`, `groupKey`, `directionality`, `status`, `topologyRole`, `container_hint`.
 
 ---
 
