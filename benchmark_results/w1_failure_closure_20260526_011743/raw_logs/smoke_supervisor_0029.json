@@ -1,0 +1,226 @@
+{
+  "supervisor_decisions": [
+    {
+      "iteration": 0,
+      "stage": "extract_window",
+      "tool_called": "extract_window",
+      "reason": "primary extraction for pwin_7912776c5b30",
+      "metrics_before": {},
+      "metrics_after": {},
+      "action": "proceed",
+      "rerun_targets": [],
+      "timestamp": "2026-05-25T17:22:58.875512+00:00"
+    },
+    {
+      "iteration": 0,
+      "stage": "cross_validate_window",
+      "tool_called": "cross_validate_window",
+      "reason": "cross-validate pwin_7912776c5b30",
+      "metrics_before": {},
+      "metrics_after": {},
+      "action": "proceed",
+      "rerun_targets": [],
+      "timestamp": "2026-05-25T17:28:24.837662+00:00"
+    },
+    {
+      "iteration": 0,
+      "stage": "extract_window",
+      "tool_called": "extract_window",
+      "reason": "primary extraction for pwin_e0c0c237cadd",
+      "metrics_before": {},
+      "metrics_after": {},
+      "action": "proceed",
+      "rerun_targets": [],
+      "timestamp": "2026-05-25T17:25:50.897306+00:00"
+    },
+    {
+      "iteration": 0,
+      "stage": "cross_validate_window",
+      "tool_called": "cross_validate_window",
+      "reason": "cross-validate pwin_e0c0c237cadd",
+      "metrics_before": {},
+      "metrics_after": {},
+      "action": "proceed",
+      "rerun_targets": [],
+      "timestamp": "2026-05-25T17:29:05.258751+00:00"
+    },
+    {
+      "iteration": 0,
+      "stage": "extract_window",
+      "tool_called": "extract_window",
+      "reason": "primary extraction for pwin_42d18ee33c08",
+      "metrics_before": {},
+      "metrics_after": {},
+      "action": "proceed",
+      "rerun_targets": [],
+      "timestamp": "2026-05-25T17:28:03.747755+00:00"
+    },
+    {
+      "iteration": 0,
+      "stage": "cross_validate_window",
+      "tool_called": "cross_validate_window",
+      "reason": "cross-validate pwin_42d18ee33c08",
+      "metrics_before": {},
+      "metrics_after": {},
+      "action": "proceed",
+      "rerun_targets": [],
+      "timestamp": "2026-05-25T17:29:05.832564+00:00"
+    },
+    {
+      "iteration": 0,
+      "stage": "judge_import",
+      "tool_called": "judge_import",
+      "reason": "deterministic convergence judgment",
+      "metrics_before": {},
+      "metrics_after": {
+        "score": 1.0,
+        "passed": true,
+        "failed_gates": []
+      },
+      "action": "proceed",
+      "rerun_targets": [],
+      "timestamp": "2026-05-25T17:29:05.846756+00:00"
+    }
+  ],
+  "gate_failures": [],
+  "window_metrics": {
+    "pwin_7912776c5b30": {
+      "window_id": "pwin_7912776c5b30",
+      "chapter_count": 4,
+      "char_count_extracted": 13,
+      "event_count_extracted": 6,
+      "world_count_extracted": 19,
+      "failed_prompts": [],
+      "confidence_distribution": {},
+      "missing_majors_count": 0,
+      "duplicate_count": 0,
+      "rerun_count": 0,
+      "gate_passed": true,
+      "missing_majors": []
+    },
+    "pwin_e0c0c237cadd": {
+      "window_id": "pwin_e0c0c237cadd",
+      "chapter_count": 4,
+      "char_count_extracted": 20,
+      "event_count_extracted": 6,
+      "world_count_extracted": 20,
+      "failed_prompts": [],
+      "confidence_distribution": {},
+      "missing_majors_count": 5,
+      "duplicate_count": 0,
+      "rerun_count": 0,
+      "gate_passed": true,
+      "missing_majors": [
+        "墨大夫",
+        "王陆",
+        "韩立大哥",
+        "韩立小妹",
+        "韩立姐姐"
+      ]
+    },
+    "pwin_42d18ee33c08": {
+      "window_id": "pwin_42d18ee33c08",
+      "chapter_count": 2,
+      "char_count_extracted": 17,
+      "event_count_extracted": 5,
+      "world_count_extracted": 10,
+      "failed_prompts": [],
+      "confidence_distribution": {},
+      "missing_majors_count": 0,
+      "duplicate_count": 0,
+      "rerun_count": 0,
+      "gate_passed": true,
+      "missing_majors": []
+    }
+  },
+  "supervisor_iteration": 0,
+  "current_tool": "judge_import",
+  "current_window": "",
+  "chapter_range": "",
+  "orchestrator_phase": "judging",
+  "judge_score": 1.0,
+  "rerun_reason": "",
+  "converge_status": "passed",
+  "judge_artifact": {
+    "score": 1.0,
+    "passed": true,
+    "failed_gates": [],
+    "thematic_rerun_requests": [],
+    "iteration": 0,
+    "metrics_snapshot": {
+      "character_count": 50,
+      "canonical_event_count": 17,
+      "world_count": 60,
+      "expected": {
+        "expected_min_characters": 15,
+        "expected_min_events": 13,
+        "expected_max_canonical_events": 40,
+        "expected_min_world_entities": 4,
+        "expected_language": "zh",
+        "expected_timeline_topology": "full_dag"
+      },
+      "symptom_flags": {
+        "missing_groupkey_count": 0,
+        "org_chars_in_registry": 0,
+        "timeline_mainline_overdense": false,
+        "missing_major_characters_count": 0,
+        "mixed_language_trait_sets": false
+      },
+      "window_metrics": {
+        "pwin_7912776c5b30": {
+          "window_id": "pwin_7912776c5b30",
+          "chapter_count": 4,
+          "char_count_extracted": 13,
+          "event_count_extracted": 6,
+          "world_count_extracted": 19,
+          "failed_prompts": [],
+          "confidence_distribution": {},
+          "missing_majors_count": 0,
+          "duplicate_count": 0,
+          "rerun_count": 0,
+          "gate_passed": true,
+          "missing_majors": []
+        },
+        "pwin_e0c0c237cadd": {
+          "window_id": "pwin_e0c0c237cadd",
+          "chapter_count": 4,
+          "char_count_extracted": 20,
+          "event_count_extracted": 6,
+          "world_count_extracted": 20,
+          "failed_prompts": [],
+          "confidence_distribution": {},
+          "missing_majors_count": 5,
+          "duplicate_count": 0,
+          "rerun_count": 0,
+          "gate_passed": true,
+          "missing_majors": [
+            "墨大夫",
+            "王陆",
+            "韩立大哥",
+            "韩立小妹",
+            "韩立姐姐"
+          ]
+        },
+        "pwin_42d18ee33c08": {
+          "window_id": "pwin_42d18ee33c08",
+          "chapter_count": 2,
+          "char_count_extracted": 17,
+          "event_count_extracted": 5,
+          "world_count_extracted": 10,
+          "failed_prompts": [],
+          "confidence_distribution": {},
+          "missing_majors_count": 0,
+          "duplicate_count": 0,
+          "rerun_count": 0,
+          "gate_passed": true,
+          "missing_majors": []
+        }
+      }
+    },
+    "rationale": "pass",
+    "artifact_paths": {
+      "judge_artifact": "/Volumes/migodam's-external-brain/home/narrative_ide/w1_failure_closure_smoke_20260526_011743/system/imports/sup_c3c71ee8d2/judge_artifact.json",
+      "tool_operating_spec": "/Volumes/migodam's-external-brain/home/narrative_ide/w1_failure_closure_smoke_20260526_011743/system/imports/sup_c3c71ee8d2/tool_operating_spec.json"
+    }
+  }
+}

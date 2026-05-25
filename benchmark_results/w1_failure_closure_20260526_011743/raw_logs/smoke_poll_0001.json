@@ -1,0 +1,19 @@
+{
+  "status": "running",
+  "progress": 0.05,
+  "errors": [],
+  "completed_chunks": 0,
+  "total_chunks": 10,
+  "current_step": "split_chunks",
+  "prompt_profile": "deep",
+  "proposals_count": 0,
+  "import_review_report": {},
+  "current_tool": "init",
+  "current_window": "",
+  "chapter_range": "",
+  "orchestrator_phase": "planning",
+  "judge_score": 0.0,
+  "rerun_reason": "",
+  "converge_status": "not_started",
+  "judge_artifact_summary": {}
+}

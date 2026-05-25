@@ -1,0 +1,55 @@
+{
+  "status": "running",
+  "progress": 0.1,
+  "errors": [],
+  "completed_chunks": 0,
+  "total_chunks": 10,
+  "current_step": "process_chunks",
+  "prompt_profile": "deep",
+  "proposals_count": 0,
+  "import_review_report": {
+    "import_run_id": "sup_c3c71ee8d2",
+    "status": "warning",
+    "warnings": [],
+    "errors": [],
+    "proposal_counts": {
+      "characters": 50,
+      "timeline_events": 17,
+      "relationships": 0,
+      "character_tags": 0,
+      "timeline_branches": 2
+    },
+    "safe_accept_ids": [],
+    "blocked_ids": [],
+    "failed_chunks": [],
+    "model": "deepseek-v4-pro",
+    "prompt_profile": "deep",
+    "artifact_paths": {
+      "manifest": "/Volumes/migodam's-external-brain/home/narrative_ide/w1_failure_closure_smoke_20260526_011743/system/imports/sup_c3c71ee8d2/manifest.json",
+      "reducer": "/Volumes/migodam's-external-brain/home/narrative_ide/w1_failure_closure_smoke_20260526_011743/system/imports/sup_c3c71ee8d2/reducer_artifact.json",
+      "timeline": "/Volumes/migodam's-external-brain/home/narrative_ide/w1_failure_closure_smoke_20260526_011743/system/imports/sup_c3c71ee8d2/timeline_architecture.json",
+      "review": "/Volumes/migodam's-external-brain/home/narrative_ide/w1_failure_closure_smoke_20260526_011743/system/imports/sup_c3c71ee8d2/review_report.json"
+    },
+    "duplicate_merges": [],
+    "low_confidence_items": [
+      {
+        "entity_type": "character",
+        "id": "char_9e537e9b",
+        "confidence": 0.6
+      },
+      {
+        "entity_type": "character",
+        "id": "char_01d4e224",
+        "confidence": 0.6
+      }
+    ]
+  },
+  "current_tool": "judge_import",
+  "current_window": "",
+  "chapter_range": "",
+  "orchestrator_phase": "judging",
+  "judge_score": 1.0,
+  "rerun_reason": "",
+  "converge_status": "passed",
+  "judge_artifact_summary": {}
+}

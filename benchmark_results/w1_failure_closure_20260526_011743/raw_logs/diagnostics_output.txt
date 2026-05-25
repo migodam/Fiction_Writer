@@ -1,0 +1,271 @@
+{
+  "diagnostics": {
+    "character_count": {
+      "character_records_analyzed": 75,
+      "pending_character_proposals": 75,
+      "review_report_character_proposals": 75
+    },
+    "group_distribution": {
+      "character_record_tag_refs": {
+        "tag_item": 3,
+        "tag_item_2": 20,
+        "tag_item_3": 40,
+        "tag_item_4": 4,
+        "tag_item_5": 5
+      },
+      "existing_character_tags": {},
+      "proposed_character_tags": {
+        "七玄门": 40,
+        "主角": 3,
+        "家庭与乡邻": 20,
+        "超自然存在": 5,
+        "野狼帮": 4
+      }
+    },
+    "import_run_id": "sup_29503d787f",
+    "import_test6_symptom_flags": {
+      "duplicate_event_clusters_present": true,
+      "mixed_language_trait_sets": false,
+      "overlong_character_summaries": false,
+      "review_report_inbox_count_mismatch": false,
+      "scene_beats_or_discards_present": true,
+      "timeline_branch_over_budget": true,
+      "timeline_mainline_overdense": false,
+      "trait_duplication_or_noise": false
+    },
+    "inbox_proposal_count": 281,
+    "manifest": {
+      "model": "deepseek-v4-pro",
+      "prompt_profile": "deep",
+      "segment_count": 50,
+      "source_file_path": "/Volumes/migodam's-external-brain/home/narrative_ide/novels/凡人修仙传_前50章.txt",
+      "total_segment_chars": 99890
+    },
+    "project_path": "/Volumes/migodam's-external-brain/home/narrative_ide/w1_failure_closure_50ch_20260526_011743",
+    "proposal_counts_by_entity_type": {
+      "character": 75,
+      "character_tag": 5,
+      "timeline_branch": 1,
+      "timeline_event": 87,
+      "world_container": 6,
+      "world_item": 107
+    },
+    "review_report_proposal_counts": {
+      "character": 75,
+      "character_tag": 5,
+      "timeline_branch": 1,
+      "timeline_event": 87,
+      "world_container": 6,
+      "world_item": 107
+    },
+    "review_status": {
+      "blocked_id_count": 0,
+      "error_count": 0,
+      "failed_chunk_count": 0,
+      "low_confidence_item_count": 3,
+      "status": "warning",
+      "warning_count": 2
+    },
+    "summary_lengths": {
+      "count": 75,
+      "max": 75,
+      "mean": 26.43,
+      "median": 24,
+      "min": 12,
+      "outlier_count": 0,
+      "outliers": []
+    },
+    "timeline": {
+      "branch_count": 5,
+      "branch_density": {
+        "branches_over_budget": {
+          "branch_import_main": 36,
+          "branch_theme_antagonist": 36
+        },
+        "max_events_per_branch": 36,
+        "mean_events_per_branch": 20.4
+      },
+      "branch_distribution": {
+        "branch_arc_rival_ally": 7,
+        "branch_import_main": 36,
+        "branch_theme_antagonist": 36,
+        "branch_theme_faction": 4,
+        "branch_theme_training": 19
+      },
+      "canonical_event_count": 102,
+      "discard_count": 171,
+      "event_duplicate_cluster_count": 4,
+      "event_duplicate_clusters": [
+        {
+          "event_ids": [
+            "event_6e3a57be",
+            "event_54185f84",
+            "event_1387a2db"
+          ],
+          "size": 3,
+          "titles": [
+            "墨大夫传授无名口诀",
+            "墨大夫传授无名口诀",
+            "墨大夫传授无名口诀"
+          ]
+        },
+        {
+          "event_ids": [
+            "event_7eef6886",
+            "event_35ff3b92"
+          ],
+          "size": 2,
+          "titles": [
+            "墨大夫收韩立张铁为记名弟子",
+            "墨大夫收韩立张铁为记名弟子"
+          ]
+        },
+        {
+          "event_ids": [
+            "event_e44661a4",
+            "event_855369bc"
+          ],
+          "size": 2,
+          "titles": [
+            "墨大夫摊牌控制韩立",
+            "墨大夫摊牌控制韩立"
+          ]
+        },
+        {
+          "event_ids": [
+            "event_873781a5",
+            "event_b22e88bd"
+          ],
+          "size": 2,
+          "titles": [
+            "韩立配制灵药突破长春功第四层",
+            "韩立配制灵药突破长春功第四层"
+          ]
+        }
+      ],
+      "mainline_density": {
+        "event_count": 36,
+        "root_branch_id": "branch_import_main",
+        "share": 0.3529
+      },
+      "scene_beat_discard_counts": {
+        "discarded_duplicate": 23,
+        "scene_beat": 148
+      },
+      "timeline_readability": {
+        "events_per_branch_ratio": 20.4,
+        "mainline_share": 0.3529,
+        "max_branch_density": 36,
+        "order_anomalies": [],
+        "order_anomaly_count": 0
+      }
+    },
+    "trait_quality": {
+      "characters_with_multilingual_trait_sets": 0,
+      "duplicate_traits": 0,
+      "mixed_language_trait_count": 0,
+      "noisy_traits": 0,
+      "total_traits": 115,
+      "trait_duplication_noise_score": 0.0,
+      "worst_characters": [
+        {
+          "duplicate_count": 0,
+          "id": "char_b5c70f75",
+          "mixed_language_trait_count": 0,
+          "name": "余子童",
+          "noisy_count": 0,
+          "trait_count": 5
+        },
+        {
+          "duplicate_count": 0,
+          "id": "char_cf019fdf",
+          "mixed_language_trait_count": 0,
+          "name": "韩立",
+          "noisy_count": 0,
+          "trait_count": 3
+        },
+        {
+          "duplicate_count": 0,
+          "id": "char_1b7ff938",
+          "mixed_language_trait_count": 0,
+          "name": "韩立",
+          "noisy_count": 0,
+          "trait_count": 3
+        },
+        {
+          "duplicate_count": 0,
+          "id": "char_d2fe2b75",
+          "mixed_language_trait_count": 0,
+          "name": "墨大夫",
+          "noisy_count": 0,
+          "trait_count": 3
+        },
+        {
+          "duplicate_count": 0,
+          "id": "char_b81f6be6",
+          "mixed_language_trait_count": 0,
+          "name": "韩胖子",
+          "noisy_count": 0,
+          "trait_count": 3
+        },
+        {
+          "duplicate_count": 0,
+          "id": "char_b64cd9c9",
+          "mixed_language_trait_count": 0,
+          "name": "张铁",
+          "noisy_count": 0,
+          "trait_count": 3
+        },
+        {
+          "duplicate_count": 0,
+          "id": "char_b309042e",
+          "mixed_language_trait_count": 0,
+          "name": "舞岩",
+          "noisy_count": 0,
+          "trait_count": 3
+        },
+        {
+          "duplicate_count": 0,
+          "id": "char_016f3f76",
+          "mixed_language_trait_count": 0,
+          "name": "王护法",
+          "noisy_count": 0,
+          "trait_count": 3
+        },
+        {
+          "duplicate_count": 0,
+          "id": "char_98b91c29",
+          "mixed_language_trait_count": 0,
+          "name": "张均",
+          "noisy_count": 0,
+          "trait_count": 3
+        },
+        {
+          "duplicate_count": 0,
+          "id": "char_c09ed025",
+          "mixed_language_trait_count": 0,
+          "name": "韩父",
+          "noisy_count": 0,
+          "trait_count": 3
+        }
+      ]
+    }
+  },
+  "summary_markdown": "## W1 Import Diagnostics: sup_29503d787f\n\n- Project: `/Volumes/migodam's-external-brain/home/narrative_ide/w1_failure_closure_50ch_20260526_011743`\n- Inbox proposals: 281\n- Proposal counts by entity type: `{\"character\": 75, \"character_tag\": 5, \"timeline_branch\": 1, \"timeline_event\": 87, \"world_container\": 6, \"world_item\": 107}`\n- Review report counts: `{\"character\": 75, \"character_tag\": 5, \"timeline_branch\": 1, \"timeline_event\": 87, \"world_container\": 6, \"world_item\": 107}`\n- Character records analyzed: 75\n- Summary outliers: 0 (max length 75)\n- Trait duplication/noise score: 0.0 with 0 mixed-language trait items\n- Timeline branches/events: 5 branches, 102 canonical events\n- Branch density: max 36, over budget `{\"branch_import_main\": 36, \"branch_theme_antagonist\": 36}`\n- Mainline density: 36 events (0.3529 share)\n- Scene-beat/discard count: 171 `{\"discarded_duplicate\": 23, \"scene_beat\": 148}`\n- Duplicate event clusters: 4\n- Import_Test6 symptom flags: `{\"duplicate_event_clusters_present\": true, \"mixed_language_trait_sets\": false, \"overlong_character_summaries\": false, \"review_report_inbox_count_mismatch\": false, \"scene_beats_or_discards_present\": true, \"timeline_branch_over_budget\": true, \"timeline_mainline_overdense\": false, \"trait_duplication_or_noise\": false}`"
+}
+
+## W1 Import Diagnostics: sup_29503d787f
+
+- Project: `/Volumes/migodam's-external-brain/home/narrative_ide/w1_failure_closure_50ch_20260526_011743`
+- Inbox proposals: 281
+- Proposal counts by entity type: `{"character": 75, "character_tag": 5, "timeline_branch": 1, "timeline_event": 87, "world_container": 6, "world_item": 107}`
+- Review report counts: `{"character": 75, "character_tag": 5, "timeline_branch": 1, "timeline_event": 87, "world_container": 6, "world_item": 107}`
+- Character records analyzed: 75
+- Summary outliers: 0 (max length 75)
+- Trait duplication/noise score: 0.0 with 0 mixed-language trait items
+- Timeline branches/events: 5 branches, 102 canonical events
+- Branch density: max 36, over budget `{"branch_import_main": 36, "branch_theme_antagonist": 36}`
+- Mainline density: 36 events (0.3529 share)
+- Scene-beat/discard count: 171 `{"discarded_duplicate": 23, "scene_beat": 148}`
+- Duplicate event clusters: 4
+- Import_Test6 symptom flags: `{"duplicate_event_clusters_present": true, "mixed_language_trait_sets": false, "overlong_character_summaries": false, "review_report_inbox_count_mismatch": false, "scene_beats_or_discards_present": true, "timeline_branch_over_budget": true, "timeline_mainline_overdense": false, "trait_duplication_or_noise": false}`

@@ -1,0 +1,171 @@
+{
+  "benchmark_id": "w1_failure_closure_20260526_011743",
+  "branch": "codex/w1-orchestrated-import-quality",
+  "model": "deepseek-v4-pro",
+  "prompt_profile": "deep",
+  "fixture": "凡人修仙传_前50章.txt",
+  "chapter_count": 50,
+  "use_supervisor": true,
+  "use_orchestrator": true,
+  "timing": {
+    "start": "2026-05-26T01:36:36+08:00",
+    "end": "2026-05-26T04:20:00+08:00",
+    "elapsed_minutes": 163
+  },
+  "smoke_10chapter": {
+    "status": "PASS",
+    "judge_score": 1.0,
+    "judge_passed": true,
+    "character_count": 50,
+    "canonical_event_count": 20,
+    "world_item_count": 30,
+    "language_violations": 0,
+    "key_chars_found": [
+      "韩立",
+      "墨大夫",
+      "张铁"
+    ],
+    "manuscript_chapters": "non-zero",
+    "inbox_written": true,
+    "manuscript_written": true
+  },
+  "full_50chapter": {
+    "status": "PASS",
+    "session_id": "29300d2d-4454-4798-87dc-82a45560ba68",
+    "import_run_id": "sup_29503d787f",
+    "judge": {
+      "score": 1.0,
+      "passed": true,
+      "failed_gates": [],
+      "thematic_rerun_requests": [],
+      "iteration": 0,
+      "converge_status": "pass"
+    },
+    "characters": {
+      "total": 75,
+      "key_chars_found": [
+        "韩立",
+        "墨大夫",
+        "厉飞雨",
+        "张铁"
+      ],
+      "key_chars_missing": [],
+      "language_violations_in_fields": 0,
+      "group_distribution": {
+        "七玄门": 40,
+        "主角": 3,
+        "家庭与乡邻": 20,
+        "超自然存在": 5,
+        "野狼帮": 4
+      }
+    },
+    "timeline": {
+      "canonical_event_count": 102,
+      "branch_count": 5,
+      "main_branch_events": 36,
+      "main_branch_share": 0.353,
+      "discarded_duplicates": 171,
+      "scene_beats": 148,
+      "discarded_duplicate_clusters": 23,
+      "duplicate_event_clusters_residual": 4,
+      "timeline_mainline_overdense": false,
+      "timeline_branch_over_budget": true
+    },
+    "world": {
+      "world_item_count": 107,
+      "world_container_count": 6,
+      "total_world_entities": 113,
+      "containers": [
+        "地点",
+        "组织与势力",
+        "物品与法器",
+        "规则与修炼体系",
+        "概念与设定",
+        "文化与习俗"
+      ],
+      "categories": {
+        "organization": 25,
+        "location": 22,
+        "item": 20,
+        "concept": 17,
+        "system": 15,
+        "rule": 6,
+        "artifact": 2
+      },
+      "qixuan_men_category": "organization",
+      "qixuan_men_routing": "CORRECT"
+    },
+    "chapters": {
+      "manuscript_chapters": 0,
+      "regression": true,
+      "note": "supervisor path does not populate state['manuscript_chapters']; node_build_manuscript reads empty list"
+    },
+    "inbox": {
+      "written": true,
+      "size_bytes": 388050,
+      "total_proposals": 281,
+      "by_entity_type": {
+        "character": 75,
+        "timeline_event": 87,
+        "world_item": 107,
+        "world_container": 6,
+        "character_tag": 5,
+        "timeline_branch": 1
+      }
+    },
+    "review_status": {
+      "status": "warning",
+      "warnings": 2,
+      "errors": 0,
+      "failed_chunks": 0,
+      "low_confidence_items": 3,
+      "blocked_ids": 0
+    },
+    "windows": {
+      "original_windows": 14,
+      "rerun_windows": 12,
+      "cross_validation_passes": 14,
+      "total_supervisor_decisions": 41
+    },
+    "oom": {
+      "crashed": false,
+      "peak_memory_percent": 49.0,
+      "peak_memory_gb": 12.3,
+      "total_ram_gb": 24.0,
+      "status": "survived"
+    }
+  },
+  "failure_closure_comparison": {
+    "character_undercoverage": {
+      "previous": 4,
+      "current": 75,
+      "status": "FIXED"
+    },
+    "language_mismatch": {
+      "previous": "Latin traits present",
+      "current": "0 violations",
+      "status": "FIXED"
+    },
+    "world_routing": {
+      "previous": "1 container, 七玄门 category unknown",
+      "current": "6 containers, 七玄门=organization",
+      "status": "FIXED"
+    },
+    "timeline_density": {
+      "previous": 3,
+      "current": 102,
+      "main_branch": 36,
+      "status": "FIXED"
+    },
+    "oom_proposal_write": {
+      "previous": "OOM crash",
+      "current": "Completed (49% peak, 24GB machine)",
+      "status": "FIXED"
+    },
+    "chapter_order": {
+      "previous": "unknown",
+      "current": "0 chapters in manuscript.json (supervisor regression)",
+      "status": "STILL_FAILING"
+    }
+  }
+}

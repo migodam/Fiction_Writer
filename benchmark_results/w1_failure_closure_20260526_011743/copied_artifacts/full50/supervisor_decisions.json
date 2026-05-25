@@ -1,0 +1,530 @@
+[
+  {
+    "iteration": 0,
+    "stage": "extract_window",
+    "tool_called": "extract_window",
+    "reason": "primary extraction for pwin_5beb6f67ea28",
+    "metrics_before": {},
+    "metrics_after": {},
+    "action": "proceed",
+    "rerun_targets": [],
+    "timestamp": "2026-05-25T17:39:01.798006+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "cross_validate_window",
+    "tool_called": "cross_validate_window",
+    "reason": "cross-validate pwin_5beb6f67ea28",
+    "metrics_before": {},
+    "metrics_after": {},
+    "action": "proceed",
+    "rerun_targets": [],
+    "timestamp": "2026-05-25T17:44:06.436034+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "rerun_window",
+    "tool_called": "rerun_window",
+    "reason": "gate failures: ['event_density=0.50<1.25']; strategy=augment",
+    "metrics_before": {
+      "reasons": [
+        "event_density=0.50<1.25"
+      ]
+    },
+    "metrics_after": {},
+    "action": "rerun",
+    "rerun_targets": [
+      "pwin_5beb6f67ea28"
+    ],
+    "timestamp": "2026-05-25T17:48:09.828701+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "rerun_window",
+    "tool_called": "rerun_window",
+    "reason": "gate failures: ['char_density=0.25<1.5', 'event_density=0.75<1.25']; strategy=split",
+    "metrics_before": {
+      "reasons": [
+        "char_density=0.25<1.5",
+        "event_density=0.75<1.25"
+      ]
+    },
+    "metrics_after": {},
+    "action": "rerun",
+    "rerun_targets": [
+      "pwin_5beb6f67ea28"
+    ],
+    "timestamp": "2026-05-25T17:54:34.056959+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "extract_window",
+    "tool_called": "extract_window",
+    "reason": "primary extraction for pwin_162e82bcdd94",
+    "metrics_before": {},
+    "metrics_after": {},
+    "action": "proceed",
+    "rerun_targets": [],
+    "timestamp": "2026-05-25T17:42:32.146888+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "cross_validate_window",
+    "tool_called": "cross_validate_window",
+    "reason": "cross-validate pwin_162e82bcdd94",
+    "metrics_before": {},
+    "metrics_after": {},
+    "action": "proceed",
+    "rerun_targets": [],
+    "timestamp": "2026-05-25T17:45:18.753828+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "extract_window",
+    "tool_called": "extract_window",
+    "reason": "primary extraction for pwin_38147f347294",
+    "metrics_before": {},
+    "metrics_after": {},
+    "action": "proceed",
+    "rerun_targets": [],
+    "timestamp": "2026-05-25T17:45:07.063137+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "cross_validate_window",
+    "tool_called": "cross_validate_window",
+    "reason": "cross-validate pwin_38147f347294",
+    "metrics_before": {},
+    "metrics_after": {},
+    "action": "proceed",
+    "rerun_targets": [],
+    "timestamp": "2026-05-25T17:47:43.139296+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "extract_window",
+    "tool_called": "extract_window",
+    "reason": "primary extraction for pwin_7a5fe7633f72",
+    "metrics_before": {},
+    "metrics_after": {},
+    "action": "proceed",
+    "rerun_targets": [],
+    "timestamp": "2026-05-25T17:58:24.727938+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "cross_validate_window",
+    "tool_called": "cross_validate_window",
+    "reason": "cross-validate pwin_7a5fe7633f72",
+    "metrics_before": {},
+    "metrics_after": {},
+    "action": "proceed",
+    "rerun_targets": [],
+    "timestamp": "2026-05-25T18:06:00.537225+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "extract_window",
+    "tool_called": "extract_window",
+    "reason": "primary extraction for pwin_ac2f557acdcf",
+    "metrics_before": {},
+    "metrics_after": {},
+    "action": "proceed",
+    "rerun_targets": [],
+    "timestamp": "2026-05-25T18:01:46.802154+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "cross_validate_window",
+    "tool_called": "cross_validate_window",
+    "reason": "cross-validate pwin_ac2f557acdcf",
+    "metrics_before": {},
+    "metrics_after": {},
+    "action": "proceed",
+    "rerun_targets": [],
+    "timestamp": "2026-05-25T18:07:52.580955+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "rerun_window",
+    "tool_called": "rerun_window",
+    "reason": "gate failures: ['char_density=1.25<1.5']; strategy=split",
+    "metrics_before": {
+      "reasons": [
+        "char_density=1.25<1.5"
+      ]
+    },
+    "metrics_after": {},
+    "action": "rerun",
+    "rerun_targets": [
+      "pwin_ac2f557acdcf"
+    ],
+    "timestamp": "2026-05-25T18:20:56.439256+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "extract_window",
+    "tool_called": "extract_window",
+    "reason": "primary extraction for pwin_f89b9091280f",
+    "metrics_before": {},
+    "metrics_after": {},
+    "action": "proceed",
+    "rerun_targets": [],
+    "timestamp": "2026-05-25T18:08:04.275678+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "cross_validate_window",
+    "tool_called": "cross_validate_window",
+    "reason": "cross-validate pwin_f89b9091280f",
+    "metrics_before": {},
+    "metrics_after": {},
+    "action": "proceed",
+    "rerun_targets": [],
+    "timestamp": "2026-05-25T18:11:49.192937+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "rerun_window",
+    "tool_called": "rerun_window",
+    "reason": "gate failures: ['char_density=1.25<1.5']; strategy=split",
+    "metrics_before": {
+      "reasons": [
+        "char_density=1.25<1.5"
+      ]
+    },
+    "metrics_after": {},
+    "action": "rerun",
+    "rerun_targets": [
+      "pwin_f89b9091280f"
+    ],
+    "timestamp": "2026-05-25T18:23:22.783944+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "extract_window",
+    "tool_called": "extract_window",
+    "reason": "primary extraction for pwin_27d15aba2d35",
+    "metrics_before": {},
+    "metrics_after": {},
+    "action": "proceed",
+    "rerun_targets": [],
+    "timestamp": "2026-05-25T18:27:02.363278+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "cross_validate_window",
+    "tool_called": "cross_validate_window",
+    "reason": "cross-validate pwin_27d15aba2d35",
+    "metrics_before": {},
+    "metrics_after": {},
+    "action": "proceed",
+    "rerun_targets": [],
+    "timestamp": "2026-05-25T18:35:04.882518+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "rerun_window",
+    "tool_called": "rerun_window",
+    "reason": "gate failures: ['char_density=0.00<1.5']; strategy=split",
+    "metrics_before": {
+      "reasons": [
+        "char_density=0.00<1.5"
+      ]
+    },
+    "metrics_after": {},
+    "action": "rerun",
+    "rerun_targets": [
+      "pwin_27d15aba2d35"
+    ],
+    "timestamp": "2026-05-25T18:47:07.479094+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "extract_window",
+    "tool_called": "extract_window",
+    "reason": "primary extraction for pwin_50df58b154fe",
+    "metrics_before": {},
+    "metrics_after": {},
+    "action": "proceed",
+    "rerun_targets": [],
+    "timestamp": "2026-05-25T18:34:04.014944+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "cross_validate_window",
+    "tool_called": "cross_validate_window",
+    "reason": "cross-validate pwin_50df58b154fe",
+    "metrics_before": {},
+    "metrics_after": {},
+    "action": "proceed",
+    "rerun_targets": [],
+    "timestamp": "2026-05-25T18:36:04.423471+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "rerun_window",
+    "tool_called": "rerun_window",
+    "reason": "gate failures: ['char_density=0.25<1.5']; strategy=split",
+    "metrics_before": {
+      "reasons": [
+        "char_density=0.25<1.5"
+      ]
+    },
+    "metrics_after": {},
+    "action": "rerun",
+    "rerun_targets": [
+      "pwin_50df58b154fe"
+    ],
+    "timestamp": "2026-05-25T18:54:17.318081+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "extract_window",
+    "tool_called": "extract_window",
+    "reason": "primary extraction for pwin_5fc18475b41c",
+    "metrics_before": {},
+    "metrics_after": {},
+    "action": "proceed",
+    "rerun_targets": [],
+    "timestamp": "2026-05-25T18:36:23.993312+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "cross_validate_window",
+    "tool_called": "cross_validate_window",
+    "reason": "cross-validate pwin_5fc18475b41c",
+    "metrics_before": {},
+    "metrics_after": {},
+    "action": "proceed",
+    "rerun_targets": [],
+    "timestamp": "2026-05-25T18:43:20.577279+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "rerun_window",
+    "tool_called": "rerun_window",
+    "reason": "gate failures: ['char_density=0.25<1.5']; strategy=split",
+    "metrics_before": {
+      "reasons": [
+        "char_density=0.25<1.5"
+      ]
+    },
+    "metrics_after": {},
+    "action": "rerun",
+    "rerun_targets": [
+      "pwin_5fc18475b41c"
+    ],
+    "timestamp": "2026-05-25T19:00:25.878962+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "extract_window",
+    "tool_called": "extract_window",
+    "reason": "primary extraction for pwin_9a0a2c1fbffc",
+    "metrics_before": {},
+    "metrics_after": {},
+    "action": "proceed",
+    "rerun_targets": [],
+    "timestamp": "2026-05-25T19:06:01.672608+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "cross_validate_window",
+    "tool_called": "cross_validate_window",
+    "reason": "cross-validate pwin_9a0a2c1fbffc",
+    "metrics_before": {},
+    "metrics_after": {},
+    "action": "proceed",
+    "rerun_targets": [],
+    "timestamp": "2026-05-25T19:12:55.481192+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "rerun_window",
+    "tool_called": "rerun_window",
+    "reason": "gate failures: ['char_density=0.00<1.5']; strategy=split",
+    "metrics_before": {
+      "reasons": [
+        "char_density=0.00<1.5"
+      ]
+    },
+    "metrics_after": {},
+    "action": "rerun",
+    "rerun_targets": [
+      "pwin_9a0a2c1fbffc"
+    ],
+    "timestamp": "2026-05-25T19:35:13.427088+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "extract_window",
+    "tool_called": "extract_window",
+    "reason": "primary extraction for pwin_9ebc8171d7f0",
+    "metrics_before": {},
+    "metrics_after": {},
+    "action": "proceed",
+    "rerun_targets": [],
+    "timestamp": "2026-05-25T19:09:43.323497+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "cross_validate_window",
+    "tool_called": "cross_validate_window",
+    "reason": "cross-validate pwin_9ebc8171d7f0",
+    "metrics_before": {},
+    "metrics_after": {},
+    "action": "proceed",
+    "rerun_targets": [],
+    "timestamp": "2026-05-25T19:12:18.721256+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "rerun_window",
+    "tool_called": "rerun_window",
+    "reason": "gate failures: ['char_density=0.00<1.5']; strategy=split",
+    "metrics_before": {
+      "reasons": [
+        "char_density=0.00<1.5"
+      ]
+    },
+    "metrics_after": {},
+    "action": "rerun",
+    "rerun_targets": [
+      "pwin_9ebc8171d7f0"
+    ],
+    "timestamp": "2026-05-25T19:28:17.771400+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "extract_window",
+    "tool_called": "extract_window",
+    "reason": "primary extraction for pwin_a8121f9bd7c2",
+    "metrics_before": {},
+    "metrics_after": {},
+    "action": "proceed",
+    "rerun_targets": [],
+    "timestamp": "2026-05-25T19:14:58.989042+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "cross_validate_window",
+    "tool_called": "cross_validate_window",
+    "reason": "cross-validate pwin_a8121f9bd7c2",
+    "metrics_before": {},
+    "metrics_after": {},
+    "action": "proceed",
+    "rerun_targets": [],
+    "timestamp": "2026-05-25T19:21:57.947976+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "rerun_window",
+    "tool_called": "rerun_window",
+    "reason": "gate failures: ['char_density=0.50<1.5']; strategy=split",
+    "metrics_before": {
+      "reasons": [
+        "char_density=0.50<1.5"
+      ]
+    },
+    "metrics_after": {},
+    "action": "rerun",
+    "rerun_targets": [
+      "pwin_a8121f9bd7c2"
+    ],
+    "timestamp": "2026-05-25T19:36:14.290353+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "extract_window",
+    "tool_called": "extract_window",
+    "reason": "primary extraction for pwin_c8b79a5ba70d",
+    "metrics_before": {},
+    "metrics_after": {},
+    "action": "proceed",
+    "rerun_targets": [],
+    "timestamp": "2026-05-25T19:44:05.714397+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "cross_validate_window",
+    "tool_called": "cross_validate_window",
+    "reason": "cross-validate pwin_c8b79a5ba70d",
+    "metrics_before": {},
+    "metrics_after": {},
+    "action": "proceed",
+    "rerun_targets": [],
+    "timestamp": "2026-05-25T19:46:31.612373+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "rerun_window",
+    "tool_called": "rerun_window",
+    "reason": "gate failures: ['char_density=0.00<1.5']; strategy=split",
+    "metrics_before": {
+      "reasons": [
+        "char_density=0.00<1.5"
+      ]
+    },
+    "metrics_after": {},
+    "action": "rerun",
+    "rerun_targets": [
+      "pwin_c8b79a5ba70d"
+    ],
+    "timestamp": "2026-05-25T20:06:08.925110+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "extract_window",
+    "tool_called": "extract_window",
+    "reason": "primary extraction for pwin_5c834b32a355",
+    "metrics_before": {},
+    "metrics_after": {},
+    "action": "proceed",
+    "rerun_targets": [],
+    "timestamp": "2026-05-25T19:47:07.599942+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "cross_validate_window",
+    "tool_called": "cross_validate_window",
+    "reason": "cross-validate pwin_5c834b32a355",
+    "metrics_before": {},
+    "metrics_after": {},
+    "action": "proceed",
+    "rerun_targets": [],
+    "timestamp": "2026-05-25T19:50:29.572743+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "rerun_window",
+    "tool_called": "rerun_window",
+    "reason": "gate failures: ['char_density=0.00<1.5']; strategy=split",
+    "metrics_before": {
+      "reasons": [
+        "char_density=0.00<1.5"
+      ]
+    },
+    "metrics_after": {},
+    "action": "rerun",
+    "rerun_targets": [
+      "pwin_5c834b32a355"
+    ],
+    "timestamp": "2026-05-25T20:03:05.091323+00:00"
+  },
+  {
+    "iteration": 0,
+    "stage": "judge_import",
+    "tool_called": "judge_import",
+    "reason": "deterministic convergence judgment",
+    "metrics_before": {},
+    "metrics_after": {
+      "score": 1.0,
+      "passed": true,
+      "failed_gates": []
+    },
+    "action": "proceed",
+    "rerun_targets": [],
+    "timestamp": "2026-05-25T20:06:09.131162+00:00"
+  }
+]

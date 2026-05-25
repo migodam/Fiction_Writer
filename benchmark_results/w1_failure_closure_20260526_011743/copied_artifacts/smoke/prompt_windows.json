@@ -1,0 +1,78 @@
+[
+  {
+    "id": "pwin_7912776c5b30",
+    "chapter_range": "第一章–第四章",
+    "chunk_ids": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "estimated_tokens": 31973,
+    "total_token_budget": 0,
+    "source_budget_tokens": 0,
+    "source_token_estimate": 0,
+    "source_chars": 8652,
+    "digest_token_estimate": 111,
+    "validation_token_estimate": 11,
+    "schema_policy_reserve_tokens": 0,
+    "target_fill_ratio": 0,
+    "fill_ratio": 0,
+    "split_reason": "complete_chapter_batch",
+    "source_span": {
+      "start": 0,
+      "end": 8646
+    },
+    "text_hash": "32eabe0c8b8b3f484b9d2e83efd26a846e1ac33436e80b092d75d3931a1207e8"
+  },
+  {
+    "id": "pwin_e0c0c237cadd",
+    "chapter_range": "第五章–第八章",
+    "chunk_ids": [
+      4,
+      5,
+      6,
+      7
+    ],
+    "estimated_tokens": 31683,
+    "total_token_budget": 0,
+    "source_budget_tokens": 0,
+    "source_token_estimate": 0,
+    "source_chars": 8289,
+    "digest_token_estimate": 111,
+    "validation_token_estimate": 11,
+    "schema_policy_reserve_tokens": 0,
+    "target_fill_ratio": 0,
+    "fill_ratio": 0,
+    "split_reason": "complete_chapter_batch",
+    "source_span": {
+      "start": 8646,
+      "end": 16929
+    },
+    "text_hash": "47d20a88b6104baad642328e1ccc9885334752c0131f714ce3e0585ca94f7a99"
+  },
+  {
+    "id": "pwin_42d18ee33c08",
+    "chapter_range": "第九章–第十章",
+    "chunk_ids": [
+      8,
+      9
+    ],
+    "estimated_tokens": 27843,
+    "total_token_budget": 0,
+    "source_budget_tokens": 0,
+    "source_token_estimate": 0,
+    "source_chars": 4022,
+    "digest_token_estimate": 111,
+    "validation_token_estimate": 11,
+    "schema_policy_reserve_tokens": 0,
+    "target_fill_ratio": 0,
+    "fill_ratio": 0,
+    "split_reason": "complete_chapter_batch",
+    "source_span": {
+      "start": 16929,
+      "end": 20949
+    },
+    "text_hash": "b396b6f51844ab59fd7bf566edd28b73192d0dc0a62909ce99ce0f1cb2ca7fbc"
+  }
+]
