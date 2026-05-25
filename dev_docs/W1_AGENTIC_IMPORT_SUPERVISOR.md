@@ -32,6 +32,7 @@ All tools are in `sidecar/supervisor/tools.py` and registered in `sidecar/superv
 | `cross_validate_window` | 2 | Checks each window's characters against the full registry. Sets `missing_majors`. |
 | `rerun_window` | 2 (conditional) | strategy=`split` halves chunk count and re-runs extract; strategy=`augment` injects `SUPERVISOR_HINT` with missing names. |
 | `reduce_entities` | 3 | Deduplicates characters/events via `node_reconcile_entities` + `node_resolve_low_confidence`. |
+| `reduce_world_entities` | 3b | Deterministic deduplication of world entries cross-window. Groups `world_detailed` entries by model-provided `dedupeKey` or computed `normalized_name::category` key. Picks highest-confidence entry as canonical per group; merges attributes from all duplicates. Synchronous (no LLM call). Logs merge count to `supervisor_log`. |
 | `minor_repair` | 4 | Deterministic fixes: groupKey normalization, world/person boundary migration, orderIndex resequencing, Latin trait strip for zh source. Strip threshold aligned with `_symptom_flags` detection (≥4 consecutive Latin chars). |
 | `architect_timeline` | 5 | Calls `node_architect_timeline`. |
 | `qa_review` | 6 | Calls `node_review_import`. Sets `gate_failures`. |
@@ -125,6 +126,7 @@ The orchestrator may plan soft parameters and request bounded reruns. It must no
 | `validation_strictness` | off | per_window | per_window |
 | `chapters_per_window` | 20 | 12 | 8 |
 | `max_rerun_iterations` | 1 | 2 | 2 |
+| `max_world_entities_per_chapter` | 3 | 4 | 5 |
 | `output_token_budget` | 3 000 | 3 000 | 3 000 |
 | `input_window_budget` | 64 000 | 48 000 | 32 000 |
 
@@ -141,6 +143,8 @@ if estimated > 3 500:
 ```
 
 `_build_supervised_prompt_windows` in `w1_import.py` groups chunks by `chapters_per_window` from the profile, then applies the output budget pre-flight split.
+
+**Late-window density cap:** For chunks in the last 25% of total chapters, `effective_chapters_per_window` is capped at `max(3, chapters_per_window // 2)` when `chapters_per_window >= 6`. This prevents over-dense windows at plot-convergence chapters where extraction complexity increases. For `deep` profile (cpw=8): last 25% → windows of max 4 chapters. For `balanced` (cpw=12): last 25% → windows of max 6 chapters.
 
 ---
 
