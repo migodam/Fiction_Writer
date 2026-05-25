@@ -746,7 +746,7 @@ async def reduce_entities(state: ImportSupervisorState) -> dict:
 # ── Tool: reduce_world_entities ────────────────────────────────────────────────
 
 def _normalize_world_dedup_key(name: str, category: str) -> str:
-    """Deterministic dedup key: NFC normalize, lowercase, strip whitespace/punctuation."""
+    """Deterministic dedup key: NFC normalize, lowercase, strip spaces/hyphens/underscores/middle-dots."""
     n = unicodedata.normalize("NFC", str(name or "")).lower()
     n = re.sub(r"[\s\-_·・·]+", "", n)
     c = str(category or "concept").lower().strip()

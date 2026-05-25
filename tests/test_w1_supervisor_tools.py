@@ -878,6 +878,26 @@ class TestReduceWorldEntities(unittest.TestCase):
         self.assertIn("founded", attr_keys)
         self.assertIn("leader", attr_keys, "Attributes from lower-confidence dup should be merged in")
 
+    def test_computed_fallback_deduplicates_spacing_variants(self):
+        """Entries with no model-provided dedupeKey are deduplicated by computed normalized key."""
+        from sidecar.supervisor.tools import reduce_world_entities
+        # Neither entry has a dedupeKey — fallback normalizes "Zhao Yun" and "Zhao-Yun" to same key
+        state = _make_state(entity_registry={
+            "characters": {}, "events": {},
+            "world": {"Zhao Yun": "location", "Zhao-Yun": "location"},
+            "world_detailed": {
+                "Zhao Yun": {"name": "Zhao Yun", "category": "location", "description": "A place",
+                             "attributes": [], "confidence": 0.85, "container_hint": "locations"},
+                "Zhao-Yun": {"name": "Zhao-Yun", "category": "location", "description": "Same place",
+                             "attributes": [], "confidence": 0.75, "container_hint": "locations"},
+            },
+        })
+        result = reduce_world_entities(state)
+        world = result["entity_registry"]["world"]
+        self.assertEqual(len(world), 1, f"Expected 1 entry after computed-key fallback dedup, got {len(world)}: {list(world)}")
+        canonical_name = list(world.keys())[0]
+        self.assertEqual(canonical_name, "Zhao Yun", "Canonical should be highest-confidence entry")
+
 
 class TestExtractWindowWorldCap(unittest.TestCase):
     @patch("sidecar.supervisor.tools._get_llm")
