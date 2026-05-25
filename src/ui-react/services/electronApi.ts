@@ -47,12 +47,44 @@ export interface W3ProgressEvent {
 
 // ── W1 Import ────────────────────────────────────────────────────────────────
 
+export type W1PromptProfile = 'fast' | 'balanced' | 'deep' | 'custom';
+
+export interface W1CustomProfileConfig {
+  quality_target: 'draft' | 'standard' | 'high' | 'max';
+  chapters_per_window_min: number;
+  chapters_per_window_max: number;
+  max_chapters_per_window: number;
+  character_granularity: 'major_only' | 'named_only' | 'all';
+  event_density: 'arc_level' | 'chapter_level' | 'scene_level';
+  timeline_topology_depth: 'flat' | 'branched' | 'full_dag';
+  world_strictness: 'named_only' | 'with_description' | 'full_attributes';
+  validation_strictness: 'off' | 'per_window' | 'per_arc';
+  rerun_budget: number;
+  max_rerun_iterations: number;
+  judge_pass_threshold: number;
+  language_policy: 'preserve_source' | 'normalize_to_source' | 'allow_mixed';
+  input_window_budget: number;
+  output_token_budget: number;
+}
+
+export interface W1OrchestratorOverrides {
+  use_orchestrator: boolean;
+  use_supervisor: boolean;
+  rerun_budget: number;
+  judge_pass_threshold: number;
+  quality_target: W1CustomProfileConfig['quality_target'];
+  language_policy: W1CustomProfileConfig['language_policy'];
+}
+
 export interface W1StartPayload {
   projectRoot: string;
   source_file_path: string;
   import_mode?: 'import_content_only' | 'import_all';
-  prompt_profile?: 'fast' | 'balanced' | 'deep' | 'custom';
+  prompt_profile?: W1PromptProfile;
   use_supervisor?: boolean;
+  use_orchestrator?: boolean;
+  custom_profile_config?: W1CustomProfileConfig;
+  orchestrator_overrides?: W1OrchestratorOverrides;
   api_key?: string;
   model?: string;
   endpoint?: string;
@@ -74,9 +106,17 @@ export interface W1StatusResult {
   completed_chunks: number;
   total_chunks: number;
   current_step?: string;
-  prompt_profile?: 'fast' | 'balanced' | 'deep' | 'custom';
+  prompt_profile?: W1PromptProfile;
   proposals_count?: number;
   import_review_report?: W1ImportReviewReport;
+  current_tool?: string;
+  current_window?: string | number;
+  chapter_range?: string | { start?: string; end?: string };
+  orchestrator_phase?: string;
+  judge_score?: number;
+  rerun_reason?: string;
+  converge_status?: string;
+  judge_artifact_summary?: W1JudgeArtifactSummary;
 }
 
 export interface W1ImportReviewReport {
@@ -91,8 +131,23 @@ export interface W1ImportReviewReport {
   duplicate_merges?: Array<Record<string, unknown>>;
   low_confidence_items?: Array<Record<string, unknown>>;
   model?: string;
-  prompt_profile?: 'fast' | 'balanced' | 'deep' | 'custom';
+  prompt_profile?: W1PromptProfile;
   artifact_paths?: Record<string, string>;
+  judge_artifact_summary?: W1JudgeArtifactSummary;
+  judge_artifact?: W1JudgeArtifactSummary;
+}
+
+export interface W1JudgeArtifactSummary {
+  status?: string;
+  score?: number;
+  judge_score?: number;
+  converge_status?: string;
+  rerun_reason?: string;
+  summary?: string;
+  strengths?: string[];
+  risks?: string[];
+  required_reruns?: string[];
+  recommendations?: string[];
 }
 
 export interface ChunkLogEntry {

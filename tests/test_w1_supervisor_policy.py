@@ -5,7 +5,7 @@ import asyncio
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from sidecar.models.state import PROFILE_CONFIGS
+from sidecar.models.state import PROFILE_CONFIGS, plan_orchestrator_targets
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────────
@@ -83,6 +83,7 @@ def _make_tools(
     repair_result: dict | None = None,
     architect_result: dict | None = None,
     qa_result: dict | None = None,
+    judge_result: dict | None = None,
     proposal_result: dict | None = None,
 ) -> dict:
     windows = [_make_window("pwin_0", [0, 1]), _make_window("pwin_1", [2, 3])]
@@ -104,6 +105,20 @@ def _make_tools(
     default_repair = {"entity_registry": empty_registry, "minor_repair_log": []}
     default_arch = {"timeline_architecture": {}, "timeline_branches": []}
     default_qa = {"gate_failures": [], "import_review_report": {}}
+    default_judge = {
+        "judge_artifact": {
+            "score": 1.0,
+            "passed": True,
+            "failed_gates": [],
+            "thematic_rerun_requests": [],
+            "iteration": 0,
+            "metrics_snapshot": {},
+            "rationale": "pass",
+        },
+        "judge_score": 1.0,
+        "converge_status": "passed",
+        "thematic_rerun_requests": [],
+    }
     default_prop = {"proposals": [], "import_review_report": {}}
 
     tools: dict = {
@@ -112,6 +127,7 @@ def _make_tools(
         "minor_repair": AsyncMock(return_value=repair_result or default_repair),
         "architect_timeline": AsyncMock(return_value=architect_result or default_arch),
         "qa_review": AsyncMock(return_value=qa_result or default_qa),
+        "judge_import": AsyncMock(return_value=judge_result or default_judge),
         "proposal_write": AsyncMock(return_value=proposal_result or default_prop),
     }
     # Per-window tools use callable side_effects so each call receives window_id.
@@ -308,6 +324,64 @@ class TestPolicyLoop(unittest.TestCase):
         for stage in expected_stages:
             self.assertIn(stage, stages, f"Stage {stage!r} missing from supervisor_decisions")
 
+    def test_thematic_reruns_are_bounded_by_tos_budget(self):
+        from sidecar.supervisor.policy import run_supervisor_policy
+
+        windows = [_make_window("pwin_theme", [0])]
+        spec, target = plan_orchestrator_targets(
+            "custom",
+            "en",
+            1,
+            overrides={"rerun_budget": 1},
+        )
+        state = {
+            **_make_state(profile="custom", windows=windows),
+            "tool_operating_spec": spec,
+            "converge_target": target,
+            "profile_config": PROFILE_CONFIGS["custom"],
+        }
+        failing_judge = {
+            "judge_artifact": {
+                "score": 0.5,
+                "passed": False,
+                "failed_gates": ["character_undercoverage"],
+                "thematic_rerun_requests": [{
+                    "theme": "character_undercoverage",
+                    "target_windows": ["pwin_theme"],
+                    "reason": "characters below target",
+                    "parameter_overrides": {"min_characters_per_chapter": 3},
+                    "expected_repair": "recover characters",
+                }],
+                "iteration": 0,
+                "metrics_snapshot": {},
+                "rationale": "failed",
+            },
+            "judge_score": 0.5,
+            "converge_status": "failed",
+            "thematic_rerun_requests": [],
+        }
+        rerun_calls = []
+
+        async def mock_rerun(state, window_id, strategy="augment", missing=None, parameter_overrides=None):
+            rerun_calls.append({
+                "window_id": window_id,
+                "strategy": strategy,
+                "parameter_overrides": parameter_overrides,
+            })
+            return {"entity_registry": state.get("entity_registry", {}), "window_metrics": _passing_metrics(window_id, 1)}
+
+        tools = _make_tools(
+            segment_result={"prompt_windows": windows, "supervisor_log": []},
+            judge_result=failing_judge,
+        )
+        tools["rerun_window"] = mock_rerun
+
+        result = _run(run_supervisor_policy(state, tools))
+
+        self.assertEqual(len(rerun_calls), 1)
+        self.assertEqual(rerun_calls[0]["parameter_overrides"], {"min_characters_per_chapter": 3})
+        self.assertEqual(result.get("converge_status"), "failed")
+
     # ── Test 7 (replaced): run_streaming dispatches to supervisor when enabled ─
 
     def test_run_streaming_dispatches_supervisor_when_enabled(self):
@@ -333,6 +407,33 @@ class TestPolicyLoop(unittest.TestCase):
                 }):
                     results.append(update)
             self.assertTrue(supervisor_calls, "run_supervisor_streaming was not called")
+            self.assertEqual(len(results), 1)
+
+        asyncio.run(collect())
+
+    def test_run_streaming_dispatches_supervisor_for_deep_default(self):
+        """Deep profile defaults to supervisor unless explicitly disabled."""
+        supervisor_calls = []
+
+        async def fake_supervisor(project_path, config):
+            supervisor_calls.append((project_path, config))
+            yield {
+                "progress": 1.0, "errors": [], "completed_chunks": 0,
+                "total_chunks": 0, "current_node": "done",
+                "import_review_report": {}, "proposals_count": 0,
+            }
+
+        async def collect():
+            from sidecar.workflows.w1_import import run_streaming
+            with patch("sidecar.supervisor.policy.run_supervisor_streaming", fake_supervisor):
+                results = []
+                async for update in run_streaming("/tmp/test", {
+                    "source_file_path": "/tmp/test.txt",
+                    "import_mode": "import_all",
+                    "prompt_profile": "deep",
+                }):
+                    results.append(update)
+            self.assertTrue(supervisor_calls, "deep profile did not default to supervisor")
             self.assertEqual(len(results), 1)
 
         asyncio.run(collect())
@@ -516,6 +617,8 @@ class TestMergeCorrectness(unittest.TestCase):
             "project_path": "/tmp/artifact_test",
             "supervisor_decisions": [{"stage": "test"}],
             "window_metrics": {"pwin_0": {"gate_passed": True}},
+            "tool_operating_spec": {"rerun_budget": 1},
+            "judge_artifact": {"score": 1.0, "passed": True},
         }
 
         artifact_calls: list = []
@@ -537,6 +640,10 @@ class TestMergeCorrectness(unittest.TestCase):
                       "supervisor_decisions.json was not written by proposal_write")
         self.assertIn("window_metrics.json", artifact_calls,
                       "window_metrics.json was not written by proposal_write")
+        self.assertIn("tool_operating_spec.json", artifact_calls,
+                      "tool_operating_spec.json was not written by proposal_write")
+        self.assertIn("judge_artifact.json", artifact_calls,
+                      "judge_artifact.json was not written by proposal_write")
 
 
 if __name__ == "__main__":

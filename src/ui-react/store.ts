@@ -54,8 +54,47 @@ import { projectService } from './services/projectService';
 import { appSettingsService, defaultAppSettings } from './services/appSettingsService';
 import * as metadataService from './services/metadataService';
 import { electronApi } from './services/electronApi';
+import type { W1CustomProfileConfig, W1OrchestratorOverrides, W1PromptProfile } from './services/electronApi';
 
 const UI_SETTINGS_KEY = 'narrative-ide-ui-settings';
+
+export const defaultW1CustomProfileConfig: W1CustomProfileConfig = {
+  quality_target: 'max',
+  chapters_per_window_min: 2,
+  chapters_per_window_max: 6,
+  max_chapters_per_window: 6,
+  character_granularity: 'all',
+  event_density: 'scene_level',
+  timeline_topology_depth: 'full_dag',
+  world_strictness: 'full_attributes',
+  validation_strictness: 'per_window',
+  rerun_budget: 3,
+  max_rerun_iterations: 3,
+  judge_pass_threshold: 0.85,
+  language_policy: 'normalize_to_source',
+  input_window_budget: 32000,
+  output_token_budget: 3000,
+};
+
+const buildW1OrchestratorOverrides = (config: W1CustomProfileConfig, enabled = true): W1OrchestratorOverrides => ({
+  use_orchestrator: enabled,
+  use_supervisor: enabled,
+  rerun_budget: config.rerun_budget,
+  judge_pass_threshold: config.judge_pass_threshold,
+  quality_target: config.quality_target,
+  language_policy: config.language_policy,
+});
+
+interface W1RuntimeStatus {
+  current_tool?: string;
+  current_window?: string | number;
+  chapter_range?: string | { start?: string; end?: string };
+  orchestrator_phase?: string;
+  judge_score?: number;
+  rerun_reason?: string;
+  converge_status?: string;
+  judge_artifact_summary?: import('./services/electronApi').W1JudgeArtifactSummary;
+}
 
 type PanelKind = 'sidebar' | 'inspector' | 'agentDock' | 'writingOutline' | 'writingContext';
 type ContextMenuItem = { id: string; label: string; action: () => void; destructive?: boolean };
@@ -291,7 +330,10 @@ interface ProjectState {
   w1ConsoleLog: import('./services/electronApi').ChunkLogEntry[];
   w1Paused: boolean;
   w1BreakpointChunk: number | null;
-  w1PromptProfile: 'fast' | 'balanced' | 'deep' | 'custom';
+  w1PromptProfile: W1PromptProfile;
+  w1CustomProfileConfig: W1CustomProfileConfig;
+  w1OrchestratorOverrides: W1OrchestratorOverrides;
+  w1RuntimeStatus: W1RuntimeStatus | null;
   w1ProposalCount: number;
   w1ImportReviewReport: import('./services/electronApi').W1ImportReviewReport | null;
   w1UseSupervisor: boolean;
@@ -299,12 +341,13 @@ interface ProjectState {
   w1GateFailures: unknown[];
   w1SupervisorIteration: number;
   setW1ImportMode: (mode: 'import_content_only' | 'import_all') => void;
-  setW1PromptProfile: (profile: 'fast' | 'balanced' | 'deep' | 'custom') => void;
+  setW1PromptProfile: (profile: W1PromptProfile) => void;
+  setW1CustomProfileConfig: (patch: Partial<W1CustomProfileConfig>) => void;
   setW1UseSupervisor: (v: boolean) => void;
   setW1Breakpoint: (chunkId: number | null) => Promise<void>;
   resumeW1: () => Promise<void>;
   rewindW1: (toChunkId: number) => Promise<void>;
-  startImport: (payload: { projectRoot: string; sourceFilePath: string; importMode?: 'import_content_only' | 'import_all' }) => Promise<void>;
+  startImport: (payload: { projectRoot: string; sourceFilePath: string; importMode?: 'import_content_only' | 'import_all'; customProfileConfig?: W1CustomProfileConfig; orchestratorOverrides?: W1OrchestratorOverrides }) => Promise<void>;
   cancelImport: () => Promise<void>;
   resetImport: () => void;
 
@@ -1477,6 +1520,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   w1Paused: false,
   w1BreakpointChunk: null,
   w1PromptProfile: 'balanced',
+  w1CustomProfileConfig: defaultW1CustomProfileConfig,
+  w1OrchestratorOverrides: buildW1OrchestratorOverrides(defaultW1CustomProfileConfig),
+  w1RuntimeStatus: null,
   w1ProposalCount: 0,
   w1ImportReviewReport: null,
   w1UseSupervisor: false,
@@ -1484,7 +1530,26 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   w1GateFailures: [],
   w1SupervisorIteration: 0,
   setW1ImportMode: (mode) => set({ w1ImportMode: mode }),
-  setW1PromptProfile: (profile) => set({ w1PromptProfile: profile }),
+  setW1PromptProfile: (profile) => set((state) => {
+    const supervisorDefault = profile === 'deep' || profile === 'custom';
+    return {
+      w1PromptProfile: profile,
+      w1UseSupervisor: supervisorDefault,
+      w1OrchestratorOverrides: buildW1OrchestratorOverrides(state.w1CustomProfileConfig, supervisorDefault),
+    };
+  }),
+  setW1CustomProfileConfig: (patch) => set((state) => {
+    const nextConfig = {
+      ...state.w1CustomProfileConfig,
+      ...patch,
+    };
+    nextConfig.max_chapters_per_window = nextConfig.chapters_per_window_max;
+    nextConfig.max_rerun_iterations = nextConfig.rerun_budget;
+    return {
+      w1CustomProfileConfig: nextConfig,
+      w1OrchestratorOverrides: buildW1OrchestratorOverrides(nextConfig, state.w1PromptProfile === 'deep' || state.w1PromptProfile === 'custom' || state.w1UseSupervisor),
+    };
+  }),
   setW1UseSupervisor: (v) => set({ w1UseSupervisor: v }),
   setW1Breakpoint: async (chunkId) => {
     const { projectRoot, w1SessionId } = get();
@@ -1507,7 +1572,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
   startImport: async (payload) => {
-    const { projectRoot, w1ImportMode, w1PromptProfile, w1UseSupervisor } = get();
+    const { projectRoot, w1ImportMode, w1PromptProfile, w1UseSupervisor, w1CustomProfileConfig, w1OrchestratorOverrides } = get();
     const mode = payload.importMode ?? w1ImportMode;
     const effectiveRoot = projectRoot || payload.projectRoot;
     if (!effectiveRoot) {
@@ -1520,12 +1585,18 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const modelProfiles = appSettings?.modelProfiles ?? [];
     const providerProfile = profiles.find((p: { id: string }) => p.id === appSettings?.selectedProviderProfileId) ?? profiles[0] as { apiKey?: string; endpoint?: string } | undefined;
     const modelProfile = modelProfiles.find((m: { id: string }) => m.id === appSettings?.selectedModelProfileId) ?? modelProfiles[0] as { model?: string } | undefined;
-    set({ w1Status: 'running', w1Progress: 0, w1Errors: [], w1SessionId: null, w1CurrentStep: '', w1ProposalCount: 0, w1ImportReviewReport: null });
+    set({ w1Status: 'running', w1Progress: 0, w1Errors: [], w1SessionId: null, w1CurrentStep: '', w1ProposalCount: 0, w1ImportReviewReport: null, w1RuntimeStatus: null });
     // Ensure sidecar is alive before calling start
     try { await electronApi.sidecarSpawn(effectiveRoot); } catch { /* best effort */ }
     let sessionId: string | null = null;
     // Retry start up to 3 times with delay (sidecar may still be booting)
     let result: any = null;
+    const shouldUseSupervisor = w1PromptProfile === 'deep' || w1PromptProfile === 'custom' || w1UseSupervisor;
+    const customProfileConfig = payload.customProfileConfig ?? w1CustomProfileConfig;
+    const orchestratorOverrides = payload.orchestratorOverrides ?? buildW1OrchestratorOverrides(
+      customProfileConfig,
+      shouldUseSupervisor || w1OrchestratorOverrides.use_orchestrator,
+    );
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         result = await electronApi.w1Start({
@@ -1533,7 +1604,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           source_file_path: payload.sourceFilePath,
           import_mode: mode,
           prompt_profile: w1PromptProfile,
-          use_supervisor: w1UseSupervisor,
+          use_supervisor: shouldUseSupervisor,
+          use_orchestrator: shouldUseSupervisor,
+          custom_profile_config: w1PromptProfile === 'custom' ? customProfileConfig : undefined,
+          orchestrator_overrides: shouldUseSupervisor ? orchestratorOverrides : undefined,
           api_key: providerProfile?.apiKey ?? '',
           model: modelProfile?.model ?? 'deepseek-chat',
           endpoint: providerProfile?.endpoint ?? 'https://api.deepseek.com/v1',
@@ -1576,6 +1650,16 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           w1PromptProfile: s.prompt_profile ?? w1PromptProfile,
           w1ProposalCount: s.proposals_count ?? 0,
           w1ImportReviewReport: s.import_review_report ?? null,
+          w1RuntimeStatus: {
+            current_tool: s.current_tool,
+            current_window: s.current_window,
+            chapter_range: s.chapter_range,
+            orchestrator_phase: s.orchestrator_phase,
+            judge_score: s.judge_score,
+            rerun_reason: s.rerun_reason,
+            converge_status: s.converge_status,
+            judge_artifact_summary: s.judge_artifact_summary,
+          },
         });
         // Also poll console log for real-time chunk detail
         try {
@@ -1617,7 +1701,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       try { await electronApi.w1Cancel({ session_id: w1SessionId }); } catch { /* already cancelled */ }
     }
   },
-  resetImport: () => set({ w1Status: 'idle', w1Progress: 0, w1CompletedChunks: 0, w1TotalChunks: 0, w1Errors: [], w1CurrentStep: '', w1SessionId: null, w1ConsoleLog: [], w1Paused: false, w1BreakpointChunk: null, w1ProposalCount: 0, w1ImportReviewReport: null }),
+  resetImport: () => set({ w1Status: 'idle', w1Progress: 0, w1CompletedChunks: 0, w1TotalChunks: 0, w1Errors: [], w1CurrentStep: '', w1SessionId: null, w1ConsoleLog: [], w1Paused: false, w1BreakpointChunk: null, w1ProposalCount: 0, w1ImportReviewReport: null, w1RuntimeStatus: null }),
 
   // ── W2 Manuscript Sync ────────────────────────────────────────────────────
   w2Status: 'idle',

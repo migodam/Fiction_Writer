@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Dict, List, Literal, Optional, TypedDict
+import math
+from typing import Any, Dict, List, Literal, Optional, TypedDict
 
 
 class OrchestratorStep(TypedDict):
@@ -83,6 +84,58 @@ class ImportCheckpoint(TypedDict):
 
 
 PromptProfile = Literal["fast", "balanced", "deep", "custom"]
+
+
+class ToolOperatingSpec(TypedDict, total=False):
+    """Soft orchestration parameters planned before W1 supervisor execution."""
+    min_characters_per_chapter: float
+    event_density_target: float
+    max_canonical_events_per_chapter: int
+    world_category_policy: Literal["named_only", "boundary_guarded", "full_attributes"]
+    language_policy: Literal["preserve_source", "normalize_to_source", "allow_mixed"]
+    rerun_budget: int
+    judge_pass_threshold: float
+    chapters_per_window_min: int
+    chapters_per_window_max: int
+    timeline_topology_target: Literal["flat", "branched", "full_dag"]
+    orchestrator_enabled: bool
+    supervisor_enabled: bool
+
+
+class ConvergeTarget(TypedDict, total=False):
+    """Expected coverage targets used by the deterministic judge pass."""
+    expected_min_characters: int
+    expected_min_events: int
+    expected_max_canonical_events: int
+    expected_min_world_entities: int
+    expected_language: str
+    expected_timeline_topology: Literal["flat", "branched", "full_dag"]
+
+
+class ThematicRerunRequest(TypedDict, total=False):
+    """A bounded orchestrator request to repair one quality theme."""
+    theme: Literal[
+        "character_undercoverage",
+        "timeline_undercoverage",
+        "world_boundary",
+        "language_mismatch",
+    ]
+    target_windows: List[str]
+    reason: str
+    parameter_overrides: Dict[str, Any]
+    expected_repair: str
+
+
+class JudgeArtifact(TypedDict, total=False):
+    """Deterministic post-QA assessment that may request thematic reruns."""
+    score: float
+    passed: bool
+    failed_gates: List[str]
+    thematic_rerun_requests: List[ThematicRerunRequest]
+    iteration: int
+    metrics_snapshot: dict
+    rationale: str
+    artifact_paths: Dict[str, str]
 
 
 class ImportRunManifest(TypedDict, total=False):
@@ -310,7 +363,189 @@ PROFILE_CONFIGS: "Dict[str, ImportProfileConfig]" = {
         "max_rerun_iterations": 2,
         "chapters_per_window": 8,
     },
+    "custom": {
+        "character_granularity": "all",
+        "event_density": "scene_level",
+        "world_strictness": "full_attributes",
+        "timeline_topology_depth": "full_dag",
+        "validation_strictness": "per_arc",
+        "input_window_budget": 24_000,
+        "output_token_budget": 3000,
+        "max_rerun_iterations": 3,
+        "chapters_per_window": 6,
+    },
 }
+
+
+_TOS_DEFAULTS: "Dict[str, ToolOperatingSpec]" = {
+    "fast": {
+        "min_characters_per_chapter": 0.5,
+        "event_density_target": 0.5,
+        "max_canonical_events_per_chapter": 2,
+        "world_category_policy": "named_only",
+        "language_policy": "preserve_source",
+        "rerun_budget": 0,
+        "judge_pass_threshold": 0.70,
+        "chapters_per_window_min": 10,
+        "chapters_per_window_max": 20,
+        "timeline_topology_target": "flat",
+        "orchestrator_enabled": False,
+        "supervisor_enabled": False,
+    },
+    "balanced": {
+        "min_characters_per_chapter": 0.75,
+        "event_density_target": 0.75,
+        "max_canonical_events_per_chapter": 3,
+        "world_category_policy": "boundary_guarded",
+        "language_policy": "preserve_source",
+        "rerun_budget": 1,
+        "judge_pass_threshold": 0.78,
+        "chapters_per_window_min": 6,
+        "chapters_per_window_max": 12,
+        "timeline_topology_target": "branched",
+        "orchestrator_enabled": False,
+        "supervisor_enabled": False,
+    },
+    "deep": {
+        "min_characters_per_chapter": 1.5,
+        "event_density_target": 1.25,
+        "max_canonical_events_per_chapter": 4,
+        "world_category_policy": "full_attributes",
+        "language_policy": "normalize_to_source",
+        "rerun_budget": 2,
+        "judge_pass_threshold": 0.85,
+        "chapters_per_window_min": 3,
+        "chapters_per_window_max": 8,
+        "timeline_topology_target": "full_dag",
+        "orchestrator_enabled": True,
+        "supervisor_enabled": True,
+    },
+    "custom": {
+        "min_characters_per_chapter": 1.5,
+        "event_density_target": 1.5,
+        "max_canonical_events_per_chapter": 5,
+        "world_category_policy": "full_attributes",
+        "language_policy": "normalize_to_source",
+        "rerun_budget": 3,
+        "judge_pass_threshold": 0.85,
+        "chapters_per_window_min": 2,
+        "chapters_per_window_max": 6,
+        "timeline_topology_target": "full_dag",
+        "orchestrator_enabled": True,
+        "supervisor_enabled": True,
+    },
+}
+
+
+def plan_tool_operating_spec(
+    prompt_profile: str = "balanced",
+    source_language: str = "en",
+    chapter_count: int = 1,
+    overrides: Optional[Dict[str, Any]] = None,
+    use_supervisor: Optional[bool] = None,
+    use_orchestrator: Optional[bool] = None,
+) -> ToolOperatingSpec:
+    """Derive deterministic W1 supervisor soft parameters from profile/config."""
+    profile = prompt_profile if prompt_profile in _TOS_DEFAULTS else "balanced"
+    chapter_count = max(int(chapter_count or 1), 1)
+    spec: ToolOperatingSpec = dict(_TOS_DEFAULTS[profile])  # type: ignore[assignment]
+
+    if use_supervisor is True:
+        spec["supervisor_enabled"] = True
+    if use_orchestrator is True:
+        spec["orchestrator_enabled"] = True
+        spec["supervisor_enabled"] = True
+
+    if source_language and source_language != "en":
+        spec["language_policy"] = "normalize_to_source"
+
+    # Keep very short imports from over-windowing even in deep/custom mode.
+    max_window = int(spec.get("chapters_per_window_max", chapter_count))
+    spec["chapters_per_window_max"] = min(max(max_window, 1), chapter_count or max_window)
+    spec["chapters_per_window_min"] = min(
+        int(spec.get("chapters_per_window_min", 1)),
+        int(spec["chapters_per_window_max"]),
+    )
+
+    for key, value in (overrides or {}).items():
+        if key in ToolOperatingSpec.__annotations__:
+            spec[key] = value
+
+    # UI Custom mode speaks in user-facing profile terms. Normalize those into
+    # the deterministic TOS contract so sent controls actually affect runtime.
+    if overrides:
+        if "max_chapters_per_window" in overrides and "chapters_per_window_max" not in overrides:
+            spec["chapters_per_window_max"] = int(overrides["max_chapters_per_window"])
+        if "event_density" in overrides and "event_density_target" not in overrides:
+            density = str(overrides.get("event_density") or "")
+            spec["event_density_target"] = {
+                "arc_level": 0.5,
+                "chapter_level": 1.25,
+                "scene_level": 1.75,
+            }.get(density, float(spec.get("event_density_target", 0.75)))
+        if "world_strictness" in overrides and "world_category_policy" not in overrides:
+            strictness = str(overrides.get("world_strictness") or "")
+            spec["world_category_policy"] = {
+                "named_only": "named_only",
+                "with_description": "boundary_guarded",
+                "full_attributes": "full_attributes",
+            }.get(strictness, spec.get("world_category_policy", "boundary_guarded"))
+        if "timeline_topology_depth" in overrides and "timeline_topology_target" not in overrides:
+            topology = str(overrides.get("timeline_topology_depth") or "")
+            spec["timeline_topology_target"] = {
+                "flat": "flat",
+                "branched": "branched",
+                "full_dag": "full_dag",
+            }.get(topology, spec.get("timeline_topology_target", "branched"))
+
+    spec["rerun_budget"] = max(int(spec.get("rerun_budget", 0)), 0)
+    spec["judge_pass_threshold"] = min(max(float(spec.get("judge_pass_threshold", 0.8)), 0.0), 1.0)
+    spec["chapters_per_window_max"] = max(int(spec.get("chapters_per_window_max", 1)), 1)
+    spec["chapters_per_window_min"] = min(
+        max(int(spec.get("chapters_per_window_min", 1)), 1),
+        int(spec["chapters_per_window_max"]),
+    )
+    return spec
+
+
+def plan_converge_target(
+    tool_operating_spec: ToolOperatingSpec,
+    source_language: str = "en",
+    chapter_count: int = 1,
+) -> ConvergeTarget:
+    """Build deterministic convergence targets from the active tool spec."""
+    chapter_count = max(int(chapter_count or 1), 1)
+    min_chars = float(tool_operating_spec.get("min_characters_per_chapter", 0.75))
+    event_density = float(tool_operating_spec.get("event_density_target", 0.75))
+    max_events = int(tool_operating_spec.get("max_canonical_events_per_chapter", 3))
+    return {
+        "expected_min_characters": max(1, math.ceil(chapter_count * min_chars)),
+        "expected_min_events": max(1, math.ceil(chapter_count * event_density)),
+        "expected_max_canonical_events": max(1, chapter_count * max_events),
+        "expected_min_world_entities": max(1, math.ceil(chapter_count * 0.4)),
+        "expected_language": source_language or "en",
+        "expected_timeline_topology": tool_operating_spec.get("timeline_topology_target", "branched"),
+    }
+
+
+def plan_orchestrator_targets(
+    prompt_profile: str = "balanced",
+    source_language: str = "en",
+    chapter_count: int = 1,
+    overrides: Optional[Dict[str, Any]] = None,
+    use_supervisor: Optional[bool] = None,
+    use_orchestrator: Optional[bool] = None,
+) -> tuple[ToolOperatingSpec, ConvergeTarget]:
+    """Return the planned ToolOperatingSpec and matching ConvergeTarget."""
+    spec = plan_tool_operating_spec(
+        prompt_profile=prompt_profile,
+        source_language=source_language,
+        chapter_count=chapter_count,
+        overrides=overrides,
+        use_supervisor=use_supervisor,
+        use_orchestrator=use_orchestrator,
+    )
+    return spec, plan_converge_target(spec, source_language, chapter_count)
 
 
 class ImportSupervisorState(TypedDict, total=False):
@@ -336,6 +571,17 @@ class ImportSupervisorState(TypedDict, total=False):
     max_supervisor_iterations: int
     supervisor_log: List[str]
     minor_repair_log: List[str]
+    tool_operating_spec: ToolOperatingSpec
+    converge_target: ConvergeTarget
+    judge_artifact: JudgeArtifact
+    thematic_rerun_requests: List[ThematicRerunRequest]
+    current_tool: str
+    current_window: str
+    chapter_range: str
+    orchestrator_phase: str
+    judge_score: float
+    rerun_reason: str
+    converge_status: Literal["not_started", "planning", "extracting", "judging", "rerunning", "passed", "failed", "writing"]
 
 
 class DiffItem(TypedDict):

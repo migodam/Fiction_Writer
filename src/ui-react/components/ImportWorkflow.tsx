@@ -4,10 +4,65 @@ import { electronApi } from '../services/electronApi';
 import { useProjectStore } from '../store';
 import { useI18n } from '../i18n';
 import { ImportConsole } from './ImportConsole';
+import type { W1CustomProfileConfig, W1JudgeArtifactSummary, W1PromptProfile } from '../services/electronApi';
 
 interface ImportWorkflowProps {
   onClose: () => void;
 }
+
+const profileExplanations: Record<W1PromptProfile, string> = {
+  fast: 'Speed: fastest. Quality: draft scout. Window: broad 20-chapter batches. Validation: off. Expected cost: low.',
+  balanced: 'Speed: moderate. Quality: named entities and chapter-level events. Window: 12 chapters. Validation: per-window. Expected cost: medium.',
+  deep: 'Speed: slow. Quality: high coverage. Window: 8 chapters. Validation: per-window with supervisor/orchestrator enabled by default. Expected cost: high.',
+  custom: 'Speed/cost follow your expert settings. Quality/window/validation are configurable. Supervisor/orchestrator are enabled by default.',
+};
+
+const formatChapterRange = (value: unknown) => {
+  if (!value) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object') {
+    const range = value as { start?: string; end?: string };
+    return [range.start, range.end].filter(Boolean).join(' - ');
+  }
+  return String(value);
+};
+
+const compactNumber = (value: number | undefined) => {
+  if (typeof value !== 'number') return '';
+  return Number.isInteger(value) ? String(value) : value.toFixed(2);
+};
+
+const CustomSelect: React.FC<{
+  id: string;
+  label: string;
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  onChange: (value: string) => void;
+}> = ({ id, label, value, options, onChange }) => (
+  <label className="space-y-1 text-xs text-text-2">
+    <span className="font-semibold">{label}</span>
+    <select
+      data-testid={id}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-text"
+    >
+      {options.map((option) => (
+        <option key={option.value} value={option.value}>{option.label}</option>
+      ))}
+    </select>
+  </label>
+);
+
+const RuntimeField: React.FC<{ testId: string; label: string; value: React.ReactNode }> = ({ testId, label, value }) => {
+  if (value === undefined || value === null || value === '') return null;
+  return (
+    <div data-testid={testId} className="rounded-lg border border-border bg-card p-2">
+      <div className="text-[10px] font-black uppercase tracking-widest text-text-3">{label}</div>
+      <div className="mt-1 text-xs text-text">{value}</div>
+    </div>
+  );
+};
 
 export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
   const w1Status = useProjectStore((s) => s.w1Status);
@@ -18,16 +73,23 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
   const w1CurrentStep = useProjectStore((s) => s.w1CurrentStep);
   const w1ImportMode = useProjectStore((s) => s.w1ImportMode);
   const w1PromptProfile = useProjectStore((s) => s.w1PromptProfile);
+  const w1CustomProfileConfig = useProjectStore((s) => s.w1CustomProfileConfig);
+  const w1RuntimeStatus = useProjectStore((s) => s.w1RuntimeStatus);
   const w1ProposalCount = useProjectStore((s) => s.w1ProposalCount);
   const w1ImportReviewReport = useProjectStore((s) => s.w1ImportReviewReport);
   const proposals = useProjectStore((s) => s.proposals);
   const resolveProposal = useProjectStore((s) => s.resolveProposal);
   const setW1ImportMode = useProjectStore((s) => s.setW1ImportMode);
   const setW1PromptProfile = useProjectStore((s) => s.setW1PromptProfile);
+  const setW1CustomProfileConfig = useProjectStore((s) => s.setW1CustomProfileConfig);
   const startImport = useProjectStore((s) => s.startImport);
   const cancelImport = useProjectStore((s) => s.cancelImport);
   const { t } = useI18n();
   const [consoleOpen, setConsoleOpen] = useState(true);
+
+  const updateCustomProfile = useCallback((patch: Partial<W1CustomProfileConfig>) => {
+    setW1CustomProfileConfig(patch);
+  }, [setW1CustomProfileConfig]);
 
   const handlePickFile = useCallback(async () => {
     try {
@@ -46,6 +108,18 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
   const safeAcceptIds = (w1ImportReviewReport?.safe_accept_ids || []).filter((id) =>
     proposals.some((proposal) => proposal.id === id),
   );
+  const judgeSummary = (w1ImportReviewReport?.judge_artifact_summary ||
+    w1ImportReviewReport?.judge_artifact ||
+    w1RuntimeStatus?.judge_artifact_summary) as W1JudgeArtifactSummary | undefined;
+  const hasRuntimeStatus = Boolean(w1RuntimeStatus && (
+    w1RuntimeStatus.current_tool ||
+    w1RuntimeStatus.current_window ||
+    w1RuntimeStatus.chapter_range ||
+    w1RuntimeStatus.orchestrator_phase ||
+    typeof w1RuntimeStatus.judge_score === 'number' ||
+    w1RuntimeStatus.rerun_reason ||
+    w1RuntimeStatus.converge_status
+  ));
   const acceptSafeAll = useCallback(() => {
     for (const proposalId of safeAcceptIds) {
       resolveProposal(proposalId, 'accepted');
@@ -54,7 +128,7 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="w-full max-w-lg rounded-2xl border border-border bg-card p-6 shadow-xl">
+      <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-border bg-card p-6 shadow-xl custom-scrollbar">
         <h2 className="mb-4 text-lg font-semibold text-text">{t('import.title')}</h2>
 
         {/* Mode selector — visible when idle */}
@@ -111,7 +185,7 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
               id="w1-prompt-profile"
               data-testid="w1-prompt-profile-select"
               value={w1PromptProfile}
-              onChange={(event) => setW1PromptProfile(event.target.value as 'fast' | 'balanced' | 'deep' | 'custom')}
+              onChange={(event) => setW1PromptProfile(event.target.value as W1PromptProfile)}
               className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text"
             >
               <option value="fast">{t('import.promptFast')}</option>
@@ -119,7 +193,130 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
               <option value="deep">{t('import.promptDeep')}</option>
               <option value="custom">{t('import.promptCustom')}</option>
             </select>
+            <p data-testid="w1-profile-explanation" className="mt-2 rounded-lg border border-border bg-card p-2 text-xs leading-relaxed text-text-2">
+              {profileExplanations[w1PromptProfile]}
+            </p>
             <p className="mt-2 text-xs text-text-3">{t('import.promptProfileDesc')}</p>
+            {w1PromptProfile === 'custom' && (
+              <div data-testid="w1-custom-expert-panel" className="mt-3 rounded-xl border border-brand/30 bg-brand/5 p-3">
+                <div className="mb-3">
+                  <div className="text-sm font-semibold text-text">{t('import.customExpert', 'Custom expert mode')}</div>
+                  <p className="mt-1 text-xs text-text-3">
+                    {t('import.customExpertDesc', 'Defaults mirror the planned custom backend profile: 2-6 chapter windows, scene-level event density, full topology, and three reruns.')}
+                  </p>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <CustomSelect
+                    id="w1-custom-quality-target"
+                    label={t('import.qualityTarget', 'Quality target')}
+                    value={w1CustomProfileConfig.quality_target}
+                    onChange={(value) => updateCustomProfile({ quality_target: value as W1CustomProfileConfig['quality_target'] })}
+                    options={[
+                      { value: 'draft', label: 'Draft' },
+                      { value: 'standard', label: 'Standard' },
+                      { value: 'high', label: 'High' },
+                      { value: 'max', label: 'Max' },
+                    ]}
+                  />
+                  <label className="space-y-1 text-xs text-text-2">
+                    <span className="font-semibold">{t('import.maxChaptersPerWindow', 'Max chapters per window')}</span>
+                    <input
+                      data-testid="w1-custom-max-chapters-per-window"
+                      type="number"
+                      min={1}
+                      max={50}
+                      value={w1CustomProfileConfig.chapters_per_window_max}
+                      onChange={(event) => {
+                        const next = Math.max(1, Number(event.target.value) || 1);
+                        updateCustomProfile({ chapters_per_window_max: next, max_chapters_per_window: next });
+                      }}
+                      className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-text"
+                    />
+                  </label>
+                  <CustomSelect
+                    id="w1-custom-character-granularity"
+                    label={t('import.characterGranularity', 'Character granularity')}
+                    value={w1CustomProfileConfig.character_granularity}
+                    onChange={(value) => updateCustomProfile({ character_granularity: value as W1CustomProfileConfig['character_granularity'] })}
+                    options={[
+                      { value: 'major_only', label: 'Major only' },
+                      { value: 'named_only', label: 'Named only' },
+                      { value: 'all', label: 'All named/role-bearing' },
+                    ]}
+                  />
+                  <CustomSelect
+                    id="w1-custom-event-density"
+                    label={t('import.eventDensity', 'Event density')}
+                    value={w1CustomProfileConfig.event_density}
+                    onChange={(value) => updateCustomProfile({ event_density: value as W1CustomProfileConfig['event_density'] })}
+                    options={[
+                      { value: 'arc_level', label: 'Arc level' },
+                      { value: 'chapter_level', label: 'Chapter level' },
+                      { value: 'scene_level', label: 'Scene level' },
+                    ]}
+                  />
+                  <CustomSelect
+                    id="w1-custom-timeline-topology-depth"
+                    label={t('import.timelineTopologyDepth', 'Timeline topology depth')}
+                    value={w1CustomProfileConfig.timeline_topology_depth}
+                    onChange={(value) => updateCustomProfile({ timeline_topology_depth: value as W1CustomProfileConfig['timeline_topology_depth'] })}
+                    options={[
+                      { value: 'flat', label: 'Flat' },
+                      { value: 'branched', label: 'Branched' },
+                      { value: 'full_dag', label: 'Full DAG' },
+                    ]}
+                  />
+                  <CustomSelect
+                    id="w1-custom-world-strictness"
+                    label={t('import.worldStrictness', 'World strictness')}
+                    value={w1CustomProfileConfig.world_strictness}
+                    onChange={(value) => updateCustomProfile({ world_strictness: value as W1CustomProfileConfig['world_strictness'] })}
+                    options={[
+                      { value: 'named_only', label: 'Named only' },
+                      { value: 'with_description', label: 'With description' },
+                      { value: 'full_attributes', label: 'Full attributes' },
+                    ]}
+                  />
+                  <CustomSelect
+                    id="w1-custom-validation-strictness"
+                    label={t('import.validationStrictness', 'Validation strictness')}
+                    value={w1CustomProfileConfig.validation_strictness}
+                    onChange={(value) => updateCustomProfile({ validation_strictness: value as W1CustomProfileConfig['validation_strictness'] })}
+                    options={[
+                      { value: 'off', label: 'Off' },
+                      { value: 'per_window', label: 'Per window' },
+                      { value: 'per_arc', label: 'Per arc' },
+                    ]}
+                  />
+                  <label className="space-y-1 text-xs text-text-2">
+                    <span className="font-semibold">{t('import.rerunBudget', 'Rerun budget')}</span>
+                    <input
+                      data-testid="w1-custom-rerun-budget"
+                      type="number"
+                      min={0}
+                      max={6}
+                      value={w1CustomProfileConfig.rerun_budget}
+                      onChange={(event) => {
+                        const next = Math.max(0, Number(event.target.value) || 0);
+                        updateCustomProfile({ rerun_budget: next, max_rerun_iterations: next });
+                      }}
+                      className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-text"
+                    />
+                  </label>
+                  <CustomSelect
+                    id="w1-custom-language-policy"
+                    label={t('import.languagePolicy', 'Language policy')}
+                    value={w1CustomProfileConfig.language_policy}
+                    onChange={(value) => updateCustomProfile({ language_policy: value as W1CustomProfileConfig['language_policy'] })}
+                    options={[
+                      { value: 'preserve_source', label: 'Preserve source' },
+                      { value: 'normalize_to_source', label: 'Normalize to source' },
+                      { value: 'allow_mixed', label: 'Allow mixed' },
+                    ]}
+                  />
+                </div>
+              </div>
+            )}
             <details data-testid="w1-prompt-review-panel" className="mt-3 rounded-lg border border-border bg-card p-3 text-xs text-text-2">
               <summary className="cursor-pointer font-semibold text-text">{t('import.promptReview')}</summary>
               <ul className="mt-2 space-y-1">
@@ -165,6 +362,17 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
                 </span>
               )}
             </div>
+            {hasRuntimeStatus && w1RuntimeStatus && (
+              <div data-testid="w1-runtime-status-card" className="grid gap-2 rounded-xl border border-border bg-bg-elev-1 p-3 md:grid-cols-3">
+                <RuntimeField testId="w1-status-current-tool" label={t('import.currentTool', 'Tool')} value={w1RuntimeStatus.current_tool} />
+                <RuntimeField testId="w1-status-current-window" label={t('import.currentWindow', 'Window')} value={w1RuntimeStatus.current_window} />
+                <RuntimeField testId="w1-status-chapter-range" label={t('import.chapterRange', 'Chapters')} value={formatChapterRange(w1RuntimeStatus.chapter_range)} />
+                <RuntimeField testId="w1-status-orchestrator-phase" label={t('import.orchestratorPhase', 'Orchestrator')} value={w1RuntimeStatus.orchestrator_phase} />
+                <RuntimeField testId="w1-status-judge-score" label={t('import.judgeScore', 'Judge score')} value={compactNumber(w1RuntimeStatus.judge_score)} />
+                <RuntimeField testId="w1-status-converge-status" label={t('import.convergeStatus', 'Converge')} value={w1RuntimeStatus.converge_status} />
+                <RuntimeField testId="w1-status-rerun-reason" label={t('import.rerunReason', 'Rerun reason')} value={w1RuntimeStatus.rerun_reason} />
+              </div>
+            )}
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -238,6 +446,20 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
             {Boolean(w1ImportReviewReport?.failed_chunks?.length) && (
               <div data-testid="w1-review-failed-chunks" className="mt-3 rounded-lg border border-red/30 bg-red/10 p-2 text-xs text-red">
                 {t('import.reviewFailedChunks', 'Failed chunks')}: {w1ImportReviewReport?.failed_chunks?.length}
+              </div>
+            )}
+            {judgeSummary && (
+              <div data-testid="w1-review-judge-summary" className="mt-3 rounded-lg border border-border bg-card p-3 text-xs text-text-2">
+                <div className="font-black uppercase tracking-widest text-text-3">{t('import.judgeArtifact', 'Judge artifact')}</div>
+                <div className="mt-2 grid gap-2 md:grid-cols-3">
+                  <RuntimeField testId="w1-review-judge-score" label={t('import.judgeScore', 'Judge score')} value={compactNumber(judgeSummary.score ?? judgeSummary.judge_score)} />
+                  <RuntimeField testId="w1-review-converge-status" label={t('import.convergeStatus', 'Converge')} value={judgeSummary.converge_status ?? judgeSummary.status} />
+                  <RuntimeField testId="w1-review-rerun-reason" label={t('import.rerunReason', 'Rerun reason')} value={judgeSummary.rerun_reason} />
+                </div>
+                {judgeSummary.summary && <p className="mt-2 leading-relaxed">{judgeSummary.summary}</p>}
+                {Boolean(judgeSummary.required_reruns?.length) && (
+                  <p className="mt-2 text-amber">{t('import.requiredReruns', 'Required reruns')}: {judgeSummary.required_reruns?.join(', ')}</p>
+                )}
               </div>
             )}
             <div className="mt-4 flex flex-wrap items-center gap-2">

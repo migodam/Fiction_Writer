@@ -312,7 +312,17 @@ def test_default_world_container_specs_are_semantic_and_localized():
     assert by_key["locations"]["name"] == "地点"
     assert by_key["organizations"]["name"] == "组织与势力"
     assert w1_import._normalize_world_category("七玄门", "sect") == "organization"
+    assert w1_import._normalize_world_category("七玄门", "地名") != "location"
+    assert w1_import._normalize_world_category("掩月宗", "宗门") == "organization"
+    assert w1_import._normalize_world_category("天南势力", "势力") == "faction"
+    assert w1_import._normalize_world_category("长春功", "功法") == "system"
+    assert w1_import._normalize_world_category("小绿瓶", "法器") == "artifact"
+    assert w1_import.WORLD_ONTOLOGY_LABELS["organization"]["zh"] == "组织"
+    assert "门派" in w1_import.WORLD_ONTOLOGY_LABELS["organization"]["zh_description"]
     assert w1_import._world_container_key("organization") == "organizations"
+    assert w1_import._world_container_key("faction") == "organizations"
+    assert w1_import._world_container_key("artifact") == "items"
+    assert w1_import._world_container_key("system") == "rules"
 
 
 def test_project_structure_digest_includes_existing_project_context(tmp_path):
@@ -590,6 +600,61 @@ def test_timeline_architect_creates_semantic_branches_for_dense_import(tmp_path)
     assert len(branches) > 1
     assert assigned_branch_ids != {"branch_import_main"}
     assert result["timeline_architecture"]["density_policy"]["max_events_per_branch"] == 36
+
+
+def test_timeline_ontology_coerces_illegal_event_class_and_sets_lane_hints():
+    event, warnings = w1_import._normalize_timeline_event_ontology({
+        "title": "七玄门冲突升级",
+        "description": "七玄门内部势力冲突改变韩立处境。",
+        "eventClass": "major_turning_point",
+        "importanceScore": 82,
+        "confidence": 0.91,
+        "location_hint": "七玄门",
+    })
+
+    assert event["eventClass"] == "canonical_event"
+    assert event["timelineClass"] == "canonical_event"
+    assert event["arcRole"] == "faction"
+    assert event["timelineLaneHint"] == "Faction / Organization"
+    assert event["deterministicLaneHints"]["factionOrOrganization"] is True
+    assert warnings
+
+
+def test_timeline_architect_promotes_minimum_density_for_long_import(tmp_path):
+    events = {}
+    for idx in range(50):
+        events[f"chapter_{idx}"] = {
+            "title": f"第{idx + 1}章转折",
+            "description": "章节证据显示主线处境发生变化。",
+            "eventClass": "scene_beat",
+            "timelineClass": "scene_beat",
+            "arcId": "protagonist_origin" if idx < 10 else "cultivation_progress",
+            "chapterRange": {"start": f"第{idx + 1}章", "end": f"第{idx + 1}章"},
+            "importanceScore": 72,
+            "character_ids": ["char_han"],
+            "location_hint": "神手谷" if idx >= 10 else "山边小村",
+            "temporal_hint": f"第{idx + 1}章",
+            "confidence": 0.9,
+            "chunk_id": idx,
+        }
+    state = {
+        "project_path": str(tmp_path),
+        "import_run_id": "import_long_density",
+        "chunks": [{"chunk_id": idx} for idx in range(50)],
+        "profile_config": {"event_density": "chapter_level"},
+        "entity_registry": {"events": events, "character_id_map": {"char_han": "char_existing_han"}},
+        "timeline_branches": [],
+        "errors": [],
+    }
+
+    result = asyncio.run(w1_import.node_architect_timeline(state))
+    canonical_events = list(result["entity_registry"]["events"].values())
+    lane_hints = {event.get("timelineLaneHint") for event in canonical_events}
+
+    assert len(canonical_events) > 3
+    assert len(canonical_events) >= result["timeline_architecture"]["density_policy"]["minimum_canonical_events"]
+    assert "Training / Power Progression" in lane_hints or any("Training" in hint for hint in lane_hints)
+    assert any("promoted to canonical_event" in warning for warning in result["timeline_architecture"]["warnings"])
 
 
 def test_timeline_architect_merges_han_li_origin_variants_and_demotes_scene_beats(tmp_path):

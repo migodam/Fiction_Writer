@@ -5,6 +5,7 @@ from sidecar.supervisor.tools import (
     architect_timeline,
     cross_validate_window,
     extract_window,
+    judge_import,
     minor_repair,
     proposal_write,
     qa_review,
@@ -24,6 +25,7 @@ def build_tool_registry() -> dict:
         "reduce_entities": reduce_entities,
         "architect_timeline": architect_timeline,
         "qa_review": qa_review,
+        "judge_import": judge_import,
         "minor_repair": minor_repair,
         "proposal_write": proposal_write,
     }

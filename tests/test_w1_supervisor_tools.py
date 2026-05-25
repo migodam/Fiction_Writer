@@ -6,13 +6,14 @@ import copy
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from sidecar.models.state import PROFILE_CONFIGS, ImportSupervisorState
+from sidecar.models.state import PROFILE_CONFIGS, ImportSupervisorState, plan_orchestrator_targets
 from sidecar.supervisor.tool_registry import build_tool_registry
 from sidecar.supervisor.tools import (
     _symptom_flags,
     extract_window,
     cross_validate_window,
     minor_repair,
+    judge_import,
     qa_review,
     reduce_entities,
     rerun_window,
@@ -454,6 +455,96 @@ class TestQaReview(unittest.TestCase):
         self.assertIn("language_consistency", gates)
 
 
+class TestToolOperatingSpecPlanner(unittest.TestCase):
+    def test_deep_defaults_enable_orchestrator_and_supervisor(self):
+        spec, target = plan_orchestrator_targets("deep", "zh", 20)
+
+        self.assertTrue(spec["orchestrator_enabled"])
+        self.assertTrue(spec["supervisor_enabled"])
+        self.assertEqual(spec["timeline_topology_target"], "full_dag")
+        self.assertEqual(spec["language_policy"], "normalize_to_source")
+        self.assertGreaterEqual(target["expected_min_characters"], 30)
+
+    def test_custom_overrides_are_applied(self):
+        spec, target = plan_orchestrator_targets(
+            "custom",
+            "en",
+            10,
+            overrides={"rerun_budget": 1, "judge_pass_threshold": 0.9},
+        )
+
+        self.assertTrue(spec["orchestrator_enabled"])
+        self.assertEqual(spec["rerun_budget"], 1)
+        self.assertEqual(spec["judge_pass_threshold"], 0.9)
+        self.assertEqual(target["expected_language"], "en")
+
+    def test_custom_ui_profile_terms_are_normalized_into_tos(self):
+        spec, target = plan_orchestrator_targets(
+            "custom",
+            "zh",
+            10,
+            overrides={
+                "max_chapters_per_window": 4,
+                "event_density": "scene_level",
+                "world_strictness": "full_attributes",
+                "timeline_topology_depth": "full_dag",
+            },
+        )
+
+        self.assertEqual(spec["chapters_per_window_max"], 4)
+        self.assertEqual(spec["event_density_target"], 1.75)
+        self.assertEqual(spec["world_category_policy"], "full_attributes")
+        self.assertEqual(spec["timeline_topology_target"], "full_dag")
+        self.assertGreaterEqual(target["expected_min_events"], 18)
+
+
+class TestJudgeImport(unittest.TestCase):
+    def test_flags_character_timeline_world_and_language_gates(self):
+        registry = {
+            "characters": {
+                "c_org": {
+                    "canonical_name": "Merchant Guild",
+                    "importance": "organization",
+                    "role_in_story": "organization",
+                    "groupKey": "Supporting Cast",
+                    "personality_traits": ["determined merchant"],
+                },
+            },
+            "events": {},
+            "world": {},
+            "world_detailed": {},
+        }
+        state = _make_state(
+            prompt_profile="deep",
+            source_language="zh",
+            entity_registry=registry,
+            chunks=[
+                {"chunk_id": i, "content": f"Chapter {i}", "chapter_hint": f"Chapter {i+1}", "char_start": i*100, "char_end": (i+1)*100}
+                for i in range(4)
+            ],
+            prompt_windows=[_make_window("pwin_a", [0, 1]), _make_window("pwin_b", [2, 3])],
+            window_metrics={
+                "pwin_a": {"window_id": "pwin_a", "chapter_count": 2, "char_count_extracted": 0, "event_count_extracted": 0},
+                "pwin_b": {"window_id": "pwin_b", "chapter_count": 2, "char_count_extracted": 0, "event_count_extracted": 0},
+            },
+            tool_operating_spec=plan_orchestrator_targets("deep", "zh", 4)[0],
+            converge_target=plan_orchestrator_targets("deep", "zh", 4)[1],
+        )
+
+        with patch("sidecar.supervisor.tools._write_import_artifact", return_value="/tmp/artifact.json"):
+            result = _run(judge_import(state))
+
+        artifact = result.get("judge_artifact", {})
+        gates = set(artifact.get("failed_gates", []))
+        self.assertIn("character_undercoverage", gates)
+        self.assertIn("timeline_undercoverage", gates)
+        self.assertIn("world_boundary", gates)
+        self.assertIn("language_mismatch", gates)
+        self.assertFalse(artifact.get("passed"))
+        request_themes = {r["theme"] for r in artifact.get("thematic_rerun_requests", [])}
+        self.assertTrue(gates.issubset(request_themes))
+
+
 # ── Test 12: output_budget gate on estimated > 3500 ──────────────────────────
 
 class TestOutputBudgetGate(unittest.TestCase):
@@ -501,12 +592,12 @@ class TestOutputBudgetGate(unittest.TestCase):
 # ── Tool registry ─────────────────────────────────────────────────────────────
 
 class TestToolRegistry(unittest.TestCase):
-    def test_build_tool_registry_returns_all_nine_tools(self):
+    def test_build_tool_registry_returns_all_ten_tools(self):
         registry = build_tool_registry()
         expected = {
             "segment_manifest", "extract_window", "cross_validate_window",
             "rerun_window", "reduce_entities", "architect_timeline",
-            "qa_review", "minor_repair", "proposal_write",
+            "qa_review", "judge_import", "minor_repair", "proposal_write",
         }
         self.assertEqual(set(registry.keys()), expected)
         for name, fn in registry.items():

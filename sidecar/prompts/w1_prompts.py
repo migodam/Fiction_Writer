@@ -102,7 +102,7 @@ Output format — respond with valid JSON only, no other text:
   "world_mentions": [
     {{
       "name": "<name as it appears in text>",
-      "category": "<location|organization|object|concept|rule>",
+      "category": "<location|organization|faction|item|artifact|rule|system|concept|culture|custom>",
       "description": "<one sentence from context>",
       "confidence": <0.6–1.0>
     }}
@@ -297,14 +297,20 @@ Every event MUST include the most specific time reference available: chapter num
 
 ## CANONICAL VS SCENE-BEAT DECISION
 Every candidate MUST explicitly choose:
-- timelineClass = canonical_event when the beat changes world state, relationship state, power status, faction alignment, major knowledge, survival stakes, or arc direction.
-- timelineClass = scene_beat when it is travel, training repetition, conversation texture, atmosphere, minor tactical movement, repeated explanation, or a sub-beat inside a larger canonical event.
+- eventClass/timelineClass = canonical_event when the beat changes world state, relationship state, power status, faction alignment, major knowledge, survival stakes, or arc direction.
+- eventClass/timelineClass = scene_beat when it is travel, training repetition, conversation texture, atmosphere, minor tactical movement, repeated explanation, or a sub-beat inside a larger canonical event.
+- eventClass/timelineClass = background_reference when it is past lore, explanation, or remembered context that should not become a timeline proposal.
 
 Only canonical_event candidates are expected to survive as timeline proposals. scene_beat candidates may be used
 for merge recommendations or scene summaries. Do not promote every action to a canonical event.
 
 ## EVENT CLASS TAXONOMY
 Every event MUST include eventClass using exactly one:
+ - canonical_event
+ - scene_beat
+ - background_reference
+
+Use eventType for the optional story-beat taxonomy:
 - inciting_choice
 - journey_departure
 - test_or_trial
@@ -346,6 +352,9 @@ Extract only events that significantly advance the plot or mark a turning point.
 - Keep titles short and specific (max 6 words)
 - Use arcId to group recurring lanes such as protagonist_origin, sect_entry, mentor_control, bottle_secret, cultivation_progress, faction_conflict, or antagonist_scheme
 - timelineLaneHint should be a human-readable lane such as Main Arc, Mentor Threat, Sect Conflict, Bottle Mystery, Family Origin, or Rival Ally
+- arcRole should be one of mainline, protagonist, faction, organization, location, antagonist, training, power_progression, background, or side
+- causalRole should be one of cause, effect, turning_point, setup, payoff, background, or unknown
+- branchRole should be one of mainline, fork, merge, parallel, callback, side_lane, or unknown
 - causalPredecessorHints should name earlier events/titles this event depends on, if visible in the chunk or registry
 - forkMergeHint must be one of root, fork, merge, parallel, callback, unknown
 - chapterRange must be an object with start and end strings, not a prose-only field
@@ -359,9 +368,13 @@ Output valid JSON only:
     {{
       "title": "<short event title>",
       "description": "<1-2 sentence summary>",
-      "eventClass": "<inciting_choice|journey_departure|test_or_trial|discovery|training_breakthrough|confrontation|betrayal_or_reveal|alliance_or_bond|power_shift|injury_or_death|escape_or_pursuit|faction_move|scene_beat|other>",
-      "timelineClass": "<canonical_event|scene_beat>",
+      "eventClass": "<canonical_event|scene_beat|background_reference>",
+      "timelineClass": "<canonical_event|scene_beat|background_reference>",
+      "eventType": "<inciting_choice|journey_departure|test_or_trial|discovery|training_breakthrough|confrontation|betrayal_or_reveal|alliance_or_bond|power_shift|injury_or_death|escape_or_pursuit|faction_move|other>",
       "arcId": "<stable snake_case arc id>",
+      "arcRole": "<mainline|protagonist|faction|organization|location|antagonist|training|power_progression|background|side>",
+      "causalRole": "<cause|effect|turning_point|setup|payoff|background|unknown>",
+      "branchRole": "<mainline|fork|merge|parallel|callback|side_lane|unknown>",
       "timelineLaneHint": "<branch/lane hint>",
       "causalPredecessorHints": ["<earlier event title or empty>"],
       "forkMergeHint": "<root|fork|merge|parallel|callback|unknown>",
@@ -395,7 +408,10 @@ Your job is to perform deep world extraction from this text chunk.
 
 ## Instructions
 Extract named world-building elements and explicit world rules grounded in this chunk.
-- Focus on locations, organizations, objects, concepts, cultures, and rules
+- Focus on locations, organizations/factions, items/artifacts, rules/systems, concepts, cultures, and custom terms
+- For Chinese source text, preserve Chinese labels and descriptions. Normalize common fiction terms deterministically:
+  门派/宗门/帮派 -> organization; 势力/阵营/联盟 -> faction; 功法/法术/修炼体系 -> system; 规则/法则 -> rule; 丹药/物品 -> item; 法器/宝物 -> artifact; 地名/地点 -> location.
+- Named sects such as 七玄门 are organizations or factions, never characters and never locations.
 - Prefer one entry per distinct mention
 - Keep descriptions concise and text-grounded
 
@@ -404,7 +420,7 @@ Output valid JSON only:
   "world_mentions": [
     {{
       "name": "<surface form from text>",
-      "category": "<location|organization|object|concept|rule|culture>",
+      "category": "<location|organization|faction|item|artifact|rule|system|concept|culture|custom>",
       "description": "<one sentence description>",
       "container_hint": "<locations|organizations|items|lore|rules or empty string>",
       "attributes": [

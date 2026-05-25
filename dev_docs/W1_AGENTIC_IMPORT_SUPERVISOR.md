@@ -21,7 +21,7 @@ Or from the Zustand store: `setW1UseSupervisor(true)` before `startImport`.
 
 ---
 
-## Tool Registry (9 tools)
+## Tool Registry (10 tools)
 
 All tools are in `sidecar/supervisor/tools.py` and registered in `sidecar/supervisor/tool_registry.py`.
 
@@ -35,6 +35,7 @@ All tools are in `sidecar/supervisor/tools.py` and registered in `sidecar/superv
 | `minor_repair` | 4 | Deterministic fixes: groupKey normalization, world/person boundary migration, orderIndex resequencing, Latin trait strip for zh source. |
 | `architect_timeline` | 5 | Calls `node_architect_timeline`. |
 | `qa_review` | 6 | Calls `node_review_import`. Sets `gate_failures`. |
+| `judge_import` | 6b | Deterministic convergence judge. Writes `JudgeArtifact`, emits thematic rerun requests, and never writes canonical proposals. |
 | `proposal_write` | 7 | Calls `node_write_to_project` + `node_build_manuscript`. |
 
 ---
@@ -61,8 +62,33 @@ run_supervisor_streaming(project_path, config)   ← async generator (same inter
         6. qa_review(state)
            IF gate_failures AND supervisor_iteration < max_supervisor_iterations:
              rerun failing windows → back to 3
-        7. proposal_write(state)
+        7. judge_import(state)
+           IF thematic_rerun_requests AND rerun_budget remains:
+             rerun targeted windows with soft parameter overrides → reduce/repair/architect/QA/judge
+        8. proposal_write(state)
 ```
+
+---
+
+## ToolOperatingSpec, ConvergeTarget, and JudgeArtifact
+
+Before the supervisor policy loop runs, it derives a `ToolOperatingSpec` and `ConvergeTarget` from `prompt_profile`, `source_language`, chapter count, and optional `context.tool_operating_spec_overrides`.
+
+Deep and Custom profiles default to orchestrator/supervisor behavior. Fast and Balanced stay lighter unless `use_supervisor` or `use_orchestrator` is explicitly enabled.
+
+The deterministic judge emits `JudgeArtifact` with:
+- `score`, `passed`, `failed_gates`
+- `thematic_rerun_requests`
+- `iteration`, `metrics_snapshot`, `rationale`
+- optional `artifact_paths`
+
+Thematic rerun themes are:
+- `character_undercoverage`
+- `timeline_undercoverage`
+- `world_boundary`
+- `language_mismatch`
+
+The orchestrator may plan soft parameters and request bounded reruns. It must not write canonical proposals or bypass reducer/repair/timeline/review validators.
 
 ---
 
@@ -70,8 +96,8 @@ run_supervisor_streaming(project_path, config)   ← async generator (same inter
 
 | Gate | Metric | Threshold | Action |
 |------|--------|-----------|--------|
-| `char_density` | `char_count / chapter_count` | < 0.5 | split (if >1 chunk) or augment |
-| `event_density` | `event_count / chapter_count` | < 0.5 | augment |
+| `char_density` | `char_count / chapter_count` | `< ToolOperatingSpec.min_characters_per_chapter` | split (if >1 chunk) or augment |
+| `event_density` | `event_count / chapter_count` | `< ToolOperatingSpec.event_density_target` | augment |
 | `failed_prompts` | `len(failed_prompts)` | ≥ 3 | augment |
 | `output_budget` | `chapters × 650 tokens` | > 3 500 | preemptive split in `segment_manifest` |
 
@@ -115,6 +141,8 @@ All artifacts land under `<project_path>/system/imports/<import_run_id>/`:
 | `project_structure_digest.json` | Digest used for character card compaction |
 | `supervisor_decisions.json` | Written by `proposal_write` from `state["supervisor_decisions"]` |
 | `window_metrics.json` | Written by `proposal_write` from `state["window_metrics"]` |
+| `tool_operating_spec.json` | Planned soft parameters for this import run |
+| `judge_artifact.json` | Final deterministic convergence judgment and thematic rerun requests |
 
 ---
 
@@ -122,7 +150,7 @@ All artifacts land under `<project_path>/system/imports/<import_run_id>/`:
 
 ```
 GET /workflow/w1/supervisor_status?session_id=<id>
-→ { supervisor_decisions, gate_failures, window_metrics, supervisor_iteration }
+→ { supervisor_decisions, gate_failures, window_metrics, supervisor_iteration, current_tool, current_window, chapter_range, orchestrator_phase, judge_score, rerun_reason, converge_status, judge_artifact }
 ```
 
 ---

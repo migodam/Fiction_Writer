@@ -20,6 +20,15 @@ interface MockState {
     completed_chunks: number;
     total_chunks: number;
     current_step: string;
+    current_tool?: string;
+    current_window?: string | number;
+    chapter_range?: string;
+    orchestrator_phase?: string;
+    judge_score?: number;
+    rerun_reason?: string;
+    converge_status?: string;
+    judge_artifact_summary?: Record<string, unknown>;
+    import_review_report?: Record<string, unknown>;
   }>;
   statusCallCount: number;
 }
@@ -132,7 +141,18 @@ test.describe('W1 Import Workflow — UI structure', () => {
   test('prompt profile selector is visible when idle', async ({ page }) => {
     await expect(page.getByTestId('w1-prompt-profile-select')).toBeVisible();
     await expect(page.getByTestId('w1-prompt-profile-select')).toHaveValue('balanced');
+    await expect(page.getByTestId('w1-profile-explanation')).toContainText('Validation: per-window');
     await expect(page.getByTestId('w1-prompt-review-panel')).toBeVisible();
+  });
+
+  test('custom expert panel is visible only for custom profile', async ({ page }) => {
+    await expect(page.getByTestId('w1-custom-expert-panel')).not.toBeVisible();
+    await page.getByTestId('w1-prompt-profile-select').selectOption('custom');
+    await expect(page.getByTestId('w1-profile-explanation')).toContainText('Supervisor/orchestrator');
+    await expect(page.getByTestId('w1-custom-expert-panel')).toBeVisible();
+    await expect(page.getByTestId('w1-custom-quality-target')).toHaveValue('max');
+    await expect(page.getByTestId('w1-custom-max-chapters-per-window')).toHaveValue('6');
+    await expect(page.getByTestId('w1-custom-rerun-budget')).toHaveValue('3');
   });
 
   test('close button is always visible', async ({ page }) => {
@@ -178,7 +198,21 @@ test.describe('W1 Import Workflow — running state', () => {
   test.beforeEach(async ({ page }) => {
     await injectIpcMock(page, {
       statusResults: [
-        { status: 'running', progress: 0.2, errors: [], completed_chunks: 200, total_chunks: 1547, current_step: 'process_chunks' },
+        {
+          status: 'running',
+          progress: 0.2,
+          errors: [],
+          completed_chunks: 200,
+          total_chunks: 1547,
+          current_step: 'process_chunks',
+          current_tool: 'extract_window',
+          current_window: 'window_003',
+          chapter_range: 'Chapters 7 - 9',
+          orchestrator_phase: 'extracting',
+          judge_score: 0.76,
+          rerun_reason: 'character undercoverage',
+          converge_status: 'rerunning',
+        },
         { status: 'running', progress: 0.5, errors: [], completed_chunks: 773, total_chunks: 1547, current_step: 'process_chunks' },
         { status: 'done',    progress: 1.0, errors: [], completed_chunks: 1547, total_chunks: 1547, current_step: 'write_to_project' },
       ],
@@ -205,6 +239,17 @@ test.describe('W1 Import Workflow — running state', () => {
   test('current step label is shown next to chunk count', async ({ page }) => {
     await expect(page.locator('text=/process.chunks|split.chunks|write.to.project/i')).toBeVisible({ timeout: 10000 });
   });
+
+  test('runtime orchestrator and judge fields render when status includes them', async ({ page }) => {
+    await expect(page.getByTestId('w1-runtime-status-card')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId('w1-status-current-tool')).toContainText('extract_window');
+    await expect(page.getByTestId('w1-status-current-window')).toContainText('window_003');
+    await expect(page.getByTestId('w1-status-chapter-range')).toContainText('Chapters 7 - 9');
+    await expect(page.getByTestId('w1-status-orchestrator-phase')).toContainText('extracting');
+    await expect(page.getByTestId('w1-status-judge-score')).toContainText('0.76');
+    await expect(page.getByTestId('w1-status-rerun-reason')).toContainText('character undercoverage');
+    await expect(page.getByTestId('w1-status-converge-status')).toContainText('rerunning');
+  });
 });
 
 test.describe('W1 Import Workflow — success state', () => {
@@ -212,13 +257,30 @@ test.describe('W1 Import Workflow — success state', () => {
     await injectIpcMock(page, {
       statusResults: [
         { status: 'running', progress: 0.5, errors: [], completed_chunks: 5, total_chunks: 10, current_step: 'process_chunks' },
-        { status: 'done',    progress: 1.0, errors: [], completed_chunks: 10, total_chunks: 10, current_step: 'write_to_project' },
+        {
+          status: 'done',
+          progress: 1.0,
+          errors: [],
+          completed_chunks: 10,
+          total_chunks: 10,
+          current_step: 'write_to_project',
+          import_review_report: {
+            status: 'warning',
+            judge_artifact_summary: {
+              score: 0.88,
+              converge_status: 'passed',
+              summary: 'Judge accepted the import after one rerun.',
+            },
+          },
+        },
       ],
     });
     await openImportModal(page);
     await page.getByTestId('w1-file-picker-btn').click();
 
     await expect(page.getByTestId('w1-success-msg')).toBeVisible({ timeout: 30000 });
+    await expect(page.getByTestId('w1-review-judge-summary')).toContainText('Judge accepted');
+    await expect(page.getByTestId('w1-review-judge-score')).toContainText('0.88');
   });
 
   test('mode selectors and file picker reappear after success if modal is closed and reopened', async ({ page }) => {
@@ -338,5 +400,53 @@ test.describe('W1 Import Workflow — provider credentials wiring', () => {
     expect(Object.keys(capturedPayload!)).toContain('model');
     expect(Object.keys(capturedPayload!)).toContain('endpoint');
     expect(capturedPayload!.prompt_profile).toBe('deep');
+  });
+
+  test('custom expert fields affect w1:start payload', async ({ page }) => {
+    await page.addInitScript(() => {
+      const mockIpcRenderer = {
+        invoke: async (channel: string, payload: unknown) => {
+          if (channel === 'sidecar:spawn') return { ok: true, port: 8765 };
+          if (channel === 'dialog:pick-files') return { canceled: false, paths: ['/tmp/novel.txt'] };
+          if (channel === 'w1:start') {
+            (window as any).__lastW1StartPayload = payload;
+            return { session_id: 'custom-test-session', status: 'started' };
+          }
+          if (channel === 'w1:status') return { status: 'done', progress: 1.0, errors: [], completed_chunks: 5, total_chunks: 5, current_step: 'done' };
+          return {};
+        },
+        on: () => {},
+        removeAllListeners: () => {},
+        send: () => {},
+      };
+      (window as any).require = (module: string) => {
+        if (module === 'electron') return { ipcRenderer: mockIpcRenderer };
+        throw new Error(`Module not found: ${module}`);
+      };
+    });
+
+    await page.goto('http://localhost:3000');
+    await page.getByTestId('activity-btn-workbench').click();
+    await page.getByTestId('open-import-btn').click();
+    await page.getByTestId('w1-prompt-profile-select').selectOption('custom');
+    await page.getByTestId('w1-custom-quality-target').selectOption('high');
+    await page.getByTestId('w1-custom-max-chapters-per-window').fill('4');
+    await page.getByTestId('w1-custom-event-density').selectOption('scene_level');
+    await page.getByTestId('w1-custom-rerun-budget').fill('5');
+    await page.getByTestId('w1-file-picker-btn').click();
+
+    await page.waitForFunction(() => (window as any).__lastW1StartPayload !== undefined, { timeout: 10000 });
+    const capturedPayload = await page.evaluate(() => (window as any).__lastW1StartPayload as Record<string, any>);
+
+    expect(capturedPayload.prompt_profile).toBe('custom');
+    expect(capturedPayload.use_supervisor).toBe(true);
+    expect(capturedPayload.use_orchestrator).toBe(true);
+    expect(capturedPayload.custom_profile_config.quality_target).toBe('high');
+    expect(capturedPayload.custom_profile_config.chapters_per_window_max).toBe(4);
+    expect(capturedPayload.custom_profile_config.max_chapters_per_window).toBe(4);
+    expect(capturedPayload.custom_profile_config.event_density).toBe('scene_level');
+    expect(capturedPayload.custom_profile_config.rerun_budget).toBe(5);
+    expect(capturedPayload.orchestrator_overrides.use_orchestrator).toBe(true);
+    expect(capturedPayload.orchestrator_overrides.rerun_budget).toBe(5);
   });
 });

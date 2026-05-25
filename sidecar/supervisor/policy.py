@@ -11,7 +11,13 @@ import uuid
 from datetime import datetime, timezone
 from typing import AsyncGenerator
 
-from sidecar.models.state import PROFILE_CONFIGS, ImportSupervisorState
+from sidecar.models.state import (
+    PROFILE_CONFIGS,
+    ImportSupervisorState,
+    ThematicRerunRequest,
+    ToolOperatingSpec,
+    plan_orchestrator_targets,
+)
 from sidecar.supervisor.tool_registry import build_tool_registry
 from sidecar.workflows.w1_import import (
     _chunk_progress,
@@ -80,6 +86,73 @@ def _merge_window_result(state: ImportSupervisorState, result: dict) -> ImportSu
     }
 
 
+def _chapter_count_from_state(state: ImportSupervisorState) -> int:
+    chunks = state.get("chunks", [])
+    if chunks:
+        return max(len(chunks), 1)
+    windows = state.get("prompt_windows", [])
+    return max(sum(len(w.get("chunk_ids", [])) or 1 for w in windows), 1)
+
+
+def _ensure_orchestrator_plan(state: ImportSupervisorState) -> ImportSupervisorState:
+    if state.get("tool_operating_spec") and state.get("converge_target"):
+        return state
+    context = state.get("context", {})
+    spec, target = plan_orchestrator_targets(
+        prompt_profile=state.get("prompt_profile", "balanced"),
+        source_language=state.get("source_language", "en"),
+        chapter_count=_chapter_count_from_state(state),
+        overrides=context.get("tool_operating_spec_overrides", {}),
+        use_supervisor=state.get("use_supervisor"),
+        use_orchestrator=context.get("use_orchestrator"),
+    )
+    profile_config = dict(state.get("profile_config") or PROFILE_CONFIGS.get(
+        state.get("prompt_profile", "balanced"), PROFILE_CONFIGS["balanced"]
+    ))
+    if spec.get("chapters_per_window_max"):
+        profile_config["chapters_per_window"] = int(spec["chapters_per_window_max"])
+    if spec.get("rerun_budget") is not None:
+        profile_config["max_rerun_iterations"] = int(spec["rerun_budget"])
+    return {
+        **state,
+        "tool_operating_spec": spec,
+        "converge_target": target,
+        "profile_config": profile_config,
+        "use_supervisor": bool(state.get("use_supervisor") or spec.get("supervisor_enabled")),
+        "orchestrator_phase": "planning",
+        "converge_status": "planning",
+    }
+
+
+def _with_status(
+    state: ImportSupervisorState,
+    *,
+    current_tool: str,
+    orchestrator_phase: str,
+    current_window: str = "",
+    chapter_range: str = "",
+    rerun_reason: str = "",
+    converge_status: str | None = None,
+) -> ImportSupervisorState:
+    update: dict = {
+        "current_tool": current_tool,
+        "current_window": current_window,
+        "chapter_range": chapter_range,
+        "orchestrator_phase": orchestrator_phase,
+        "rerun_reason": rerun_reason,
+    }
+    if converge_status:
+        update["converge_status"] = converge_status
+    if state.get("judge_artifact"):
+        update["judge_score"] = state["judge_artifact"].get("score", 0.0)
+    return {**state, **update}
+
+
+def _window_chapter_range(state: ImportSupervisorState, window_id: str) -> str:
+    window = next((w for w in state.get("prompt_windows", []) if w.get("id") == window_id), {})
+    return str(window.get("chapter_range", ""))
+
+
 def _record_decision(
     state: ImportSupervisorState,
     stage: str,
@@ -105,17 +178,20 @@ def _record_decision(
     return {**state, "supervisor_decisions": decisions}
 
 
-def _evaluate_window_gate(metrics: dict, profile_config: dict) -> tuple[bool, list[str]]:
+def _evaluate_window_gate(metrics: dict, profile_config: dict, tool_operating_spec: ToolOperatingSpec | None = None) -> tuple[bool, list[str]]:
     """Return (gate_passed, list_of_failure_reasons) for a window's metrics."""
+    spec = tool_operating_spec or {}
     chapters = max(metrics.get("chapter_count", 1), 1)
     char_density = metrics.get("char_count_extracted", 0) / chapters
     event_density = metrics.get("event_count_extracted", 0) / chapters
     failed = len(metrics.get("failed_prompts", []))
+    char_threshold = float(spec.get("min_characters_per_chapter", _CHAR_DENSITY_THRESHOLD))
+    event_threshold = float(spec.get("event_density_target", _EVENT_DENSITY_THRESHOLD))
     reasons: list[str] = []
-    if char_density < _CHAR_DENSITY_THRESHOLD:
-        reasons.append(f"char_density={char_density:.2f}<{_CHAR_DENSITY_THRESHOLD}")
-    if event_density < _EVENT_DENSITY_THRESHOLD:
-        reasons.append(f"event_density={event_density:.2f}<{_EVENT_DENSITY_THRESHOLD}")
+    if char_density < char_threshold:
+        reasons.append(f"char_density={char_density:.2f}<{char_threshold}")
+    if event_density < event_threshold:
+        reasons.append(f"event_density={event_density:.2f}<{event_threshold}")
     if failed >= _FAILED_PROMPTS_THRESHOLD:
         reasons.append(f"failed_prompts={failed}>={_FAILED_PROMPTS_THRESHOLD}")
     return not reasons, reasons
@@ -126,10 +202,20 @@ async def _process_window(
     tools: dict,
     window_id: str,
     profile_config: dict,
+    tool_operating_spec: ToolOperatingSpec | None = None,
 ) -> ImportSupervisorState:
     """Extract + optionally cross-validate + gate-check one window. Mutates nothing — returns new state."""
     validation = profile_config.get("validation_strictness", "per_window")
-    max_reruns = profile_config.get("max_rerun_iterations", 2)
+    spec = tool_operating_spec or state.get("tool_operating_spec", {})
+    max_reruns = int(spec.get("rerun_budget", profile_config.get("max_rerun_iterations", 2)))
+    state = _with_status(
+        state,
+        current_tool="extract_window",
+        current_window=window_id,
+        chapter_range=_window_chapter_range(state, window_id),
+        orchestrator_phase="extracting",
+        converge_status="extracting",
+    )
 
     # Extract
     update = await tools["extract_window"](state, window_id)
@@ -154,7 +240,7 @@ async def _process_window(
     rerun_count = 0
 
     while rerun_count < max_reruns:
-        gate_passed, reasons = _evaluate_window_gate(metrics, profile_config)
+        gate_passed, reasons = _evaluate_window_gate(metrics, profile_config, spec)
         if gate_passed:
             break
 
@@ -163,10 +249,19 @@ async def _process_window(
         missing_names = metrics.get("missing_majors", [])
 
         window = next((w for w in state.get("prompt_windows", []) if w.get("id") == window_id), {})
-        can_split = len(window.get("chunk_ids", [])) > 1 and char_density < _CHAR_DENSITY_THRESHOLD
+        can_split = len(window.get("chunk_ids", [])) > 1 and char_density < float(spec.get("min_characters_per_chapter", _CHAR_DENSITY_THRESHOLD))
         strategy = "split" if can_split else "augment"
 
         prev_window_ids = {w["id"] for w in state.get("prompt_windows", [])}
+        state = _with_status(
+            state,
+            current_tool="rerun_window",
+            current_window=window_id,
+            chapter_range=_window_chapter_range(state, window_id),
+            orchestrator_phase="rerunning",
+            rerun_reason="; ".join(reasons),
+            converge_status="rerunning",
+        )
         rerun_update = await tools["rerun_window"](state, window_id, strategy, missing_names or None)
         state = _merge_window_result(state, rerun_update)
         # carry through any new prompt_windows added by rerun
@@ -197,16 +292,165 @@ async def _process_window(
     return state
 
 
+def _strategy_for_thematic_request(state: ImportSupervisorState, request: ThematicRerunRequest, window_id: str) -> str:
+    window = next((w for w in state.get("prompt_windows", []) if w.get("id") == window_id), {})
+    if request.get("theme") in {"character_undercoverage", "timeline_undercoverage"} and len(window.get("chunk_ids", [])) > 1:
+        return "split"
+    return "augment"
+
+
+async def _call_rerun_window(
+    tools: dict,
+    state: ImportSupervisorState,
+    window_id: str,
+    strategy: str,
+    missing_names: list[str] | None,
+    parameter_overrides: dict,
+) -> dict:
+    """Call rerun_window while remaining compatible with older test doubles."""
+    try:
+        return await tools["rerun_window"](
+            state,
+            window_id,
+            strategy,
+            missing_names,
+            parameter_overrides=parameter_overrides,
+        )
+    except TypeError as exc:
+        if "parameter_overrides" not in str(exc) and "unexpected keyword" not in str(exc):
+            raise
+        return await tools["rerun_window"](state, window_id, strategy, missing_names)
+
+
+async def _run_judge_import(state: ImportSupervisorState, tools: dict) -> ImportSupervisorState:
+    state = _with_status(
+        state,
+        current_tool="judge_import",
+        orchestrator_phase="judging",
+        converge_status="judging",
+    )
+    judge_update = await tools["judge_import"](state)
+    state = {**state, **judge_update, "current_stage": "judge_import"}
+    state = _record_decision(
+        state,
+        "judge_import",
+        "judge_import",
+        "deterministic convergence judgment",
+        {},
+        {
+            "score": state.get("judge_artifact", {}).get("score", 0.0),
+            "passed": state.get("judge_artifact", {}).get("passed", False),
+            "failed_gates": state.get("judge_artifact", {}).get("failed_gates", []),
+        },
+        "proceed" if state.get("judge_artifact", {}).get("passed") else "rerun",
+        [],
+    )
+    return _with_status(
+        state,
+        current_tool="judge_import",
+        orchestrator_phase="judging",
+        converge_status=state.get("converge_status", "failed"),
+    )
+
+
+async def _apply_thematic_reruns(
+    state: ImportSupervisorState,
+    tools: dict,
+    profile_config: dict,
+    tool_operating_spec: ToolOperatingSpec,
+) -> ImportSupervisorState:
+    budget = max(int(tool_operating_spec.get("rerun_budget", 0)), 0)
+    applied = 0
+    seen: set[tuple[str, str]] = set()
+
+    while applied < budget:
+        artifact = state.get("judge_artifact", {})
+        if artifact.get("passed"):
+            break
+        requests = list(artifact.get("thematic_rerun_requests", []))
+        if not requests:
+            break
+
+        progressed = False
+        for request in requests:
+            target_windows = [w for w in request.get("target_windows", []) if w]
+            if not target_windows:
+                target_windows = [w.get("id", "") for w in state.get("prompt_windows", []) if w.get("id")][:1]
+            for window_id in target_windows:
+                key = (str(request.get("theme", "")), window_id)
+                if key in seen:
+                    continue
+                if applied >= budget:
+                    break
+                seen.add(key)
+                strategy = _strategy_for_thematic_request(state, request, window_id)
+                reason = str(request.get("reason", request.get("theme", "thematic_rerun")))
+                state = _with_status(
+                    state,
+                    current_tool="rerun_window",
+                    current_window=window_id,
+                    chapter_range=_window_chapter_range(state, window_id),
+                    orchestrator_phase="rerunning",
+                    rerun_reason=reason,
+                    converge_status="rerunning",
+                )
+                rerun_update = await _call_rerun_window(
+                    tools,
+                    state,
+                    window_id,
+                    strategy,
+                    None,
+                    dict(request.get("parameter_overrides", {})),
+                )
+                state = _merge_window_result(state, rerun_update)
+                if "prompt_windows" in rerun_update:
+                    state = {**state, "prompt_windows": rerun_update["prompt_windows"]}
+                state = _record_decision(
+                    state,
+                    "thematic_rerun",
+                    "rerun_window",
+                    f"{request.get('theme')}: {reason}; strategy={strategy}",
+                    {"judge_score": artifact.get("score")},
+                    {},
+                    "rerun",
+                    [window_id],
+                )
+                applied += 1
+                progressed = True
+            if applied >= budget:
+                break
+
+        if not progressed:
+            break
+
+        reduce_update = await tools["reduce_entities"](state)
+        state = {**state, **reduce_update, "current_stage": "reduce_entities"}
+        repair_update = await tools["minor_repair"](state)
+        state = {**state, **repair_update, "current_stage": "minor_repair"}
+        arch_update = await tools["architect_timeline"](state)
+        state = {**state, **arch_update, "current_stage": "architect_timeline"}
+        qa_update = await tools["qa_review"](state)
+        state = {**state, **qa_update, "current_stage": "qa_review"}
+        state = await _run_judge_import(state, tools)
+
+    if state.get("judge_artifact", {}).get("passed"):
+        return _with_status(state, current_tool="judge_import", orchestrator_phase="judging", converge_status="passed")
+    return _with_status(state, current_tool="judge_import", orchestrator_phase="judging", converge_status="failed")
+
+
 async def run_supervisor_policy(
     state: ImportSupervisorState,
     tools: dict,
 ) -> ImportSupervisorState:
     """Execute the full supervisor policy loop. Returns final state."""
+    state = _ensure_orchestrator_plan(state)
     profile_config = state.get("profile_config") or PROFILE_CONFIGS.get(
         state.get("prompt_profile", "balanced"), PROFILE_CONFIGS["balanced"]
     )
+    tool_operating_spec = state.get("tool_operating_spec", {})
 
     # ── 1. Segment manifest ──────────────────────────────────────────────────
+    state = _with_status(state, current_tool="segment_manifest", orchestrator_phase="planning", converge_status="planning")
     seg_update = await tools["segment_manifest"](state)
     state = {**state, **seg_update, "current_stage": "segment_manifest"}
     state = _record_decision(
@@ -219,7 +463,7 @@ async def run_supervisor_policy(
     batch_size = 3
     for batch_start in range(0, len(windows), batch_size):
         batch = windows[batch_start: batch_start + batch_size]
-        tasks = [_process_window(state, tools, w["id"], profile_config) for w in batch]
+        tasks = [_process_window(state, tools, w["id"], profile_config, tool_operating_spec) for w in batch]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for result in results:
             if isinstance(result, Exception):
@@ -237,6 +481,7 @@ async def run_supervisor_policy(
     state = {**state, "current_stage": "extract_windows"}
 
     # ── 3. Reduce entities ───────────────────────────────────────────────────
+    state = _with_status(state, current_tool="reduce_entities", orchestrator_phase="reducing")
     reduce_update = await tools["reduce_entities"](state)
     state = {**state, **reduce_update, "current_stage": "reduce_entities"}
     state = _record_decision(
@@ -245,6 +490,7 @@ async def run_supervisor_policy(
     )
 
     # ── 4. Minor repair ──────────────────────────────────────────────────────
+    state = _with_status(state, current_tool="minor_repair", orchestrator_phase="repairing")
     repair_update = await tools["minor_repair"](state)
     state = {**state, **repair_update, "current_stage": "minor_repair"}
     state = _record_decision(
@@ -253,6 +499,7 @@ async def run_supervisor_policy(
     )
 
     # ── 5. Architect timeline ────────────────────────────────────────────────
+    state = _with_status(state, current_tool="architect_timeline", orchestrator_phase="architecting")
     arch_update = await tools["architect_timeline"](state)
     state = {**state, **arch_update, "current_stage": "architect_timeline"}
     state = _record_decision(
@@ -265,6 +512,7 @@ async def run_supervisor_policy(
     for sup_iter in range(max_supervisor_iterations):
         state = {**state, "supervisor_iteration": sup_iter}
 
+        state = _with_status(state, current_tool="qa_review", orchestrator_phase="reviewing")
         qa_update = await tools["qa_review"](state)
         state = {**state, **qa_update, "current_stage": "qa_review"}
         gate_failures = list(state.get("gate_failures", []))
@@ -281,7 +529,7 @@ async def run_supervisor_policy(
         # Rerun only windows responsible for failing gates
         failing_window_ids = list({f["window_id"] for f in gate_failures if "window_id" in f})
         for wid in failing_window_ids:
-            state = await _process_window(state, tools, wid, profile_config)
+            state = await _process_window(state, tools, wid, profile_config, tool_operating_spec)
 
         # Redo reduce + repair after reruns
         reduce_update = await tools["reduce_entities"](state)
@@ -289,7 +537,12 @@ async def run_supervisor_policy(
         repair_update = await tools["minor_repair"](state)
         state = {**state, **repair_update}
 
+    if "judge_import" in tools:
+        state = await _run_judge_import(state, tools)
+        state = await _apply_thematic_reruns(state, tools, profile_config, tool_operating_spec)
+
     # ── 7. Proposal write ────────────────────────────────────────────────────
+    state = _with_status(state, current_tool="proposal_write", orchestrator_phase="writing", converge_status="writing")
     proposal_update = await tools["proposal_write"](state)
     state = {**state, **proposal_update, "current_stage": "proposal_write"}
     state = _record_decision(
@@ -297,7 +550,12 @@ async def run_supervisor_policy(
         {}, {}, "proceed",
     )
 
-    return state
+    return _with_status(
+        state,
+        current_tool="proposal_write",
+        orchestrator_phase="done",
+        converge_status="passed" if state.get("judge_artifact", {}).get("passed", True) else "failed",
+    )
 
 
 async def run_supervisor_streaming(
@@ -307,7 +565,9 @@ async def run_supervisor_streaming(
     """Async generator — same interface as run_streaming(). Yields progress dicts."""
     import_mode = config.get("import_mode", "import_all")
     profile = config.get("prompt_profile") or config.get("context", {}).get("prompt_profile", "balanced")
-    profile_config = PROFILE_CONFIGS.get(profile, PROFILE_CONFIGS["balanced"])
+    profile_config = dict(PROFILE_CONFIGS.get(profile, PROFILE_CONFIGS["balanced"]))
+    if isinstance(config.get("profile_config"), dict):
+        profile_config.update(config["profile_config"])
     session_id = config.get("session_id", "")
 
     import_run_id = f"sup_{uuid.uuid4().hex[:10]}"
@@ -354,6 +614,14 @@ async def run_supervisor_streaming(
         "max_supervisor_iterations": 3,
         "supervisor_log": [],
         "minor_repair_log": [],
+        "thematic_rerun_requests": [],
+        "current_tool": "init",
+        "current_window": "",
+        "chapter_range": "",
+        "orchestrator_phase": "planning",
+        "judge_score": 0.0,
+        "rerun_reason": "",
+        "converge_status": "not_started",
     }
 
     def _emit(progress: float, node: str, errors: list | None = None) -> dict:
@@ -366,6 +634,13 @@ async def run_supervisor_streaming(
             "completed_chunks": chunks_done,
             "total_chunks": total,
             "current_node": node,
+            "current_tool": state.get("current_tool", node),
+            "current_window": state.get("current_window", ""),
+            "chapter_range": state.get("chapter_range", ""),
+            "orchestrator_phase": state.get("orchestrator_phase", ""),
+            "judge_score": state.get("judge_score", 0.0),
+            "rerun_reason": state.get("rerun_reason", ""),
+            "converge_status": state.get("converge_status", ""),
             "import_review_report": state.get("import_review_report", {}),
             "proposals_count": len(state.get("proposals", [])),
         }
@@ -401,9 +676,12 @@ async def run_supervisor_streaming(
 
     async def _policy_with_progress():
         nonlocal state
+        state = _ensure_orchestrator_plan(state)
         profile_config_local = state.get("profile_config") or profile_config
+        tool_operating_spec_local = state.get("tool_operating_spec", {})
 
         # segment_manifest
+        state = _with_status(state, current_tool="segment_manifest", orchestrator_phase="planning", converge_status="planning")
         seg_update = await tools["segment_manifest"](state)
         state = {**state, **seg_update, "current_stage": "segment_manifest"}
         _emit(_PROGRESS_SEGMENT_MANIFEST, "segment_manifest")
@@ -415,7 +693,7 @@ async def run_supervisor_streaming(
         window_idx = 0
         for batch_start in range(0, len(windows_local), batch_size):
             batch = windows_local[batch_start: batch_start + batch_size]
-            tasks = [_process_window(state, tools, w["id"], profile_config_local) for w in batch]
+            tasks = [_process_window(state, tools, w["id"], profile_config_local, tool_operating_spec_local) for w in batch]
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for result in results:
                 if isinstance(result, Exception):
@@ -436,13 +714,16 @@ async def run_supervisor_streaming(
         state = {**state, "current_stage": "extract_windows"}
 
         # Reduce + repair
+        state = _with_status(state, current_tool="reduce_entities", orchestrator_phase="reducing")
         reduce_update = await tools["reduce_entities"](state)
         state = {**state, **reduce_update, "current_stage": "reduce_entities"}
+        state = _with_status(state, current_tool="minor_repair", orchestrator_phase="repairing")
         repair_update = await tools["minor_repair"](state)
         state = {**state, **repair_update, "current_stage": "minor_repair"}
         yield _PROGRESS_REDUCE_REPAIR, "reduce_repair", state.get("errors", [])
 
         # Architect
+        state = _with_status(state, current_tool="architect_timeline", orchestrator_phase="architecting")
         arch_update = await tools["architect_timeline"](state)
         state = {**state, **arch_update, "current_stage": "architect_timeline"}
         yield _PROGRESS_ARCHITECT, "architect_timeline", state.get("errors", [])
@@ -451,6 +732,7 @@ async def run_supervisor_streaming(
         max_sup_iters = state.get("max_supervisor_iterations", 3)
         for sup_iter in range(max_sup_iters):
             state = {**state, "supervisor_iteration": sup_iter}
+            state = _with_status(state, current_tool="qa_review", orchestrator_phase="reviewing")
             qa_update = await tools["qa_review"](state)
             state = {**state, **qa_update, "current_stage": "qa_review"}
             gate_failures = list(state.get("gate_failures", []))
@@ -458,14 +740,20 @@ async def run_supervisor_streaming(
                 break
             failing_ids = list({f["window_id"] for f in gate_failures if "window_id" in f})
             for wid in failing_ids:
-                state = await _process_window(state, tools, wid, profile_config_local)
+                state = await _process_window(state, tools, wid, profile_config_local, tool_operating_spec_local)
             reduce_u = await tools["reduce_entities"](state)
             state = {**state, **reduce_u}
             repair_u = await tools["minor_repair"](state)
             state = {**state, **repair_u}
         yield _PROGRESS_QA_REVIEW, "qa_review", state.get("errors", [])
 
+        if "judge_import" in tools:
+            state = await _run_judge_import(state, tools)
+            state = await _apply_thematic_reruns(state, tools, profile_config_local, tool_operating_spec_local)
+        yield _PROGRESS_QA_REVIEW, "judge_import", state.get("errors", [])
+
         # Proposal write
+        state = _with_status(state, current_tool="proposal_write", orchestrator_phase="writing", converge_status="writing")
         proposal_update = await tools["proposal_write"](state)
         state = {**state, **proposal_update, "current_stage": "proposal_write"}
         yield _PROGRESS_PROPOSAL, "proposal_write", state.get("errors", [])
@@ -480,8 +768,22 @@ async def run_supervisor_streaming(
                 session["gate_failures"] = state.get("gate_failures", [])
                 session["window_metrics"] = state.get("window_metrics", {})
                 session["supervisor_iteration"] = state.get("supervisor_iteration", 0)
+                session["current_tool"] = state.get("current_tool", "")
+                session["current_window"] = state.get("current_window", "")
+                session["chapter_range"] = state.get("chapter_range", "")
+                session["orchestrator_phase"] = state.get("orchestrator_phase", "")
+                session["judge_score"] = state.get("judge_score", 0.0)
+                session["rerun_reason"] = state.get("rerun_reason", "")
+                session["converge_status"] = state.get("converge_status", "")
+                session["judge_artifact"] = state.get("judge_artifact", {})
             except Exception:
                 pass
         yield _emit(progress, node, errors)
 
+    state = _with_status(
+        state,
+        current_tool="proposal_write",
+        orchestrator_phase="done",
+        converge_status="passed" if state.get("judge_artifact", {}).get("passed", True) else "failed",
+    )
     yield _emit(_PROGRESS_DONE, "done")

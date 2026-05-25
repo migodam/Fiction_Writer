@@ -195,6 +195,9 @@ class W1StartRequest(BaseModel):
     model: str = "deepseek-chat"
     endpoint: str = "https://api.deepseek.com/v1"
     use_supervisor: bool = False
+    use_orchestrator: bool = False
+    custom_profile_config: Optional[dict[str, Any]] = None
+    orchestrator_overrides: Optional[dict[str, Any]] = None
 
 
 class W1StartResponse(BaseModel):
@@ -220,6 +223,14 @@ class W1StatusResponse(BaseModel):
     prompt_profile: str = "balanced"
     proposals_count: int = 0
     import_review_report: dict = {}
+    current_tool: str = ""
+    current_window: Any = ""
+    chapter_range: Any = ""
+    orchestrator_phase: str = ""
+    judge_score: Optional[float] = None
+    rerun_reason: str = ""
+    converge_status: str = ""
+    judge_artifact_summary: dict = {}
 
 
 class W1ConsoleResponse(BaseModel):
@@ -315,6 +326,16 @@ async def _run_w1(session_id: str, config: dict) -> None:
                 "prompt_profile": current.get("prompt_profile", config.get("prompt_profile", "balanced")),
                 "proposals_count": state_update.get("proposals_count", current.get("proposals_count", 0)),
                 "import_review_report": state_update.get("import_review_report") or current.get("import_review_report", {}),
+                "current_tool": state_update.get("current_tool", current.get("current_tool", "")),
+                "current_window": state_update.get("current_window", current.get("current_window", "")),
+                "chapter_range": state_update.get("chapter_range", current.get("chapter_range", "")),
+                "orchestrator_phase": state_update.get("orchestrator_phase", current.get("orchestrator_phase", "")),
+                "judge_score": state_update.get("judge_score", current.get("judge_score")),
+                "rerun_reason": state_update.get("rerun_reason", current.get("rerun_reason", "")),
+                "converge_status": state_update.get("converge_status", current.get("converge_status", "")),
+                "judge_artifact_summary": state_update.get("judge_artifact_summary")
+                or state_update.get("judge_artifact")
+                or current.get("judge_artifact_summary", {}),
             }
         # Final state from the last update
         final = _w1_sessions.get(session_id, {})
@@ -359,30 +380,62 @@ async def _run_w2(session_id: str, config: dict) -> None:
 async def w1_start(body: W1StartRequest) -> W1StartResponse:
     """Start a W1 Import workflow run."""
     session_id = str(uuid.uuid4())
+    custom_profile_config = body.custom_profile_config or {}
+    orchestrator_overrides = body.orchestrator_overrides or {}
+    effective_use_orchestrator = (
+        body.use_orchestrator
+        or bool(orchestrator_overrides.get("use_orchestrator"))
+        or body.prompt_profile in {"deep", "custom"}
+    )
+    effective_use_supervisor = body.use_supervisor or effective_use_orchestrator
+    tool_operating_spec_overrides = {
+        **custom_profile_config,
+        **orchestrator_overrides,
+    }
+    context = {
+        "api_key": body.api_key,
+        "model": body.model,
+        "endpoint": body.endpoint,
+        "prompt_profile": body.prompt_profile,
+        "use_supervisor": effective_use_supervisor,
+        "use_orchestrator": effective_use_orchestrator,
+        "custom_profile_config": custom_profile_config,
+        "orchestrator_overrides": orchestrator_overrides,
+        "tool_operating_spec_overrides": tool_operating_spec_overrides,
+    }
     config = {
         "project_path": body.project_path,
         "source_file_path": body.source_file_path,
         "import_mode": body.import_mode,
         "prompt_profile": body.prompt_profile,
-        "use_supervisor": body.use_supervisor,
-        "context": {
-            "api_key": body.api_key,
-            "model": body.model,
-            "endpoint": body.endpoint,
-            "prompt_profile": body.prompt_profile,
-            "use_supervisor": body.use_supervisor,
-        },
+        "use_supervisor": effective_use_supervisor,
+        "use_orchestrator": effective_use_orchestrator,
+        "custom_profile_config": custom_profile_config,
+        "orchestrator_overrides": orchestrator_overrides,
+        "profile_config": custom_profile_config if body.prompt_profile == "custom" else {},
+        "context": context,
         "session_id": session_id,
     }
     _w1_sessions[session_id] = {
         "status": "running", "progress": 0.0, "errors": [],
         "completed_chunks": 0, "total_chunks": 0,
         "prompt_profile": body.prompt_profile,
-        "use_supervisor": body.use_supervisor,
+        "use_supervisor": effective_use_supervisor,
+        "use_orchestrator": effective_use_orchestrator,
+        "custom_profile_config": custom_profile_config,
+        "orchestrator_overrides": orchestrator_overrides,
         "supervisor_decisions": [],
         "gate_failures": [],
         "window_metrics": {},
         "supervisor_iteration": 0,
+        "current_tool": "",
+        "current_window": "",
+        "chapter_range": "",
+        "orchestrator_phase": "",
+        "judge_score": None,
+        "rerun_reason": "",
+        "converge_status": "",
+        "judge_artifact_summary": {},
         "chunk_log": [],
         "paused": False,
         "breakpoint_chunk": None,
@@ -411,6 +464,14 @@ async def w1_supervisor_status(session_id: str = "") -> dict:
         "gate_failures": session.get("gate_failures", []),
         "window_metrics": session.get("window_metrics", {}),
         "supervisor_iteration": session.get("supervisor_iteration", 0),
+        "current_tool": session.get("current_tool", ""),
+        "current_window": session.get("current_window", ""),
+        "chapter_range": session.get("chapter_range", ""),
+        "orchestrator_phase": session.get("orchestrator_phase", ""),
+        "judge_score": session.get("judge_score"),
+        "rerun_reason": session.get("rerun_reason", ""),
+        "converge_status": session.get("converge_status", ""),
+        "judge_artifact": session.get("judge_artifact", session.get("judge_artifact_summary", {})),
     }
 
 
@@ -533,6 +594,14 @@ async def w1_status(session_id: str = "") -> W1StatusResponse:
         prompt_profile=session.get("prompt_profile", "balanced"),
         proposals_count=session.get("proposals_count", 0),
         import_review_report=session.get("import_review_report", {}),
+        current_tool=session.get("current_tool", ""),
+        current_window=session.get("current_window", ""),
+        chapter_range=session.get("chapter_range", ""),
+        orchestrator_phase=session.get("orchestrator_phase", ""),
+        judge_score=session.get("judge_score"),
+        rerun_reason=session.get("rerun_reason", ""),
+        converge_status=session.get("converge_status", ""),
+        judge_artifact_summary=session.get("judge_artifact_summary", session.get("judge_artifact", {})),
     )
 
 

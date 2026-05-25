@@ -19,12 +19,19 @@ from typing import Any
 from langchain_core.messages import HumanMessage
 
 from sidecar.models.state import (
+    ConvergeTarget,
     ImportSupervisorState,
+    JudgeArtifact,
     WindowExtractionMetrics,
     PROFILE_CONFIGS,
+    ThematicRerunRequest,
+    ToolOperatingSpec,
+    plan_converge_target,
+    plan_tool_operating_spec,
 )
 from sidecar.workflows.w1_import import (
     _API_SEMAPHORE,
+    _add_world_candidate_to_registry,
     _append_unique_strings,
     _artifact_dir,
     _build_project_structure_digest,
@@ -37,6 +44,7 @@ from sidecar.workflows.w1_import import (
     _merge_prompt_outputs,
     _merge_text_field,
     _normalize_world_category,
+    _normalize_timeline_event_ontology,
     _now_iso,
     _parse_json_response,
     _read_chunk_prompt_cache,
@@ -98,6 +106,59 @@ def _event_cap_from_profile(profile_config: dict, chapter_count: int) -> int:
     if density == "scene_level":
         return chapter_count * 5
     return min(24, max(8, chapter_count * 3))
+
+
+def _chapter_count_from_state(state: ImportSupervisorState) -> int:
+    chunks = state.get("chunks", [])
+    if chunks:
+        return max(len(chunks), 1)
+    windows = state.get("prompt_windows", [])
+    return max(sum(len(w.get("chunk_ids", [])) or 1 for w in windows), 1)
+
+
+def _active_tool_operating_spec(state: ImportSupervisorState) -> ToolOperatingSpec:
+    if state.get("tool_operating_spec"):
+        return state["tool_operating_spec"]
+    return plan_tool_operating_spec(
+        prompt_profile=state.get("prompt_profile", "balanced"),
+        source_language=state.get("source_language", "en"),
+        chapter_count=_chapter_count_from_state(state),
+        overrides=state.get("context", {}).get("tool_operating_spec_overrides", {}),
+        use_supervisor=state.get("use_supervisor"),
+        use_orchestrator=state.get("context", {}).get("use_orchestrator"),
+    )
+
+
+def _active_converge_target(state: ImportSupervisorState, spec: ToolOperatingSpec | None = None) -> ConvergeTarget:
+    if state.get("converge_target"):
+        return state["converge_target"]
+    active_spec = spec or _active_tool_operating_spec(state)
+    return plan_converge_target(
+        active_spec,
+        source_language=state.get("source_language", "en"),
+        chapter_count=_chapter_count_from_state(state),
+    )
+
+
+def _candidate_windows_for_theme(state: ImportSupervisorState, theme: str, spec: ToolOperatingSpec) -> list[str]:
+    metrics = state.get("window_metrics", {})
+    if not metrics:
+        return [w.get("id", "") for w in state.get("prompt_windows", []) if w.get("id")][:3]
+
+    target_ids: list[str] = []
+    for window_id, item in metrics.items():
+        chapters = max(int(item.get("chapter_count", 1) or 1), 1)
+        if theme == "character_undercoverage":
+            density = float(item.get("char_count_extracted", 0)) / chapters
+            if density < float(spec.get("min_characters_per_chapter", 0.75)):
+                target_ids.append(window_id)
+        elif theme == "timeline_undercoverage":
+            density = float(item.get("event_count_extracted", 0)) / chapters
+            if density < float(spec.get("event_density_target", 0.75)):
+                target_ids.append(window_id)
+    if target_ids:
+        return target_ids[:3]
+    return [w.get("id", "") for w in state.get("prompt_windows", []) if w.get("id")][:3]
 
 
 # ── Symptom flags for qa_review ────────────────────────────────────────────────
@@ -285,6 +346,15 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
         name = str(nc.get("canonical_name", "")).strip()
         if not name:
             continue
+        if _is_world_entity_candidate(name, nc):
+            _add_world_candidate_to_registry(
+                registry,
+                name,
+                _normalize_world_category(name, nc.get("category") or "organization"),
+                str(nc.get("summary") or nc.get("role_in_story") or "").strip(),
+                float(nc.get("confidence", 0.72) or 0.72),
+            )
+            continue
         matched_id = _resolve_character_id(name, registry)
         if matched_id:
             entry = registry["characters"][matched_id]
@@ -323,6 +393,7 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
     raw_events = sorted(raw_events, key=lambda e: float(e.get("confidence", 0)), reverse=True)[:event_cap]
     new_events: list[dict] = []
     for ev in raw_events:
+        ev, _ontology_warnings = _normalize_timeline_event_ontology(ev)
         event_id = f"event_{uuid.uuid4().hex[:8]}"
         char_refs = list(ev.get("character_ids", [])) + list(ev.get("character_names", []))
         resolved_ids = _resolve_character_ids(char_refs, registry)
@@ -335,6 +406,10 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
             "description": str(ev.get("description", "")).strip(),
             "eventClass": str(ev.get("eventClass", "")).strip(),
             "timelineClass": str(ev.get("timelineClass", "")).strip(),
+            "eventType": str(ev.get("eventType", "")).strip(),
+            "arcRole": str(ev.get("arcRole", "")).strip(),
+            "causalRole": str(ev.get("causalRole", "")).strip(),
+            "branchRole": str(ev.get("branchRole", "")).strip(),
             "arcId": str(ev.get("arcId", "")).strip(),
             "timelineLaneHint": str(ev.get("timelineLaneHint", "")).strip(),
             "causalPredecessorHints": [str(h).strip() for h in ev.get("causalPredecessorHints", []) if str(h).strip()],
@@ -346,6 +421,9 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
             "character_names": [str(n).strip() for n in ev.get("character_names", []) if str(n).strip()],
             "location_hint": str(ev.get("location_hint", "")).strip() or None,
             "temporal_hint": str(ev.get("temporal_hint", "")).strip() or None,
+            "importance": str(ev.get("importance", "")).strip(),
+            "deterministicLaneHints": ev.get("deterministicLaneHints", {}),
+            "ontologyWarnings": ev.get("ontologyWarnings", []),
             "confidence": float(ev.get("confidence", 0.7)),
             "chunk_id": chunk_id,
         }
@@ -358,18 +436,20 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
         name = str(wm.get("name", "")).strip()
         if not name:
             continue
-        category = str(wm.get("category", "concept")).strip() or "concept"
-        if name not in registry["world"]:
-            registry["world"][name] = category
+        category = _normalize_world_category(name, wm.get("category", "concept"))
+        existed = name in registry["world"]
+        _add_world_candidate_to_registry(
+            registry,
+            name,
+            category,
+            str(wm.get("description", "")).strip(),
+            float(wm.get("confidence", 0.7) or 0.7),
+        )
+        detail = registry["world_detailed"][name]
+        if wm.get("attributes"):
+            detail["attributes"] = wm.get("attributes", [])
+        if not existed:
             new_world.append(name)
-        if name not in registry["world_detailed"]:
-            registry["world_detailed"][name] = {
-                "name": name, "category": category,
-                "description": str(wm.get("description", "")).strip(),
-                "container_hint": str(wm.get("container_hint", "")).strip(),
-                "attributes": wm.get("attributes", []),
-                "confidence": float(wm.get("confidence", 0.7)),
-            }
 
     # ── Register raw relationships ──────────────────────────────────────────
     raw_rels: list[dict] = list(state.get("raw_relationships", []))
@@ -507,6 +587,7 @@ async def rerun_window(
     window_id: str,
     strategy: str = "augment",
     missing_char_names: list[str] | None = None,
+    parameter_overrides: dict | None = None,
 ) -> dict:
     """Rerun extraction for a window using split or augment strategy.
 
@@ -586,6 +667,12 @@ async def rerun_window(
         hint_block = (
             f"\nSUPERVISOR_HINT: The following major character names were flagged as missing "
             f"from prior extraction passes. Ensure they are identified and registered: {names_list}\n\n"
+        )
+    if parameter_overrides:
+        override_text = json.dumps(parameter_overrides, ensure_ascii=False, sort_keys=True)
+        hint_block += (
+            "\nORCHESTRATOR_PARAMETER_OVERRIDES: Treat these as soft extraction emphasis only; "
+            f"do not write canonical proposals directly: {override_text}\n\n"
         )
     new_text = hint_block + parent.get("text", "")
     new_win = {
@@ -681,6 +768,124 @@ async def qa_review(state: ImportSupervisorState) -> dict:
     }
 
 
+# ── Tool: judge_import ─────────────────────────────────────────────────────────
+
+async def judge_import(state: ImportSupervisorState) -> dict:
+    """Deterministic convergence judge that may request bounded thematic reruns."""
+    spec = _active_tool_operating_spec(state)
+    target = _active_converge_target(state, spec)
+    registry = state.get("entity_registry", {})
+    chars = registry.get("characters", {})
+    events = registry.get("events", {})
+    world = registry.get("world", {})
+    world_detailed = registry.get("world_detailed", {})
+    timeline = state.get("timeline_architecture", {})
+    canonical_events = timeline.get("canonical_events", []) or list(events.values())
+    flags = _symptom_flags(state)
+
+    character_count = sum(1 for c in chars.values() if not c.get("skip_create"))
+    event_count = len(canonical_events)
+    world_count = len(world_detailed) + len(world)
+
+    failed_gates: list[str] = []
+    requests: list[ThematicRerunRequest] = []
+
+    if character_count < int(target.get("expected_min_characters", 1)):
+        failed_gates.append("character_undercoverage")
+        requests.append({
+            "theme": "character_undercoverage",
+            "target_windows": _candidate_windows_for_theme(state, "character_undercoverage", spec),
+            "reason": f"characters={character_count}<target={target.get('expected_min_characters')}",
+            "parameter_overrides": {
+                "min_characters_per_chapter": spec.get("min_characters_per_chapter"),
+                "character_focus": "recover_named_and_major_characters",
+            },
+            "expected_repair": "Recover missed named/major characters without writing canonical proposals directly.",
+        })
+
+    if event_count < int(target.get("expected_min_events", 1)):
+        failed_gates.append("timeline_undercoverage")
+        requests.append({
+            "theme": "timeline_undercoverage",
+            "target_windows": _candidate_windows_for_theme(state, "timeline_undercoverage", spec),
+            "reason": f"canonical_events={event_count}<target={target.get('expected_min_events')}",
+            "parameter_overrides": {
+                "event_density_target": spec.get("event_density_target"),
+                "timeline_topology_target": spec.get("timeline_topology_target"),
+            },
+            "expected_repair": "Recover missing chapter-level timeline events for the reducer/architect path.",
+        })
+
+    if flags["org_chars_in_registry"] > 0:
+        failed_gates.append("world_boundary")
+        requests.append({
+            "theme": "world_boundary",
+            "target_windows": _candidate_windows_for_theme(state, "world_boundary", spec),
+            "reason": f"org_chars_in_registry={flags['org_chars_in_registry']}",
+            "parameter_overrides": {
+                "world_category_policy": spec.get("world_category_policy"),
+                "boundary_focus": "organizations_locations_rules_as_world",
+            },
+            "expected_repair": "Re-extract world/organization boundary candidates for deterministic repair.",
+        })
+
+    if flags["mixed_language_trait_sets"]:
+        failed_gates.append("language_mismatch")
+        requests.append({
+            "theme": "language_mismatch",
+            "target_windows": _candidate_windows_for_theme(state, "language_mismatch", spec),
+            "reason": f"source_language={target.get('expected_language')} has mixed-language trait fields",
+            "parameter_overrides": {
+                "language_policy": spec.get("language_policy"),
+                "expected_language": target.get("expected_language"),
+            },
+            "expected_repair": "Re-run extraction with source-language field normalization hints.",
+        })
+
+    score = max(0.0, 1.0 - 0.18 * len(failed_gates))
+    threshold = float(spec.get("judge_pass_threshold", 0.8))
+    passed = score >= threshold and not failed_gates
+    artifact: JudgeArtifact = {
+        "score": round(score, 3),
+        "passed": passed,
+        "failed_gates": failed_gates,
+        "thematic_rerun_requests": requests,
+        "iteration": int(state.get("supervisor_iteration", 0)),
+        "metrics_snapshot": {
+            "character_count": character_count,
+            "canonical_event_count": event_count,
+            "world_count": world_count,
+            "expected": target,
+            "symptom_flags": flags,
+            "window_metrics": state.get("window_metrics", {}),
+        },
+        "rationale": "pass" if passed else f"failed gates: {', '.join(failed_gates)}",
+    }
+
+    import_run_id = state.get("import_run_id", "")
+    project_path = state.get("project_path", "")
+    artifact_paths: dict[str, str] = {}
+    if import_run_id and project_path:
+        judge_path = _write_import_artifact(project_path, import_run_id, "judge_artifact.json", artifact)
+        tos_path = _write_import_artifact(project_path, import_run_id, "tool_operating_spec.json", spec)
+        artifact_paths = {"judge_artifact": judge_path, "tool_operating_spec": tos_path}
+        artifact["artifact_paths"] = artifact_paths
+
+    log = list(state.get("supervisor_log", []))
+    log.append(f"judge_import: score={artifact['score']}, passed={passed}, failed_gates={failed_gates}")
+
+    return {
+        "tool_operating_spec": spec,
+        "converge_target": target,
+        "judge_artifact": artifact,
+        "thematic_rerun_requests": requests,
+        "judge_score": artifact["score"],
+        "converge_status": "passed" if passed else "failed",
+        "supervisor_log": log,
+        "current_stage": "judge_import",
+    }
+
+
 # ── Tool: minor_repair ──────────────────────────────────────────────────────────
 
 async def minor_repair(state: ImportSupervisorState) -> dict:
@@ -707,17 +912,20 @@ async def minor_repair(state: ImportSupervisorState) -> dict:
         repair_log.append(f"groupKey_normalization: fixed {groupkey_fixed} characters")
 
     # 2. world/person boundary — migrate org-role chars to world_detailed
+    world_map: dict[str, str] = dict(registry.get("world", {}))
     world_detailed: dict[str, dict] = dict(registry.get("world_detailed", {}))
     migrated = 0
     for cid, entry in list(chars.items()):
         name = entry.get("canonical_name", cid)
         if _is_world_entity_candidate(name, entry):
             canonical_category = _normalize_world_category(name, entry.get("category", "organization"))
+            world_map[name] = canonical_category
             if name not in world_detailed:
                 world_detailed[name] = {
                     "name": name, "category": canonical_category,
                     "description": entry.get("summary", ""),
                     "attributes": entry.get("personality_traits", []),
+                    "container_hint": "organizations" if canonical_category in {"organization", "faction"} else "",
                     "confidence": float(entry.get("confidence", 0.7)),
                 }
             entry["skip_create"] = True
@@ -759,6 +967,7 @@ async def minor_repair(state: ImportSupervisorState) -> dict:
             repair_log.append(f"language_validation: stripped {latin_stripped} Latin-dominant traits for zh source")
 
     registry["characters"] = chars
+    registry["world"] = world_map
     registry["world_detailed"] = world_detailed
     registry["events"] = events
 
@@ -809,6 +1018,15 @@ async def proposal_write(state: ImportSupervisorState) -> dict:
             project_path, import_run_id, "window_metrics.json",
             state.get("window_metrics", {}),
         )
+        _write_import_artifact(
+            project_path, import_run_id, "tool_operating_spec.json",
+            state.get("tool_operating_spec", _active_tool_operating_spec(state)),
+        )
+        if state.get("judge_artifact"):
+            _write_import_artifact(
+                project_path, import_run_id, "judge_artifact.json",
+                state.get("judge_artifact", {}),
+            )
 
     return {
         **manuscript_result,

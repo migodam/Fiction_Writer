@@ -515,6 +515,30 @@ _WORLD_ENTITY_NAME_PATTERNS = (
 )
 _ORGANIZATION_HINTS = ("门", "派", "宗", "帮", "会", "盟", "阁", "殿", "宫", "山庄", "书院")
 _LOCATION_HINTS = ("城", "镇", "村", "谷", "山", "峰", "河", "湖", "岛", "国", "州", "府", "岭", "洞")
+WORLD_ONTOLOGY_CATEGORIES: tuple[str, ...] = (
+    "location",
+    "organization",
+    "faction",
+    "item",
+    "artifact",
+    "rule",
+    "system",
+    "concept",
+    "culture",
+    "custom",
+)
+WORLD_ONTOLOGY_LABELS: dict[str, dict[str, str]] = {
+    "location": {"en": "Location", "zh": "地点", "zh_description": "地名、区域、建筑或地理空间。"},
+    "organization": {"en": "Organization", "zh": "组织", "zh_description": "门派、宗门、帮派、机构或正式团体。"},
+    "faction": {"en": "Faction", "zh": "势力", "zh_description": "势力、派系、联盟或阵营。"},
+    "item": {"en": "Item", "zh": "物品", "zh_description": "普通物品、丹药、装备或重要道具。"},
+    "artifact": {"en": "Artifact", "zh": "法器", "zh_description": "法器、宝物、灵器或特殊器物。"},
+    "rule": {"en": "Rule", "zh": "规则", "zh_description": "明确规则、禁制、法则或制度约束。"},
+    "system": {"en": "System", "zh": "体系", "zh_description": "功法、法术、修炼体系或能力系统。"},
+    "concept": {"en": "Concept", "zh": "概念", "zh_description": "世界观概念、术语或设定。"},
+    "culture": {"en": "Culture", "zh": "文化", "zh_description": "文化、习俗、礼法或社会惯例。"},
+    "custom": {"en": "Custom", "zh": "自定义", "zh_description": "无法归入固定类别但需要保留的设定。"},
+}
 _MAINLINE_ARC_HINTS = {
     "main",
     "main_arc",
@@ -544,25 +568,73 @@ _WORLD_CATEGORY_ALIASES: dict[str, str] = {
     "place": "location",
     "location": "location",
     "map": "location",
+    "地名": "location",
+    "地点": "location",
     "organization": "organization",
     "organisation": "organization",
-    "faction": "organization",
+    "faction": "faction",
+    "势力": "faction",
     "sect": "organization",
+    "门派": "organization",
+    "宗门": "organization",
+    "帮派": "organization",
     "clan": "organization",
     "guild": "organization",
     "object": "item",
-    "artifact": "item",
+    "artifact": "artifact",
+    "法器": "artifact",
     "item": "item",
+    "丹药": "item",
+    "物品": "item",
     "weapon": "item",
-    "treasure": "item",
+    "treasure": "artifact",
     "concept": "concept",
     "lore": "concept",
     "rule": "rule",
-    "system": "rule",
+    "规则": "rule",
+    "system": "system",
+    "功法": "system",
+    "法术": "system",
     "magic": "rule",
-    "cultivation": "rule",
+    "cultivation": "system",
     "culture": "culture",
-    "custom": "culture",
+    "custom": "custom",
+}
+
+TIMELINE_EVENT_CLASSES: tuple[str, ...] = (
+    "canonical_event",
+    "scene_beat",
+    "background_reference",
+    "discarded_duplicate",
+)
+_LEGACY_EVENT_TYPE_VALUES = {
+    "inciting_choice",
+    "journey_departure",
+    "test_or_trial",
+    "discovery",
+    "training_breakthrough",
+    "confrontation",
+    "betrayal_or_reveal",
+    "alliance_or_bond",
+    "power_shift",
+    "injury_or_death",
+    "escape_or_pursuit",
+    "faction_move",
+    "other",
+}
+_TIMELINE_BRANCH_ROLES = {"mainline", "fork", "merge", "parallel", "callback", "side_lane", "unknown"}
+_TIMELINE_CAUSAL_ROLES = {"cause", "effect", "turning_point", "setup", "payoff", "background", "unknown"}
+_TIMELINE_ARC_ROLES = {
+    "mainline",
+    "protagonist",
+    "faction",
+    "organization",
+    "location",
+    "antagonist",
+    "training",
+    "power_progression",
+    "background",
+    "side",
 }
 
 
@@ -577,19 +649,30 @@ def _localized_text(state_or_language: ImportState | dict | str, zh: str, en: st
 
 def _normalize_world_category(name: str, category: Any = "") -> str:
     raw = str(category or "").strip().lower()
+    clean_name = str(name or "").strip()
+    if any(token in clean_name for token in _ORGANIZATION_HINTS) and not any(token in clean_name for token in _LOCATION_HINTS):
+        return "organization"
     normalized = _WORLD_CATEGORY_ALIASES.get(raw)
     if normalized:
         return normalized
-    if any(token in raw for token in ("organization", "organisation", "faction", "sect", "clan", "guild", "组织", "势力", "门派", "宗门")):
+    if any(token in raw for token in ("organization", "organisation", "sect", "clan", "guild", "组织", "门派", "宗门", "帮派")):
         return "organization"
+    if any(token in raw for token in ("faction", "alliance", "势力", "阵营", "联盟", "派系")):
+        return "faction"
     if any(token in raw for token in ("location", "place", "map", "地点", "位置", "地理")):
         return "location"
-    if any(token in raw for token in ("item", "artifact", "object", "物品", "法器", "道具")):
+    if any(token in raw for token in ("artifact", "treasure", "法器", "宝物", "灵器")):
+        return "artifact"
+    if any(token in raw for token in ("item", "object", "物品", "丹药", "道具")):
         return "item"
-    if any(token in raw for token in ("rule", "system", "law", "规则", "体系", "修炼")):
+    if any(token in raw for token in ("system", "cultivation", "功法", "法术", "体系", "修炼")):
+        return "system"
+    if any(token in raw for token in ("rule", "law", "规则", "法则", "制度")):
         return "rule"
     if any(token in raw for token in ("culture", "custom", "文化", "习俗")):
         return "culture"
+    if any(token in raw for token in ("custom", "自定义")):
+        return "custom"
     if any(token in name for token in _ORGANIZATION_HINTS):
         return "organization"
     if any(token in name for token in _LOCATION_HINTS):
@@ -601,11 +684,11 @@ def _world_container_key(category: Any) -> str:
     normalized = _normalize_world_category("", category)
     if normalized == "location":
         return "locations"
-    if normalized == "organization":
+    if normalized in {"organization", "faction"}:
         return "organizations"
-    if normalized == "item":
+    if normalized in {"item", "artifact"}:
         return "items"
-    if normalized == "rule":
+    if normalized in {"rule", "system"}:
         return "rules"
     if normalized == "culture":
         return "culture"
@@ -644,15 +727,18 @@ def _is_world_entity_candidate(name: str, candidate: dict | None = None) -> bool
     candidate = candidate or {}
     group_key = str(candidate.get("groupKey") or candidate.get("groupKey_update") or "").lower()
     story_function = str(candidate.get("story_function") or candidate.get("story_function_update") or "").lower()
-    role_text = " ".join(str(candidate.get(field, "")) for field in ("role_in_story", "summary", "background", "notes"))
-    if group_key in {"organizations", "organization", "world", "locations"}:
+    category = _normalize_world_category(cleaned, candidate.get("category") or candidate.get("world_category") or "")
+    role_text = " ".join(str(candidate.get(field, "")) for field in ("role_in_story", "summary", "background", "notes", "aliases"))
+    if category in {"organization", "faction"} and any(token in cleaned for token in _ORGANIZATION_HINTS):
         return True
-    if story_function in {"organization", "location"}:
+    if group_key in {"organizations", "organization", "faction", "factions", "world", "locations"}:
+        return True
+    if story_function in {"organization", "faction", "location"}:
         return True
     if any(token in cleaned for token in _WORLD_ENTITY_NAME_PATTERNS):
         # Personal names such as 墨大夫 or 厉飞雨 should not match these suffixes.
         return len(cleaned) >= 3 and not any(title in cleaned for title in ("大夫", "师兄", "师姐", "师父", "师傅", "叔", "父", "母"))
-    return any(token in role_text.lower() for token in ("organization", "sect", "faction", "location", "门派", "组织", "地点"))
+    return any(token in role_text.lower() for token in ("organization", "sect", "faction", "location", "门派", "宗门", "帮派", "组织", "势力", "地点"))
 
 
 def _add_world_candidate_to_registry(registry: dict, name: str, category: str, description: str = "", confidence: float = 0.72) -> None:
@@ -684,7 +770,7 @@ def _remove_world_entities_from_character_registry(registry: dict) -> dict:
         name = str(entry.get("canonical_name") or entry.get("name") or "").strip()
         if not _is_world_entity_candidate(name, entry):
             continue
-        category = _normalize_world_category(name, "organization")
+        category = _normalize_world_category(name, entry.get("category") or "organization")
         _add_world_candidate_to_registry(
             registry,
             name,
@@ -2029,6 +2115,7 @@ async def _legacy_node_process_chunks(state: ImportState) -> dict:
         "characters": {k: dict(v) for k, v in registry.get("characters", {}).items()},
         "events": {k: dict(v) for k, v in registry.get("events", {}).items()},
         "world": dict(registry.get("world", {})),
+        "world_detailed": {k: dict(v) for k, v in registry.get("world_detailed", {}).items()},
     }
     extractions: list[dict] = list(state.get("chunk_extractions", []))
     errors: list[str] = list(state.get("errors", []))
@@ -2077,7 +2164,16 @@ async def _legacy_node_process_chunks(state: ImportState) -> dict:
             new_chars: list[dict] = []
             alias_updates: list[dict] = []
             for nc in char_data.get("new_characters", []):
-                name = nc.get("canonical_name", "")
+                name = str(nc.get("canonical_name", "")).strip()
+                if _is_world_entity_candidate(name, nc):
+                    _add_world_candidate_to_registry(
+                        registry,
+                        name,
+                        _normalize_world_category(name, nc.get("category") or "organization"),
+                        str(nc.get("summary") or nc.get("role_in_story") or "").strip(),
+                        float(nc.get("confidence", 0.72) or 0.72),
+                    )
+                    continue
                 matched_id = _alias_resolver(name, registry)
                 if matched_id:
                     # Existing character — append alias + notes
@@ -2120,11 +2216,22 @@ async def _legacy_node_process_chunks(state: ImportState) -> dict:
 
             events: list[dict] = []
             for ev in event_data.get("events", []):
+                ev, _ontology_warnings = _normalize_timeline_event_ontology(ev)
                 event_id = f"event_{uuid.uuid4().hex[:8]}"
                 registry["events"][event_id] = {
                     "event_id": event_id,
                     "title": ev.get("title", ""),
                     "description": ev.get("description", ""),
+                    "eventClass": ev.get("eventClass", "canonical_event"),
+                    "timelineClass": ev.get("timelineClass", "canonical_event"),
+                    "eventType": ev.get("eventType", ""),
+                    "arcRole": ev.get("arcRole", ""),
+                    "causalRole": ev.get("causalRole", ""),
+                    "branchRole": ev.get("branchRole", ""),
+                    "timelineLaneHint": ev.get("timelineLaneHint", ""),
+                    "importance": ev.get("importance", "medium"),
+                    "deterministicLaneHints": ev.get("deterministicLaneHints", {}),
+                    "ontologyWarnings": ev.get("ontologyWarnings", []),
                     "character_ids": ev.get("character_ids", []),
                     "location_hint": ev.get("location_hint"),
                     "temporal_hint": ev.get("temporal_hint"),
@@ -2147,10 +2254,16 @@ async def _legacy_node_process_chunks(state: ImportState) -> dict:
             world_mentions: list[str] = []
             for wm in world_data.get("world_mentions", []):
                 name = wm.get("name", "")
-                category = wm.get("category", "concept")
-                if name and name not in registry.get("world", {}):
-                    registry["world"][name] = category
-                world_mentions.append(name)
+                category = _normalize_world_category(name, wm.get("category", "concept"))
+                if name:
+                    _add_world_candidate_to_registry(
+                        registry,
+                        name,
+                        category,
+                        str(wm.get("description", "")).strip(),
+                        float(wm.get("confidence", 0.7) or 0.7),
+                    )
+                    world_mentions.append(name)
 
             # Build extraction record
             extraction: dict = {
@@ -2561,6 +2674,192 @@ def _event_sequence_key(event: dict) -> tuple[int, int, str]:
     )
 
 
+def _normalize_timeline_importance(event: dict) -> str:
+    raw = str(event.get("importance", "")).strip().lower()
+    if raw in {"critical", "high", "medium", "low"}:
+        return raw
+    score = int(float(event.get("importanceScore", 0) or 0))
+    confidence = float(event.get("confidence", 0.7) or 0.7)
+    if score >= 90:
+        return "critical"
+    if score >= 75 or confidence >= 0.86:
+        return "high"
+    if score >= 50 or confidence >= 0.75:
+        return "medium"
+    return "low"
+
+
+def _infer_timeline_arc_role(event: dict) -> str:
+    raw = str(event.get("arcRole", "")).strip().lower()
+    if raw in _TIMELINE_ARC_ROLES:
+        return raw
+    arc_id = _safe_branch_slug(str(event.get("arcId", "")).strip()) if str(event.get("arcId", "")).strip() else ""
+    if arc_id in {"cultivation_progress", "training_progress", "core_progression"}:
+        return "power_progression"
+    if arc_id in _MAINLINE_ARC_HINTS:
+        return "protagonist"
+    if arc_id in {"mentor_control", "mentor_threat"}:
+        return "antagonist"
+    if arc_id in {"faction_conflict", "sect_conflict"}:
+        return "faction"
+    text = " ".join([
+        str(event.get("arcId", "")),
+        str(event.get("timelineLaneHint", "")),
+        str(event.get("title", "")),
+        str(event.get("description", "")),
+        str(event.get("stakes", "")),
+    ]).lower()
+    if any(token in text for token in ("antagonist", "villain", "enemy", "反派", "敌", "仇")):
+        return "antagonist"
+    if any(token in text for token in ("training", "cultivation", "breakthrough", "power", "修炼", "功法", "突破", "练功")):
+        return "power_progression"
+    if any(token in text for token in ("faction", "sect", "organization", "clan", "门派", "宗门", "帮派", "势力", "七玄门")):
+        return "faction"
+    if str(event.get("location_hint", "")).strip():
+        return "location"
+    if any(token in text for token in ("protagonist", "origin", "main", "主角", "韩立")):
+        return "protagonist"
+    return "mainline"
+
+
+def _normalize_timeline_role(value: Any, allowed: set[str], default: str) -> str:
+    raw = str(value or "").strip().lower()
+    if raw in allowed:
+        return raw
+    if raw in {"root", "main", "main_arc", "mainline"} and "mainline" in allowed:
+        return "mainline"
+    if raw in {"forked", "branch", "side"} and "side_lane" in allowed:
+        return "side_lane"
+    if raw in {"cause", "causal"} and "cause" in allowed:
+        return "cause"
+    if raw in {"effect", "result"} and "effect" in allowed:
+        return "effect"
+    return default
+
+
+def _deterministic_timeline_lane_hint(event: dict) -> str:
+    existing = str(event.get("timelineLaneHint", "")).strip()
+    if existing:
+        return existing
+    arc_role = _infer_timeline_arc_role(event)
+    if arc_role in {"mainline", "protagonist"}:
+        return "Main Arc"
+    if arc_role in {"faction", "organization"}:
+        return "Faction / Organization"
+    if arc_role == "location":
+        location = str(event.get("location_hint", "")).strip()
+        return f"Location: {location}" if location else "Location"
+    if arc_role == "antagonist":
+        return "Antagonist Pressure"
+    if arc_role in {"training", "power_progression"}:
+        return "Training / Power Progression"
+    return "Main Arc"
+
+
+def _normalize_timeline_event_ontology(event: dict) -> tuple[dict, list[str]]:
+    """Apply deterministic timeline ontology before prompt-derived fields are trusted."""
+    normalized = dict(event)
+    warnings: list[str] = []
+    raw_event_class = str(normalized.get("eventClass", "")).strip().lower()
+    raw_timeline_class = str(normalized.get("timelineClass", "")).strip().lower()
+    event_type = str(normalized.get("eventType", "")).strip()
+
+    if raw_event_class in TIMELINE_EVENT_CLASSES:
+        event_class = raw_event_class
+    elif raw_timeline_class in TIMELINE_EVENT_CLASSES:
+        event_class = raw_timeline_class
+        if raw_event_class:
+            warnings.append(f"Coerced invalid eventClass '{raw_event_class}' to '{event_class}' from timelineClass.")
+    elif raw_event_class in _LEGACY_EVENT_TYPE_VALUES:
+        event_type = event_type or raw_event_class
+        event_class = "canonical_event"
+        warnings.append(f"Coerced legacy eventClass '{raw_event_class}' to 'canonical_event'.")
+    elif raw_event_class == "scene_beat":
+        event_class = "scene_beat"
+    else:
+        score = int(float(normalized.get("importanceScore", 0) or 0))
+        confidence = float(normalized.get("confidence", 0.7) or 0.7)
+        if score and score < 50:
+            event_class = "background_reference"
+        elif confidence < 0.75:
+            event_class = "background_reference"
+        else:
+            event_class = "canonical_event"
+        if raw_event_class:
+            warnings.append(f"Coerced invalid eventClass '{raw_event_class}' to '{event_class}'.")
+
+    normalized["eventClass"] = event_class
+    normalized["timelineClass"] = event_class
+    if event_type:
+        normalized["eventType"] = event_type
+    normalized["arcRole"] = _infer_timeline_arc_role(normalized)
+    normalized["causalRole"] = _normalize_timeline_role(normalized.get("causalRole"), _TIMELINE_CAUSAL_ROLES, "turning_point" if event_class == "canonical_event" else "background")
+    normalized["branchRole"] = _normalize_timeline_role(normalized.get("branchRole") or normalized.get("forkMergeHint"), _TIMELINE_BRANCH_ROLES, "mainline" if normalized["arcRole"] in {"mainline", "protagonist"} else "side_lane")
+    normalized["importance"] = _normalize_timeline_importance(normalized)
+    normalized["timelineLaneHint"] = _deterministic_timeline_lane_hint(normalized)
+    normalized["deterministicLaneHints"] = {
+        "mainline": normalized["arcRole"] in {"mainline", "protagonist"},
+        "factionOrOrganization": normalized["arcRole"] in {"faction", "organization"},
+        "location": normalized["arcRole"] == "location",
+        "antagonist": normalized["arcRole"] == "antagonist",
+        "trainingOrPowerProgression": normalized["arcRole"] in {"training", "power_progression"},
+    }
+    if warnings:
+        normalized["ontologyWarnings"] = list(normalized.get("ontologyWarnings", [])) + warnings
+    return normalized, warnings
+
+
+def _minimum_canonical_event_count(state: ImportState | dict, total_candidates: int) -> int:
+    if total_candidates <= 0:
+        return 0
+    targets = state.get("converge_target") or state.get("converge_targets") or state.get("convergence_targets") or {}
+    tos = state.get("tool_operating_spec") or state.get("tos") or {}
+    explicit = int(targets.get("expected_min_events") or tos.get("expected_min_events") or 0)
+    chunks = state.get("chunks") or []
+    manuscript = state.get("manuscript_chapters") or []
+    chapter_count = len(manuscript) or len(chunks)
+    if not chapter_count:
+        anchors = {
+            _timeline_chapter_anchor(event.get("chapterRange") or event.get("temporal_hint", ""))
+            for event in state.get("entity_registry", {}).get("events", {}).values()
+        }
+        chapter_count = len([anchor for anchor in anchors if anchor])
+    density_target = float(tos.get("event_density_target", 0) or 0)
+    density_min = math.ceil(chapter_count * density_target) if chapter_count and density_target else 0
+    profile = state.get("profile_config") or {}
+    profile_density = profile.get("event_density") or state.get("prompt_profile")
+    profile_min = 0
+    if chapter_count >= 20 and profile_density in {"chapter_level", "deep", "balanced"}:
+        profile_min = max(8, math.ceil(chapter_count * 0.25))
+    if chapter_count >= 50:
+        profile_min = max(profile_min, 8)
+    return min(total_candidates, max(explicit, density_min, profile_min))
+
+
+def _build_prelim_timeline_event(event_id: str, event: dict, character_id_map: dict, class_reason: str) -> dict:
+    participant_ids = [character_id_map.get(cid, cid) for cid in event.get("character_ids", [])]
+    importance_score = int(event.get("importanceScore", 0) or 0)
+    importance = _normalize_timeline_importance(event)
+    return {
+        **event,
+        "event_id": event_id,
+        "summary": event.get("description", ""),
+        "locationIds": [],
+        "participantCharacterIds": [cid for cid in participant_ids if cid],
+        "linkedSceneIds": [],
+        "linkedWorldItemIds": [],
+        "tags": ["imported"],
+        "sharedBranchIds": [],
+        "importance": importance or ("critical" if importance_score >= 90 else "high"),
+        "timelineClass": "canonical_event",
+        "eventClass": "canonical_event",
+        "classificationReason": class_reason,
+        "mergedEventIds": [],
+        "mergeReasons": [],
+        "_sequence": _event_sequence_key(event),
+    }
+
+
 def _timeline_theme_key(event: dict) -> tuple[str, str, str]:
     text = " ".join([
         str(event.get("title", "")),
@@ -2588,6 +2887,18 @@ def _timeline_lane_key(event: dict) -> tuple[str, str, str]:
     lane_hint = str(event.get("timelineLaneHint", "")).strip()
     fork_hint = str(event.get("forkMergeHint", "")).strip().lower()
     importance = float(event.get("importanceScore", 0) or 0)
+    arc_role = str(event.get("arcRole", "")).strip().lower() or _infer_timeline_arc_role(event)
+    if arc_role in {"mainline", "protagonist"} and importance >= 65:
+        return ("root", "main", "Main Plot")
+    if arc_role in {"faction", "organization"}:
+        return ("theme", "faction", lane_hint or "Faction / Organization")
+    if arc_role == "antagonist":
+        return ("theme", "antagonist", lane_hint or "Antagonist Pressure")
+    if arc_role in {"training", "power_progression"}:
+        return ("theme", "training", lane_hint or "Training / Power Progression")
+    if arc_role == "location" and str(event.get("location_hint", "")).strip():
+        location = str(event.get("location_hint", "")).strip()
+        return ("location", _safe_branch_slug(location), f"Location: {location}")
     if arc_id in _MAINLINE_ARC_HINTS and importance >= 65:
         return ("root", "main", "Main Plot")
     if arc_id in _SIDE_ARC_HINTS:
@@ -2687,8 +2998,11 @@ async def node_architect_timeline(state: ImportState) -> dict:
     density_limit_per_chunk = 8
     branch_event_budget = 36
     prelim_events: dict[str, dict] = {}
+    demoted_candidates: list[tuple[str, dict, dict, str]] = []
 
-    for event_id, event in events.items():
+    for event_id, raw_event in events.items():
+        event, ontology_warnings = _normalize_timeline_event_ontology(raw_event)
+        warnings.extend(f"{event_id}: {warning}" for warning in ontology_warnings)
         title = event.get("title", "").strip()
         if not title:
             discarded_duplicates.append({"event_id": event_id, "timelineClass": "discarded_duplicate", "reason": "missing title"})
@@ -2710,11 +3024,13 @@ async def node_architect_timeline(state: ImportState) -> dict:
             item = {"event_id": event_id, "title": title, "timelineClass": "scene_beat", "reason": class_reason}
             scene_beats.append(item)
             discarded_duplicates.append(item)
+            demoted_candidates.append((event_id, event, item, class_reason))
             continue
         if candidate_class == "background_reference":
             item = {"event_id": event_id, "title": title, "timelineClass": "background_reference", "reason": class_reason}
             background_references.append(item)
             discarded_duplicates.append(item)
+            demoted_candidates.append((event_id, event, item, class_reason))
             continue
         chunk_id = int(event.get("chunk_id", 0) or 0)
         chunk_event_counts[chunk_id] = chunk_event_counts.get(chunk_id, 0) + 1
@@ -2752,25 +3068,41 @@ async def node_architect_timeline(state: ImportState) -> dict:
         seen_signatures[signature] = event_id
         seen_signatures[semantic_signature] = event_id
         seen_loose_signatures[loose_signature] = event_id
-        participant_ids = [character_id_map.get(cid, cid) for cid in event.get("character_ids", [])]
-        importance_score = int(event.get("importanceScore", 0) or 0)
-        prelim_events[event_id] = {
-            **event,
-            "event_id": event_id,
-            "summary": event.get("description", ""),
-            "locationIds": [],
-            "participantCharacterIds": [cid for cid in participant_ids if cid],
-            "linkedSceneIds": [],
-            "linkedWorldItemIds": [],
-            "tags": ["imported"],
-            "sharedBranchIds": [],
-            "importance": "critical" if importance_score >= 90 else ("high" if importance_score >= 75 or float(event.get("confidence", 0.7)) >= 0.86 else "medium"),
-            "timelineClass": "canonical_event",
-            "classificationReason": class_reason,
-            "mergedEventIds": [],
-            "mergeReasons": [],
-            "_sequence": _event_sequence_key(event),
-        }
+        prelim_events[event_id] = _build_prelim_timeline_event(event_id, event, character_id_map, class_reason)
+
+    min_canonical_events = _minimum_canonical_event_count(state, len(events))
+    if len(prelim_events) < min_canonical_events and demoted_candidates:
+        promoted_ids: set[str] = set()
+        for event_id, event, _item, class_reason in sorted(
+            demoted_candidates,
+            key=lambda item: _importance_sort_value(item[1]),
+            reverse=True,
+        ):
+            if len(prelim_events) >= min_canonical_events:
+                break
+            if event_id in prelim_events:
+                continue
+            signature = _event_signature(event)
+            semantic_signature = _event_semantic_signature(event)
+            loose_signature = _event_loose_semantic_signature(event)
+            if seen_signatures.get(signature) or seen_signatures.get(semantic_signature) or seen_loose_signatures.get(loose_signature):
+                continue
+            promoted = _build_prelim_timeline_event(
+                event_id,
+                {**event, "eventClass": "canonical_event", "timelineClass": "canonical_event"},
+                character_id_map,
+                f"promoted by minimum canonical density policy after {class_reason}",
+            )
+            prelim_events[event_id] = promoted
+            seen_signatures[signature] = event_id
+            seen_signatures[semantic_signature] = event_id
+            seen_loose_signatures[loose_signature] = event_id
+            promoted_ids.add(event_id)
+            warnings.append(f"{event_id}: promoted to canonical_event to satisfy minimum event density.")
+        if promoted_ids:
+            discarded_duplicates = [item for item in discarded_duplicates if item.get("event_id") not in promoted_ids]
+            scene_beats = [item for item in scene_beats if item.get("event_id") not in promoted_ids]
+            background_references = [item for item in background_references if item.get("event_id") not in promoted_ids]
 
     lane_counts: dict[tuple[str, str, str], int] = {}
     for event in prelim_events.values():
@@ -2920,6 +3252,7 @@ async def node_architect_timeline(state: ImportState) -> dict:
             "max_events_per_chunk": density_limit_per_chunk,
             "max_events_per_branch": branch_event_budget,
             "branch_threshold": branch_threshold,
+            "minimum_canonical_events": min_canonical_events,
             "low_confidence_threshold": 0.9,
             "canonical_classes": ["canonical_event"],
             "noncanonical_classes": ["scene_beat", "background_reference", "discarded_duplicate"],
@@ -4251,6 +4584,7 @@ async def node_process_chunks(state: ImportState) -> dict:
             raw_events = sorted(raw_events, key=_importance_sort_value, reverse=True)[:event_cap]
 
             for ev in raw_events:
+                ev, _ontology_warnings = _normalize_timeline_event_ontology(ev)
                 event_id = f"event_{uuid.uuid4().hex[:8]}"
                 character_refs = list(ev.get("character_ids", [])) + list(ev.get("character_names", []))
                 resolved_character_ids = _resolve_character_ids(character_refs, registry)
@@ -4263,6 +4597,10 @@ async def node_process_chunks(state: ImportState) -> dict:
                     "description": str(ev.get("description", "")).strip(),
                     "eventClass": str(ev.get("eventClass", "")).strip(),
                     "timelineClass": str(ev.get("timelineClass", "")).strip(),
+                    "eventType": str(ev.get("eventType", "")).strip(),
+                    "arcRole": str(ev.get("arcRole", "")).strip(),
+                    "causalRole": str(ev.get("causalRole", "")).strip(),
+                    "branchRole": str(ev.get("branchRole", "")).strip(),
                     "arcId": str(ev.get("arcId", "")).strip(),
                     "timelineLaneHint": str(ev.get("timelineLaneHint", "")).strip(),
                     "causalPredecessorHints": [str(item).strip() for item in ev.get("causalPredecessorHints", []) if str(item).strip()],
@@ -4280,6 +4618,8 @@ async def node_process_chunks(state: ImportState) -> dict:
                     "chunk_position": str(ev.get("chunk_position", "")).strip(),
                     "stakes": str(ev.get("stakes", "")).strip(),
                     "mergeCandidateTitles": [str(item).strip() for item in ev.get("mergeCandidateTitles", []) if str(item).strip()],
+                    "deterministicLaneHints": ev.get("deterministicLaneHints", {}),
+                    "ontologyWarnings": ev.get("ontologyWarnings", []),
                     "confidence": float(ev.get("confidence", 0.7)),
                     "chunk_id": chunk_id,
                 }
@@ -4603,7 +4943,15 @@ async def run_streaming(project_path: str, config: dict):
     Each yielded dict has: progress, errors, completed_chunks, total_chunks.
     The caller can use these to update a status endpoint in real time.
     """
-    if config.get("use_supervisor") or config.get("context", {}).get("use_supervisor"):
+    prompt_profile = config.get("prompt_profile") or config.get("context", {}).get("prompt_profile", "balanced")
+    supervisor_configured = config.get("use_supervisor")
+    context_supervisor_configured = config.get("context", {}).get("use_supervisor")
+    supervisor_defaulted = (
+        supervisor_configured is None
+        and context_supervisor_configured is None
+        and prompt_profile in {"deep", "custom"}
+    )
+    if supervisor_configured or context_supervisor_configured or supervisor_defaulted:
         from sidecar.supervisor.policy import run_supervisor_streaming
         async for update in run_supervisor_streaming(project_path, config):
             yield update
@@ -4615,7 +4963,7 @@ async def run_streaming(project_path: str, config: dict):
         "workflow_id": "W1",
         "source_file_path": config.get("source_file_path", ""),
         "import_mode": import_mode,
-        "prompt_profile": config.get("prompt_profile") or config.get("context", {}).get("prompt_profile", "balanced"),
+        "prompt_profile": prompt_profile,
         "context": config.get("context", {}),
         "chunks": [],
         "import_run_manifest": {},
