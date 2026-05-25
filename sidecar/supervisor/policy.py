@@ -489,6 +489,17 @@ async def run_supervisor_policy(
         {}, {}, "proceed",
     )
 
+    # ── 3b. Reduce world entities ────────────────────────────────────────────
+    if "reduce_world_entities" in tools:
+        state = _with_status(state, current_tool="reduce_world_entities", orchestrator_phase="reducing")
+        rwe_update = tools["reduce_world_entities"](state)
+        state = {**state, **rwe_update, "current_stage": "reduce_world_entities"}
+        state = _record_decision(
+            state, "reduce_world_entities", "reduce_world_entities",
+            "deduplicate world entity registry",
+            {}, {"world_count": len(state.get("entity_registry", {}).get("world", {}))}, "proceed",
+        )
+
     # ── 4. Minor repair ──────────────────────────────────────────────────────
     state = _with_status(state, current_tool="minor_repair", orchestrator_phase="repairing")
     repair_update = await tools["minor_repair"](state)
@@ -534,6 +545,9 @@ async def run_supervisor_policy(
         # Redo reduce + repair after reruns
         reduce_update = await tools["reduce_entities"](state)
         state = {**state, **reduce_update}
+        if "reduce_world_entities" in tools:
+            rwe_update = tools["reduce_world_entities"](state)
+            state = {**state, **rwe_update}
         repair_update = await tools["minor_repair"](state)
         state = {**state, **repair_update}
 

@@ -596,8 +596,9 @@ class TestToolRegistry(unittest.TestCase):
         registry = build_tool_registry()
         expected = {
             "segment_manifest", "extract_window", "cross_validate_window",
-            "rerun_window", "reduce_entities", "architect_timeline",
-            "qa_review", "judge_import", "minor_repair", "proposal_write",
+            "rerun_window", "reduce_entities", "reduce_world_entities",
+            "architect_timeline", "qa_review", "judge_import", "minor_repair",
+            "proposal_write",
         }
         self.assertEqual(set(registry.keys()), expected)
         for name, fn in registry.items():
@@ -800,6 +801,83 @@ class TestWorldEntityCapInExtractWindow(unittest.TestCase):
 
 
 # ── Test: per-window world entity cap (TDD task 3) ───────────────────────────
+
+class TestReduceWorldEntities(unittest.TestCase):
+    def test_reduces_duplicate_names_to_single_canonical(self):
+        """Two differently-spelled entries for the same entity collapse to one."""
+        from sidecar.supervisor.tools import reduce_world_entities
+        state = _make_state(entity_registry={
+            "characters": {}, "events": {},
+            "world": {"七玄门": "organization", "七玄門": "organization"},
+            "world_detailed": {
+                "七玄门": {"name": "七玄门", "category": "organization", "description": "A sect",
+                          "dedupeKey": "七玄门::organization", "attributes": [], "confidence": 0.9,
+                          "container_hint": "organizations"},
+                "七玄門": {"name": "七玄門", "category": "organization", "description": "Same sect",
+                          "dedupeKey": "七玄门::organization", "attributes": [], "confidence": 0.8,
+                          "container_hint": "organizations"},
+            },
+        })
+        result = reduce_world_entities(state)
+        world = result["entity_registry"]["world"]
+        self.assertEqual(len(world), 1, f"Expected 1 world entry after dedup, got {len(world)}: {list(world)}")
+
+    def test_canonical_entry_is_highest_confidence(self):
+        from sidecar.supervisor.tools import reduce_world_entities
+        state = _make_state(entity_registry={
+            "characters": {}, "events": {},
+            "world": {"七玄门": "organization", "七玄門": "organization"},
+            "world_detailed": {
+                "七玄门": {"name": "七玄门", "category": "organization", "description": "High conf",
+                          "dedupeKey": "七玄门::organization", "attributes": [], "confidence": 0.95,
+                          "container_hint": "organizations"},
+                "七玄門": {"name": "七玄門", "category": "organization", "description": "Low conf",
+                          "dedupeKey": "七玄门::organization", "attributes": [], "confidence": 0.6,
+                          "container_hint": "organizations"},
+            },
+        })
+        result = reduce_world_entities(state)
+        world = result["entity_registry"]["world"]
+        canonical_name = list(world.keys())[0]
+        self.assertEqual(canonical_name, "七玄门", f"Expected high-confidence entry as canonical, got {canonical_name!r}")
+
+    def test_keeps_organization_category_for_sect_name(self):
+        from sidecar.supervisor.tools import reduce_world_entities
+        state = _make_state(entity_registry={
+            "characters": {}, "events": {},
+            "world": {"七玄门": "organization"},
+            "world_detailed": {
+                "七玄门": {"name": "七玄门", "category": "organization", "description": "A sect",
+                          "dedupeKey": "七玄门::organization", "attributes": [], "confidence": 0.9,
+                          "container_hint": "organizations"},
+            },
+        })
+        result = reduce_world_entities(state)
+        world = result["entity_registry"]["world"]
+        self.assertEqual(world.get("七玄门"), "organization", f"Expected category 'organization', got {world.get('七玄门')!r}")
+
+    def test_merges_attributes_from_duplicates(self):
+        from sidecar.supervisor.tools import reduce_world_entities
+        state = _make_state(entity_registry={
+            "characters": {}, "events": {},
+            "world": {"SectA": "organization", "Sect A": "organization"},
+            "world_detailed": {
+                "SectA": {"name": "SectA", "category": "organization", "description": "Main",
+                          "dedupeKey": "secta::organization",
+                          "attributes": [{"key": "founded", "value": "dynasty"}],
+                          "confidence": 0.9, "container_hint": "organizations"},
+                "Sect A": {"name": "Sect A", "category": "organization", "description": "Alt",
+                           "dedupeKey": "secta::organization",
+                           "attributes": [{"key": "leader", "value": "Elder Mo"}],
+                           "confidence": 0.7, "container_hint": "organizations"},
+            },
+        })
+        result = reduce_world_entities(state)
+        canonical = list(result["entity_registry"]["world_detailed"].values())[0]
+        attr_keys = {a["key"] for a in canonical.get("attributes", [])}
+        self.assertIn("founded", attr_keys)
+        self.assertIn("leader", attr_keys, "Attributes from lower-confidence dup should be merged in")
+
 
 class TestExtractWindowWorldCap(unittest.TestCase):
     @patch("sidecar.supervisor.tools._get_llm")

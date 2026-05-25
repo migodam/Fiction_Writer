@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import unicodedata
 import uuid
 from typing import Any
 
@@ -740,6 +741,76 @@ async def reduce_entities(state: ImportSupervisorState) -> dict:
 
     updates = {**result1, **result2, "supervisor_log": log, "current_stage": "reduce_entities"}
     return updates
+
+
+# ── Tool: reduce_world_entities ────────────────────────────────────────────────
+
+def _normalize_world_dedup_key(name: str, category: str) -> str:
+    """Deterministic dedup key: NFC normalize, lowercase, strip whitespace/punctuation."""
+    n = unicodedata.normalize("NFC", str(name or "")).lower()
+    n = re.sub(r"[\s\-_·・·]+", "", n)
+    c = str(category or "concept").lower().strip()
+    return f"{n}::{c}"
+
+
+def reduce_world_entities(state: "ImportSupervisorState") -> dict:
+    """Deterministic world entity deduplication across all extraction windows.
+
+    Groups world_detailed entries by dedupeKey (model-provided) or computed
+    normalized_name::category. Picks the highest-confidence entry per group as
+    canonical and merges attributes from all duplicates.
+    """
+    registry = {k: dict(v) if isinstance(v, dict) else v for k, v in state.get("entity_registry", {}).items()}
+    world_detailed: dict = dict(registry.get("world_detailed", {}))
+
+    # Build groups keyed by dedupeKey (model-provided) or computed fallback
+    groups: dict[str, list[tuple[str, dict]]] = {}
+    for name, detail in world_detailed.items():
+        dk = str(detail.get("dedupeKey", "")).strip()
+        if not dk:
+            dk = _normalize_world_dedup_key(name, detail.get("category", "concept"))
+        groups.setdefault(dk, []).append((name, detail))
+
+    new_world: dict[str, str] = {}
+    new_world_detailed: dict[str, dict] = {}
+    merge_log: list[str] = []
+
+    for dk, entries in groups.items():
+        # Canonical = highest confidence
+        sorted_entries = sorted(entries, key=lambda x: float(x[1].get("confidence", 0.0)), reverse=True)
+        canonical_name, canonical_detail = sorted_entries[0]
+
+        # Merge attributes from all duplicates (no key collision)
+        merged_attrs: list[dict] = list(canonical_detail.get("attributes", []))
+        seen_attr_keys = {a.get("key") for a in merged_attrs}
+        for dup_name, dup_detail in sorted_entries[1:]:
+            for attr in dup_detail.get("attributes", []):
+                if attr.get("key") not in seen_attr_keys:
+                    merged_attrs.append(attr)
+                    seen_attr_keys.add(attr.get("key"))
+            if dup_name != canonical_name:
+                merge_log.append(f"world_dedup: '{dup_name}' → '{canonical_name}' (key={dk})")
+
+        merged = dict(canonical_detail)
+        merged["attributes"] = merged_attrs
+        merged["confidence"] = max(float(d.get("confidence", 0.0)) for _, d in sorted_entries)
+        merged["dedupeKey"] = dk  # persist key for idempotency
+
+        new_world[canonical_name] = merged.get("category", "concept")
+        new_world_detailed[canonical_name] = merged
+
+    new_registry = {**registry, "world": new_world, "world_detailed": new_world_detailed}
+
+    log = list(state.get("supervisor_log", []))
+    before = len(world_detailed)
+    after = len(new_world_detailed)
+    log.append(f"reduce_world_entities: {before} → {after} entries ({len(merge_log)} merges)")
+
+    return {
+        "entity_registry": new_registry,
+        "supervisor_log": log,
+        "current_stage": "reduce_world_entities",
+    }
 
 
 # ── Tool: architect_timeline ────────────────────────────────────────────────────

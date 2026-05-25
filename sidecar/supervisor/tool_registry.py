@@ -10,6 +10,7 @@ from sidecar.supervisor.tools import (
     proposal_write,
     qa_review,
     reduce_entities,
+    reduce_world_entities,
     rerun_window,
     segment_manifest,
 )
@@ -23,6 +24,7 @@ def build_tool_registry() -> dict:
         "cross_validate_window": cross_validate_window,
         "rerun_window": rerun_window,
         "reduce_entities": reduce_entities,
+        "reduce_world_entities": reduce_world_entities,
         "architect_timeline": architect_timeline,
         "qa_review": qa_review,
         "judge_import": judge_import,
