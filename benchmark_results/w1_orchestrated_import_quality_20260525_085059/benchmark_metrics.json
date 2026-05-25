@@ -1,0 +1,74 @@
+{
+  "status": "warning",
+  "project_path": "/Volumes/migodam's-external-brain/home/narrative_ide/w1_benchmark_orchestrated_20260525_085059",
+  "source_path": "/Volumes/migodam's-external-brain/home/narrative_ide/novels/凡人修仙传_前50章.txt",
+  "import_run_id": "sup_2d42990ac3",
+  "duration_seconds": 1264,
+  "run_complete": false,
+  "crash_stage": "proposal_write (sidecar OOM after qa_review/judge)",
+  "chapters": {
+    "count": "unknown (manuscript.json not written — sidecar crashed before proposal_write)",
+    "ordered": "unknown",
+    "manuscript_preserved": "unknown"
+  },
+  "characters": {
+    "count": 70,
+    "key_presence": {
+      "韩立": "likely_present (missing_major_characters_count=0 in final judge snapshot; flagged missing in 1 individual window)",
+      "墨大夫": "likely_present (flagged missing in 1 window; present in others)",
+      "厉飞雨": "likely_present (no final-state missing flag)",
+      "张铁": "likely_present (flagged missing in 2 windows; present in others)"
+    },
+    "organizations_in_characters": [],
+    "org_chars_in_registry": 0,
+    "missing_groupkey_count": 0
+  },
+  "world": {
+    "total_world_entities": 366,
+    "containers": "unknown (inbox.json not written)",
+    "items_by_category": "unknown (inbox.json not written)",
+    "qixuanmen_category": "unknown (inbox.json not written)"
+  },
+  "timeline": {
+    "branch_count": 4,
+    "branch_names": [
+      "branch_import_main",
+      "branch_theme_antagonist",
+      "branch_theme_training",
+      "branch_theme_faction"
+    ],
+    "canonical_event_count": 114,
+    "main_branch_event_count": 36,
+    "side_branch_event_count": 78,
+    "discarded_duplicate_count": 11,
+    "mainline_overdense_flag": true
+  },
+  "language": {
+    "source_language": "zh",
+    "mixed_language_trait_sets": true,
+    "mixed_user_visible_fields": "detected (language_mismatch gate failed at iteration 2)"
+  },
+  "judge": {
+    "score": 0.64,
+    "passed": false,
+    "pass_threshold": 0.85,
+    "failed_gates": [
+      "character_undercoverage",
+      "language_mismatch"
+    ],
+    "thematic_rerun_requests": [
+      "character_undercoverage",
+      "language_mismatch"
+    ],
+    "converge_status": "failed (sidecar crashed before reruns could complete)",
+    "iteration": 2,
+    "rerun_budget": 2
+  },
+  "previous_failure_comparison": {
+    "character_count": "fixed",
+    "timeline_density": "fixed",
+    "chapter_order": "unknown",
+    "language_consistency": "still_failing",
+    "world_routing": "fixed"
+  }
+}

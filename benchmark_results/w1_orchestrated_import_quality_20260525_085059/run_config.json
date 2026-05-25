@@ -1,0 +1,14 @@
+{
+  "project_path": "/Volumes/migodam's-external-brain/home/narrative_ide/w1_benchmark_orchestrated_20260525_085059",
+  "source_file_path": "/Volumes/migodam's-external-brain/home/narrative_ide/novels/凡人修仙传_前50章.txt",
+  "import_mode": "import_all",
+  "prompt_profile": "deep",
+  "model": "deepseek-chat",
+  "endpoint": "https://api.deepseek.com/v1",
+  "use_supervisor": true,
+  "use_orchestrator": true,
+  "api_key": "sk-243196e4172041df8dce12fcb479f0ff",
+  "sidecar_url": "http://127.0.0.1:8765",
+  "timestamp": "20260525_085059",
+  "branch": "codex/w1-orchestrated-import-quality"
+}

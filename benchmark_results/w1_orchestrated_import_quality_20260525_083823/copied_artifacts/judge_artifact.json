@@ -1,0 +1,61 @@
+{
+  "score": 0.64,
+  "passed": false,
+  "failed_gates": [
+    "character_undercoverage",
+    "timeline_undercoverage"
+  ],
+  "thematic_rerun_requests": [
+    {
+      "theme": "character_undercoverage",
+      "target_windows": [
+        "pwin_73543411b614",
+        "pwin_1ce59c6b0662",
+        "pwin_a608bbf63ac1"
+      ],
+      "reason": "characters=0<target=75",
+      "parameter_overrides": {
+        "min_characters_per_chapter": 1.5,
+        "character_focus": "recover_named_and_major_characters"
+      },
+      "expected_repair": "Recover missed named/major characters without writing canonical proposals directly."
+    },
+    {
+      "theme": "timeline_undercoverage",
+      "target_windows": [
+        "pwin_73543411b614",
+        "pwin_1ce59c6b0662",
+        "pwin_a608bbf63ac1"
+      ],
+      "reason": "canonical_events=0<target=63",
+      "parameter_overrides": {
+        "event_density_target": 1.25,
+        "timeline_topology_target": "full_dag"
+      },
+      "expected_repair": "Recover missing chapter-level timeline events for the reducer/architect path."
+    }
+  ],
+  "iteration": 0,
+  "metrics_snapshot": {
+    "character_count": 0,
+    "canonical_event_count": 0,
+    "world_count": 0,
+    "expected": {
+      "expected_min_characters": 75,
+      "expected_min_events": 63,
+      "expected_max_canonical_events": 200,
+      "expected_min_world_entities": 20,
+      "expected_language": "zh",
+      "expected_timeline_topology": "full_dag"
+    },
+    "symptom_flags": {
+      "missing_groupkey_count": 0,
+      "org_chars_in_registry": 0,
+      "timeline_mainline_overdense": false,
+      "missing_major_characters_count": 0,
+      "mixed_language_trait_sets": false
+    },
+    "window_metrics": {}
+  },
+  "rationale": "failed gates: character_undercoverage, timeline_undercoverage"
+}

@@ -1,0 +1,14 @@
+{
+  "supervisor_decisions": [],
+  "gate_failures": [],
+  "window_metrics": {},
+  "supervisor_iteration": 0,
+  "current_tool": "",
+  "current_window": "",
+  "chapter_range": "",
+  "orchestrator_phase": "",
+  "judge_score": null,
+  "rerun_reason": "",
+  "converge_status": "",
+  "judge_artifact": {}
+}

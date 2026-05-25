@@ -1,0 +1,227 @@
+{
+  "supervisor_decisions": [
+    {
+      "iteration": 0,
+      "stage": "extract_window",
+      "tool_called": "extract_window",
+      "reason": "primary extraction for pwin_839f45621a38",
+      "metrics_before": {},
+      "metrics_after": {},
+      "action": "proceed",
+      "rerun_targets": [],
+      "timestamp": "2026-05-25T00:51:47.427330+00:00"
+    },
+    {
+      "iteration": 0,
+      "stage": "cross_validate_window",
+      "tool_called": "cross_validate_window",
+      "reason": "cross-validate pwin_839f45621a38",
+      "metrics_before": {},
+      "metrics_after": {},
+      "action": "proceed",
+      "rerun_targets": [],
+      "timestamp": "2026-05-25T00:52:39.400338+00:00"
+    },
+    {
+      "iteration": 0,
+      "stage": "extract_window",
+      "tool_called": "extract_window",
+      "reason": "primary extraction for pwin_96a902fd924a",
+      "metrics_before": {},
+      "metrics_after": {},
+      "action": "proceed",
+      "rerun_targets": [],
+      "timestamp": "2026-05-25T00:52:14.125718+00:00"
+    },
+    {
+      "iteration": 0,
+      "stage": "cross_validate_window",
+      "tool_called": "cross_validate_window",
+      "reason": "cross-validate pwin_96a902fd924a",
+      "metrics_before": {},
+      "metrics_after": {},
+      "action": "proceed",
+      "rerun_targets": [],
+      "timestamp": "2026-05-25T00:52:46.547187+00:00"
+    },
+    {
+      "iteration": 0,
+      "stage": "rerun_window",
+      "tool_called": "rerun_window",
+      "reason": "gate failures: ['event_density=0.75<1.25']; strategy=augment",
+      "metrics_before": {
+        "reasons": [
+          "event_density=0.75<1.25"
+        ]
+      },
+      "metrics_after": {},
+      "action": "rerun",
+      "rerun_targets": [
+        "pwin_96a902fd924a"
+      ],
+      "timestamp": "2026-05-25T00:53:12.622611+00:00"
+    },
+    {
+      "iteration": 0,
+      "stage": "rerun_window",
+      "tool_called": "rerun_window",
+      "reason": "gate failures: ['event_density=1.00<1.25']; strategy=augment",
+      "metrics_before": {
+        "reasons": [
+          "event_density=1.00<1.25"
+        ]
+      },
+      "metrics_after": {},
+      "action": "rerun",
+      "rerun_targets": [
+        "pwin_96a902fd924a"
+      ],
+      "timestamp": "2026-05-25T00:53:55.927338+00:00"
+    },
+    {
+      "iteration": 0,
+      "stage": "extract_window",
+      "tool_called": "extract_window",
+      "reason": "primary extraction for pwin_f4fbee39d96c",
+      "metrics_before": {},
+      "metrics_after": {},
+      "action": "proceed",
+      "rerun_targets": [],
+      "timestamp": "2026-05-25T00:52:51.020634+00:00"
+    },
+    {
+      "iteration": 0,
+      "stage": "cross_validate_window",
+      "tool_called": "cross_validate_window",
+      "reason": "cross-validate pwin_f4fbee39d96c",
+      "metrics_before": {},
+      "metrics_after": {},
+      "action": "proceed",
+      "rerun_targets": [],
+      "timestamp": "2026-05-25T00:53:11.124763+00:00"
+    },
+    {
+      "iteration": 0,
+      "stage": "rerun_window",
+      "tool_called": "rerun_window",
+      "reason": "gate failures: ['char_density=0.25<1.5', 'event_density=0.75<1.25']; strategy=split",
+      "metrics_before": {
+        "reasons": [
+          "char_density=0.25<1.5",
+          "event_density=0.75<1.25"
+        ]
+      },
+      "metrics_after": {},
+      "action": "rerun",
+      "rerun_targets": [
+        "pwin_f4fbee39d96c"
+      ],
+      "timestamp": "2026-05-25T00:54:30.332953+00:00"
+    }
+  ],
+  "gate_failures": [],
+  "window_metrics": {
+    "pwin_839f45621a38": {
+      "window_id": "pwin_839f45621a38",
+      "chapter_count": 4,
+      "char_count_extracted": 10,
+      "event_count_extracted": 5,
+      "world_count_extracted": 21,
+      "failed_prompts": [],
+      "confidence_distribution": {},
+      "missing_majors_count": 2,
+      "duplicate_count": 3,
+      "rerun_count": 0,
+      "gate_passed": true,
+      "missing_majors": [
+        "舞岩",
+        "王护法"
+      ]
+    },
+    "pwin_96a902fd924a": {
+      "window_id": "pwin_96a902fd924a",
+      "chapter_count": 4,
+      "char_count_extracted": 6,
+      "event_count_extracted": 3,
+      "world_count_extracted": 36,
+      "failed_prompts": [],
+      "confidence_distribution": {},
+      "missing_majors_count": 5,
+      "duplicate_count": 4,
+      "rerun_count": 0,
+      "gate_passed": true,
+      "missing_majors": [
+        "韩父",
+        "三叔",
+        "张铁",
+        "岳堂主",
+        "墨大夫"
+      ]
+    },
+    "pwin_c40f11b29ccf": {
+      "window_id": "pwin_c40f11b29ccf",
+      "chapter_count": 4,
+      "char_count_extracted": 0,
+      "event_count_extracted": 4,
+      "world_count_extracted": 3,
+      "failed_prompts": [],
+      "confidence_distribution": {},
+      "missing_majors_count": 0,
+      "duplicate_count": 0,
+      "rerun_count": 1,
+      "gate_passed": true
+    },
+    "pwin_f4fbee39d96c": {
+      "window_id": "pwin_f4fbee39d96c",
+      "chapter_count": 4,
+      "char_count_extracted": 1,
+      "event_count_extracted": 3,
+      "world_count_extracted": 36,
+      "failed_prompts": [],
+      "confidence_distribution": {},
+      "missing_majors_count": 2,
+      "duplicate_count": 0,
+      "rerun_count": 0,
+      "gate_passed": true,
+      "missing_majors": [
+        "韩立",
+        "张铁"
+      ]
+    },
+    "pwin_0e96e12ceca1": {
+      "window_id": "pwin_0e96e12ceca1",
+      "chapter_count": 2,
+      "char_count_extracted": 8,
+      "event_count_extracted": 3,
+      "world_count_extracted": 5,
+      "failed_prompts": [],
+      "confidence_distribution": {},
+      "missing_majors_count": 0,
+      "duplicate_count": 0,
+      "rerun_count": 1,
+      "gate_passed": true
+    },
+    "pwin_5224e866cd41": {
+      "window_id": "pwin_5224e866cd41",
+      "chapter_count": 2,
+      "char_count_extracted": 0,
+      "event_count_extracted": 6,
+      "world_count_extracted": 1,
+      "failed_prompts": [],
+      "confidence_distribution": {},
+      "missing_majors_count": 0,
+      "duplicate_count": 0,
+      "rerun_count": 1,
+      "gate_passed": true
+    }
+  },
+  "supervisor_iteration": 0,
+  "current_tool": "segment_manifest",
+  "current_window": "",
+  "chapter_range": "",
+  "orchestrator_phase": "planning",
+  "judge_score": 0.0,
+  "rerun_reason": "",
+  "converge_status": "planning",
+  "judge_artifact": {}
+}

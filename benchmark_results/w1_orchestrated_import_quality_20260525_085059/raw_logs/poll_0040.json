@@ -1,0 +1,485 @@
+{
+  "status": "running",
+  "progress": 0.1,
+  "errors": [],
+  "completed_chunks": 0,
+  "total_chunks": 50,
+  "current_step": "process_chunks",
+  "prompt_profile": "deep",
+  "proposals_count": 0,
+  "import_review_report": {
+    "import_run_id": "sup_2d42990ac3",
+    "status": "warning",
+    "warnings": [
+      "Branch branch_import_main has 84 canonical events; lower-importance events were converted to scene beats."
+    ],
+    "errors": [],
+    "proposal_counts": {
+      "characters": 70,
+      "timeline_events": 110,
+      "relationships": 0,
+      "character_tags": 0,
+      "timeline_branches": 4
+    },
+    "safe_accept_ids": [],
+    "blocked_ids": [],
+    "failed_chunks": [],
+    "model": "deepseek-chat",
+    "prompt_profile": "deep",
+    "artifact_paths": {
+      "manifest": "/Volumes/migodam's-external-brain/home/narrative_ide/w1_benchmark_orchestrated_20260525_085059/system/imports/sup_2d42990ac3/manifest.json",
+      "reducer": "/Volumes/migodam's-external-brain/home/narrative_ide/w1_benchmark_orchestrated_20260525_085059/system/imports/sup_2d42990ac3/reducer_artifact.json",
+      "timeline": "/Volumes/migodam's-external-brain/home/narrative_ide/w1_benchmark_orchestrated_20260525_085059/system/imports/sup_2d42990ac3/timeline_architecture.json",
+      "review": "/Volumes/migodam's-external-brain/home/narrative_ide/w1_benchmark_orchestrated_20260525_085059/system/imports/sup_2d42990ac3/review_report.json"
+    },
+    "duplicate_merges": [
+      {
+        "event_id": "event_c47af760",
+        "title": "韩立观看王大胖与张长贵比武",
+        "timelineClass": "scene_beat",
+        "reason": "model classified candidate as scene_beat"
+      },
+      {
+        "event_id": "event_540a5048",
+        "title": "张铁修炼象甲功至第一层顶峰后失踪",
+        "timelineClass": "scene_beat",
+        "reason": "demoted by density policy"
+      },
+      {
+        "event_id": "event_9ea5508c",
+        "title": "韩立观看王大胖与张长贵的比武",
+        "timelineClass": "scene_beat",
+        "reason": "model classified candidate as scene_beat"
+      },
+      {
+        "event_id": "event_c2d781b4",
+        "merged_into": "event_a64eb42c",
+        "title": "韩立配制自保灵药",
+        "timelineClass": "discarded_duplicate",
+        "reason": "semantic duplicate: same dedupe/participants/chapter/normalized title",
+        "dedupeKey": "韩立::配制灵药::黄龙丹金髓丸清灵散::ch27",
+        "semanticSignature": "loose:cultivation_breakthrough|p:char58aeef11|c:第二十七章"
+      },
+      {
+        "event_id": "event_26cbae45",
+        "merged_into": "event_a64eb42c",
+        "title": "韩立练成口诀第四层",
+        "timelineClass": "discarded_duplicate",
+        "reason": "semantic duplicate: same dedupe/participants/chapter/normalized title",
+        "dedupeKey": "韩立::服用丹药突破瓶颈::练成第四层::第二十七章-第二十八章",
+        "semanticSignature": "loose:cultivation_breakthrough|p:char58aeef11|c:第二十七章"
+      },
+      {
+        "event_id": "event_dca04a68",
+        "merged_into": "event_a64eb42c",
+        "title": "韩立用灵药突破至第四层",
+        "timelineClass": "discarded_duplicate",
+        "reason": "semantic duplicate: same dedupe/participants/chapter/normalized title",
+        "dedupeKey": "韩立::服用灵药::突破至无名口诀第四层::第二十八章",
+        "semanticSignature": "loose:cultivation_breakthrough|p:char58aeef11|c:第二十七章"
+      },
+      {
+        "event_id": "event_becb4ea3",
+        "title": "韩立配置并交付止痛药给厉飞雨",
+        "timelineClass": "scene_beat",
+        "reason": "demoted by density policy"
+      },
+      {
+        "event_id": "event_199f7696",
+        "title": "韩立遭遇心魔入侵",
+        "timelineClass": "scene_beat",
+        "reason": "demoted by density policy"
+      },
+      {
+        "event_id": "event_4aac2bf9",
+        "title": "韩立夜遇野狼帮奸细",
+        "timelineClass": "scene_beat",
+        "reason": "demoted by density policy"
+      },
+      {
+        "event_id": "event_d65b7b58",
+        "title": "韩立夜路偶遇野狼帮奸细",
+        "timelineClass": "scene_beat",
+        "reason": "demoted by density policy"
+      },
+      {
+        "event_id": "event_5c3bc143",
+        "title": "韩立确认清灵散无效",
+        "timelineClass": "scene_beat",
+        "reason": "demoted by density policy"
+      },
+      {
+        "event_id": "event_51fe4497",
+        "merged_into": "event_68bcee88",
+        "title": "韩立利用绿液大量催生灵药",
+        "timelineClass": "discarded_duplicate",
+        "reason": "semantic duplicate: same dedupe/participants/chapter/normalized title",
+        "dedupeKey": "韩立::配制黄龙丹等灵药::突破第四层::第26-27章",
+        "semanticSignature": "loose:cultivation_breakthrough|p:char58aeef11|c:第二十六章"
+      },
+      {
+        "event_id": "event_855f54f3",
+        "merged_into": "event_7ed980e4",
+        "title": "韩立苦练眨眼剑法闭关四个月",
+        "timelineClass": "discarded_duplicate",
+        "reason": "semantic duplicate: same dedupe/participants/chapter/normalized title",
+        "dedupeKey": "韩立::闭关练成眨眼剑法秘技::练至长春功第六层::第41-44章",
+        "semanticSignature": "loose:cultivation_breakthrough|p:char58aeef11|c:第四十一章"
+      },
+      {
+        "event_id": "event_d7f915d8",
+        "merged_into": "event_a64eb42c",
+        "title": "韩立配制解毒疗伤圣药",
+        "timelineClass": "discarded_duplicate",
+        "reason": "semantic duplicate: same dedupe/participants/chapter/normalized title",
+        "dedupeKey": "韩立::配制黄龙丹金髓丸清灵散养精丹::获得突破瓶颈和自保能力::ch27-28",
+        "semanticSignature": "loose:cultivation_breakthrough|p:char58aeef11|c:第二十七章"
+      },
+      {
+        "event_id": "event_8937543a",
+        "title": "韩立与厉飞雨建立交易联盟",
+        "timelineClass": "scene_beat",
+        "reason": "demoted by density policy"
+      },
+      {
+        "event_id": "event_41fa6671",
+        "title": "韩立练成长春功第六层",
+        "timelineClass": "scene_beat",
+        "reason": "demoted by density policy"
+      },
+      {
+        "event_id": "event_74c6f384",
+        "title": "韩立打开小瓶获绿液",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_11b703bb",
+        "title": "韩立捡到神秘小瓶",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_d132f4cd",
+        "title": "韩立救助厉飞雨",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_3401e546",
+        "title": "韩立救治厉飞雨识破抽髓丸",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_5b2f4f22",
+        "title": "韩立服用灵药突破第四层",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_079122dd",
+        "title": "韩立突破无名口诀第一层",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_20f8e835",
+        "title": "韩立重新发现神秘小瓶",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_6605663e",
+        "title": "韩立首次救治厉飞雨",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_d188677d",
+        "title": "厉飞雨服用禁药抽髓丸的秘密泄露",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_ab7cb309",
+        "title": "韩立借助小瓶绿液突破无名口诀第四层",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_b88a3afe",
+        "title": "韩立入门考核成为记名弟子",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_3b8381cc",
+        "title": "韩立识破厉飞雨服用抽髓丸并施救",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_a6d16d1d",
+        "title": "墨大夫揭穿韩立修为隐瞒",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_6cfa285d",
+        "title": "韩立决心不受制于人",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_da261799",
+        "title": "韩立发现神秘瓶子的催熟药效",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_a64eb42c",
+        "title": "韩立炼成黄龙丹和金髓丸突破第四层",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_033e4fe8",
+        "title": "韩立结识厉飞雨并发现其服用抽髓丸",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_37e4fb29",
+        "title": "韩立走火入魔（心魔入侵）并激活平安符",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_556c80fb",
+        "title": "韩立达到无名口诀第三层顶峰",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_fde24020",
+        "title": "韩立与厉飞雨达成交易协议",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_bf265fe5",
+        "title": "韩立与厉飞雨达成私下交易",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_19c4dcfb",
+        "title": "厉飞雨将七绝堂藏书盗出",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_2b25b122",
+        "title": "韩立决定掌握命运不再受制于人",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_3e5cfbc1",
+        "title": "韩立决定用外力突破瓶颈",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_bc59e9dd",
+        "title": "心魔入侵与平安符驱除",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_d26f006e",
+        "title": "韩立决心自保并换得七绝堂绝学",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_54a2790f",
+        "title": "韩立发现瓶子吸收月光凝液",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_3300bd71",
+        "title": "韩立开始与厉飞雨暗地交易学武",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_e4ea5415",
+        "title": "韩立服丹药突破长春功第四层",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_4803e9b4",
+        "title": "韩立用绿液催熟草药成功",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_9f2364d6",
+        "title": "韩立与厉飞雨达成交易",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_5b277963",
+        "title": "韩立成功突破长春功第四层",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_1fbaec3d",
+        "title": "韩立留言离谷闭关修炼",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_8d9ab403",
+        "title": "韩立获取眨眼剑法全谱",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_2e32b571",
+        "title": "韩立练成罗烟步",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_eab97863",
+        "title": "韩立和厉飞雨私下交易武学",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_9fb67810",
+        "title": "韩立获生机决心命运自主",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_929b7420",
+        "title": "韩立再次遭遇心魔入侵",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_34dbff89",
+        "title": "韩立钻研眨眼剑法并做出修炼计划",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_b1e9c0fd",
+        "title": "韩立与厉飞雨达成交易",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_812367cf",
+        "title": "韩立发现绿液加速植物药性",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_a335e23a",
+        "title": "韩立确认绿液续产特性",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_b72e7ff0",
+        "title": "韩立突破至长春功第四层",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_6aa32e82",
+        "title": "韩立苦练眨眼剑法四个月",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_cfd61a3e",
+        "title": "韩立获完整眨眼剑法全本",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_dfc3654d",
+        "title": "韩立获得并钻研眨眼剑法",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_bb4d5714",
+        "title": "韩立与厉飞雨秘密交易武学",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      },
+      {
+        "event_id": "event_447ab67c",
+        "title": "韩立发现绿液催熟能力",
+        "timelineClass": "scene_beat",
+        "reason": "branch event budget overflow on branch_import_main"
+      }
+    ],
+    "low_confidence_items": [
+      {
+        "entity_type": "character",
+        "id": "char_90599ff4",
+        "confidence": 0.6
+      },
+      {
+        "entity_type": "character",
+        "id": "char_e68bcf3a",
+        "confidence": 0.6
+      },
+      {
+        "entity_type": "character",
+        "id": "char_c8bccd7c",
+        "confidence": 0.6
+      },
+      {
+        "entity_type": "character",
+        "id": "char_9b6ac2b8",
+        "confidence": 0.6
+      },
+      {
+        "entity_type": "character",
+        "id": "char_cd0506df",
+        "confidence": 0.6
+      },
+      {
+        "entity_type": "character",
+        "id": "char_17915cde",
+        "confidence": 0.6
+      },
+      {
+        "entity_type": "character",
+        "id": "char_e5ed5530",
+        "confidence": 0.6
+      }
+    ]
+  },
+  "current_tool": "qa_review",
+  "current_window": "",
+  "chapter_range": "",
+  "orchestrator_phase": "reviewing",
+  "judge_score": 0.0,
+  "rerun_reason": "",
+  "converge_status": "planning",
+  "judge_artifact_summary": {}
+}
