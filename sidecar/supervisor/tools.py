@@ -506,6 +506,13 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
         _write_import_artifact(project_path, import_run_id, f"windows/{window_id}.json", artifact)
 
     # ── Build metrics ────────────────────────────────────────────────────────
+    _char_extraction_failed = any(
+        f.split(":")[0] == "character" for f in failed_prompts
+    )
+    _gate_passed = (
+        len(failed_prompts) < 3
+        and not (_char_extraction_failed and len(new_char_ids) == 0)
+    )
     metrics: WindowExtractionMetrics = {
         "window_id": window_id,
         "chapter_count": len(chunk_ids),
@@ -517,7 +524,7 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
         "missing_majors_count": 0,
         "duplicate_count": 0,
         "rerun_count": state.get("window_metrics", {}).get(window_id, {}).get("rerun_count", 0),
-        "gate_passed": len(failed_prompts) < 3,
+        "gate_passed": _gate_passed,
     }
 
     window_metrics = dict(state.get("window_metrics", {}))

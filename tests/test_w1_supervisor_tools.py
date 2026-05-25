@@ -927,5 +927,51 @@ class TestExtractWindowWorldCap(unittest.TestCase):
         self.assertLessEqual(registered, 10, f"Expected ≤10 world entities for 2-chunk window with cap 5/ch, got {registered}")
 
 
+class TestExtractWindowFailureGate(unittest.TestCase):
+    @patch("sidecar.supervisor.tools._get_llm")
+    @patch("sidecar.supervisor.tools._invoke_json_prompt")
+    def test_character_extraction_failure_fails_gate(self, mock_invoke, mock_llm):
+        """A single character extraction failure + 0 chars should fail the window gate."""
+        import asyncio
+        mock_llm.return_value = MagicMock()
+        mock_invoke.side_effect = [
+            RuntimeError("LLM timeout"),   # character fails
+            {"events": []},
+            {"world_mentions": []},
+            {"relationships": []},
+            {"scene_summaries": []},
+        ]
+        state = _make_state(prompt_windows=[_make_window("win_fail", [0])])
+        result = asyncio.run(extract_window(state, "win_fail"))
+        metrics = result.get("window_metrics", {}).get("win_fail", {})
+        self.assertFalse(
+            metrics.get("gate_passed", True),
+            "Gate should fail when character extraction errors and 0 chars extracted"
+        )
+        self.assertEqual(metrics.get("char_count_extracted", 0), 0)
+
+    @patch("sidecar.supervisor.tools._get_llm")
+    @patch("sidecar.supervisor.tools._invoke_json_prompt")
+    def test_non_character_failure_still_passes_gate(self, mock_invoke, mock_llm):
+        """A single non-character failure (world) with chars extracted should pass gate."""
+        import asyncio
+        mock_llm.return_value = MagicMock()
+        mock_invoke.side_effect = [
+            {"new_characters": [{"canonical_name": "Hero", "confidence": 0.9, "importance": "core",
+                                 "groupKey": "main_characters", "aliases": []}]},
+            {"events": []},
+            RuntimeError("world extraction failed"),  # world fails
+            {"relationships": []},
+            {"scene_summaries": []},
+        ]
+        state = _make_state(prompt_windows=[_make_window("win_ok", [0])])
+        result = asyncio.run(extract_window(state, "win_ok"))
+        metrics = result.get("window_metrics", {}).get("win_ok", {})
+        self.assertTrue(
+            metrics.get("gate_passed", False),
+            "Gate should pass when only 1 non-character failure occurs and chars were extracted"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
