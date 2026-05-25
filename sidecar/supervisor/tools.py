@@ -1006,6 +1006,33 @@ async def minor_repair(state: ImportSupervisorState) -> dict:
 
 async def proposal_write(state: ImportSupervisorState) -> dict:
     """Run synthesis nodes then write proposals to the project."""
+    # Write diagnostics BEFORE proposal write so they survive an OOM crash
+    import_run_id = state.get("import_run_id", "")
+    project_path = state.get("project_path", "")
+    if import_run_id and project_path:
+        _write_import_artifact(
+            project_path, import_run_id, "supervisor_decisions.json",
+            state.get("supervisor_decisions", []),
+        )
+        _write_import_artifact(
+            project_path, import_run_id, "window_metrics.json",
+            state.get("window_metrics", {}),
+        )
+        _write_import_artifact(
+            project_path, import_run_id, "tool_operating_spec.json",
+            state.get("tool_operating_spec", _active_tool_operating_spec(state)),
+        )
+        if state.get("judge_artifact"):
+            _write_import_artifact(
+                project_path, import_run_id, "judge_artifact.json",
+                state.get("judge_artifact", {}),
+            )
+        if state.get("cross_validation"):
+            _write_import_artifact(
+                project_path, import_run_id, "cross_validation.json",
+                state.get("cross_validation", {}),
+            )
+
     # Build manuscript chapters
     manuscript_result = await node_build_manuscript(state)
     merged = {**state, **manuscript_result}
@@ -1027,28 +1054,7 @@ async def proposal_write(state: ImportSupervisorState) -> dict:
     log = list(state.get("supervisor_log", []))
     log.append(f"proposal_write: {len(proposals)} proposals written")
 
-    import_run_id = state.get("import_run_id", "")
-    project_path = state.get("project_path", "")
-    if import_run_id and project_path:
-        _write_import_artifact(
-            project_path, import_run_id, "supervisor_decisions.json",
-            state.get("supervisor_decisions", []),
-        )
-        _write_import_artifact(
-            project_path, import_run_id, "window_metrics.json",
-            state.get("window_metrics", {}),
-        )
-        _write_import_artifact(
-            project_path, import_run_id, "tool_operating_spec.json",
-            state.get("tool_operating_spec", _active_tool_operating_spec(state)),
-        )
-        if state.get("judge_artifact"):
-            _write_import_artifact(
-                project_path, import_run_id, "judge_artifact.json",
-                state.get("judge_artifact", {}),
-            )
-
-    return {
+    return_dict = {
         **manuscript_result,
         **rel_result,
         **tags_result,
@@ -1057,3 +1063,6 @@ async def proposal_write(state: ImportSupervisorState) -> dict:
         "supervisor_log": log,
         "current_stage": "proposal_write",
     }
+    return_dict.pop("entity_registry", None)
+    return_dict.pop("cross_validation", None)
+    return return_dict

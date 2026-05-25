@@ -373,10 +373,12 @@ def test_parse_json_response_repairs_common_model_drift():
 
 
 def test_character_card_proposals_stay_slim_by_default(tmp_path, monkeypatch):
+    captured_ops: list[dict] = []
+
     async def fake_propose_write(op, _project_path):
+        captured_ops.append(op)
         return {
             "id": f"proposal_{op['entity_id']}",
-            "operations": [{"entityType": op["entity_type"], "fields": op["data"]}],
             "confidence": op["confidence"],
         }
 
@@ -420,12 +422,21 @@ def test_character_card_proposals_stay_slim_by_default(tmp_path, monkeypatch):
     }
 
     result = asyncio.run(w1_import.node_write_to_project(state))
-    character_proposal = result["proposals"][0]
-    data = character_proposal["operations"][0]["fields"] if "fields" in character_proposal["operations"][0] else None
 
-    assert data is None or data.get("goals", []) == []
-    assert data is None or data.get("fears", []) == []
-    assert data is None or data.get("secrets", []) == []
+    # node_write_to_project now returns compact receipts (no 'operations' key).
+    # Verify the receipt is present and is compact.
+    char_receipts = [r for r in result["proposals"] if r.get("entity_type") == "character"]
+    assert len(char_receipts) == 1
+    assert "id" in char_receipts[0]
+    assert "operations" not in char_receipts[0]
+
+    # The op passed to propose_write must strip deep fields (goals/fears/secrets).
+    char_ops = [op for op in captured_ops if op.get("entity_type") == "character"]
+    assert len(char_ops) == 1
+    data = char_ops[0]["data"]
+    assert data.get("goals", []) == []
+    assert data.get("fears", []) == []
+    assert data.get("secrets", []) == []
 
 
 def test_character_card_compaction_caps_long_running_import_fields():
@@ -845,3 +856,94 @@ def test_cross_validation_prompt_and_artifact_contract_are_stable():
         assert field in annotations
 
     assert "cross_validation" in sidecar_state.ImportState.__annotations__
+
+
+# ── node_write_to_project compact receipts and manuscript ─────────────────────
+
+def _make_write_state(tmp_path, *, entity_registry=None, manuscript_chapters=None):
+    """Minimal state for node_write_to_project tests."""
+    return {
+        "project_path": str(tmp_path),
+        "source_file_path": str(tmp_path / "novel.txt"),
+        "import_run_id": "import_compact",
+        "source_language": "en",
+        "entity_registry": entity_registry or {"characters": {}, "events": {}, "world": {}, "world_detailed": {}},
+        "manuscript_chapters": manuscript_chapters or [],
+        "relationships": [],
+        "character_tags": [],
+        "timeline_branches": [],
+        "world_settings": {},
+        "world_containers": [],
+        "chunk_extractions": [],
+        "import_review_report": {},
+        "proposals": [],
+        "errors": [],
+    }
+
+
+def test_node_write_to_project_returns_compact_receipts(tmp_path, monkeypatch):
+    """proposals returned by node_write_to_project must be compact receipts, not full proposal dicts."""
+    async def fake_propose_write(op, _project_path):
+        return {
+            "id": f"p_{op['entity_id']}",
+            "operations": [{"entityType": op["entity_type"]}],
+            "confidence": op["confidence"],
+        }
+
+    monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", fake_propose_write)
+
+    state = _make_write_state(
+        tmp_path,
+        entity_registry={
+            "characters": {
+                "char_a": {"canonical_name": "Alice", "confidence": 0.8, "importance": "core", "aliases": [], "tag_ids": []},
+                "char_b": {"canonical_name": "Bob", "confidence": 0.7, "importance": "minor", "aliases": [], "tag_ids": []},
+            },
+            "events": {
+                "ev_1": {"title": "A battle", "description": "Clash", "confidence": 0.8, "branchId": "branch_main", "orderIndex": 1},
+            },
+            "world": {"Rivendell": "location"},
+            "world_detailed": {"Rivendell": {"category": "location", "description": "An elf city."}},
+        },
+    )
+
+    result = asyncio.run(w1_import.node_write_to_project(state))
+    receipts = result["proposals"]
+
+    # All receipts must be compact (id, entity_type present; no operations key)
+    assert len(receipts) > 0
+    for receipt in receipts:
+        assert "id" in receipt, f"receipt missing 'id': {receipt}"
+        assert "entity_type" in receipt, f"receipt missing 'entity_type': {receipt}"
+        assert "operations" not in receipt, f"receipt must not contain 'operations': {receipt}"
+
+    entity_types = {r["entity_type"] for r in receipts}
+    assert "character" in entity_types
+    assert "timeline_event" in entity_types
+    assert "world_item" in entity_types
+
+
+def test_node_write_to_project_manuscript_still_written(tmp_path, monkeypatch):
+    """manuscript.json must be written even after switching to compact receipts."""
+    import json
+
+    async def fake_propose_write(op, _project_path):
+        return {"id": f"p_{op['entity_id']}", "confidence": op["confidence"]}
+
+    monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", fake_propose_write)
+
+    state = _make_write_state(
+        tmp_path,
+        manuscript_chapters=[
+            {"chapter_id": "chap_1", "title": "Ch 1", "orderIndex": 0, "chunk_ids": [0], "manuscript_content": "Text of chapter one."},
+            {"chapter_id": "chap_2", "title": "Ch 2", "orderIndex": 1, "chunk_ids": [1], "manuscript_content": "Text of chapter two."},
+        ],
+    )
+
+    asyncio.run(w1_import.node_write_to_project(state))
+
+    manuscript_path = tmp_path / "manuscript.json"
+    assert manuscript_path.exists(), "manuscript.json must be written"
+    manuscript = json.loads(manuscript_path.read_text(encoding="utf-8"))
+    assert len(manuscript["chapters"]) == 2
+    assert manuscript["chapters"][0]["title"] == "Ch 1"

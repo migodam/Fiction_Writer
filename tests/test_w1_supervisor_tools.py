@@ -743,7 +743,7 @@ class TestWorldEntityCapInExtractWindow(unittest.TestCase):
 
     def test_world_mentions_capped_by_chapter_count(self):
         win = _make_window("pwin_worldcap", [0, 1])  # 2 chunk_ids → 2 chapters → cap = 40
-        state = _make_state(prompt_windows=[win])
+        state = _make_state(prompt_windows=[win], tool_operating_spec={"max_world_entities_per_chapter": 20})
 
         # Build 60 world mentions (exceeds cap of 2 × 20 = 40)
         world_mentions = [
@@ -773,7 +773,7 @@ class TestWorldEntityCapInExtractWindow(unittest.TestCase):
 
     def test_world_mentions_below_cap_not_truncated(self):
         win = _make_window("pwin_worldsmall", [0])  # 1 chunk → 1 chapter → cap = 20
-        state = _make_state(prompt_windows=[win])
+        state = _make_state(prompt_windows=[win], tool_operating_spec={"max_world_entities_per_chapter": 20})
 
         world_mentions = [
             {"name": f"Place_{i}", "category": "location", "confidence": 0.8}

@@ -28,15 +28,28 @@ All tools are in `sidecar/supervisor/tools.py` and registered in `sidecar/superv
 | Tool | Stage | Side-effects |
 |------|-------|-------------|
 | `segment_manifest` | 1 | Builds `prompt_windows` from chunks using `_build_supervised_prompt_windows`. Idempotent (skips if windows exist). |
-| `extract_window` | 2 | 5-parallel LLM calls (characters, events, world, relationships, scene). Merges into `entity_registry`. Records `WindowExtractionMetrics`. |
+| `extract_window` | 2 | 5-parallel LLM calls (characters, events, world, relationships, scene). Merges into `entity_registry`. Records `WindowExtractionMetrics`. Injects `source_language_label` and `language_policy` into all five deep extraction prompts. |
 | `cross_validate_window` | 2 | Checks each window's characters against the full registry. Sets `missing_majors`. |
 | `rerun_window` | 2 (conditional) | strategy=`split` halves chunk count and re-runs extract; strategy=`augment` injects `SUPERVISOR_HINT` with missing names. |
 | `reduce_entities` | 3 | Deduplicates characters/events via `node_reconcile_entities` + `node_resolve_low_confidence`. |
-| `minor_repair` | 4 | Deterministic fixes: groupKey normalization, world/person boundary migration, orderIndex resequencing, Latin trait strip for zh source. |
+| `minor_repair` | 4 | Deterministic fixes: groupKey normalization, world/person boundary migration, orderIndex resequencing, Latin trait strip for zh source. Strip threshold aligned with `_symptom_flags` detection (≥4 consecutive Latin chars). |
 | `architect_timeline` | 5 | Calls `node_architect_timeline`. |
 | `qa_review` | 6 | Calls `node_review_import`. Sets `gate_failures`. |
 | `judge_import` | 6b | Deterministic convergence judge. Writes `JudgeArtifact`, emits thematic rerun requests, and never writes canonical proposals. |
-| `proposal_write` | 7 | Calls `node_write_to_project` + `node_build_manuscript`. |
+| `proposal_write` | 7 | Writes diagnostic artifacts first (crash-safe), then runs synthesis nodes and `node_write_to_project`. Returns compact receipts (no full proposal dicts). Evicts `entity_registry` from return state. |
+
+---
+
+## Language Policy
+
+All five deep extraction prompts (`W1_EXTRACT_CHARACTERS_DEEP`, `W1_EXTRACT_EVENTS_DEEP`, `W1_EXTRACT_WORLD_DEEP`, `W1_EXTRACT_RELATIONSHIPS_CHUNK`, `W1_EXTRACT_SCENE_SUMMARIES`) require two template variables at call time:
+
+| Variable | Source | Example (zh) |
+|----------|--------|--------------|
+| `source_language_label` | `"Chinese (Simplified)" if source_language == "zh" else "English"` | `"Chinese (Simplified)"` |
+| `language_policy` | `tool_operating_spec.get("language_policy", "passthrough")` | `"normalize_to_source"` |
+
+These are injected in `extract_window` (supervisor path) and `node_process_chunks` (legacy LangGraph path). Fields that intentionally remain in English (enum/internal keys): `eventClass`, `timelineClass`, `eventType`, `arcRole`, `causalRole`, `branchRole`, `forkMergeHint`, `arcId`, `category`, `importance`, `story_function`, `groupKey`, `directionality`, `status`, `topologyRole`, `container_hint`.
 
 ---
 
@@ -135,14 +148,18 @@ if estimated > 3 500:
 
 All artifacts land under `<project_path>/system/imports/<import_run_id>/`:
 
-| File | Contents |
-|------|---------|
-| `prompt_windows.json` | Final window manifest (text hash, chunk_ids, chapter_range) |
-| `project_structure_digest.json` | Digest used for character card compaction |
-| `supervisor_decisions.json` | Written by `proposal_write` from `state["supervisor_decisions"]` |
-| `window_metrics.json` | Written by `proposal_write` from `state["window_metrics"]` |
-| `tool_operating_spec.json` | Planned soft parameters for this import run |
-| `judge_artifact.json` | Final deterministic convergence judgment and thematic rerun requests |
+| File | When written | Contents |
+|------|-------------|---------|
+| `prompt_windows.json` | `segment_manifest` | Final window manifest (text hash, chunk_ids, chapter_range) |
+| `project_structure_digest.json` | `segment_manifest` | Digest used for character card compaction |
+| `supervisor_decisions.json` | **Start of `proposal_write`** (before OOM risk) | All supervisor routing decisions |
+| `window_metrics.json` | **Start of `proposal_write`** (before OOM risk) | Per-window extraction quality metrics |
+| `tool_operating_spec.json` | **Start of `proposal_write`** (before OOM risk) | Planned soft parameters for this import run |
+| `judge_artifact.json` | **Start of `proposal_write`** (before OOM risk, if present) | Final deterministic convergence judgment |
+| `cross_validation.json` | **Start of `proposal_write`** (before OOM risk, if present) | Cross-window entity validation results |
+| `inbox.json` | Inside `node_write_to_project` | Per-entity `propose_write` proposals (gated) |
+| `manuscript.json` | Inside `node_write_to_project` | Ordered chapter content |
+| `review_report.json` | Inside `node_write_to_project` | Proposal counts, blocked IDs, safe-accept IDs |
 
 ---
 

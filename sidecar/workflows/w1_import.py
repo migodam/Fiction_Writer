@@ -3356,7 +3356,8 @@ async def node_write_to_project(state: ImportState) -> dict:
         world_containers.append({**spec, "sortOrder": len(world_containers)})
         existing_container_keys.add(spec["importCategoryKey"])
         existing_container_ids.add(spec["id"])
-    proposals: list[dict] = list(state.get("proposals", []))
+    # Compact receipts — one small dict per proposal — replace the old full-payload list.
+    receipts: list[dict] = []
     errors: list[str] = list(state.get("errors", []))
 
     character_event_links: dict[str, list[str]] = {}
@@ -3410,7 +3411,13 @@ async def node_write_to_project(state: ImportState) -> dict:
         }
         try:
             proposal = await s2_memory_writer.propose_write(op, str(project_path))
-            proposals.append(proposal)
+            receipts.append({
+                "id": proposal.get("id", ""),
+                "entity_type": "character",
+                "status": proposal.get("status", ""),
+                "confidence": float(proposal.get("confidence", 0.75) or 0.75),
+                "blocked": bool(proposal.get("blockedReason") or proposal.get("requiresManualReview")),
+            })
         except Exception as e:
             errors.append(f"Failed to propose character {cid}: {str(e)}")
 
@@ -3452,7 +3459,13 @@ async def node_write_to_project(state: ImportState) -> dict:
         }
         try:
             proposal = await s2_memory_writer.propose_write(op, str(project_path))
-            proposals.append(proposal)
+            receipts.append({
+                "id": proposal.get("id", ""),
+                "entity_type": "timeline_branch",
+                "status": proposal.get("status", ""),
+                "confidence": float(proposal.get("confidence", 0.75) or 0.75),
+                "blocked": bool(proposal.get("blockedReason") or proposal.get("requiresManualReview")),
+            })
         except Exception as e:
             errors.append(f"Failed to propose timeline branch {branch_id}: {str(e)}")
 
@@ -3521,7 +3534,13 @@ async def node_write_to_project(state: ImportState) -> dict:
         }
         try:
             proposal = await s2_memory_writer.propose_write(op, str(project_path))
-            proposals.append(proposal)
+            receipts.append({
+                "id": proposal.get("id", ""),
+                "entity_type": "timeline_event",
+                "status": proposal.get("status", ""),
+                "confidence": float(proposal.get("confidence", 0.75) or 0.75),
+                "blocked": bool(proposal.get("blockedReason") or proposal.get("requiresManualReview")),
+            })
         except Exception as e:
             errors.append(f"Failed to propose event {eid}: {str(e)}")
 
@@ -3573,7 +3592,13 @@ async def node_write_to_project(state: ImportState) -> dict:
         }
         try:
             proposal = await s2_memory_writer.propose_write(op, str(project_path))
-            proposals.append(proposal)
+            receipts.append({
+                "id": proposal.get("id", ""),
+                "entity_type": "world_item",
+                "status": proposal.get("status", ""),
+                "confidence": float(proposal.get("confidence", 0.70) or 0.70),
+                "blocked": bool(proposal.get("blockedReason") or proposal.get("requiresManualReview")),
+            })
         except Exception as e:
             errors.append(f"Failed to propose world entry '{name}': {str(e)}")
 
@@ -3592,7 +3617,13 @@ async def node_write_to_project(state: ImportState) -> dict:
         }
         try:
             proposal = await s2_memory_writer.propose_write(op, str(project_path))
-            proposals.append(proposal)
+            receipts.append({
+                "id": proposal.get("id", ""),
+                "entity_type": "relationship",
+                "status": proposal.get("status", ""),
+                "confidence": float(proposal.get("confidence", 0.75) or 0.75),
+                "blocked": bool(proposal.get("blockedReason") or proposal.get("requiresManualReview")),
+            })
         except Exception as e:
             errors.append(f"Failed to propose relationship {rel_id}: {str(e)}")
 
@@ -3611,7 +3642,13 @@ async def node_write_to_project(state: ImportState) -> dict:
         }
         try:
             proposal = await s2_memory_writer.propose_write(op, str(project_path))
-            proposals.append(proposal)
+            receipts.append({
+                "id": proposal.get("id", ""),
+                "entity_type": "character_tag",
+                "status": proposal.get("status", ""),
+                "confidence": float(proposal.get("confidence", 0.75) or 0.75),
+                "blocked": bool(proposal.get("blockedReason") or proposal.get("requiresManualReview")),
+            })
         except Exception as e:
             errors.append(f"Failed to propose character tag {tag_id}: {str(e)}")
 
@@ -3629,7 +3666,13 @@ async def node_write_to_project(state: ImportState) -> dict:
         }
         try:
             proposal = await s2_memory_writer.propose_write(op, str(project_path))
-            proposals.append(proposal)
+            receipts.append({
+                "id": proposal.get("id", ""),
+                "entity_type": "world_settings",
+                "status": proposal.get("status", ""),
+                "confidence": float(proposal.get("confidence", 0.75) or 0.75),
+                "blocked": bool(proposal.get("blockedReason") or proposal.get("requiresManualReview")),
+            })
         except Exception as e:
             errors.append(f"Failed to propose world settings: {str(e)}")
 
@@ -3648,7 +3691,13 @@ async def node_write_to_project(state: ImportState) -> dict:
         }
         try:
             proposal = await s2_memory_writer.propose_write(op, str(project_path))
-            proposals.append(proposal)
+            receipts.append({
+                "id": proposal.get("id", ""),
+                "entity_type": "world_container",
+                "status": proposal.get("status", ""),
+                "confidence": float(proposal.get("confidence", 0.75) or 0.75),
+                "blocked": bool(proposal.get("blockedReason") or proposal.get("requiresManualReview")),
+            })
         except Exception as e:
             errors.append(f"Failed to propose world container {container_id}: {str(e)}")
 
@@ -3688,7 +3737,13 @@ async def node_write_to_project(state: ImportState) -> dict:
             }
             try:
                 proposal = await s2_memory_writer.propose_write(op, str(project_path))
-                proposals.append(proposal)
+                receipts.append({
+                    "id": proposal.get("id", ""),
+                    "entity_type": "scene",
+                    "status": proposal.get("status", ""),
+                    "confidence": float(proposal.get("confidence", 0.70) or 0.70),
+                    "blocked": bool(proposal.get("blockedReason") or proposal.get("requiresManualReview")),
+                })
             except Exception as e:
                 errors.append(f"Failed to propose scene '{title}': {str(e)}")
 
@@ -3723,35 +3778,39 @@ async def node_write_to_project(state: ImportState) -> dict:
         }
         try:
             proposal = await s2_memory_writer.propose_write(op, str(project_path))
-            proposals.append(proposal)
+            receipts.append({
+                "id": proposal.get("id", ""),
+                "entity_type": "chapter",
+                "status": proposal.get("status", ""),
+                "confidence": float(proposal.get("confidence", 0.90) or 0.90),
+                "blocked": bool(proposal.get("blockedReason") or proposal.get("requiresManualReview")),
+            })
         except Exception as e:
             errors.append(f"Failed to propose chapter '{title}': {str(e)}")
+    print(f"[proposal_write] all entity groups done — {len(receipts)} total receipts", flush=True)
 
+    # Build review_report counts and ID lists from compact receipts.
+    safe_types = {"character_tag", "timeline_branch", "chapter", "scene"}
     proposal_counts: dict[str, int] = {}
-    for proposal in proposals:
-        ops = proposal.get("operations", [])
-        entity_type = ops[0].get("entityType", "unknown") if ops else "unknown"
-        proposal_counts[entity_type] = proposal_counts.get(entity_type, 0) + 1
+    all_proposal_ids: list[str] = []
+    blocked_ids: list[str] = []
+    safe_accept_ids: list[str] = []
+    for receipt in receipts:
+        et = receipt["entity_type"]
+        proposal_counts[et] = proposal_counts.get(et, 0) + 1
+        pid = receipt["id"]
+        if pid:
+            all_proposal_ids.append(pid)
+            if receipt.get("blocked") or receipt.get("status") == "blocked":
+                blocked_ids.append(pid)
+            if et in safe_types and receipt["confidence"] >= 0.7:
+                safe_accept_ids.append(pid)
 
     review_report = dict(state.get("import_review_report", {}))
     if review_report:
         review_report["proposal_counts"] = proposal_counts
-        all_proposal_ids = [proposal.get("id", "") for proposal in proposals if proposal.get("id")]
-        blocked_ids = [
-            proposal.get("id", "")
-            for proposal in proposals
-            if proposal.get("status") == "blocked" or proposal.get("blockedReason") or proposal.get("requiresManualReview")
-        ]
-        safe_types = {"character_tag", "timeline_branch", "chapter", "scene"}
-        safe_accept_ids: list[str] = []
-        for proposal in proposals:
-            ops = proposal.get("operations", [])
-            entity_type = ops[0].get("entityType", "unknown") if ops else "unknown"
-            confidence = float(proposal.get("confidence", 0.0) or 0.0)
-            if proposal.get("id") and entity_type in safe_types and confidence >= 0.7:
-                safe_accept_ids.append(proposal["id"])
         review_report["safe_accept_ids"] = safe_accept_ids
-        review_report["blocked_ids"] = [pid for pid in blocked_ids if pid]
+        review_report["blocked_ids"] = blocked_ids
         review_report["proposal_ids"] = all_proposal_ids
         if state.get("import_run_id"):
             _write_import_artifact(str(project_path), state["import_run_id"], "review_report.json", review_report)
@@ -3806,7 +3865,7 @@ async def node_write_to_project(state: ImportState) -> dict:
         pass
 
     return {
-        "proposals": proposals,
+        "proposals": receipts,
         "import_review_report": review_report,
         "errors": errors,
         "status": "done",
