@@ -1622,10 +1622,17 @@ def _build_supervised_prompt_windows(state: ImportState, chunks: list[dict], dig
             })
         return batch_windows
 
-    # Group chunks into batches of chapters_per_window
-    for i in range(0, len(chunks), chapters_per_window):
-        batch = chunks[i: i + chapters_per_window]
+    # Group chunks into batches; apply tighter cap for late (last 25%) chapters
+    total_chunks = len(chunks)
+    late_threshold = max(1, int(total_chunks * 0.75))
+    late_cpw = max(3, chapters_per_window // 2) if chapters_per_window >= 6 else chapters_per_window
+
+    i = 0
+    while i < total_chunks:
+        effective_cpw = late_cpw if i >= late_threshold else chapters_per_window
+        batch = chunks[i: i + effective_cpw]
         windows.extend(_make_windows_from_batch(batch))
+        i += effective_cpw
 
     return windows
 

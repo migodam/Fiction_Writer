@@ -161,6 +161,50 @@ class TestSupervisorWindowing(unittest.TestCase):
         self.assertGreater(est_8, est_4)
         self.assertEqual(est_8, 2 * est_4)
 
+    # ── Test 9: late-window density cap ──────────────────────────────────────
+
+    def test_late_window_chapters_capped_for_deep_profile(self):
+        """For a cpw=6 profile with 50 tiny chapters, last 25% (ch38+) windows
+        should have <= 3 chunks after the late-window cap, not 6.
+
+        Token-budget halving does NOT fire here (6 * 520 = 3120 <= 3500 threshold),
+        so without the explicit late-window cap all windows would have 6 chunks.
+        """
+        from sidecar.workflows.w1_import import _build_supervised_prompt_windows
+
+        # Synthetic profile with cpw=6 so halving does NOT fire (6*520=3120 <= 3500)
+        profile_config_6 = {
+            "chapters_per_window": 6,
+            "input_window_budget": 48_000,
+            "output_token_budget": 3_000,
+        }
+        chunks = [
+            {"chunk_id": i, "content": f"Tiny ch {i}.",
+             "chapter_hint": f"Chapter {i+1}", "char_start": i * 20, "char_end": (i+1) * 20}
+            for i in range(50)
+        ]
+        state = {
+            "prompt_profile": "deep",
+            "profile_config": profile_config_6,
+            "import_run_id": "test_lw",
+            "import_run_manifest": {"source_hash": "abc"},
+            "project_structure_digest": {"content": "(empty)", "estimated_tokens": 5},
+            "source_language": "zh",
+        }
+        digest = {"content": "(empty)", "estimated_tokens": 5, "artifact_path": ""}
+        windows = _build_supervised_prompt_windows(state, chunks, digest)
+
+        # Late windows: those whose chunk_ids are all >= 38 (last 25% of 50)
+        late_windows = [w for w in windows if all(cid >= 38 for cid in w["chunk_ids"])]
+        self.assertTrue(late_windows, "Expected at least one late window (chunk_id >= 38)")
+
+        # late_cpw = max(3, 6 // 2) = 3
+        for w in late_windows:
+            self.assertLessEqual(
+                len(w["chunk_ids"]), 3,
+                f"Late window {w['id']} has {len(w['chunk_ids'])} chunks, expected <= 3 (cpw=6 → late_cpw=3)"
+            )
+
 
 class TestDetectLanguage(unittest.TestCase):
     def test_cjk_text_detected_as_zh(self):
