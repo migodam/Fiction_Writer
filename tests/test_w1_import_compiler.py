@@ -244,6 +244,27 @@ def test_build_manuscript_orders_chapters_by_source_chunk_id(tmp_path):
     assert [chapter["manuscript_content"] for chapter in result["manuscript_chapters"]] == ["first", "second", "third"]
 
 
+def test_build_manuscript_supervisor_falls_back_to_chunks_without_extractions(tmp_path):
+    state = {
+        "project_path": str(tmp_path),
+        "import_mode": "import_all",
+        "chunks": [
+            {"chunk_id": 2, "chapter_hint": "第三章", "manuscript_content": "第三章原文"},
+            {"chunk_id": 0, "chapter_hint": "第一章", "manuscript_content": "第一章原文"},
+            {"chunk_id": 1, "chapter_hint": "第二章", "manuscript_content": "第二章原文"},
+        ],
+        "chunk_extractions": [],
+    }
+
+    result = asyncio.run(w1_import.node_build_manuscript(state))
+
+    chapters = result["manuscript_chapters"]
+    assert [chapter["title"] for chapter in chapters] == ["第一章", "第二章", "第三章"]
+    assert [chapter["chunk_ids"] for chapter in chapters] == [[0], [1], [2]]
+    assert [chapter["orderIndex"] for chapter in chapters] == [0, 1, 2]
+    assert [chapter["manuscript_content"] for chapter in chapters] == ["第一章原文", "第二章原文", "第三章原文"]
+
+
 def test_world_entity_candidates_are_routed_out_of_character_registry():
     registry = {
         "characters": {

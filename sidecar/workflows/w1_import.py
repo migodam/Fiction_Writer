@@ -2362,12 +2362,11 @@ async def node_build_manuscript(state: ImportState) -> dict:
     import_mode = state.get("import_mode", "import_all")
     chunks = state.get("chunks", [])
 
-    if import_mode == "import_content_only":
-        # Fast path: group raw chunks by chapter_hint
+    def _build_from_chunks(raw_chunks: list[dict]) -> list[dict]:
         chapter_map: dict[str, list[dict]] = {}
         chapter_order: list[str] = []
 
-        for chunk in chunks:
+        for chunk in raw_chunks:
             chunk_id = chunk.get("chunk_id", 0)
             hint = chunk.get("chapter_hint") or f"Chapter {len(chapter_order) + 1}"
             if hint not in chapter_map:
@@ -2389,11 +2388,19 @@ async def node_build_manuscript(state: ImportState) -> dict:
                 "manuscript_content": content,
                 "orderIndex": len(manuscript_chapters),
             })
+        return _sort_manuscript_chapters(manuscript_chapters)
 
-        return {"manuscript_chapters": _sort_manuscript_chapters(manuscript_chapters), "progress": 0.88}
+    if import_mode == "import_content_only":
+        # Fast path: group raw chunks by chapter_hint
+        return {"manuscript_chapters": _build_from_chunks(chunks), "progress": 0.88}
 
-    # import_all path: build from chunk_extractions
+    # import_all path: build from chunk_extractions when present. The
+    # supervisor path extracts by prompt window and may not produce per-chunk
+    # extraction records, so fall back to deterministic raw chunks.
     extractions = state.get("chunk_extractions", [])
+    if not extractions and chunks:
+        return {"manuscript_chapters": _build_from_chunks(chunks), "progress": 0.88}
+
     chunk_map2 = {c.get("chunk_id", i): c for i, c in enumerate(chunks)}
     chapter_map2: dict[str, list[dict]] = {}
     chapter_order2: list[str] = []
