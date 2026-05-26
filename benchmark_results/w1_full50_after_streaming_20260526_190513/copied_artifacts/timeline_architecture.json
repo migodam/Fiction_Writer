@@ -1,0 +1,62 @@
+{
+  "import_run_id": "sup_a483ce0ac3",
+  "root_branch_id": "branch_import_main",
+  "branches": [
+    {
+      "id": "branch_import_main",
+      "name": "主时间线",
+      "description": "主叙事时间线",
+      "parentBranchId": null,
+      "forkEventId": null,
+      "mergeEventId": null,
+      "color": "#38bdf8",
+      "sortOrder": 0,
+      "mode": "root",
+      "startAnchor": null,
+      "endAnchor": null,
+      "endMode": "open",
+      "mergeTargetBranchId": null,
+      "geometry": {
+        "laneOffset": 0,
+        "bend": 0.25,
+        "thickness": 2
+      },
+      "rankStart": 0,
+      "rankEnd": 0,
+      "laneId": "lane_0_main",
+      "layoutHint": {
+        "eventBudget": 36,
+        "clusterOverflow": false,
+        "densityClass": "normal"
+      }
+    }
+  ],
+  "canonical_events": [],
+  "event_classifications": [],
+  "discarded_duplicates": [],
+  "scene_beats": [],
+  "background_references": [],
+  "fork_merge_anchors": [],
+  "density_policy": {
+    "max_events_per_chunk": 8,
+    "max_events_per_branch": 36,
+    "branch_threshold": 3,
+    "minimum_canonical_events": 0,
+    "low_confidence_threshold": 0.9,
+    "canonical_classes": [
+      "canonical_event"
+    ],
+    "noncanonical_classes": [
+      "scene_beat",
+      "background_reference",
+      "discarded_duplicate"
+    ]
+  },
+  "layout_hints": {
+    "strategy": "semantic_branch_topology",
+    "max_branch_count": 10,
+    "branch_lane_spacing": 140,
+    "root_branch_policy": "mainline only for arc-level turning points or deterministic fallback"
+  },
+  "warnings": []
+}

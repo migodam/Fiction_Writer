@@ -1,0 +1,16 @@
+{
+  "import_run_id": "sup_a483ce0ac3",
+  "artifact_path": "/Volumes/migodam's-external-brain/home/narrative_ide/w1_full50_streaming_20260526_190513/system/imports/sup_a483ce0ac3/project_structure_digest.json",
+  "estimated_tokens": 111,
+  "counts": {
+    "characters": 0,
+    "character_tags": 0,
+    "relationships": 0,
+    "timeline_branches": 0,
+    "world_containers": 0,
+    "world_items": 0,
+    "open_inbox_items": 0,
+    "open_issues": 0
+  },
+  "content": "{\"character_groups\":{},\"character_tags\":[],\"characters\":[],\"counts\":{\"character_tags\":0,\"characters\":0,\"open_inbox_items\":0,\"open_issues\":0,\"relationships\":0,\"timeline_branches\":0,\"world_containers\":0,\"world_items\":0},\"import_run_id\":\"sup_a483ce0ac3\",\"proposal_risk_summary\":{\"open_inbox_items\":0,\"open_issues\":0,\"risk_or_severity\":{},\"statuses\":{}},\"relationships\":[],\"timeline_branches\":[],\"version\":1,\"world_containers\":[],\"world_items\":[]}"
+}

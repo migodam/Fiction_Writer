@@ -1,0 +1,77 @@
+{
+  "benchmark_id": "w1_full50_after_streaming_20260526_190513",
+  "branch": "codex/w1-orchestrated-import-quality",
+  "head_commit": "f366144",
+  "key_commits": {
+    "streaming_write_fix": "6718ab0",
+    "manuscript_fix": "5db686f",
+    "r3_character_hint_fix": "f366144"
+  },
+  "model": "deepseek-v4-pro",
+  "prompt_profile": "deep",
+  "date": "2026-05-26",
+  "overall_result": "FAIL/INVALID",
+  "failure_reason": "API 402 Insufficient Balance — all extraction calls failed, 0 characters and 0 events extracted",
+  "run": {
+    "session_id": "72805962-a64e-414a-9651-49fe1b9c9fae",
+    "import_run_id": "sup_a483ce0ac3",
+    "run_number": 4,
+    "project_path": "/Volumes/migodam's-external-brain/home/narrative_ide/w1_full50_streaming_20260526_190513",
+    "source": "凡人修仙传_前50章.txt",
+    "start_time": "19:05 UTC+8",
+    "end_time": "19:07 UTC+8",
+    "elapsed_minutes": 2,
+    "terminal_status": "done (invalid — all LLM calls failed 402)"
+  },
+  "windows": {
+    "total": 14,
+    "primary_estimated": 14,
+    "reruns_estimated": 0,
+    "failed_402": 14,
+    "failed_prompts_total": 70
+  },
+  "supervisor": {
+    "total_decisions": 46,
+    "proceed_decisions": 28,
+    "rerun_decisions": 18
+  },
+  "judge": {
+    "score": 0.64,
+    "passed": false,
+    "failed_gates": ["character_undercoverage", "timeline_undercoverage"],
+    "character_count": 0,
+    "target_character_count": 75,
+    "canonical_events": 0,
+    "target_canonical_events": 90,
+    "iteration": 0
+  },
+  "r3_fix": {
+    "applied": true,
+    "commit": "f366144",
+    "note": "R3 fix deployed but could not be validated — all LLM calls failed 402 before any extraction occurred"
+  },
+  "outputs": {
+    "inbox_json_written": true,
+    "inbox_json_valid": false,
+    "manuscript_json_written": true,
+    "manuscript_json_valid": false,
+    "manuscript_chapters": 50,
+    "manuscript_chapters_with_content": 0
+  },
+  "secret_check": {
+    "api_key_found_in_results": false
+  },
+  "acceptance_criteria": {
+    "fifty_chapters_no_oom": "FAIL/INVALID",
+    "manuscript_chapters_50": "FAIL/INVALID",
+    "inbox_exists": "FAIL/INVALID",
+    "characters_gte_75": "FAIL/INVALID",
+    "key_chars_present": "FAIL/INVALID",
+    "language_violations_zero": "FAIL/INVALID",
+    "qixuanmen_organization": "FAIL/INVALID",
+    "timeline_events_gte_90": "FAIL/INVALID",
+    "judge_score_1_0": "FAIL/INVALID",
+    "no_api_key_in_output": "PASS"
+  },
+  "note": "Run 4 invalid — same API balance exhaustion as run 1. R3 fix cannot be validated until balance is topped up and run 5 is attempted."
+}
