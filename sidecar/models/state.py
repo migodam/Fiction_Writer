@@ -127,6 +127,10 @@ class ImportGranularityProfile(TypedDict, total=False):
     min_events_per_chapter: float
     rerun_on_character_gap: bool         # if False: gap below floor → acceptable_with_warnings, no rerun
     max_world_entities_per_chapter: int
+    character_granularity: Literal["major_only", "named_only", "all"]
+    event_density: Literal["arc_level", "chapter_level", "scene_level"]
+    world_density: Literal["named_only", "structural", "full_lore"]
+    relationship_depth: Literal["core", "recurring", "dense"]
 
 
 class ImportResultClassification(TypedDict, total=False):
@@ -549,20 +553,150 @@ def plan_converge_target(
     tool_operating_spec: ToolOperatingSpec,
     source_language: str = "en",
     chapter_count: int = 1,
+    granularity_profile: "Optional[ImportGranularityProfile]" = None,
 ) -> ConvergeTarget:
-    """Build deterministic convergence targets from the active tool spec."""
+    """Build deterministic convergence targets from the active tool spec.
+
+    When granularity_profile is provided, character and event targets are derived
+    from the profile rather than TOS defaults. All other fields come from TOS.
+    Omitting granularity_profile produces identical output to the 3-arg call.
+    """
     chapter_count = max(int(chapter_count or 1), 1)
     min_chars = float(tool_operating_spec.get("min_characters_per_chapter", 0.75))
     event_density = float(tool_operating_spec.get("event_density_target", 0.75))
     max_events = int(tool_operating_spec.get("max_canonical_events_per_chapter", 3))
-    return {
-        "expected_min_characters": max(1, math.ceil(chapter_count * min_chars)),
-        "expected_min_events": max(1, math.ceil(chapter_count * event_density)),
+
+    expected_min_characters = max(1, math.ceil(chapter_count * min_chars))
+    expected_min_events = max(1, math.ceil(chapter_count * event_density))
+
+    target: ConvergeTarget = {
+        "expected_min_characters": expected_min_characters,
+        "expected_min_events": expected_min_events,
         "expected_max_canonical_events": max(1, chapter_count * max_events),
         "expected_min_world_entities": max(1, math.ceil(chapter_count * 0.4)),
         "expected_language": source_language or "en",
         "expected_timeline_topology": tool_operating_spec.get("timeline_topology_target", "branched"),
     }
+
+    if granularity_profile is not None:
+        profile_min_chars = float(granularity_profile.get("min_characters_per_chapter", min_chars))
+        profile_floor_frac = float(granularity_profile.get("acceptable_floor_fraction", 1.0))
+        profile_min_events = float(granularity_profile.get("min_events_per_chapter", event_density))
+
+        profile_expected_chars = max(1, int(profile_min_chars * chapter_count))
+        profile_expected_events = max(1, int(profile_min_events * chapter_count))
+
+        target["expected_min_characters"] = profile_expected_chars
+        target["acceptable_min_characters"] = max(1, int(profile_expected_chars * profile_floor_frac))
+        target["expected_min_events"] = profile_expected_events
+        target["acceptable_min_events"] = max(1, int(profile_expected_events * profile_floor_frac))
+
+    return target
+
+
+_WEBNOVEL_LANGUAGES = frozenset({"zh", "ko", "ja"})
+
+_GRANULARITY_DEFAULTS: Dict[str, ImportGranularityProfile] = {
+    "coarse_webnovel": {
+        "profile_name": "coarse_webnovel",
+        "min_characters_per_chapter": 1.0,
+        "acceptable_floor_fraction": 0.80,
+        "min_events_per_chapter": 1.0,
+        "rerun_on_character_gap": False,
+        "max_world_entities_per_chapter": 4,
+        "character_granularity": "named_only",
+        "event_density": "chapter_level",
+        "world_density": "named_only",
+        "relationship_depth": "core",
+    },
+    "balanced_novel": {
+        "profile_name": "balanced_novel",
+        "min_characters_per_chapter": 1.2,
+        "acceptable_floor_fraction": 0.85,
+        "min_events_per_chapter": 1.2,
+        "rerun_on_character_gap": True,
+        "max_world_entities_per_chapter": 5,
+        "character_granularity": "named_only",
+        "event_density": "chapter_level",
+        "world_density": "structural",
+        "relationship_depth": "recurring",
+    },
+    "fine_short_story": {
+        "profile_name": "fine_short_story",
+        "min_characters_per_chapter": 1.5,
+        "acceptable_floor_fraction": 0.90,
+        "min_events_per_chapter": 1.5,
+        "rerun_on_character_gap": True,
+        "max_world_entities_per_chapter": 5,
+        "character_granularity": "all",
+        "event_density": "scene_level",
+        "world_density": "full_lore",
+        "relationship_depth": "dense",
+    },
+}
+
+# Variant for large fast runs (lower world cap)
+_GRANULARITY_DEFAULTS["coarse_fast"] = {
+    **_GRANULARITY_DEFAULTS["coarse_webnovel"],
+    "profile_name": "coarse_webnovel",
+    "min_characters_per_chapter": 0.5,
+    "acceptable_floor_fraction": 0.70,
+    "min_events_per_chapter": 0.5,
+    "rerun_on_character_gap": False,
+    "max_world_entities_per_chapter": 3,
+    "event_density": "arc_level",
+    "world_density": "named_only",
+    "relationship_depth": "core",
+}
+
+
+def select_granularity_profile(
+    chapter_count: int,
+    source_language: str,
+    prompt_profile: str,
+    import_mode: str = "import_all",
+) -> ImportGranularityProfile:
+    """Select a source-adaptive granularity profile before extraction begins.
+
+    Decision rules (first match wins):
+    1. fast profile → coarse (low token budget)
+    2. Long CJK source (>30 chapters) → coarse_webnovel regardless of prompt_profile
+    3. Long non-CJK source (>30 chapters) → balanced_novel
+    4. Medium source (15–30 chapters) → balanced_novel
+    5. Short source (≤15 chapters) → fine_short_story
+    6. Default (custom without override, or any unmatched) → balanced_novel
+
+    Note: prompt_profile="custom" does NOT force fine_short_story; only short
+    chapter_count (≤15) triggers fine. This avoids over-extraction on long webnovels
+    where users choose "custom" for other reasons.
+    """
+    chapter_count = max(int(chapter_count or 1), 1)
+    lang = (source_language or "en").lower().split("-")[0]
+
+    if prompt_profile == "fast":
+        return dict(_GRANULARITY_DEFAULTS["coarse_fast"])  # type: ignore[return-value]
+
+    if chapter_count > 30 and lang in _WEBNOVEL_LANGUAGES:
+        return dict(_GRANULARITY_DEFAULTS["coarse_webnovel"])  # type: ignore[return-value]
+
+    if chapter_count > 30:
+        profile = dict(_GRANULARITY_DEFAULTS["balanced_novel"])
+        # Long sources: relax floor slightly and disable character gap rerun
+        profile["min_characters_per_chapter"] = 1.0
+        profile["acceptable_floor_fraction"] = 0.80
+        profile["min_events_per_chapter"] = 1.0
+        profile["rerun_on_character_gap"] = False
+        profile["max_world_entities_per_chapter"] = 4
+        return profile  # type: ignore[return-value]
+
+    if chapter_count > 15:
+        return dict(_GRANULARITY_DEFAULTS["balanced_novel"])  # type: ignore[return-value]
+
+    if chapter_count <= 15:
+        return dict(_GRANULARITY_DEFAULTS["fine_short_story"])  # type: ignore[return-value]
+
+    # Default — catches custom profile without explicit granularity override
+    return dict(_GRANULARITY_DEFAULTS["balanced_novel"])  # type: ignore[return-value]
 
 
 def plan_orchestrator_targets(
@@ -621,6 +755,7 @@ class ImportSupervisorState(TypedDict, total=False):
     converge_status: Literal["not_started", "planning", "extracting", "judging", "rerunning", "passed", "failed", "writing"]
     budget_exhausted: bool      # True when API returned HTTP 402 — stops all reruns
     global_rerun_count: int     # Total rerun API calls dispatched this run
+    import_granularity_profile: ImportGranularityProfile
 
 
 class DiffItem(TypedDict):
