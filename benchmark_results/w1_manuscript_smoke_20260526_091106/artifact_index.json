@@ -1,0 +1,106 @@
+{
+  "artifacts": [
+    {
+      "path": "run_config.json",
+      "description": "Run configuration (no API key) \u2014 run 1 (old sidecar)",
+      "exists": true,
+      "size_bytes": 640
+    },
+    {
+      "path": "benchmark_report.md",
+      "description": "Smoke validation report",
+      "exists": true,
+      "size_bytes": 4741
+    },
+    {
+      "path": "benchmark_metrics.json",
+      "description": "Machine-readable metrics \u2014 PASS",
+      "exists": true,
+      "size_bytes": 2401
+    },
+    {
+      "path": "failures_and_followups.md",
+      "description": "Remaining open items from failure closure benchmark",
+      "exists": true,
+      "size_bytes": 2147
+    },
+    {
+      "path": "artifact_index.json",
+      "description": "This file",
+      "exists": false,
+      "size_bytes": 0
+    },
+    {
+      "path": "smoke_10_chapter/\u51e1\u4eba\u4fee\u4ed9\u4f20_\u524d10\u7ae0.txt",
+      "description": "10-chapter source excerpt (20,951 chars)",
+      "exists": true,
+      "size_bytes": 61505
+    },
+    {
+      "path": "copied_artifacts/run2/inbox.json",
+      "description": "Validated run inbox (40 chars, 22 events, 37 world)",
+      "exists": true,
+      "size_bytes": 312459
+    },
+    {
+      "path": "copied_artifacts/run2/manuscript.json",
+      "description": "Validated run manuscript (10 chapters, all non-empty)",
+      "exists": true,
+      "size_bytes": 64144
+    },
+    {
+      "path": "copied_artifacts/run2/judge_artifact.json",
+      "description": "Judge: score=1.0, passed=True",
+      "exists": true,
+      "size_bytes": 3725
+    },
+    {
+      "path": "copied_artifacts/run2/timeline_architecture.json",
+      "description": "Timeline architecture",
+      "exists": true,
+      "size_bytes": 72686
+    },
+    {
+      "path": "copied_artifacts/run2/review_report.json",
+      "description": "Review report",
+      "exists": true,
+      "size_bytes": 5342
+    },
+    {
+      "path": "copied_artifacts/run2/supervisor_decisions.json",
+      "description": "Supervisor decisions (9 total)",
+      "exists": true,
+      "size_bytes": 3132
+    },
+    {
+      "path": "copied_artifacts/run2/window_metrics.json",
+      "description": "Window metrics (6 windows)",
+      "exists": true,
+      "size_bytes": 2273
+    },
+    {
+      "path": "copied_artifacts/run2/manifest.json",
+      "description": "Import manifest",
+      "exists": true,
+      "size_bytes": 6778
+    },
+    {
+      "path": "copied_artifacts/run2/prompt_windows.json",
+      "description": "Prompt window definitions",
+      "exists": true,
+      "size_bytes": 1940
+    },
+    {
+      "path": "copied_artifacts/run2/reducer_artifact.json",
+      "description": "Entity reducer artifact",
+      "exists": true,
+      "size_bytes": 215
+    },
+    {
+      "path": "copied_artifacts/run2/tool_operating_spec.json",
+      "description": "Tool operating spec",
+      "exists": true,
+      "size_bytes": 462
+    }
+  ]
+}

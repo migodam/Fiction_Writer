@@ -1,0 +1,95 @@
+{
+  "benchmark_id": "w1_manuscript_smoke_20260526_091106",
+  "branch": "codex/w1-orchestrated-import-quality",
+  "required_commit": "5db686f",
+  "required_commit_message": "fix: build manuscript from chunks in W1 supervisor path",
+  "model": "deepseek-v4-pro",
+  "prompt_profile": "deep",
+  "fixture": "凡人修仙传_前10章.txt",
+  "chapter_count_source": 10,
+  "overall_result": "PASS",
+  "run2": {
+    "session_id": "374ab212-323b-46cf-85dc-44d1c6fef8ab",
+    "import_run_id": "sup_27488a4242",
+    "project_path": "/home/narrative_ide/w1_ms_smoke_20260526_092758/",
+    "start_time": "2026-05-26T09:27:00+08:00",
+    "end_time": "2026-05-26T09:57:00+08:00",
+    "elapsed_minutes": 30,
+    "manuscript": {
+      "exists": true,
+      "chapter_count": 10,
+      "empty_titles": 0,
+      "empty_content": 0,
+      "order_sequential": true,
+      "order_indices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "content_lengths": [
+        2499,
+        2026,
+        1700,
+        2421,
+        2262,
+        2044,
+        1943,
+        2034,
+        2034,
+        1988
+      ]
+    },
+    "judge": {
+      "score": 1.0,
+      "passed": true,
+      "failed_gates": [],
+      "thematic_rerun_requests": [],
+      "character_count": 40,
+      "canonical_event_count": 26,
+      "world_count": 74,
+      "mixed_language_trait_sets": false
+    },
+    "language": {
+      "total_characters": 40,
+      "latin_violations": 0
+    },
+    "inbox": {
+      "exists": true,
+      "entity_types": {
+        "character": 40,
+        "timeline_event": 22,
+        "world_item": 37,
+        "world_container": 7,
+        "relationship": 24,
+        "character_tag": 3,
+        "timeline_branch": 5,
+        "chapter": 10,
+        "world_settings": 1
+      }
+    },
+    "windows": {
+      "original": 3,
+      "reruns": 2,
+      "total": 6,
+      "supervisor_decisions": 9
+    }
+  },
+  "acceptance_criteria": {
+    "manuscript_exists": "PASS",
+    "chapter_count_10": "PASS",
+    "all_titles_nonempty": "PASS",
+    "all_content_nonempty": "PASS",
+    "order_sequential_0_9": "PASS",
+    "inbox_exists": "PASS",
+    "judge_score_ge_1_0": "PASS",
+    "language_violations_0": "PASS"
+  },
+  "note_run1": "Run 1 used sidecar started at 1:19AM (before fix commit at 9:04AM) — old code, manuscript empty. Sidecar restarted before Run 2."
+}

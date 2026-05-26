@@ -1,0 +1,242 @@
+{
+  "import_run_id": "sup_27488a4242",
+  "source_file_path": "/Volumes/migodam's-external-brain/Development/Narrative_IDE/benchmark_results/w1_manuscript_smoke_20260526_091106/smoke_10_chapter/凡人修仙传_前10章.txt",
+  "source_hash": "7b78ecafbc0cb16e3f0f9e853273aa63e562ee6c03b7e2264535b5666503a84f",
+  "import_mode": "import_all",
+  "prompt_profile": "deep",
+  "model": "deepseek-v4-pro",
+  "created_at": "2026-05-26T01:28:14.615552+00:00",
+  "segment_count": 10,
+  "artifact_dir": "/Volumes/migodam's-external-brain/home/narrative_ide/w1_ms_smoke_20260526_092758/system/imports/sup_27488a4242",
+  "segments": [
+    {
+      "id": "seg_1c2459d3e277",
+      "level": "chapter",
+      "title": "第一章",
+      "chunk_id": 0,
+      "chapter_index": 0,
+      "source_span": {
+        "start": 0,
+        "end": 2499
+      },
+      "hash": "cce314d4193259aa446e84148bfa92ac3c1672fad80f0106614031885c60fdb0",
+      "char_count": 2499
+    },
+    {
+      "id": "seg_b68b9960e1e7",
+      "level": "chapter",
+      "title": "第二章",
+      "chunk_id": 1,
+      "chapter_index": 1,
+      "source_span": {
+        "start": 2499,
+        "end": 4525
+      },
+      "hash": "71b2a72bbf51ef6c0ae57886903185dc74e6ada438798308467921ddd3f87261",
+      "char_count": 2026
+    },
+    {
+      "id": "seg_48aa8dfab712",
+      "level": "chapter",
+      "title": "第三章",
+      "chunk_id": 2,
+      "chapter_index": 2,
+      "source_span": {
+        "start": 4525,
+        "end": 6225
+      },
+      "hash": "6802d09d6cc64518795930b7c5339538f1c55041be09d40cd3f87bde05c6099c",
+      "char_count": 1700
+    },
+    {
+      "id": "seg_76ecb15b66ab",
+      "level": "chapter",
+      "title": "第四章",
+      "chunk_id": 3,
+      "chapter_index": 3,
+      "source_span": {
+        "start": 6225,
+        "end": 8646
+      },
+      "hash": "125fecd344d60101ede7b8c3fc2a216f9678da16562d7ca824082088f6b45a8a",
+      "char_count": 2421
+    },
+    {
+      "id": "seg_63751a33e98b",
+      "level": "chapter",
+      "title": "第五章",
+      "chunk_id": 4,
+      "chapter_index": 4,
+      "source_span": {
+        "start": 8646,
+        "end": 10908
+      },
+      "hash": "cc7d626108c9a52a9d710f4398e7e6084ef9f3d079b1d9e80225c95095131eac",
+      "char_count": 2262
+    },
+    {
+      "id": "seg_2860d9587966",
+      "level": "chapter",
+      "title": "第六章",
+      "chunk_id": 5,
+      "chapter_index": 5,
+      "source_span": {
+        "start": 10908,
+        "end": 12952
+      },
+      "hash": "8ec5437088cc36371b06837011366dd550969439fde6c38ffe9b86328006b366",
+      "char_count": 2044
+    },
+    {
+      "id": "seg_ec418550da4f",
+      "level": "chapter",
+      "title": "第七章",
+      "chunk_id": 6,
+      "chapter_index": 6,
+      "source_span": {
+        "start": 12952,
+        "end": 14895
+      },
+      "hash": "a66065731f2483f7e90bbc47da3cf87793eff72ff90a85cf866ac1fb208b3716",
+      "char_count": 1943
+    },
+    {
+      "id": "seg_95879858bd41",
+      "level": "chapter",
+      "title": "第八章",
+      "chunk_id": 7,
+      "chapter_index": 7,
+      "source_span": {
+        "start": 14895,
+        "end": 16929
+      },
+      "hash": "1df1f95eec3a3d037a00f15574a09d8e9a881c2f98b629bfd842cb791f7ae5a6",
+      "char_count": 2034
+    },
+    {
+      "id": "seg_00ff24852385",
+      "level": "chapter",
+      "title": "第九章",
+      "chunk_id": 8,
+      "chapter_index": 8,
+      "source_span": {
+        "start": 16929,
+        "end": 18963
+      },
+      "hash": "73635e1f783199b3a62b51f6820ed44ad916b6044a3352cb27f8afffbc26bf0f",
+      "char_count": 2034
+    },
+    {
+      "id": "seg_bfb156b50780",
+      "level": "chapter",
+      "title": "第十章",
+      "chunk_id": 9,
+      "chapter_index": 9,
+      "source_span": {
+        "start": 18963,
+        "end": 20951
+      },
+      "hash": "38d3485efefb31f9652a55a3a6a55a2dbae44a52ea5e99f13fed100c59da5e75",
+      "char_count": 1988
+    }
+  ],
+  "project_structure_digest": {
+    "artifact_path": "/Volumes/migodam's-external-brain/home/narrative_ide/w1_ms_smoke_20260526_092758/system/imports/sup_27488a4242/project_structure_digest.json",
+    "estimated_tokens": 111,
+    "counts": {
+      "characters": 0,
+      "character_tags": 0,
+      "relationships": 0,
+      "timeline_branches": 0,
+      "world_containers": 0,
+      "world_items": 0,
+      "open_inbox_items": 0,
+      "open_issues": 0
+    }
+  },
+  "prompt_window_budget": {
+    "total_estimated_tokens": 256000,
+    "schema_policy_reserve_tokens": 24000,
+    "digest_reserve_tokens": 24000,
+    "validation_reserve_tokens": 8000
+  },
+  "prompt_windows": [
+    {
+      "id": "pwin_f39df2f7113f",
+      "chapter_range": "第一章–第四章",
+      "chunk_ids": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "estimated_tokens": 31973,
+      "total_token_budget": 0,
+      "source_budget_tokens": 0,
+      "source_token_estimate": 0,
+      "source_chars": 8652,
+      "digest_token_estimate": 111,
+      "validation_token_estimate": 11,
+      "schema_policy_reserve_tokens": 0,
+      "target_fill_ratio": 0,
+      "fill_ratio": 0,
+      "split_reason": "complete_chapter_batch",
+      "source_span": {
+        "start": 0,
+        "end": 8646
+      }
+    },
+    {
+      "id": "pwin_70f4029c718a",
+      "chapter_range": "第五章–第八章",
+      "chunk_ids": [
+        4,
+        5,
+        6,
+        7
+      ],
+      "estimated_tokens": 31683,
+      "total_token_budget": 0,
+      "source_budget_tokens": 0,
+      "source_token_estimate": 0,
+      "source_chars": 8289,
+      "digest_token_estimate": 111,
+      "validation_token_estimate": 11,
+      "schema_policy_reserve_tokens": 0,
+      "target_fill_ratio": 0,
+      "fill_ratio": 0,
+      "split_reason": "complete_chapter_batch",
+      "source_span": {
+        "start": 8646,
+        "end": 16929
+      }
+    },
+    {
+      "id": "pwin_937cc2da8fb7",
+      "chapter_range": "第九章–第十章",
+      "chunk_ids": [
+        8,
+        9
+      ],
+      "estimated_tokens": 27843,
+      "total_token_budget": 0,
+      "source_budget_tokens": 0,
+      "source_token_estimate": 0,
+      "source_chars": 4024,
+      "digest_token_estimate": 111,
+      "validation_token_estimate": 11,
+      "schema_policy_reserve_tokens": 0,
+      "target_fill_ratio": 0,
+      "fill_ratio": 0,
+      "split_reason": "complete_chapter_batch",
+      "source_span": {
+        "start": 16929,
+        "end": 20951
+      }
+    }
+  ],
+  "artifact_paths": {
+    "project_structure_digest": "/Volumes/migodam's-external-brain/home/narrative_ide/w1_ms_smoke_20260526_092758/system/imports/sup_27488a4242/project_structure_digest.json",
+    "prompt_windows": "/Volumes/migodam's-external-brain/home/narrative_ide/w1_ms_smoke_20260526_092758/system/imports/sup_27488a4242/prompt_windows.json"
+  }
+}
