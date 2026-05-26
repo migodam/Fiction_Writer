@@ -1,0 +1,104 @@
+{
+  "benchmark_id": "w1_full50_after_streaming_20260526_100642",
+  "branch": "codex/w1-orchestrated-import-quality",
+  "head_commit": "bed8ec6",
+  "key_commits": {
+    "streaming_write_fix": "6718ab0",
+    "manuscript_fix": "5db686f"
+  },
+  "model": "deepseek-v4-pro",
+  "prompt_profile": "deep",
+  "date": "2026-05-26",
+  "overall_result": "FAIL_INVALID",
+  "failure_reason": "DeepSeek API 402 Insufficient Balance — 29 of 41 windows failed, chapters 25–50 not extracted",
+  "run": {
+    "session_id": "6d9148dc-cb68-4673-a174-bea262dda9d2",
+    "import_run_id": "sup_4a7238a76b",
+    "project_path": "/Volumes/migodam's-external-brain/home/narrative_ide/w1_full50_streaming_20260526_100642",
+    "source": "凡人修仙传_前50章.txt",
+    "start_time": "10:07 UTC+8",
+    "end_time": "10:57 UTC+8",
+    "elapsed_minutes": 50,
+    "terminal_status": "error"
+  },
+  "windows": {
+    "planned": 14,
+    "actual": 41,
+    "reruns": 27,
+    "succeeded": 12,
+    "failed_402": 29,
+    "failed_prompts_total": 148
+  },
+  "supervisor": {
+    "total_decisions": 45
+  },
+  "extraction_partial": {
+    "chapters_covered": "1–24 (partial)",
+    "chapters_missed": "25–50",
+    "character_count": 56,
+    "canonical_event_count": 58,
+    "world_count": 97,
+    "timeline_branches": 4
+  },
+  "judge": {
+    "score": 0.64,
+    "passed": false,
+    "failed_gates": ["character_undercoverage", "timeline_undercoverage"],
+    "character_count_at_judge": 56,
+    "target_character_count": 75,
+    "canonical_events_at_judge": 58,
+    "target_canonical_events": 63,
+    "iteration": 0,
+    "note": "Failures due to API quota exhaustion, not extraction quality regression"
+  },
+  "memory": {
+    "peak_percent": 7.5,
+    "peak_gb_approx": 1.8,
+    "total_ram_gb": 24,
+    "during_extraction_percent": 0.6,
+    "oom_crashed": false,
+    "streaming_fix_confirmed": true,
+    "previous_run_peak_percent": 49.0,
+    "improvement_factor": "6.5x"
+  },
+  "outputs": {
+    "inbox_json_written": false,
+    "manuscript_json_written": false,
+    "cross_validation_json": false
+  },
+  "secret_check": {
+    "api_key_found_in_results": false,
+    "scan": "rg -n 'sk-[A-Za-z0-9_-]{16,}' benchmark_results/w1_full50_after_streaming_20260526_100642/ -> 0 matches"
+  },
+  "acceptance_criteria": {
+    "fifty_chapters_no_oom": "FAIL",
+    "manuscript_chapters_50": "FAIL",
+    "all_titles_content_nonempty": "UNKNOWN",
+    "order_index_sequential": "UNKNOWN",
+    "inbox_exists": "FAIL",
+    "characters_gte_75": "FAIL",
+    "key_chars_present": "UNKNOWN",
+    "language_violations_zero": "UNKNOWN",
+    "qixuanmen_organization": "UNKNOWN",
+    "timeline_events_gte_90": "FAIL",
+    "judge_score_1_0": "FAIL",
+    "no_api_key_in_output": "PASS"
+  },
+  "comparison_with_previous": {
+    "w1_failure_closure_50ch": {
+      "character_count": 75,
+      "canonical_event_count": 102,
+      "judge_score": 1.0,
+      "peak_memory_percent": 49.0,
+      "result": "PASS"
+    },
+    "this_run": {
+      "character_count": 56,
+      "canonical_event_count": 58,
+      "judge_score": 0.64,
+      "peak_memory_percent": 7.5,
+      "result": "FAIL_INVALID"
+    },
+    "assessment": "Count regression is entirely explained by API quota exhaustion (chapters 25-50 not extracted). Extraction quality for chapters 1-24 appears normal. Memory improvement of 6.5x confirms streaming write fix is effective."
+  }
+}

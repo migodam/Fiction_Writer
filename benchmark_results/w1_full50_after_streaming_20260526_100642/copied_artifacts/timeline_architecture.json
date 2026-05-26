@@ -1,0 +1,4605 @@
+{
+  "import_run_id": "sup_4a7238a76b",
+  "root_branch_id": "branch_import_main",
+  "branches": [
+    {
+      "id": "branch_import_main",
+      "name": "主时间线",
+      "description": "主叙事时间线",
+      "parentBranchId": null,
+      "forkEventId": null,
+      "mergeEventId": null,
+      "color": "#38bdf8",
+      "sortOrder": 0,
+      "mode": "root",
+      "startAnchor": null,
+      "endAnchor": null,
+      "endMode": "open",
+      "mergeTargetBranchId": null,
+      "geometry": {
+        "laneOffset": 0,
+        "bend": 0.25,
+        "thickness": 2
+      },
+      "rankStart": 0,
+      "rankEnd": 35,
+      "laneId": "lane_0_main",
+      "layoutHint": {
+        "eventBudget": 36,
+        "clusterOverflow": false,
+        "densityClass": "dense"
+      }
+    },
+    {
+      "id": "branch_theme_antagonist",
+      "name": "Mentor Threat",
+      "description": "Imported timeline lane inferred from 11 events on theme lane 'Mentor Threat'.",
+      "parentBranchId": "branch_import_main",
+      "forkEventId": "event_6d31c354",
+      "mergeEventId": "event_1e681692",
+      "color": "#f97316",
+      "sortOrder": 1,
+      "mode": "forked",
+      "startAnchor": null,
+      "endAnchor": null,
+      "endMode": "merge",
+      "mergeTargetBranchId": "branch_import_main",
+      "geometry": {
+        "laneOffset": 140,
+        "bend": 0.26,
+        "thickness": 2
+      },
+      "rankStart": 0,
+      "rankEnd": 12,
+      "laneId": "lane_theme_antagonist",
+      "layoutHint": {
+        "eventBudget": 36,
+        "clusterOverflow": false,
+        "densityClass": "normal"
+      }
+    },
+    {
+      "id": "branch_theme_training",
+      "name": "Bottle Mystery",
+      "description": "Imported timeline lane inferred from 2 events on theme lane 'Bottle Mystery'.",
+      "parentBranchId": "branch_import_main",
+      "forkEventId": "event_68934596",
+      "mergeEventId": "event_9e64b65b",
+      "color": "#22c55e",
+      "sortOrder": 2,
+      "mode": "forked",
+      "startAnchor": null,
+      "endAnchor": null,
+      "endMode": "merge",
+      "mergeTargetBranchId": "branch_import_main",
+      "geometry": {
+        "laneOffset": 280,
+        "bend": 0.33999999999999997,
+        "thickness": 2
+      },
+      "rankStart": 0,
+      "rankEnd": 6,
+      "laneId": "lane_theme_training",
+      "layoutHint": {
+        "eventBudget": 36,
+        "clusterOverflow": false,
+        "densityClass": "normal"
+      }
+    },
+    {
+      "id": "branch_arc_rival_ally",
+      "name": "Rival Ally",
+      "description": "Imported timeline lane inferred from 2 events on arc lane 'Rival Ally'.",
+      "parentBranchId": "branch_import_main",
+      "forkEventId": "event_2de5923b",
+      "mergeEventId": "event_2de5923b",
+      "color": "#a855f7",
+      "sortOrder": 3,
+      "mode": "forked",
+      "startAnchor": null,
+      "endAnchor": null,
+      "endMode": "merge",
+      "mergeTargetBranchId": "branch_import_main",
+      "geometry": {
+        "laneOffset": 420,
+        "bend": 0.18,
+        "thickness": 2
+      },
+      "rankStart": 0,
+      "rankEnd": 1,
+      "laneId": "lane_arc_rival_ally",
+      "layoutHint": {
+        "eventBudget": 36,
+        "clusterOverflow": false,
+        "densityClass": "normal"
+      }
+    }
+  ],
+  "canonical_events": [
+    {
+      "event_id": "event_fc842826",
+      "title": "三叔举荐韩立参加七玄门测试",
+      "description": "韩立的三叔成为七玄门外门弟子，推举韩立参加七玄门内门弟子考验，韩父在得知可能每月有一两银子并成为体面人后答应。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "inciting_choice",
+      "arcRole": "protagonist",
+      "causalRole": "cause",
+      "branchRole": "mainline",
+      "arcId": "protagonist_origin",
+      "timelineLaneHint": "Main Arc",
+      "causalPredecessorHints": [],
+      "forkMergeHint": "root",
+      "dedupeKey": "hanli::uncle_recommends::seven_mysteries_test::ch1",
+      "chapterRange": {
+        "start": "第一章",
+        "end": "第一章"
+      },
+      "importanceScore": 96,
+      "character_ids": [
+        "char_1298e116",
+        "char_5aef4084",
+        "char_e19cfa9d"
+      ],
+      "character_names": [
+        "韩立",
+        "三叔",
+        "韩父"
+      ],
+      "location_hint": "山边小村",
+      "temporal_hint": "第一章，韩立十岁时",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 1.0,
+      "chunk_id": 0,
+      "orderIndex": 0,
+      "summary": "韩立的三叔成为七玄门外门弟子，推举韩立参加七玄门内门弟子考验，韩父在得知可能每月有一两银子并成为体面人后答应。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_1298e116",
+        "char_5aef4084",
+        "char_e19cfa9d"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 0,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_d48fc175",
+      "title": "王护法接走韩立正式入七玄门",
+      "description": "在青牛镇春香酒楼停留两天后，七玄门王护法驾乘带有“玄”字旗的马车到来，接走韩立。三叔贿赂王护法请求路上照顾。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "faction_move",
+      "arcRole": "faction",
+      "causalRole": "turning_point",
+      "branchRole": "mainline",
+      "arcId": "sect_entry",
+      "timelineLaneHint": "Sect Entry",
+      "causalPredecessorHints": [
+        "韩立随三叔离家前往青牛镇"
+      ],
+      "forkMergeHint": "merge",
+      "dedupeKey": "王护法::接走韩立::移交七玄门::第二章",
+      "chapterRange": {
+        "start": "第二章",
+        "end": "第二章"
+      },
+      "importanceScore": 90,
+      "character_ids": [
+        "char_1298e116",
+        "char_c4739c95",
+        "char_5aef4084"
+      ],
+      "character_names": [],
+      "location_hint": "青牛镇春香酒楼",
+      "temporal_hint": "第二章，韩立到达青牛镇两天后的傍晚",
+      "importance": "critical",
+      "deterministicLaneHints": {
+        "mainline": false,
+        "factionOrOrganization": true,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.97,
+      "chunk_id": 0,
+      "orderIndex": 1,
+      "summary": "在青牛镇春香酒楼停留两天后，七玄门王护法驾乘带有“玄”字旗的马车到来，接走韩立。三叔贿赂王护法请求路上照顾。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_1298e116",
+        "char_c4739c95",
+        "char_5aef4084"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 1,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_d572f8a4",
+      "title": "韩立攀登炼骨崖试炼",
+      "description": "韩立与三十余名孩童参加七玄门入门考验，需在正午前穿越竹林、岩壁并攀登炼骨崖；韩立耗尽体力未能按时登顶，舞岩率先到达并嘲笑众人。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "test_or_trial",
+      "arcRole": "protagonist",
+      "causalRole": "turning_point",
+      "branchRole": "mainline",
+      "arcId": "sect_entry",
+      "timelineLaneHint": "Sect Entrance Trial",
+      "causalPredecessorHints": [
+        "韩立离别家人赴七玄门"
+      ],
+      "forkMergeHint": "fork",
+      "dedupeKey": "hanli::entrance_test::cliff_climb::ch3_ch4",
+      "chapterRange": {
+        "start": "第三章",
+        "end": "第四章"
+      },
+      "importanceScore": 75,
+      "character_ids": [
+        "char_1298e116",
+        "char_8178869f",
+        "char_e67925b7",
+        "char_c4739c95"
+      ],
+      "character_names": [
+        "韩立",
+        "舞岩",
+        "岳堂主",
+        "王护法"
+      ],
+      "location_hint": "彩霞山炼骨崖",
+      "temporal_hint": "第三章末尾至第四章正午",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.9,
+      "chunk_id": 0,
+      "orderIndex": 2,
+      "summary": "韩立与三十余名孩童参加七玄门入门考验，需在正午前穿越竹林、岩壁并攀登炼骨崖；韩立耗尽体力未能按时登顶，舞岩率先到达并嘲笑众人。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_1298e116",
+        "char_8178869f",
+        "char_e67925b7",
+        "char_c4739c95"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 2,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_aab98f65",
+      "title": "韩立离别家人赴七玄门",
+      "description": "一个多月后三叔来接韩立，韩立与父母告别，坐马车离开村子，心中立志挣大钱后归来。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "journey_departure",
+      "arcRole": "protagonist",
+      "causalRole": "effect",
+      "branchRole": "mainline",
+      "arcId": "protagonist_origin",
+      "timelineLaneHint": "Main Arc",
+      "causalPredecessorHints": [
+        "三叔举荐韩立参加七玄门测试"
+      ],
+      "forkMergeHint": "unknown",
+      "dedupeKey": "hanli::departs_village::for_seven_mysteries::ch1",
+      "chapterRange": {
+        "start": "第一章",
+        "end": "第一章"
+      },
+      "importanceScore": 90,
+      "character_ids": [
+        "char_1298e116",
+        "char_5aef4084",
+        "char_e19cfa9d",
+        "char_5f65c6fd"
+      ],
+      "character_names": [
+        "韩立",
+        "三叔",
+        "韩父",
+        "韩母"
+      ],
+      "location_hint": "山边小村",
+      "temporal_hint": "第一章末尾，一个多月后",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 1.0,
+      "chunk_id": 0,
+      "orderIndex": 3,
+      "summary": "一个多月后三叔来接韩立，韩立与父母告别，坐马车离开村子，心中立志挣大钱后归来。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_1298e116",
+        "char_5aef4084",
+        "char_e19cfa9d",
+        "char_5f65c6fd"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 3,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_a9a8f12d",
+      "title": "韩立随三叔离家前往青牛镇",
+      "description": "三叔一个多月后准时来接韩立，韩立告别父母，随三叔乘马车第一次离开家乡，前往青牛镇准备参加七玄门入门测试。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "journey_departure",
+      "arcRole": "protagonist",
+      "causalRole": "effect",
+      "branchRole": "mainline",
+      "arcId": "protagonist_origin",
+      "timelineLaneHint": "Main Arc",
+      "causalPredecessorHints": [
+        "三叔引荐韩立参加七玄门入门测试"
+      ],
+      "forkMergeHint": "root",
+      "dedupeKey": "韩立::离开家乡::前往青牛镇::第一章",
+      "chapterRange": {
+        "start": "第一章",
+        "end": "第一章"
+      },
+      "importanceScore": 92,
+      "character_ids": [
+        "char_1298e116",
+        "char_5aef4084"
+      ],
+      "character_names": [],
+      "location_hint": "从山边小村前往青牛镇的马车上",
+      "temporal_hint": "第一章，三叔来访一个月后",
+      "importance": "critical",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.96,
+      "chunk_id": 0,
+      "orderIndex": 4,
+      "summary": "三叔一个多月后准时来接韩立，韩立告别父母，随三叔乘马车第一次离开家乡，前往青牛镇准备参加七玄门入门测试。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_1298e116",
+        "char_5aef4084"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 4,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_f9155589",
+      "title": "三叔来访提议韩立参加七玄门测试",
+      "description": "三叔来访，告知韩立父母七玄门招收内门弟子，并提议带韩立参加测试，韩父在犹豫后同意。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "inciting_choice",
+      "arcRole": "protagonist",
+      "causalRole": "cause",
+      "branchRole": "mainline",
+      "arcId": "hanli_origin",
+      "timelineLaneHint": "韩立出身与转折",
+      "causalPredecessorHints": [],
+      "forkMergeHint": "root",
+      "dedupeKey": "三叔::提议韩立参加七玄门测试::韩父同意改变韩立命运::ch1",
+      "chapterRange": {
+        "start": "第一章",
+        "end": "第一章"
+      },
+      "importanceScore": 100,
+      "character_ids": [
+        "char_1298e116",
+        "char_5aef4084",
+        "char_e19cfa9d",
+        "char_5f65c6fd"
+      ],
+      "character_names": [],
+      "location_hint": "山边小村韩立家",
+      "temporal_hint": "韩立十岁时，三叔来访日",
+      "importance": "critical",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 1.0,
+      "chunk_id": 2,
+      "orderIndex": 5,
+      "summary": "三叔来访，告知韩立父母七玄门招收内门弟子，并提议带韩立参加测试，韩父在犹豫后同意。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_1298e116",
+        "char_5aef4084",
+        "char_e19cfa9d",
+        "char_5f65c6fd"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 5,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_a10cb7ba",
+      "title": "王护法接韩立前往七玄门总门",
+      "description": "在青牛镇等待数日后，七玄门王护法乘玄旗马车到来，三叔行贿托其照顾，韩立被带上马车与其他孩童一同前往彩霞山。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "journey_departure",
+      "arcRole": "protagonist",
+      "causalRole": "effect",
+      "branchRole": "mainline",
+      "arcId": "journey_to_sect",
+      "timelineLaneHint": "入门旅途",
+      "causalPredecessorHints": [
+        "韩立离家随三叔前往青牛镇"
+      ],
+      "forkMergeHint": "mainline",
+      "dedupeKey": "王护法::接韩立上马车::前往七玄门总门::ch2",
+      "chapterRange": {
+        "start": "第二章",
+        "end": "第二章"
+      },
+      "importanceScore": 82,
+      "character_ids": [
+        "char_1298e116",
+        "char_5aef4084",
+        "char_c4739c95"
+      ],
+      "character_names": [],
+      "location_hint": "青牛镇春香酒楼前",
+      "temporal_hint": "到达青牛镇后第三天",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.9,
+      "chunk_id": 2,
+      "orderIndex": 6,
+      "summary": "在青牛镇等待数日后，七玄门王护法乘玄旗马车到来，三叔行贿托其照顾，韩立被带上马车与其他孩童一同前往彩霞山。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_1298e116",
+        "char_5aef4084",
+        "char_c4739c95"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 6,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_b36b931b",
+      "title": "韩立参加入门测试未能登顶",
+      "description": "次日，岳堂主宣布炼骨崖测试规则，韩立与三十余名孩童开始攀爬，韩立拼尽全力，最终正午前未能到达崖顶，力竭停在麻绳上。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "test_or_trial",
+      "arcRole": "protagonist",
+      "causalRole": "turning_point",
+      "branchRole": "mainline",
+      "arcId": "entrance_trial",
+      "timelineLaneHint": "入门考验",
+      "causalPredecessorHints": [
+        "韩立抵达七玄门总门"
+      ],
+      "forkMergeHint": "mainline",
+      "dedupeKey": "韩立::攀登炼骨崖::未能在正午登顶::ch4",
+      "chapterRange": {
+        "start": "第四章",
+        "end": "第四章"
+      },
+      "importanceScore": 95,
+      "character_ids": [
+        "char_1298e116",
+        "char_e67925b7"
+      ],
+      "character_names": [],
+      "location_hint": "炼骨崖",
+      "temporal_hint": "抵达七玄门次日晨至正午",
+      "importance": "critical",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 1.0,
+      "chunk_id": 2,
+      "orderIndex": 7,
+      "summary": "次日，岳堂主宣布炼骨崖测试规则，韩立与三十余名孩童开始攀爬，韩立拼尽全力，最终正午前未能到达崖顶，力竭停在麻绳上。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_1298e116",
+        "char_e67925b7"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 7,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_a8681d80",
+      "title": "韩立抵达七玄门总门",
+      "description": "马车行五日，抵达彩霞山七玄门总门，岳堂主下令安排至清客院休息，次日开始选拔。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "other",
+      "arcRole": "organization",
+      "causalRole": "setup",
+      "branchRole": "mainline",
+      "arcId": "journey_to_sect",
+      "timelineLaneHint": "入门旅途",
+      "causalPredecessorHints": [
+        "王护法接韩立前往七玄门总门"
+      ],
+      "forkMergeHint": "mainline",
+      "dedupeKey": "韩立等人::到达七玄门彩霞山::入住清客院准备测试::ch3",
+      "chapterRange": {
+        "start": "第三章",
+        "end": "第三章"
+      },
+      "importanceScore": 60,
+      "character_ids": [
+        "char_1298e116",
+        "char_e67925b7",
+        "char_c4739c95"
+      ],
+      "character_names": [],
+      "location_hint": "彩霞山七玄门",
+      "temporal_hint": "离开青牛镇后第五天傍晚",
+      "importance": "medium",
+      "deterministicLaneHints": {
+        "mainline": false,
+        "factionOrOrganization": true,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.85,
+      "chunk_id": 2,
+      "orderIndex": 8,
+      "summary": "马车行五日，抵达彩霞山七玄门总门，岳堂主下令安排至清客院休息，次日开始选拔。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_1298e116",
+        "char_e67925b7",
+        "char_c4739c95"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 8,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_989dd38d",
+      "title": "三叔提议韩立参加七玄门入门考验",
+      "description": "三叔韩胖子回乡，告知七玄门招收内门弟子，力劝韩父让韩立参加测试，韩父最终同意。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "inciting_choice",
+      "arcRole": "protagonist",
+      "causalRole": "cause",
+      "branchRole": "mainline",
+      "arcId": "protagonist_origin",
+      "timelineLaneHint": "Main Arc",
+      "causalPredecessorHints": [],
+      "forkMergeHint": "root",
+      "dedupeKey": "han_li::three_uncle::proposes_entrance_test::chapter1",
+      "chapterRange": {
+        "start": "第一章",
+        "end": "第一章"
+      },
+      "importanceScore": 85,
+      "character_ids": [
+        "char_e5de8bac",
+        "char_a30381fd"
+      ],
+      "character_names": [
+        "韩立",
+        "三叔",
+        "韩父"
+      ],
+      "location_hint": "山边小村",
+      "temporal_hint": "韩立十岁，一个月后三叔来接",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.95,
+      "chunk_id": 4,
+      "orderIndex": 9,
+      "summary": "三叔韩胖子回乡，告知七玄门招收内门弟子，力劝韩父让韩立参加测试，韩父最终同意。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_e5de8bac",
+        "char_a30381fd"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 9,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_5d9f1b33",
+      "title": "韩立修炼出异种凉性能量",
+      "description": "韩立修炼无名口诀三个月后，体内产生细微的凉性能量流，与七玄门正阳劲的热流截然不同。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "discovery",
+      "arcRole": "protagonist",
+      "causalRole": "cause",
+      "branchRole": "mainline",
+      "arcId": "cultivation_progress",
+      "timelineLaneHint": "Cultivation Progress",
+      "causalPredecessorHints": [
+        "墨大夫传授无名口诀"
+      ],
+      "forkMergeHint": "unknown",
+      "dedupeKey": "han_li::cultivates_unnamed_method::produces_cool_energy::chapter7",
+      "chapterRange": {
+        "start": "第七章",
+        "end": "第七章"
+      },
+      "importanceScore": 80,
+      "character_ids": [
+        "char_e5de8bac",
+        "char_bf69ae71"
+      ],
+      "character_names": [
+        "韩立",
+        "张铁"
+      ],
+      "location_hint": "神手谷",
+      "temporal_hint": "修炼三个月后",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.9,
+      "chunk_id": 4,
+      "orderIndex": 10,
+      "summary": "韩立修炼无名口诀三个月后，体内产生细微的凉性能量流，与七玄门正阳劲的热流截然不同。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_e5de8bac",
+        "char_bf69ae71"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 10,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_47b0c837",
+      "title": "韩立参加炼骨崖考验并成为记名弟子",
+      "description": "韩立在炼骨崖入门测试中虽未按时到达崖顶，但因表现突出，与张铁一同被收为记名弟子。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "test_or_trial",
+      "arcRole": "protagonist",
+      "causalRole": "turning_point",
+      "branchRole": "mainline",
+      "arcId": "sect_entry",
+      "timelineLaneHint": "Sect Entry",
+      "causalPredecessorHints": [
+        "三叔提议韩立参加七玄门入门考验"
+      ],
+      "forkMergeHint": "root",
+      "dedupeKey": "han_li::seven_mysteries_gate::entrance_trial::becomes_temporary_disciple::chapter4",
+      "chapterRange": {
+        "start": "第四章",
+        "end": "第四章"
+      },
+      "importanceScore": 80,
+      "character_ids": [
+        "char_e5de8bac",
+        "char_bf69ae71",
+        "char_acf708ac",
+        "char_469c50b0"
+      ],
+      "character_names": [
+        "韩立",
+        "张铁",
+        "岳堂主",
+        "舞岩"
+      ],
+      "location_hint": "七玄门炼骨崖",
+      "temporal_hint": "中午前，入门测试结束",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.9,
+      "chunk_id": 4,
+      "orderIndex": 11,
+      "summary": "韩立在炼骨崖入门测试中虽未按时到达崖顶，但因表现突出，与张铁一同被收为记名弟子。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_e5de8bac",
+        "char_bf69ae71",
+        "char_acf708ac",
+        "char_469c50b0"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 11,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_113a7a9c",
+      "title": "三叔提议入门测试",
+      "description": "三叔来访，告知七玄门招收内门弟子测试，建议韩立参加，韩父犹豫后同意。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "inciting_choice",
+      "arcRole": "protagonist",
+      "causalRole": "turning_point",
+      "branchRole": "mainline",
+      "arcId": "sect_entry",
+      "timelineLaneHint": "Main Arc",
+      "causalPredecessorHints": [],
+      "forkMergeHint": "root",
+      "dedupeKey": "三叔::提议参加七玄门测试::韩父同意::第一章",
+      "chapterRange": {
+        "start": "第一章",
+        "end": "第一章"
+      },
+      "importanceScore": 85,
+      "character_ids": [
+        "char_b71227cd",
+        "char_04273f33"
+      ],
+      "character_names": [
+        "韩立",
+        "三叔",
+        "韩父"
+      ],
+      "location_hint": "山边小村韩立家",
+      "temporal_hint": "韩立十岁时，第一章",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.95,
+      "chunk_id": 8,
+      "orderIndex": 12,
+      "summary": "三叔来访，告知七玄门招收内门弟子测试，建议韩立参加，韩父犹豫后同意。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_b71227cd",
+        "char_04273f33"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 12,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_20367d13",
+      "title": "炼骨崖测试成为记名弟子",
+      "description": "韩立参加七玄门入门测试，虽未按时登顶，但表现突出，与张铁一同被收为记名弟子，舞岩直接进七绝堂。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "test_or_trial",
+      "arcRole": "protagonist",
+      "causalRole": "turning_point",
+      "branchRole": "mainline",
+      "arcId": "sect_entry",
+      "timelineLaneHint": "Sect Entry Trial",
+      "causalPredecessorHints": [
+        "韩立离家赴七玄门"
+      ],
+      "forkMergeHint": "root",
+      "dedupeKey": "韩立::炼骨崖测试::成为记名弟子::第四章",
+      "chapterRange": {
+        "start": "第四章",
+        "end": "第四章"
+      },
+      "importanceScore": 85,
+      "character_ids": [
+        "char_b71227cd",
+        "char_de38e2c4",
+        "char_69f03c1e",
+        "char_05e57dd5"
+      ],
+      "character_names": [
+        "韩立",
+        "张铁",
+        "舞岩",
+        "岳堂主"
+      ],
+      "location_hint": "彩霞山炼骨崖",
+      "temporal_hint": "到达七玄门次日，第四章",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.95,
+      "chunk_id": 8,
+      "orderIndex": 13,
+      "summary": "韩立参加七玄门入门测试，虽未按时登顶，但表现突出，与张铁一同被收为记名弟子，舞岩直接进七绝堂。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_b71227cd",
+        "char_de38e2c4",
+        "char_69f03c1e",
+        "char_05e57dd5"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 13,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_529f94f5",
+      "title": "韩立捡到神秘小瓶",
+      "description": "韩立外出途中踢到一只坚硬的绿色瓶子，带回并试图打开，但无法开启。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "discovery",
+      "arcRole": "location",
+      "causalRole": "setup",
+      "branchRole": "fork",
+      "arcId": "bottle_secret",
+      "timelineLaneHint": "Bottle Mystery",
+      "causalPredecessorHints": [],
+      "forkMergeHint": "fork",
+      "dedupeKey": "韩立::捡到绿色小瓶::无法打开::第十章",
+      "chapterRange": {
+        "start": "第十章",
+        "end": "第十章"
+      },
+      "importanceScore": 90,
+      "character_ids": [
+        "char_b71227cd"
+      ],
+      "character_names": [
+        "韩立"
+      ],
+      "location_hint": "彩霞山小路上",
+      "temporal_hint": "修炼期间某个秋末，第十章",
+      "importance": "critical",
+      "deterministicLaneHints": {
+        "mainline": false,
+        "factionOrOrganization": false,
+        "location": true,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 1.0,
+      "chunk_id": 8,
+      "orderIndex": 14,
+      "summary": "韩立外出途中踢到一只坚硬的绿色瓶子，带回并试图打开，但无法开启。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_b71227cd"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 14,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_bcf7940e",
+      "title": "韩立砸瓶不碎并藏匿",
+      "description": "韩立用铁锤猛砸瓶子，瓶子完好无损，意识到其非凡，便将其藏于贴身皮袋中。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "discovery",
+      "arcRole": "location",
+      "causalRole": "payoff",
+      "branchRole": "parallel",
+      "arcId": "bottle_secret",
+      "timelineLaneHint": "Bottle Mystery",
+      "causalPredecessorHints": [
+        "韩立捡到神秘小瓶"
+      ],
+      "forkMergeHint": "merge",
+      "dedupeKey": "韩立::砸瓶不碎::藏匿瓶子::第十二章",
+      "chapterRange": {
+        "start": "第十二章",
+        "end": "第十二章"
+      },
+      "importanceScore": 85,
+      "character_ids": [
+        "char_b71227cd"
+      ],
+      "character_names": [
+        "韩立"
+      ],
+      "location_hint": "韩立小屋",
+      "temporal_hint": "捡到瓶子后不久，第十二章",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": false,
+        "factionOrOrganization": false,
+        "location": true,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.95,
+      "chunk_id": 8,
+      "orderIndex": 15,
+      "summary": "韩立用铁锤猛砸瓶子，瓶子完好无损，意识到其非凡，便将其藏于贴身皮袋中。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_b71227cd"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 15,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_41277027",
+      "title": "韩立离家赴七玄门",
+      "description": "三叔带韩立乘坐马车离开村子，韩立告别父母，怀揣挣大钱的希望，踏上了改变命运的旅程。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "journey_departure",
+      "arcRole": "protagonist",
+      "causalRole": "effect",
+      "branchRole": "mainline",
+      "arcId": "protagonist_origin",
+      "timelineLaneHint": "Main Arc",
+      "causalPredecessorHints": [
+        "三叔提议入门测试"
+      ],
+      "forkMergeHint": "root",
+      "dedupeKey": "韩立::离家去七玄门::离别父母::第一章",
+      "chapterRange": {
+        "start": "第一章",
+        "end": "第一章"
+      },
+      "importanceScore": 80,
+      "character_ids": [
+        "char_b71227cd",
+        "char_04273f33",
+        "char_78fd7cdd"
+      ],
+      "character_names": [
+        "韩立",
+        "三叔",
+        "韩父",
+        "韩母"
+      ],
+      "location_hint": "山村至马车上",
+      "temporal_hint": "一个月后，第一章末",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.95,
+      "chunk_id": 8,
+      "orderIndex": 16,
+      "summary": "三叔带韩立乘坐马车离开村子，韩立告别父母，怀揣挣大钱的希望，踏上了改变命运的旅程。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_b71227cd",
+        "char_04273f33",
+        "char_78fd7cdd"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 16,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_a135a4d8",
+      "title": "三叔提议七玄门入门测试",
+      "description": "三叔韩胖子回到村中，提出七玄门招收内门弟子的消息，韩父犹豫后最终同意让年仅十岁的韩立去参加考验，韩立的命运由此改变。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "inciting_choice",
+      "arcRole": "protagonist",
+      "causalRole": "cause",
+      "branchRole": "mainline",
+      "arcId": "sect_entry",
+      "timelineLaneHint": "Main Arc",
+      "causalPredecessorHints": [],
+      "forkMergeHint": "root",
+      "dedupeKey": "韩立三叔::提议七玄门测试::韩父同意韩立离家::第一章",
+      "chapterRange": {
+        "start": "第一章",
+        "end": "第二章"
+      },
+      "importanceScore": 95,
+      "character_ids": [
+        "char_5aef4084",
+        "char_e5de8bac",
+        "char_e19cfa9d"
+      ],
+      "character_names": [],
+      "location_hint": "山边小村，韩立家中",
+      "temporal_hint": "韩立十岁时，一个多月后出发",
+      "importance": "critical",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 1.0,
+      "chunk_id": 12,
+      "orderIndex": 17,
+      "summary": "三叔韩胖子回到村中，提出七玄门招收内门弟子的消息，韩父犹豫后最终同意让年仅十岁的韩立去参加考验，韩立的命运由此改变。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_5aef4084",
+        "char_e5de8bac",
+        "char_e19cfa9d"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 17,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_834cdf34",
+      "title": "三叔来访，举荐韩立入七玄门",
+      "description": "韩立的亲三叔作为七玄门外门弟子，前来推举十岁的韩立参加内门弟子测试。韩父在得知内门弟子每月可有一两多银子的待遇后，终于同意。三叔留下银两作为准备费用，约定一个月后来接人。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "inciting_choice",
+      "arcRole": "protagonist",
+      "causalRole": "cause",
+      "branchRole": "mainline",
+      "arcId": "protagonist_origin",
+      "timelineLaneHint": "命运转折",
+      "causalPredecessorHints": [],
+      "forkMergeHint": "root",
+      "dedupeKey": "三叔::韩立::推荐入门测试::第1章",
+      "chapterRange": {
+        "start": "第一章",
+        "end": "第一章"
+      },
+      "importanceScore": 92,
+      "character_ids": [
+        "char_5aef4084",
+        "char_1298e116",
+        "char_9aa94098",
+        "char_5f65c6fd",
+        "char_e19cfa9d"
+      ],
+      "character_names": [],
+      "location_hint": "韩立家乡山边小村",
+      "temporal_hint": "韩立十岁时，某日中午",
+      "importance": "critical",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.97,
+      "chunk_id": 12,
+      "orderIndex": 18,
+      "summary": "韩立的亲三叔作为七玄门外门弟子，前来推举十岁的韩立参加内门弟子测试。韩父在得知内门弟子每月可有一两多银子的待遇后，终于同意。三叔留下银两作为准备费用，约定一个月后来接人。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_5aef4084",
+        "char_1298e116",
+        "char_9aa94098",
+        "char_5f65c6fd",
+        "char_e19cfa9d"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 18,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_94661131",
+      "title": "小瓶夜间吸光，显现异象",
+      "description": "韩立夜间发现神秘瓶子从天窗吸收白色光丝，汇集为光点被瓶子吞噬。第八天瓶子吸收停止后，墨绿花纹发出耀眼光芒，浮现金色字符，随后瓶盖轻松打开，内部仅有一滴黄豆大的碧绿液体。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "discovery",
+      "arcRole": "mainline",
+      "causalRole": "setup",
+      "branchRole": "mainline",
+      "arcId": "bottle_secret",
+      "timelineLaneHint": "瓶内秘液",
+      "causalPredecessorHints": [
+        "韩立发现神秘小瓶，无法打开"
+      ],
+      "forkMergeHint": "fork",
+      "dedupeKey": "韩立::神秘瓶子::夜间吸光产液::第十三章-第十四章",
+      "chapterRange": {
+        "start": "第十三章",
+        "end": "第十四章"
+      },
+      "importanceScore": 95,
+      "character_ids": [
+        "char_1298e116"
+      ],
+      "character_names": [],
+      "location_hint": "神手谷韩立住处及谷外空旷处",
+      "temporal_hint": "得到瓶子当晚，持续八天后",
+      "importance": "critical",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.97,
+      "chunk_id": 12,
+      "orderIndex": 19,
+      "summary": "韩立夜间发现神秘瓶子从天窗吸收白色光丝，汇集为光点被瓶子吞噬。第八天瓶子吸收停止后，墨绿花纹发出耀眼光芒，浮现金色字符，随后瓶盖轻松打开，内部仅有一滴黄豆大的碧绿液体。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_1298e116"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 19,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_547001d4",
+      "title": "韩立发现神秘小瓶，无法打开",
+      "description": "韩立在神手谷外小路上踢到神秘金属瓶子，瓶子沉甸甸非金非瓷，呈淡绿色有墨绿叶状花纹，瓶盖紧密无法拧开。韩立秘密收藏，张铁也未能拧开瓶盖。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "discovery",
+      "arcRole": "mainline",
+      "causalRole": "setup",
+      "branchRole": "mainline",
+      "arcId": "bottle_secret",
+      "timelineLaneHint": "神器初现",
+      "causalPredecessorHints": [
+        "韩立口诀突破第一层，成亲传弟子"
+      ],
+      "forkMergeHint": "fork",
+      "dedupeKey": "韩立::神秘瓶子::捡到打不开::第十章",
+      "chapterRange": {
+        "start": "第十章",
+        "end": "第十一章"
+      },
+      "importanceScore": 94,
+      "character_ids": [
+        "char_1298e116",
+        "char_bf69ae71"
+      ],
+      "character_names": [],
+      "location_hint": "神手谷外小路",
+      "temporal_hint": "无名口诀练成后某日，秋末",
+      "importance": "critical",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.96,
+      "chunk_id": 12,
+      "orderIndex": 20,
+      "summary": "韩立在神手谷外小路上踢到神秘金属瓶子，瓶子沉甸甸非金非瓷，呈淡绿色有墨绿叶状花纹，瓶盖紧密无法拧开。韩立秘密收藏，张铁也未能拧开瓶盖。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_1298e116",
+        "char_bf69ae71"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 20,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_17507158",
+      "title": "韩立通过入门测试成为记名弟子",
+      "description": "在七玄门炼骨崖测试中，韩立未能按时登顶，但因表现坚毅被岳堂主破格收为记名弟子，与张铁一起留下。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "test_or_trial",
+      "arcRole": "protagonist",
+      "causalRole": "effect",
+      "branchRole": "mainline",
+      "arcId": "sect_entry",
+      "timelineLaneHint": "Main Arc",
+      "causalPredecessorHints": [
+        "三叔提议七玄门入门测试"
+      ],
+      "forkMergeHint": "unknown",
+      "dedupeKey": "韩立::炼骨崖测试::成为记名弟子::第四章",
+      "chapterRange": {
+        "start": "第四章",
+        "end": "第四章"
+      },
+      "importanceScore": 90,
+      "character_ids": [
+        "char_e5de8bac",
+        "char_bf69ae71",
+        "char_ce713497",
+        "char_fba449bc"
+      ],
+      "character_names": [],
+      "location_hint": "七玄门炼骨崖",
+      "temporal_hint": "抵达七玄门次日正午前后",
+      "importance": "critical",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 1.0,
+      "chunk_id": 12,
+      "orderIndex": 21,
+      "summary": "在七玄门炼骨崖测试中，韩立未能按时登顶，但因表现坚毅被岳堂主破格收为记名弟子，与张铁一起留下。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_e5de8bac",
+        "char_bf69ae71",
+        "char_ce713497",
+        "char_fba449bc"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 21,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_76bed8a5",
+      "title": "七玄门入门测试——炼骨崖攀爬",
+      "description": "三十余名孩童参加入门测试，需正午前攀上炼骨崖才能正式入门。舞岩率先登顶直接进入七绝堂，韩立和张铁虽未按时到达但因表现突出被收为记名弟子，其余不合格者被遣送回家。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "test_or_trial",
+      "arcRole": "protagonist",
+      "causalRole": "turning_point",
+      "branchRole": "mainline",
+      "arcId": "hanli_sect_entry",
+      "timelineLaneHint": "Main Arc / Sect Entry",
+      "causalPredecessorHints": [
+        "韩立随三叔抵达青牛镇，与王护法会面"
+      ],
+      "forkMergeHint": "mainline",
+      "dedupeKey": "hanli::trial_climb_liangu_cliff::becomes_probationary_disciple::chapter3_4",
+      "chapterRange": {
+        "start": "第三章",
+        "end": "第四章"
+      },
+      "importanceScore": 90,
+      "character_ids": [
+        "char_1298e116",
+        "char_469c50b0",
+        "char_bf69ae71",
+        "char_acf708ac",
+        "char_fba449bc",
+        "char_57528d34",
+        "char_6f2ab345",
+        "char_b71227cd",
+        "char_69f03c1e",
+        "char_de38e2c4",
+        "char_05e57dd5",
+        "char_146ef4fe",
+        "char_b0d07267",
+        "char_a230f5d2"
+      ],
+      "character_names": [
+        "韩立",
+        "舞岩",
+        "张铁",
+        "岳堂主",
+        "王护法",
+        "张均",
+        "吴铭瑞"
+      ],
+      "location_hint": "彩霞山炼骨崖",
+      "temporal_hint": "入门测试当天，正午前",
+      "importance": "critical",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 1.0,
+      "chunk_id": 16,
+      "orderIndex": 22,
+      "summary": "三十余名孩童参加入门测试，需正午前攀上炼骨崖才能正式入门。舞岩率先登顶直接进入七绝堂，韩立和张铁虽未按时到达但因表现突出被收为记名弟子，其余不合格者被遣送回家。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_1298e116",
+        "char_469c50b0",
+        "char_bf69ae71",
+        "char_acf708ac",
+        "char_fba449bc",
+        "char_57528d34",
+        "char_6f2ab345",
+        "char_b71227cd",
+        "char_69f03c1e",
+        "char_de38e2c4",
+        "char_05e57dd5",
+        "char_146ef4fe",
+        "char_b0d07267",
+        "char_a230f5d2"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 22,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_389fde52",
+      "title": "三叔安排韩立入门测试",
+      "description": "三叔成为七玄门外门弟子后，赶回山村说服韩父，要用推荐名额带十岁的韩立去参加七玄门内门弟子入门测试，并留下银子补身子。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "inciting_choice",
+      "arcRole": "protagonist",
+      "causalRole": "cause",
+      "branchRole": "mainline",
+      "arcId": "protagonist_origin",
+      "timelineLaneHint": "Main Arc",
+      "causalPredecessorHints": [],
+      "forkMergeHint": "root",
+      "dedupeKey": "三叔::安排韩立参加入门测试::第一章",
+      "chapterRange": {
+        "start": "第一章",
+        "end": "第一章"
+      },
+      "importanceScore": 85,
+      "character_ids": [
+        "char_b71227cd",
+        "char_04273f33",
+        "char_e19cfa9d",
+        "char_78fd7cdd"
+      ],
+      "character_names": [
+        "韩父",
+        "韩母"
+      ],
+      "location_hint": "山村家中",
+      "temporal_hint": "第一章，韩立十岁时",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 1.0,
+      "chunk_id": 16,
+      "orderIndex": 23,
+      "summary": "三叔成为七玄门外门弟子后，赶回山村说服韩父，要用推荐名额带十岁的韩立去参加七玄门内门弟子入门测试，并留下银子补身子。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_b71227cd",
+        "char_04273f33",
+        "char_e19cfa9d",
+        "char_78fd7cdd"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 23,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_f1325198",
+      "title": "三叔来访，韩立被推举参加七玄门入门测试",
+      "description": "韩立的三叔韩胖子作为七玄门外门弟子，向韩父提议让十岁的韩立参加七玄门内门弟子入门考核，韩父在得知可挣银子后同意，三叔留下银两并约定一个月后带韩立出发。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "inciting_choice",
+      "arcRole": "protagonist",
+      "causalRole": "cause",
+      "branchRole": "mainline",
+      "arcId": "hanli_departure_origin",
+      "timelineLaneHint": "Main Arc",
+      "causalPredecessorHints": [],
+      "forkMergeHint": "root",
+      "dedupeKey": "hanli::recommended_for_qixuanmen_trial::leaves_home::chapter1",
+      "chapterRange": {
+        "start": "第一章",
+        "end": "第一章"
+      },
+      "importanceScore": 95,
+      "character_ids": [
+        "char_1298e116",
+        "char_5aef4084",
+        "char_e19cfa9d",
+        "char_9aa94098",
+        "char_5f65c6fd",
+        "char_b71227cd",
+        "char_04273f33",
+        "char_0bec024f",
+        "char_78fd7cdd"
+      ],
+      "character_names": [
+        "韩立",
+        "三叔",
+        "韩父",
+        "韩铸",
+        "韩母"
+      ],
+      "location_hint": "韩立家中山边小村",
+      "temporal_hint": "韩立十岁时",
+      "importance": "critical",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 1.0,
+      "chunk_id": 16,
+      "orderIndex": 24,
+      "summary": "韩立的三叔韩胖子作为七玄门外门弟子，向韩父提议让十岁的韩立参加七玄门内门弟子入门考核，韩父在得知可挣银子后同意，三叔留下银两并约定一个月后带韩立出发。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_1298e116",
+        "char_5aef4084",
+        "char_e19cfa9d",
+        "char_9aa94098",
+        "char_5f65c6fd",
+        "char_b71227cd",
+        "char_04273f33",
+        "char_0bec024f",
+        "char_78fd7cdd"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 24,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_4661bc02",
+      "title": "四年修炼瓶颈与张铁失踪",
+      "description": "四年过去，韩立十四岁，无名口诀练至第三层后因缺药停滞；墨大夫病情恶化，目光日益贪婪，对韩立愈发焦急。韩立坦言困境后，墨大夫独自下山采药。期间张铁两年前于象甲功三层后突然消失，留下闯江湖书信，疑点重重。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "power_shift",
+      "arcRole": "protagonist",
+      "causalRole": "turning_point",
+      "branchRole": "mainline",
+      "arcId": "cultivation_progress",
+      "timelineLaneHint": "Mentor Threat / Cultivation",
+      "causalPredecessorHints": [
+        "墨大夫测试发现韩立特殊体质"
+      ],
+      "forkMergeHint": "root",
+      "dedupeKey": "四年后::韩立瓶颈墨大夫下山张铁失踪::第十五章",
+      "chapterRange": {
+        "start": "第十五章",
+        "end": "第十五章"
+      },
+      "importanceScore": 88,
+      "character_ids": [
+        "char_b71227cd",
+        "char_bcc133d0",
+        "char_de38e2c4"
+      ],
+      "character_names": [],
+      "location_hint": "神手谷",
+      "temporal_hint": "第十五章，四年后韩立十四岁",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 1.0,
+      "chunk_id": 16,
+      "orderIndex": 25,
+      "summary": "四年过去，韩立十四岁，无名口诀练至第三层后因缺药停滞；墨大夫病情恶化，目光日益贪婪，对韩立愈发焦急。韩立坦言困境后，墨大夫独自下山采药。期间张铁两年前于象甲功三层后突然消失，留下闯江湖书信，疑点重重。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_b71227cd",
+        "char_bcc133d0",
+        "char_de38e2c4"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 25,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_a3101982",
+      "title": "墨大夫收韩立张铁为助手",
+      "description": "在带往百锻堂的路上，墨大夫突然出现，以缺人手为由将韩立和张铁两名记名弟子带到神手谷，收为采药和炼药童子。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "setup",
+      "arcRole": "protagonist",
+      "causalRole": "setup",
+      "branchRole": "mainline",
+      "arcId": "mentor_control",
+      "timelineLaneHint": "Mentor Threat",
+      "causalPredecessorHints": [
+        "炼骨崖入门测试"
+      ],
+      "forkMergeHint": "root",
+      "dedupeKey": "墨大夫::收韩立张铁为助手::第五章",
+      "chapterRange": {
+        "start": "第五章",
+        "end": "第五章"
+      },
+      "importanceScore": 80,
+      "character_ids": [
+        "char_bcc133d0",
+        "char_b71227cd",
+        "char_de38e2c4",
+        "char_b0d07267",
+        "char_a230f5d2"
+      ],
+      "character_names": [
+        "张均",
+        "吴铭瑞"
+      ],
+      "location_hint": "七玄门树林至神手谷",
+      "temporal_hint": "第五章，入门测试结束后",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.95,
+      "chunk_id": 16,
+      "orderIndex": 26,
+      "summary": "在带往百锻堂的路上，墨大夫突然出现，以缺人手为由将韩立和张铁两名记名弟子带到神手谷，收为采药和炼药童子。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_bcc133d0",
+        "char_b71227cd",
+        "char_de38e2c4",
+        "char_b0d07267",
+        "char_a230f5d2"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 26,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_a3ab7a43",
+      "title": "墨大夫测试发现韩立特殊体质",
+      "description": "墨大夫检查韩立修炼成果时发现其体内异种能量，欣喜若狂，立即收为亲传弟子，并允许张铁改修象甲功；墨大夫的激动显露其隐藏的图谋。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "turning_point",
+      "arcRole": "protagonist",
+      "causalRole": "turning_point",
+      "branchRole": "mainline",
+      "arcId": "mentor_control",
+      "timelineLaneHint": "Mentor Threat",
+      "causalPredecessorHints": [
+        "韩立发现体内异种真气"
+      ],
+      "forkMergeHint": "root",
+      "dedupeKey": "墨大夫::测试发现韩立特殊体质收为亲传弟子::第八章",
+      "chapterRange": {
+        "start": "第八章",
+        "end": "第八章"
+      },
+      "importanceScore": 90,
+      "character_ids": [
+        "char_bcc133d0",
+        "char_b71227cd",
+        "char_de38e2c4"
+      ],
+      "character_names": [],
+      "location_hint": "神手谷屋内",
+      "temporal_hint": "第八章，入门半年后",
+      "importance": "critical",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 1.0,
+      "chunk_id": 16,
+      "orderIndex": 27,
+      "summary": "墨大夫检查韩立修炼成果时发现其体内异种能量，欣喜若狂，立即收为亲传弟子，并允许张铁改修象甲功；墨大夫的激动显露其隐藏的图谋。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_bcc133d0",
+        "char_b71227cd",
+        "char_de38e2c4"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 27,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_07af37db",
+      "title": "炼骨崖入门测试",
+      "description": "岳堂主主持炼骨崖登山测试，规定正午前到达崖顶才可入门。舞岩靠关系和体魄第一到达，直接进入七绝堂；韩立和张铁未按时登顶但表现顽强，被收为记名弟子，其余失败者遣返。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "test_or_trial",
+      "arcRole": "protagonist",
+      "causalRole": "turning_point",
+      "branchRole": "mainline",
+      "arcId": "sect_entry",
+      "timelineLaneHint": "Sect Entry",
+      "causalPredecessorHints": [
+        "三叔安排韩立入门测试"
+      ],
+      "forkMergeHint": "root",
+      "dedupeKey": "韩立::炼骨崖测试未按时到达获记名弟子::第四章",
+      "chapterRange": {
+        "start": "第四章",
+        "end": "第四章"
+      },
+      "importanceScore": 88,
+      "character_ids": [
+        "char_b71227cd",
+        "char_de38e2c4",
+        "char_69f03c1e",
+        "char_146ef4fe",
+        "char_05e57dd5"
+      ],
+      "character_names": [
+        "张铁",
+        "舞岩",
+        "王护法",
+        "岳堂主"
+      ],
+      "location_hint": "彩霞山炼骨崖",
+      "temporal_hint": "第四章，入门测试当天",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 1.0,
+      "chunk_id": 16,
+      "orderIndex": 28,
+      "summary": "岳堂主主持炼骨崖登山测试，规定正午前到达崖顶才可入门。舞岩靠关系和体魄第一到达，直接进入七绝堂；韩立和张铁未按时登顶但表现顽强，被收为记名弟子，其余失败者遣返。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_b71227cd",
+        "char_de38e2c4",
+        "char_69f03c1e",
+        "char_146ef4fe",
+        "char_05e57dd5"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 28,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_56d93dbf",
+      "title": "神秘瓶吸月光生绿液",
+      "description": "韩立发现小瓶每晚定时吸收白色光点，八天后瓶盖自动打开，内有一滴碧绿色神秘液体。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "discovery",
+      "arcRole": "protagonist",
+      "causalRole": "payoff",
+      "branchRole": "mainline",
+      "arcId": "bottle_secret",
+      "timelineLaneHint": "Bottle Mystery",
+      "causalPredecessorHints": [
+        "韩立捡到神秘小瓶"
+      ],
+      "forkMergeHint": "root",
+      "dedupeKey": "神秘瓶::吸收月光产生绿色液体::第十三-十四章",
+      "chapterRange": {
+        "start": "第十三章",
+        "end": "第十四章"
+      },
+      "importanceScore": 90,
+      "character_ids": [
+        "char_b71227cd"
+      ],
+      "character_names": [],
+      "location_hint": "神手谷及谷外空地",
+      "temporal_hint": "第十三至十四章，捡到瓶子后第八天",
+      "importance": "critical",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 1.0,
+      "chunk_id": 16,
+      "orderIndex": 29,
+      "summary": "韩立发现小瓶每晚定时吸收白色光点，八天后瓶盖自动打开，内有一滴碧绿色神秘液体。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_b71227cd"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 29,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_789ef66c",
+      "title": "韩立发现体内异种真气",
+      "description": "修炼墨大夫传授的无名口诀三个月后，韩立体内心法产生微凉细丝般的能量，与同门的正阳劲热流迥异，只增强了精神胃口；张铁则毫无反应。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "discovery",
+      "arcRole": "protagonist",
+      "causalRole": "effect",
+      "branchRole": "mainline",
+      "arcId": "cultivation_progress",
+      "timelineLaneHint": "Cultivation Progress",
+      "causalPredecessorHints": [
+        "墨大夫收韩立张铁为助手"
+      ],
+      "forkMergeHint": "root",
+      "dedupeKey": "韩立::发现异种真气::第七章",
+      "chapterRange": {
+        "start": "第七章",
+        "end": "第七章"
+      },
+      "importanceScore": 75,
+      "character_ids": [
+        "char_b71227cd",
+        "char_de38e2c4"
+      ],
+      "character_names": [],
+      "location_hint": "神手谷修炼处",
+      "temporal_hint": "第七章，修炼口诀三个月后",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.9,
+      "chunk_id": 16,
+      "orderIndex": 30,
+      "summary": "修炼墨大夫传授的无名口诀三个月后，韩立体内心法产生微凉细丝般的能量，与同门的正阳劲热流迥异，只增强了精神胃口；张铁则毫无反应。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_b71227cd",
+        "char_de38e2c4"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 30,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_acda8933",
+      "title": "韩立发现神秘瓶子并引发异象",
+      "description": "韩立在神手谷外小路上踢到一只浅绿色金属小瓶，以各种方法都无法打开。数天后深夜，小瓶自动吸收月光（白色光丝），形成白色光团。第八天吸收停止后瓶面浮现金色古文字，瓶盖自动松开，瓶中产出一滴碧绿色液体。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "discovery",
+      "arcRole": "mainline",
+      "causalRole": "setup",
+      "branchRole": "fork",
+      "arcId": "bottle_secret",
+      "timelineLaneHint": "Bottle Mystery",
+      "causalPredecessorHints": [],
+      "forkMergeHint": "fork",
+      "dedupeKey": "hanli::finds_mysterious_bottle::bottle_produces_green_liquid::chapter10_14",
+      "chapterRange": {
+        "start": "第十章",
+        "end": "第十四章"
+      },
+      "importanceScore": 95,
+      "character_ids": [
+        "char_1298e116",
+        "char_b71227cd"
+      ],
+      "character_names": [
+        "韩立"
+      ],
+      "location_hint": "神手谷外小路及谷内",
+      "temporal_hint": "韩立成为正式弟子后不久",
+      "importance": "critical",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 1.0,
+      "chunk_id": 16,
+      "orderIndex": 31,
+      "summary": "韩立在神手谷外小路上踢到一只浅绿色金属小瓶，以各种方法都无法打开。数天后深夜，小瓶自动吸收月光（白色光丝），形成白色光团。第八天吸收停止后瓶面浮现金色古文字，瓶盖自动松开，瓶中产出一滴碧绿色液体。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_1298e116",
+        "char_b71227cd"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 31,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_16303638",
+      "title": "韩立救厉师兄揭破抽髓丸",
+      "description": "韩立在溪边发现厉师兄因抽髓丸发作垂危，以针术救醒后识破其服用抽髓丸。韩立透露自己也服用过该丸但方式不同，并给出保命弃功或续命猛进的两难选择。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "revelation",
+      "arcRole": "protagonist",
+      "causalRole": "turning_point",
+      "branchRole": "mainline",
+      "arcId": "antagonist_scheme",
+      "timelineLaneHint": "Mentor Threat / Sect Conflict",
+      "causalPredecessorHints": [
+        "墨大夫测试发现韩立特殊体质",
+        "四年修炼瓶颈与张铁失踪"
+      ],
+      "forkMergeHint": "root",
+      "dedupeKey": "韩立::救治厉师兄并揭露抽髓丸秘密::第二十章",
+      "chapterRange": {
+        "start": "第二十章",
+        "end": "第二十章"
+      },
+      "importanceScore": 92,
+      "character_ids": [
+        "char_b71227cd",
+        "char_9e7a7196"
+      ],
+      "character_names": [
+        "厉师兄"
+      ],
+      "location_hint": "彩霞山偏僻小溪",
+      "temporal_hint": "第二十章，韩立外出闲逛后",
+      "importance": "critical",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.95,
+      "chunk_id": 16,
+      "orderIndex": 32,
+      "summary": "韩立在溪边发现厉师兄因抽髓丸发作垂危，以针术救醒后识破其服用抽髓丸。韩立透露自己也服用过该丸但方式不同，并给出保命弃功或续命猛进的两难选择。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_b71227cd",
+        "char_9e7a7196"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 32,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_e221b375",
+      "title": "韩立随三叔抵达青牛镇，与王护法会面",
+      "description": "韩立与三叔赶路三天到达青牛镇春香酒楼，三天后七玄门王护法乘漆黑马车前来接人，韩胖子暗中贿赂王护法以获得路上照顾，韩立即将出发前往七玄门总门。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "journey_departure",
+      "arcRole": "protagonist",
+      "causalRole": "effect",
+      "branchRole": "mainline",
+      "arcId": "hanli_departure_origin",
+      "timelineLaneHint": "Main Arc",
+      "causalPredecessorHints": [
+        "三叔来访，韩立被推举参加七玄门入门测试"
+      ],
+      "forkMergeHint": "mainline",
+      "dedupeKey": "hanli::arrives_qingniu_town_meets_wanghufa::departure_to_qixuanmen::chapter2",
+      "chapterRange": {
+        "start": "第二章",
+        "end": "第二章"
+      },
+      "importanceScore": 85,
+      "character_ids": [
+        "char_1298e116",
+        "char_5aef4084",
+        "char_c4739c95",
+        "char_b71227cd",
+        "char_04273f33",
+        "char_146ef4fe"
+      ],
+      "character_names": [
+        "韩立",
+        "三叔",
+        "王护法"
+      ],
+      "location_hint": "青牛镇春香酒楼",
+      "temporal_hint": "三叔到访一个月后，赶路三天抵达青牛镇",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.95,
+      "chunk_id": 16,
+      "orderIndex": 33,
+      "summary": "韩立与三叔赶路三天到达青牛镇春香酒楼，三天后七玄门王护法乘漆黑马车前来接人，韩胖子暗中贿赂王护法以获得路上照顾，韩立即将出发前往七玄门总门。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_1298e116",
+        "char_5aef4084",
+        "char_c4739c95",
+        "char_b71227cd",
+        "char_04273f33",
+        "char_146ef4fe"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 33,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_7433041d",
+      "title": "三叔接韩立前往七玄门参加入门测试",
+      "description": "韩立的三叔以七玄门外门弟子身份，来村中接走十岁的韩立，前往参加七玄门内门弟子入门考核。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "journey_departure",
+      "arcRole": "protagonist",
+      "causalRole": "turning_point",
+      "branchRole": "mainline",
+      "arcId": "protagonist_origin",
+      "timelineLaneHint": "Main Arc",
+      "causalPredecessorHints": [],
+      "forkMergeHint": "root",
+      "dedupeKey": "三叔接韩立赴七玄门::韩立离家::chapter1",
+      "chapterRange": {
+        "start": "第一章",
+        "end": "第一章"
+      },
+      "importanceScore": 90,
+      "character_ids": [
+        "char_b71227cd",
+        "char_a30381fd"
+      ],
+      "character_names": [],
+      "location_hint": "山边小村",
+      "temporal_hint": "韩立十岁时",
+      "importance": "critical",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 1.0,
+      "chunk_id": 20,
+      "orderIndex": 34,
+      "summary": "韩立的三叔以七玄门外门弟子身份，来村中接走十岁的韩立，前往参加七玄门内门弟子入门考核。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_b71227cd",
+        "char_a30381fd"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 34,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_edf9dea9",
+      "title": "墨大夫下山寻药离开七玄门",
+      "description": "因韩立修炼停滞且药物耗尽，墨大夫决定亲自下山寻找药材，离开七玄门，韩立独自留守神手谷。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "journey_departure",
+      "arcRole": "protagonist",
+      "causalRole": "cause",
+      "branchRole": "mainline",
+      "arcId": "mentor_control",
+      "timelineLaneHint": "Mentor Threat",
+      "causalPredecessorHints": [
+        "韩立修炼至第三层，墨大夫态度反常"
+      ],
+      "forkMergeHint": "unknown",
+      "dedupeKey": "墨大夫::下山寻药::离开七玄门::第十五章",
+      "chapterRange": {
+        "start": "第十五章",
+        "end": "第十五章"
+      },
+      "importanceScore": 80,
+      "character_ids": [
+        "char_ce713497",
+        "char_1298e116"
+      ],
+      "character_names": [],
+      "location_hint": "神手谷至山外",
+      "temporal_hint": "第十五章，韩立14岁时",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": true,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.9,
+      "chunk_id": 20,
+      "orderIndex": 35,
+      "summary": "因韩立修炼停滞且药物耗尽，墨大夫决定亲自下山寻找药材，离开七玄门，韩立独自留守神手谷。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_ce713497",
+        "char_1298e116"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_import_main",
+      "globalOrderIndex": 35,
+      "layoutHints": {
+        "density": 36,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_6d31c354",
+      "title": "舞岩率先登顶并嘲讽众人",
+      "description": "在攀爬过程中，舞岩凭借年龄和武功优势率先登上崖顶，回头对下方孩童做出挑衅手势并狂笑。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "confrontation",
+      "arcRole": "antagonist",
+      "causalRole": "setup",
+      "branchRole": "parallel",
+      "arcId": "entrance_trial",
+      "timelineLaneHint": "对手关系",
+      "causalPredecessorHints": [
+        "韩立参加入门测试未能登顶"
+      ],
+      "forkMergeHint": "fork",
+      "dedupeKey": "舞岩::登顶后嘲讽::树立对手形象::ch4",
+      "chapterRange": {
+        "start": "第四章",
+        "end": "第四章"
+      },
+      "importanceScore": 80,
+      "character_ids": [
+        "char_8178869f",
+        "char_1298e116"
+      ],
+      "character_names": [],
+      "location_hint": "炼骨崖崖顶",
+      "temporal_hint": "测试过程中，正午前",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": false,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": true,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.9,
+      "chunk_id": 2,
+      "orderIndex": 0,
+      "summary": "在攀爬过程中，舞岩凭借年龄和武功优势率先登上崖顶，回头对下方孩童做出挑衅手势并狂笑。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_8178869f",
+        "char_1298e116"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [
+        "branch_import_main"
+      ],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_theme_antagonist",
+      "globalOrderIndex": 36,
+      "layoutHints": {
+        "density": 13,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_fbb72d39",
+      "title": "半年考核：墨大夫确认韩立修炼成果并狂喜收徒",
+      "description": "半年后，墨大夫检查发现韩立体内凉性能量，异常兴奋，当场宣布收韩立为亲传弟子；张铁因特殊根骨也被另传心法。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "betrayal_or_reveal",
+      "arcRole": "antagonist",
+      "causalRole": "turning_point",
+      "branchRole": "mainline",
+      "arcId": "mentor_control",
+      "timelineLaneHint": "Mentor Threat",
+      "causalPredecessorHints": [
+        "韩立修炼出异种凉性能量"
+      ],
+      "forkMergeHint": "merge",
+      "dedupeKey": "mo_daifu::half_year_test::recognizes_cool_energy::accepts_han_li_as_personal_disciple::chapter8",
+      "chapterRange": {
+        "start": "第八章",
+        "end": "第八章"
+      },
+      "importanceScore": 95,
+      "character_ids": [
+        "char_ce713497",
+        "char_e5de8bac",
+        "char_bf69ae71"
+      ],
+      "character_names": [
+        "墨大夫",
+        "韩立",
+        "张铁"
+      ],
+      "location_hint": "神手谷墨大夫房内",
+      "temporal_hint": "入门满半年，考核日",
+      "importance": "critical",
+      "deterministicLaneHints": {
+        "mainline": false,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": true,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.95,
+      "chunk_id": 4,
+      "orderIndex": 1,
+      "summary": "半年后，墨大夫检查发现韩立体内凉性能量，异常兴奋，当场宣布收韩立为亲传弟子；张铁因特殊根骨也被另传心法。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_ce713497",
+        "char_e5de8bac",
+        "char_bf69ae71"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [
+        "branch_import_main"
+      ],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_theme_antagonist",
+      "globalOrderIndex": 37,
+      "layoutHints": {
+        "density": 13,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_87dd8242",
+      "title": "墨大夫传授无名口诀",
+      "description": "墨大夫向韩立和张铁传授一套无名口诀，明确半年后考查修炼成果，不合格则逐至外门。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "training_breakthrough",
+      "arcRole": "antagonist",
+      "causalRole": "setup",
+      "branchRole": "mainline",
+      "arcId": "mentor_control",
+      "timelineLaneHint": "Mentor Threat",
+      "causalPredecessorHints": [
+        "墨大夫带走韩立与张铁"
+      ],
+      "forkMergeHint": "unknown",
+      "dedupeKey": "mo_daifu::teaches_unnamed_method::sets_half_year_test::chapter6",
+      "chapterRange": {
+        "start": "第六章",
+        "end": "第六章"
+      },
+      "importanceScore": 75,
+      "character_ids": [
+        "char_ce713497",
+        "char_e5de8bac",
+        "char_bf69ae71"
+      ],
+      "character_names": [
+        "墨大夫",
+        "韩立",
+        "张铁"
+      ],
+      "location_hint": "神手谷",
+      "temporal_hint": "入门后一个月开始传授口诀",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": false,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": true,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.85,
+      "chunk_id": 4,
+      "orderIndex": 2,
+      "summary": "墨大夫向韩立和张铁传授一套无名口诀，明确半年后考查修炼成果，不合格则逐至外门。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_ce713497",
+        "char_e5de8bac",
+        "char_bf69ae71"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [
+        "branch_import_main"
+      ],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_theme_antagonist",
+      "globalOrderIndex": 38,
+      "layoutHints": {
+        "density": 13,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_07d84afa",
+      "title": "墨大夫带走韩立与张铁",
+      "description": "墨大夫在半路出现，直接指定韩立和张铁为炼药童子和采药弟子，带往神手谷。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "power_shift",
+      "arcRole": "antagonist",
+      "causalRole": "setup",
+      "branchRole": "fork",
+      "arcId": "mentor_control",
+      "timelineLaneHint": "Mentor Threat",
+      "causalPredecessorHints": [
+        "韩立参加炼骨崖考验并成为记名弟子"
+      ],
+      "forkMergeHint": "fork",
+      "dedupeKey": "mo_daifu::selects_han_li_and_zhang_tie::as_apprentice::chapter5",
+      "chapterRange": {
+        "start": "第五章",
+        "end": "第五章"
+      },
+      "importanceScore": 90,
+      "character_ids": [
+        "char_ce713497",
+        "char_e5de8bac",
+        "char_bf69ae71",
+        "char_57528d34"
+      ],
+      "character_names": [
+        "墨大夫",
+        "韩立",
+        "张铁",
+        "张均"
+      ],
+      "location_hint": "彩霞山树林转神手谷",
+      "temporal_hint": "入门考验之后，当天",
+      "importance": "critical",
+      "deterministicLaneHints": {
+        "mainline": false,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": true,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.95,
+      "chunk_id": 4,
+      "orderIndex": 3,
+      "summary": "墨大夫在半路出现，直接指定韩立和张铁为炼药童子和采药弟子，带往神手谷。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_ce713497",
+        "char_e5de8bac",
+        "char_bf69ae71",
+        "char_57528d34"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [
+        "branch_import_main"
+      ],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_theme_antagonist",
+      "globalOrderIndex": 39,
+      "layoutHints": {
+        "density": 13,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_97d29158",
+      "title": "墨大夫发现韩立特殊体质",
+      "description": "半年后考核，墨大夫检查韩立体内凉性能量，狂喜异常，立即收为亲传弟子，对张铁也改变态度。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "betrayal_or_reveal",
+      "arcRole": "antagonist",
+      "causalRole": "turning_point",
+      "branchRole": "mainline",
+      "arcId": "mentor_control",
+      "timelineLaneHint": "Mentor Threat",
+      "causalPredecessorHints": [
+        "墨大夫传授无名口诀"
+      ],
+      "forkMergeHint": "unknown",
+      "dedupeKey": "墨大夫::考核发现韩立凉性能量::狂喜收徒::第八章",
+      "chapterRange": {
+        "start": "第八章",
+        "end": "第八章"
+      },
+      "importanceScore": 90,
+      "character_ids": [
+        "char_bcc133d0",
+        "char_b71227cd",
+        "char_de38e2c4"
+      ],
+      "character_names": [
+        "墨大夫",
+        "韩立",
+        "张铁"
+      ],
+      "location_hint": "神手谷屋内",
+      "temporal_hint": "入门半年后，第八章",
+      "importance": "critical",
+      "deterministicLaneHints": {
+        "mainline": false,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": true,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.95,
+      "chunk_id": 8,
+      "orderIndex": 4,
+      "summary": "半年后考核，墨大夫检查韩立体内凉性能量，狂喜异常，立即收为亲传弟子，对张铁也改变态度。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_bcc133d0",
+        "char_b71227cd",
+        "char_de38e2c4"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [
+        "branch_import_main"
+      ],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_theme_antagonist",
+      "globalOrderIndex": 40,
+      "layoutHints": {
+        "density": 13,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_41c0e0a9",
+      "title": "墨大夫挑走韩立张铁",
+      "description": "墨大夫在树林中带走韩立和张铁作为炼药童子和采药弟子，将他们带入神手谷。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "alliance_or_bond",
+      "arcRole": "antagonist",
+      "causalRole": "setup",
+      "branchRole": "fork",
+      "arcId": "mentor_control",
+      "timelineLaneHint": "Mentor Threat",
+      "causalPredecessorHints": [
+        "炼骨崖测试成为记名弟子"
+      ],
+      "forkMergeHint": "fork",
+      "dedupeKey": "墨大夫::挑选韩立张铁::进入神手谷::第五章",
+      "chapterRange": {
+        "start": "第五章",
+        "end": "第五章"
+      },
+      "importanceScore": 80,
+      "character_ids": [
+        "char_bcc133d0",
+        "char_b71227cd",
+        "char_de38e2c4"
+      ],
+      "character_names": [
+        "墨大夫",
+        "韩立",
+        "张铁"
+      ],
+      "location_hint": "彩霞山树林至神手谷",
+      "temporal_hint": "入门测试后不久，第五章",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": false,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": true,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.9,
+      "chunk_id": 8,
+      "orderIndex": 5,
+      "summary": "墨大夫在树林中带走韩立和张铁作为炼药童子和采药弟子，将他们带入神手谷。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_bcc133d0",
+        "char_b71227cd",
+        "char_de38e2c4"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [
+        "branch_import_main"
+      ],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_theme_antagonist",
+      "globalOrderIndex": 41,
+      "layoutHints": {
+        "density": 13,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_c69ba6f3",
+      "title": "墨大夫收徒，韩立入神手谷",
+      "description": "韩立因在炼骨崖测试中表现出色被选为记名弟子，后在前往百锻堂途中被墨大夫看中，以人手不足为由直接要走。韩立与张铁被带入神手谷，成为墨大夫的记名弟子及炼药、采药童子。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "alliance_or_bond",
+      "arcRole": "antagonist",
+      "causalRole": "setup",
+      "branchRole": "mainline",
+      "arcId": "mentor_control",
+      "timelineLaneHint": "师徒关系建立",
+      "causalPredecessorHints": [
+        "舞岩轻视，韩立受辱激志"
+      ],
+      "forkMergeHint": "fork",
+      "dedupeKey": "墨大夫::韩立::收为记名弟子::第五章",
+      "chapterRange": {
+        "start": "第五章",
+        "end": "第五章"
+      },
+      "importanceScore": 90,
+      "character_ids": [
+        "char_ce713497",
+        "char_1298e116",
+        "char_bf69ae71",
+        "char_475602b6",
+        "char_573c9698"
+      ],
+      "character_names": [],
+      "location_hint": "七玄门神手谷",
+      "temporal_hint": "韩立即将前往百锻堂，入门测试当天",
+      "importance": "critical",
+      "deterministicLaneHints": {
+        "mainline": false,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": true,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.94,
+      "chunk_id": 12,
+      "orderIndex": 6,
+      "summary": "韩立因在炼骨崖测试中表现出色被选为记名弟子，后在前往百锻堂途中被墨大夫看中，以人手不足为由直接要走。韩立与张铁被带入神手谷，成为墨大夫的记名弟子及炼药、采药童子。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_ce713497",
+        "char_1298e116",
+        "char_bf69ae71",
+        "char_475602b6",
+        "char_573c9698"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [
+        "branch_import_main"
+      ],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_theme_antagonist",
+      "globalOrderIndex": 42,
+      "layoutHints": {
+        "density": 13,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_9379bd79",
+      "title": "墨大夫收韩立为记名弟子",
+      "description": "在前往百锻堂的路上，墨大夫突然出现，以缺人手为由直接将韩立与张铁两名记名弟子选入神手谷，成为其记名弟子。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "alliance_or_bond",
+      "arcRole": "antagonist",
+      "causalRole": "turning_point",
+      "branchRole": "fork",
+      "arcId": "mentor_control",
+      "timelineLaneHint": "Mentor Threat",
+      "causalPredecessorHints": [
+        "韩立通过入门测试成为记名弟子"
+      ],
+      "forkMergeHint": "fork",
+      "dedupeKey": "墨大夫::选中韩立张铁::带回神手谷::第五章",
+      "chapterRange": {
+        "start": "第五章",
+        "end": "第五章"
+      },
+      "importanceScore": 85,
+      "character_ids": [
+        "char_ce713497",
+        "char_e5de8bac",
+        "char_bf69ae71"
+      ],
+      "character_names": [],
+      "location_hint": "七玄门树林小路与神手谷",
+      "temporal_hint": "入门测试结束后即刻",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": false,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": true,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 1.0,
+      "chunk_id": 12,
+      "orderIndex": 7,
+      "summary": "在前往百锻堂的路上，墨大夫突然出现，以缺人手为由直接将韩立与张铁两名记名弟子选入神手谷，成为其记名弟子。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_ce713497",
+        "char_e5de8bac",
+        "char_bf69ae71"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [
+        "branch_import_main"
+      ],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_theme_antagonist",
+      "globalOrderIndex": 43,
+      "layoutHints": {
+        "density": 13,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_5d8d42d4",
+      "title": "墨大夫收韩立张铁为记名弟子，入住神手谷",
+      "description": "墨大夫在半路截住韩立和张铁，以缺炼药童子为由将二人收为记名弟子带入神手谷。张均和吴铭瑞对墨大夫极为尊敬，暗示墨大夫在门内地位非凡。韩立正式成为墨大夫门下，开始学习医药知识。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "alliance_or_bond",
+      "arcRole": "antagonist",
+      "causalRole": "setup",
+      "branchRole": "mainline",
+      "arcId": "mentor_mo_control",
+      "timelineLaneHint": "Mentor Threat",
+      "causalPredecessorHints": [
+        "七玄门入门测试——炼骨崖攀爬"
+      ],
+      "forkMergeHint": "fork",
+      "dedupeKey": "mo_dafu::takes_hanli_zhangtie_as_apprentices::enters_shenshou_valley::chapter5",
+      "chapterRange": {
+        "start": "第五章",
+        "end": "第五章"
+      },
+      "importanceScore": 90,
+      "character_ids": [
+        "char_ce713497",
+        "char_1298e116",
+        "char_bf69ae71",
+        "char_57528d34",
+        "char_6f2ab345",
+        "char_bcc133d0",
+        "char_b71227cd",
+        "char_de38e2c4",
+        "char_b0d07267",
+        "char_a230f5d2"
+      ],
+      "character_names": [
+        "墨大夫",
+        "韩立",
+        "张铁",
+        "张均",
+        "吴铭瑞"
+      ],
+      "location_hint": "彩霞山神手谷",
+      "temporal_hint": "入门测试结束后当天",
+      "importance": "critical",
+      "deterministicLaneHints": {
+        "mainline": false,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": true,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 1.0,
+      "chunk_id": 16,
+      "orderIndex": 8,
+      "summary": "墨大夫在半路截住韩立和张铁，以缺炼药童子为由将二人收为记名弟子带入神手谷。张均和吴铭瑞对墨大夫极为尊敬，暗示墨大夫在门内地位非凡。韩立正式成为墨大夫门下，开始学习医药知识。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_ce713497",
+        "char_1298e116",
+        "char_bf69ae71",
+        "char_57528d34",
+        "char_6f2ab345",
+        "char_bcc133d0",
+        "char_b71227cd",
+        "char_de38e2c4",
+        "char_b0d07267",
+        "char_a230f5d2"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [
+        "branch_import_main"
+      ],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_theme_antagonist",
+      "globalOrderIndex": 44,
+      "layoutHints": {
+        "density": 13,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_1e681692",
+      "title": "墨大夫正式收韩立为亲传弟子",
+      "description": "半年考核，墨大夫检查韩立修炼成果后发现其体内能量流正是自己所需，欣喜若狂，当场收韩立为亲传弟子。张铁因口诀毫无进展差点被赶走，墨大夫以另有功法适合为由留下张铁，传授象甲功。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "power_shift",
+      "arcRole": "antagonist",
+      "causalRole": "turning_point",
+      "branchRole": "mainline",
+      "arcId": "mentor_mo_control",
+      "timelineLaneHint": "Mentor Threat",
+      "causalPredecessorHints": [
+        "墨大夫传授无名口诀，韩立发现修炼异象"
+      ],
+      "forkMergeHint": "merge",
+      "dedupeKey": "mo_dafu::formally_accepts_hanli_as_personal_disciple::zhangtie_gets_xiangjia_gong::chapter8",
+      "chapterRange": {
+        "start": "第八章",
+        "end": "第八章"
+      },
+      "importanceScore": 88,
+      "character_ids": [
+        "char_ce713497",
+        "char_1298e116",
+        "char_bf69ae71",
+        "char_bcc133d0",
+        "char_b71227cd",
+        "char_de38e2c4"
+      ],
+      "character_names": [
+        "墨大夫",
+        "韩立",
+        "张铁"
+      ],
+      "location_hint": "神手谷墨大夫房内",
+      "temporal_hint": "入门后半年，记名弟子考核日",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": false,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": true,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.95,
+      "chunk_id": 16,
+      "orderIndex": 9,
+      "summary": "半年考核，墨大夫检查韩立修炼成果后发现其体内能量流正是自己所需，欣喜若狂，当场收韩立为亲传弟子。张铁因口诀毫无进展差点被赶走，墨大夫以另有功法适合为由留下张铁，传授象甲功。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_ce713497",
+        "char_1298e116",
+        "char_bf69ae71",
+        "char_bcc133d0",
+        "char_b71227cd",
+        "char_de38e2c4"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [
+        "branch_import_main"
+      ],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_theme_antagonist",
+      "globalOrderIndex": 45,
+      "layoutHints": {
+        "density": 13,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_2f55e9bb",
+      "title": "韩立无名口诀突破第三层，墨大夫下山寻药",
+      "description": "四年后韩立十四岁，已将无名口诀练至第三层，但遭遇瓶颈一年未有寸进。墨大夫手中灵药已耗尽，得知韩立困境后面色难看，告知韩立要下山寻药，随后独自离开七玄门。韩立开始对墨大夫的过度关注产生猜疑和防范。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "confrontation",
+      "arcRole": "antagonist",
+      "causalRole": "turning_point",
+      "branchRole": "mainline",
+      "arcId": "mentor_mo_control",
+      "timelineLaneHint": "Mentor Threat",
+      "causalPredecessorHints": [
+        "墨大夫正式收韩立为亲传弟子",
+        "张铁练成象甲功三层后神秘消失"
+      ],
+      "forkMergeHint": "mainline",
+      "dedupeKey": "hanli::formula_layer3_bottleneck::mo_dafu_leaves_to_find_herbs::chapter15",
+      "chapterRange": {
+        "start": "第十五章",
+        "end": "第十五章"
+      },
+      "importanceScore": 85,
+      "character_ids": [
+        "char_1298e116",
+        "char_ce713497",
+        "char_b71227cd",
+        "char_bcc133d0"
+      ],
+      "character_names": [
+        "韩立",
+        "墨大夫"
+      ],
+      "location_hint": "神手谷",
+      "temporal_hint": "韩立入门约四年后，十四岁",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": false,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": true,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.9,
+      "chunk_id": 16,
+      "orderIndex": 10,
+      "summary": "四年后韩立十四岁，已将无名口诀练至第三层，但遭遇瓶颈一年未有寸进。墨大夫手中灵药已耗尽，得知韩立困境后面色难看，告知韩立要下山寻药，随后独自离开七玄门。韩立开始对墨大夫的过度关注产生猜疑和防范。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_1298e116",
+        "char_ce713497",
+        "char_b71227cd",
+        "char_bcc133d0"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [
+        "branch_import_main"
+      ],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_theme_antagonist",
+      "globalOrderIndex": 46,
+      "layoutHints": {
+        "density": 13,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_65049b4b",
+      "title": "墨大夫发现韩立特殊真气，收为亲传弟子",
+      "description": "半年测试中，墨大夫检查韩立体内产生的冰凉真气后狂喜失控，认定其为所需之物，立刻将韩立升为亲传弟子。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "discovery",
+      "arcRole": "antagonist",
+      "causalRole": "turning_point",
+      "branchRole": "mainline",
+      "arcId": "mentor_control",
+      "timelineLaneHint": "Mentor Threat",
+      "causalPredecessorHints": [
+        "墨大夫传授无名口诀"
+      ],
+      "forkMergeHint": "fork",
+      "dedupeKey": "墨大夫::发现韩立冰凉真气::升亲传::chapter8",
+      "chapterRange": {
+        "start": "第八章",
+        "end": "第八章"
+      },
+      "importanceScore": 92,
+      "character_ids": [
+        "char_ce713497",
+        "char_b71227cd",
+        "char_de38e2c4"
+      ],
+      "character_names": [
+        "张铁"
+      ],
+      "location_hint": "神手谷",
+      "temporal_hint": "半年考查时",
+      "importance": "critical",
+      "deterministicLaneHints": {
+        "mainline": false,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": true,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 1.0,
+      "chunk_id": 20,
+      "orderIndex": 11,
+      "summary": "半年测试中，墨大夫检查韩立体内产生的冰凉真气后狂喜失控，认定其为所需之物，立刻将韩立升为亲传弟子。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_ce713497",
+        "char_b71227cd",
+        "char_de38e2c4"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [
+        "branch_import_main"
+      ],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_theme_antagonist",
+      "globalOrderIndex": 47,
+      "layoutHints": {
+        "density": 13,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_41b07fbf",
+      "title": "墨大夫收韩立张铁为记名弟子",
+      "description": "墨大夫因缺人手，在树林中截住韩立与张铁，强行带走作为炼药童子与采药弟子，安置于神手谷。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "alliance_or_bond",
+      "arcRole": "antagonist",
+      "causalRole": "cause",
+      "branchRole": "mainline",
+      "arcId": "mentor_control",
+      "timelineLaneHint": "Mentor Threat",
+      "causalPredecessorHints": [
+        "炼骨崖入门测试，韩立获记名弟子资格"
+      ],
+      "forkMergeHint": "root",
+      "dedupeKey": "墨大夫::收韩立张铁::记名弟子::chapter5",
+      "chapterRange": {
+        "start": "第五章",
+        "end": "第五章"
+      },
+      "importanceScore": 88,
+      "character_ids": [
+        "char_ce713497",
+        "char_b71227cd",
+        "char_bf69ae71",
+        "char_bcc133d0",
+        "char_de38e2c4"
+      ],
+      "character_names": [
+        "墨大夫",
+        "韩立",
+        "张铁"
+      ],
+      "location_hint": "神手谷",
+      "temporal_hint": "入门测试后不久",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": false,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": true,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 1.0,
+      "chunk_id": 20,
+      "orderIndex": 12,
+      "summary": "墨大夫因缺人手，在树林中截住韩立与张铁，强行带走作为炼药童子与采药弟子，安置于神手谷。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_ce713497",
+        "char_b71227cd",
+        "char_bf69ae71",
+        "char_bcc133d0",
+        "char_de38e2c4"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [
+        "branch_import_main"
+      ],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_theme_antagonist",
+      "globalOrderIndex": 48,
+      "layoutHints": {
+        "density": 13,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_68934596",
+      "title": "墨大夫传授无名口诀",
+      "description": "墨大夫传韩立张铁一套无名口诀，强调修身养性，不教武功，半年后考核。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "training_breakthrough",
+      "arcRole": "training",
+      "causalRole": "setup",
+      "branchRole": "mainline",
+      "arcId": "cultivation_progress",
+      "timelineLaneHint": "Cultivation Path",
+      "causalPredecessorHints": [
+        "墨大夫挑走韩立张铁"
+      ],
+      "forkMergeHint": "root",
+      "dedupeKey": "墨大夫::传授无名口诀::韩立张铁::第六章",
+      "chapterRange": {
+        "start": "第六章",
+        "end": "第六章"
+      },
+      "importanceScore": 75,
+      "character_ids": [
+        "char_bcc133d0",
+        "char_b71227cd",
+        "char_de38e2c4"
+      ],
+      "character_names": [
+        "墨大夫",
+        "韩立",
+        "张铁"
+      ],
+      "location_hint": "神手谷",
+      "temporal_hint": "入门一个月后，第六章",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": false,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": true
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.9,
+      "chunk_id": 8,
+      "orderIndex": 0,
+      "summary": "墨大夫传韩立张铁一套无名口诀，强调修身养性，不教武功，半年后考核。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_bcc133d0",
+        "char_b71227cd",
+        "char_de38e2c4"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [
+        "branch_import_main"
+      ],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_theme_training",
+      "globalOrderIndex": 49,
+      "layoutHints": {
+        "density": 7,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_a9581754",
+      "title": "墨大夫传授无名口诀",
+      "description": "墨大夫正式传授韩立与张铁一套无名修身养性口诀，宣称不会教武功，但对此口诀极为重视。规定半年后考核，不合格将被赶往外门。韩立开始修行。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "training_breakthrough",
+      "arcRole": "training",
+      "causalRole": "setup",
+      "branchRole": "mainline",
+      "arcId": "mentor_control",
+      "timelineLaneHint": "口诀传承",
+      "causalPredecessorHints": [
+        "墨大夫收徒，韩立入神手谷"
+      ],
+      "forkMergeHint": "fork",
+      "dedupeKey": "墨大夫::韩立::传授无名口诀::第六章",
+      "chapterRange": {
+        "start": "第六章",
+        "end": "第六章"
+      },
+      "importanceScore": 88,
+      "character_ids": [
+        "char_ce713497",
+        "char_1298e116",
+        "char_bf69ae71"
+      ],
+      "character_names": [],
+      "location_hint": "神手谷墨大夫房内",
+      "temporal_hint": "韩立入门一个月后",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": false,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": true
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.93,
+      "chunk_id": 12,
+      "orderIndex": 1,
+      "summary": "墨大夫正式传授韩立与张铁一套无名修身养性口诀，宣称不会教武功，但对此口诀极为重视。规定半年后考核，不合格将被赶往外门。韩立开始修行。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_ce713497",
+        "char_1298e116",
+        "char_bf69ae71"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [
+        "branch_import_main"
+      ],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_theme_training",
+      "globalOrderIndex": 50,
+      "layoutHints": {
+        "density": 7,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_30f8c55a",
+      "title": "墨大夫传授无名口诀并设下半年考核",
+      "description": "墨大夫向韩立与张铁传授一套无名口诀，要求半年内修炼有成，否则降为外门弟子；张铁无法练出效果，韩立则修出微弱寒性能量流。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "power_shift",
+      "arcRole": "training",
+      "causalRole": "setup",
+      "branchRole": "mainline",
+      "arcId": "cultivation_progress",
+      "timelineLaneHint": "Cultivation",
+      "causalPredecessorHints": [
+        "墨大夫收韩立为记名弟子"
+      ],
+      "forkMergeHint": "unknown",
+      "dedupeKey": "墨大夫::传授无名口诀::韩立修出寒性能量流::第六至第九章",
+      "chapterRange": {
+        "start": "第六章",
+        "end": "第八章"
+      },
+      "importanceScore": 88,
+      "character_ids": [
+        "char_ce713497",
+        "char_e5de8bac",
+        "char_bf69ae71"
+      ],
+      "character_names": [],
+      "location_hint": "神手谷",
+      "temporal_hint": "入门后一个月起，持续近半年",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": false,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": true
+      },
+      "ontologyWarnings": [],
+      "confidence": 1.0,
+      "chunk_id": 12,
+      "orderIndex": 2,
+      "summary": "墨大夫向韩立与张铁传授一套无名口诀，要求半年内修炼有成，否则降为外门弟子；张铁无法练出效果，韩立则修出微弱寒性能量流。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_ce713497",
+        "char_e5de8bac",
+        "char_bf69ae71"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [
+        "branch_import_main"
+      ],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_theme_training",
+      "globalOrderIndex": 51,
+      "layoutHints": {
+        "density": 7,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_7bc65b28",
+      "title": "韩立发现并激活神秘绿瓶",
+      "description": "韩立踢到一只神秘绿瓶，刀枪不入无法开启；深夜瓶子吸收月光化为光点，最终浮现金色符文自行开启，露出一滴碧绿液体。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "discovery",
+      "arcRole": "power_progression",
+      "causalRole": "setup",
+      "branchRole": "fork",
+      "arcId": "bottle_secret",
+      "timelineLaneHint": "Bottle Mystery",
+      "causalPredecessorHints": [
+        "墨大夫传授无名口诀并设下半年考核"
+      ],
+      "forkMergeHint": "fork",
+      "dedupeKey": "韩立::发现神秘绿瓶::瓶子吸收月光打开::第十至第十四章",
+      "chapterRange": {
+        "start": "第十章",
+        "end": "第十四章"
+      },
+      "importanceScore": 92,
+      "character_ids": [
+        "char_e5de8bac"
+      ],
+      "character_names": [],
+      "location_hint": "神手谷外山路与韩立住处附近",
+      "temporal_hint": "秋末深夜，韩立已修炼近一年",
+      "importance": "critical",
+      "deterministicLaneHints": {
+        "mainline": false,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": true
+      },
+      "ontologyWarnings": [],
+      "confidence": 1.0,
+      "chunk_id": 12,
+      "orderIndex": 3,
+      "summary": "韩立踢到一只神秘绿瓶，刀枪不入无法开启；深夜瓶子吸收月光化为光点，最终浮现金色符文自行开启，露出一滴碧绿液体。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_e5de8bac"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [
+        "branch_import_main"
+      ],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_theme_training",
+      "globalOrderIndex": 52,
+      "layoutHints": {
+        "density": 7,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_da79168f",
+      "title": "韩立口诀突破第一层，成亲传弟子",
+      "description": "经过近半年疯狂修行，韩立在墨大夫测试中展现出体内微弱能量流，墨大夫欣喜若狂，认定韩立练成了自己所需之物，当场收为亲传弟子。张铁因口诀无成，被另授象甲功。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "power_shift",
+      "arcRole": "power_progression",
+      "causalRole": "turning_point",
+      "branchRole": "mainline",
+      "arcId": "mentor_control",
+      "timelineLaneHint": "师徒关系质变",
+      "causalPredecessorHints": [
+        "墨大夫传授无名口诀"
+      ],
+      "forkMergeHint": "fork",
+      "dedupeKey": "韩立::墨大夫::口诀突破第一层::第八章",
+      "chapterRange": {
+        "start": "第八章",
+        "end": "第八章"
+      },
+      "importanceScore": 86,
+      "character_ids": [
+        "char_1298e116",
+        "char_ce713497",
+        "char_bf69ae71"
+      ],
+      "character_names": [],
+      "location_hint": "神手谷墨大夫房内",
+      "temporal_hint": "韩立入门近半年后",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": false,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": true
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.92,
+      "chunk_id": 12,
+      "orderIndex": 4,
+      "summary": "经过近半年疯狂修行，韩立在墨大夫测试中展现出体内微弱能量流，墨大夫欣喜若狂，认定韩立练成了自己所需之物，当场收为亲传弟子。张铁因口诀无成，被另授象甲功。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_1298e116",
+        "char_ce713497",
+        "char_bf69ae71"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [
+        "branch_import_main"
+      ],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_theme_training",
+      "globalOrderIndex": 53,
+      "layoutHints": {
+        "density": 7,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_228969ef",
+      "title": "墨大夫传授无名口诀，韩立发现修炼异象",
+      "description": "墨大夫传授韩立和张铁一套无名口诀，并严令不得外传。韩立修炼后体内产生微凉能量流，而张铁毫无进展。韩立发现这套口诀与七玄门正阳劲截然不同，修炼速度极慢，效果微弱，但墨大夫对此口诀异常重视。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "discovery",
+      "arcRole": "training",
+      "causalRole": "setup",
+      "branchRole": "mainline",
+      "arcId": "cultivation_mystery",
+      "timelineLaneHint": "Main Arc / Cultivation",
+      "causalPredecessorHints": [
+        "墨大夫收韩立张铁为记名弟子，入住神手谷"
+      ],
+      "forkMergeHint": "mainline",
+      "dedupeKey": "mo_dafu::teaches_nameless_formula::hanli_produces_cold_energy::chapter6_7",
+      "chapterRange": {
+        "start": "第六章",
+        "end": "第七章"
+      },
+      "importanceScore": 80,
+      "character_ids": [
+        "char_ce713497",
+        "char_1298e116",
+        "char_bf69ae71",
+        "char_bcc133d0",
+        "char_b71227cd",
+        "char_de38e2c4"
+      ],
+      "character_names": [
+        "墨大夫",
+        "韩立",
+        "张铁"
+      ],
+      "location_hint": "神手谷",
+      "temporal_hint": "入门后一个月至大半年",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": false,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": true
+      },
+      "ontologyWarnings": [],
+      "confidence": 0.9,
+      "chunk_id": 16,
+      "orderIndex": 5,
+      "summary": "墨大夫传授韩立和张铁一套无名口诀，并严令不得外传。韩立修炼后体内产生微凉能量流，而张铁毫无进展。韩立发现这套口诀与七玄门正阳劲截然不同，修炼速度极慢，效果微弱，但墨大夫对此口诀异常重视。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_ce713497",
+        "char_1298e116",
+        "char_bf69ae71",
+        "char_bcc133d0",
+        "char_b71227cd",
+        "char_de38e2c4"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [
+        "branch_import_main"
+      ],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_theme_training",
+      "globalOrderIndex": 54,
+      "layoutHints": {
+        "density": 7,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_9e64b65b",
+      "title": "神秘瓶子吸收月光后开启，生出绿液",
+      "description": "瓶子在夜间吸收月光多日后，表面浮现金色符文并自动打开，韩立得到一滴黄豆大的碧绿液体。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "discovery",
+      "arcRole": "power_progression",
+      "causalRole": "payoff",
+      "branchRole": "side_lane",
+      "arcId": "bottle_secret",
+      "timelineLaneHint": "Bottle Mystery",
+      "causalPredecessorHints": [
+        "韩立捡到神秘小瓶"
+      ],
+      "forkMergeHint": "merge",
+      "dedupeKey": "神秘瓶子::吸收月华自动开启::绿液::chapter13-14",
+      "chapterRange": {
+        "start": "第十三章",
+        "end": "第十四章"
+      },
+      "importanceScore": 90,
+      "character_ids": [
+        "char_b71227cd"
+      ],
+      "character_names": [],
+      "location_hint": "神手谷附近空旷处",
+      "temporal_hint": "捡到瓶子后第八天夜里",
+      "importance": "critical",
+      "deterministicLaneHints": {
+        "mainline": false,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": true
+      },
+      "ontologyWarnings": [],
+      "confidence": 1.0,
+      "chunk_id": 20,
+      "orderIndex": 6,
+      "summary": "瓶子在夜间吸收月光多日后，表面浮现金色符文并自动打开，韩立得到一滴黄豆大的碧绿液体。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_b71227cd"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [
+        "branch_import_main"
+      ],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_theme_training",
+      "globalOrderIndex": 55,
+      "layoutHints": {
+        "density": 7,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_2de5923b",
+      "title": "韩立与厉飞雨缔结秘密同盟",
+      "description": "韩立承诺为厉飞雨提供止痛药并保守秘密，厉飞雨以欠下人情并承诺帮助作为回报，两人形成利益关系。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "alliance_or_bond",
+      "arcRole": "side",
+      "causalRole": "effect",
+      "branchRole": "merge",
+      "arcId": "rival_ally",
+      "timelineLaneHint": "Rival Ally",
+      "causalPredecessorHints": [
+        "韩立救下厉飞雨并发现抽髓丸秘密"
+      ],
+      "forkMergeHint": "merge",
+      "dedupeKey": "韩立厉飞雨::约定止痛药互助::chapter21",
+      "chapterRange": {
+        "start": "第二十一章",
+        "end": "第二十一章"
+      },
+      "importanceScore": 82,
+      "character_ids": [
+        "char_b71227cd",
+        "char_a60b18f0"
+      ],
+      "character_names": [],
+      "location_hint": "神手谷口",
+      "temporal_hint": "次日午时",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": false,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 1.0,
+      "chunk_id": 20,
+      "orderIndex": 0,
+      "summary": "韩立承诺为厉飞雨提供止痛药并保守秘密，厉飞雨以欠下人情并承诺帮助作为回报，两人形成利益关系。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_b71227cd",
+        "char_a60b18f0"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [
+        "branch_import_main"
+      ],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_arc_rival_ally",
+      "globalOrderIndex": 56,
+      "layoutHints": {
+        "density": 2,
+        "branchEventBudget": 36
+      }
+    },
+    {
+      "event_id": "event_01fde84f",
+      "title": "韩立救下厉飞雨并发现抽髓丸秘密",
+      "description": "韩立在小溪边偶遇毒瘾发作的厉飞雨，施针救醒后发现其服用抽髓丸透支生命，逼问后得知其以寿命换取武功。",
+      "eventClass": "canonical_event",
+      "timelineClass": "canonical_event",
+      "eventType": "discovery",
+      "arcRole": "side",
+      "causalRole": "cause",
+      "branchRole": "parallel",
+      "arcId": "rival_ally",
+      "timelineLaneHint": "Rival Ally",
+      "causalPredecessorHints": [
+        "韩立闭关四年后初出山谷"
+      ],
+      "forkMergeHint": "fork",
+      "dedupeKey": "韩立厉飞雨::发现抽髓丸::chapter20",
+      "chapterRange": {
+        "start": "第二十章",
+        "end": "第二十章"
+      },
+      "importanceScore": 88,
+      "character_ids": [
+        "char_b71227cd",
+        "char_a60b18f0"
+      ],
+      "character_names": [],
+      "location_hint": "彩霞山偏僻小溪",
+      "temporal_hint": "韩立出谷闲逛当天下午",
+      "importance": "high",
+      "deterministicLaneHints": {
+        "mainline": false,
+        "factionOrOrganization": false,
+        "location": false,
+        "antagonist": false,
+        "trainingOrPowerProgression": false
+      },
+      "ontologyWarnings": [],
+      "confidence": 1.0,
+      "chunk_id": 20,
+      "orderIndex": 1,
+      "summary": "韩立在小溪边偶遇毒瘾发作的厉飞雨，施针救醒后发现其服用抽髓丸透支生命，逼问后得知其以寿命换取武功。",
+      "locationIds": [],
+      "participantCharacterIds": [
+        "char_b71227cd",
+        "char_a60b18f0"
+      ],
+      "linkedSceneIds": [],
+      "linkedWorldItemIds": [],
+      "tags": [
+        "imported"
+      ],
+      "sharedBranchIds": [
+        "branch_import_main"
+      ],
+      "classificationReason": "candidate preserves story state, causal, or arc-level change",
+      "mergedEventIds": [],
+      "mergeReasons": [],
+      "branchId": "branch_arc_rival_ally",
+      "globalOrderIndex": 57,
+      "layoutHints": {
+        "density": 2,
+        "branchEventBudget": 36
+      }
+    }
+  ],
+  "event_classifications": [
+    {
+      "event_id": "event_fc842826",
+      "title": "三叔举荐韩立参加七玄门测试",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "hanli::uncle_recommends::seven_mysteries_test::ch1",
+      "semanticTitleKey": "third_uncle_sect_offer"
+    },
+    {
+      "event_id": "event_d48fc175",
+      "title": "王护法接走韩立正式入七玄门",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "王护法::接走韩立::移交七玄门::第二章",
+      "semanticTitleKey": "王护法接走韩立正式入七玄门"
+    },
+    {
+      "event_id": "event_d572f8a4",
+      "title": "韩立攀登炼骨崖试炼",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "hanli::entrance_test::cliff_climb::ch3_ch4",
+      "semanticTitleKey": "third_uncle_sect_offer"
+    },
+    {
+      "event_id": "event_aab98f65",
+      "title": "韩立离别家人赴七玄门",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "hanli::departs_village::for_seven_mysteries::ch1",
+      "semanticTitleKey": "han_li_leave_home"
+    },
+    {
+      "event_id": "event_a9a8f12d",
+      "title": "韩立随三叔离家前往青牛镇",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "韩立::离开家乡::前往青牛镇::第一章",
+      "semanticTitleKey": "han_li_leave_home"
+    },
+    {
+      "event_id": "event_f9155589",
+      "title": "三叔来访提议韩立参加七玄门测试",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "三叔::提议韩立参加七玄门测试::韩父同意改变韩立命运::ch1",
+      "semanticTitleKey": "third_uncle_sect_offer"
+    },
+    {
+      "event_id": "event_a10cb7ba",
+      "title": "王护法接韩立前往七玄门总门",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "王护法::接韩立上马车::前往七玄门总门::ch2",
+      "semanticTitleKey": "join_seven_mysteries"
+    },
+    {
+      "event_id": "event_b36b931b",
+      "title": "韩立参加入门测试未能登顶",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "韩立::攀登炼骨崖::未能在正午登顶::ch4",
+      "semanticTitleKey": "韩立参加入门测试未能登顶"
+    },
+    {
+      "event_id": "event_a8681d80",
+      "title": "韩立抵达七玄门总门",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "韩立等人::到达七玄门彩霞山::入住清客院准备测试::ch3",
+      "semanticTitleKey": "join_seven_mysteries"
+    },
+    {
+      "event_id": "event_989dd38d",
+      "title": "三叔提议韩立参加七玄门入门考验",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "han_li::three_uncle::proposes_entrance_test::chapter1",
+      "semanticTitleKey": "third_uncle_sect_offer"
+    },
+    {
+      "event_id": "event_5d9f1b33",
+      "title": "韩立修炼出异种凉性能量",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "han_li::cultivates_unnamed_method::produces_cool_energy::chapter7",
+      "semanticTitleKey": "韩立修炼出异种凉性能量"
+    },
+    {
+      "event_id": "event_47b0c837",
+      "title": "韩立参加炼骨崖考验并成为记名弟子",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "han_li::seven_mysteries_gate::entrance_trial::becomes_temporary_disciple::chapter4",
+      "semanticTitleKey": "韩立参加炼骨崖考验并成为记名弟子"
+    },
+    {
+      "event_id": "event_113a7a9c",
+      "title": "三叔提议入门测试",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "三叔::提议参加七玄门测试::韩父同意::第一章",
+      "semanticTitleKey": "third_uncle_sect_offer"
+    },
+    {
+      "event_id": "event_20367d13",
+      "title": "炼骨崖测试成为记名弟子",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "韩立::炼骨崖测试::成为记名弟子::第四章",
+      "semanticTitleKey": "third_uncle_sect_offer"
+    },
+    {
+      "event_id": "event_529f94f5",
+      "title": "韩立捡到神秘小瓶",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "韩立::捡到绿色小瓶::无法打开::第十章",
+      "semanticTitleKey": "韩立捡到神秘小瓶"
+    },
+    {
+      "event_id": "event_bcf7940e",
+      "title": "韩立砸瓶不碎并藏匿",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "韩立::砸瓶不碎::藏匿瓶子::第十二章",
+      "semanticTitleKey": "韩立砸瓶不碎并藏匿"
+    },
+    {
+      "event_id": "event_41277027",
+      "title": "韩立离家赴七玄门",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "韩立::离家去七玄门::离别父母::第一章",
+      "semanticTitleKey": "han_li_leave_home"
+    },
+    {
+      "event_id": "event_a135a4d8",
+      "title": "三叔提议七玄门入门测试",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "韩立三叔::提议七玄门测试::韩父同意韩立离家::第一章",
+      "semanticTitleKey": "han_li_leave_home"
+    },
+    {
+      "event_id": "event_834cdf34",
+      "title": "三叔来访，举荐韩立入七玄门",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "三叔::韩立::推荐入门测试::第1章",
+      "semanticTitleKey": "三叔来访举荐韩立入七玄门"
+    },
+    {
+      "event_id": "event_94661131",
+      "title": "小瓶夜间吸光，显现异象",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "韩立::神秘瓶子::夜间吸光产液::第十三章-第十四章",
+      "semanticTitleKey": "小瓶夜间吸光显现异象"
+    },
+    {
+      "event_id": "event_547001d4",
+      "title": "韩立发现神秘小瓶，无法打开",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "韩立::神秘瓶子::捡到打不开::第十章",
+      "semanticTitleKey": "韩立发现神秘小瓶无法打开"
+    },
+    {
+      "event_id": "event_17507158",
+      "title": "韩立通过入门测试成为记名弟子",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "韩立::炼骨崖测试::成为记名弟子::第四章",
+      "semanticTitleKey": "韩立通过入门测试成为记名弟子"
+    },
+    {
+      "event_id": "event_76bed8a5",
+      "title": "七玄门入门测试——炼骨崖攀爬",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "hanli::trial_climb_liangu_cliff::becomes_probationary_disciple::chapter3_4",
+      "semanticTitleKey": "七玄门入门测试炼骨崖攀爬"
+    },
+    {
+      "event_id": "event_389fde52",
+      "title": "三叔安排韩立入门测试",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "三叔::安排韩立参加入门测试::第一章",
+      "semanticTitleKey": "third_uncle_sect_offer"
+    },
+    {
+      "event_id": "event_f1325198",
+      "title": "三叔来访，韩立被推举参加七玄门入门测试",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "hanli::recommended_for_qixuanmen_trial::leaves_home::chapter1",
+      "semanticTitleKey": "third_uncle_sect_offer"
+    },
+    {
+      "event_id": "event_4661bc02",
+      "title": "四年修炼瓶颈与张铁失踪",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "四年后::韩立瓶颈墨大夫下山张铁失踪::第十五章",
+      "semanticTitleKey": "四年修炼瓶颈与张铁失踪"
+    },
+    {
+      "event_id": "event_a3101982",
+      "title": "墨大夫收韩立张铁为助手",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "墨大夫::收韩立张铁为助手::第五章",
+      "semanticTitleKey": "墨大夫收韩立张铁为助手"
+    },
+    {
+      "event_id": "event_a3ab7a43",
+      "title": "墨大夫测试发现韩立特殊体质",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "墨大夫::测试发现韩立特殊体质收为亲传弟子::第八章",
+      "semanticTitleKey": "墨大夫测试发现韩立特殊体质"
+    },
+    {
+      "event_id": "event_07af37db",
+      "title": "炼骨崖入门测试",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "韩立::炼骨崖测试未按时到达获记名弟子::第四章",
+      "semanticTitleKey": "炼骨崖入门测试"
+    },
+    {
+      "event_id": "event_56d93dbf",
+      "title": "神秘瓶吸月光生绿液",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "神秘瓶::吸收月光产生绿色液体::第十三-十四章",
+      "semanticTitleKey": "神秘瓶吸月光生绿液"
+    },
+    {
+      "event_id": "event_789ef66c",
+      "title": "韩立发现体内异种真气",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "韩立::发现异种真气::第七章",
+      "semanticTitleKey": "韩立发现体内异种真气"
+    },
+    {
+      "event_id": "event_acda8933",
+      "title": "韩立发现神秘瓶子并引发异象",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "hanli::finds_mysterious_bottle::bottle_produces_green_liquid::chapter10_14",
+      "semanticTitleKey": "韩立发现神秘瓶子并引发异象"
+    },
+    {
+      "event_id": "event_16303638",
+      "title": "韩立救厉师兄揭破抽髓丸",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "韩立::救治厉师兄并揭露抽髓丸秘密::第二十章",
+      "semanticTitleKey": "韩立救厉师兄揭破抽髓丸"
+    },
+    {
+      "event_id": "event_e221b375",
+      "title": "韩立随三叔抵达青牛镇，与王护法会面",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "hanli::arrives_qingniu_town_meets_wanghufa::departure_to_qixuanmen::chapter2",
+      "semanticTitleKey": "join_seven_mysteries"
+    },
+    {
+      "event_id": "event_7433041d",
+      "title": "三叔接韩立前往七玄门参加入门测试",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "三叔接韩立赴七玄门::韩立离家::chapter1",
+      "semanticTitleKey": "han_li_leave_home"
+    },
+    {
+      "event_id": "event_edf9dea9",
+      "title": "墨大夫下山寻药离开七玄门",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "墨大夫::下山寻药::离开七玄门::第十五章",
+      "semanticTitleKey": "墨大夫下山寻药离开七玄门"
+    },
+    {
+      "event_id": "event_6d31c354",
+      "title": "舞岩率先登顶并嘲讽众人",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "舞岩::登顶后嘲讽::树立对手形象::ch4",
+      "semanticTitleKey": "舞岩率先登顶并嘲讽众人"
+    },
+    {
+      "event_id": "event_fbb72d39",
+      "title": "半年考核：墨大夫确认韩立修炼成果并狂喜收徒",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "mo_daifu::half_year_test::recognizes_cool_energy::accepts_han_li_as_personal_disciple::chapter8",
+      "semanticTitleKey": "半年考核墨大夫确认韩立修炼成果并狂喜收徒"
+    },
+    {
+      "event_id": "event_87dd8242",
+      "title": "墨大夫传授无名口诀",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "mo_daifu::teaches_unnamed_method::sets_half_year_test::chapter6",
+      "semanticTitleKey": "墨大夫传授无名口诀"
+    },
+    {
+      "event_id": "event_07d84afa",
+      "title": "墨大夫带走韩立与张铁",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "mo_daifu::selects_han_li_and_zhang_tie::as_apprentice::chapter5",
+      "semanticTitleKey": "墨大夫带走韩立与张铁"
+    },
+    {
+      "event_id": "event_97d29158",
+      "title": "墨大夫发现韩立特殊体质",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "墨大夫::考核发现韩立凉性能量::狂喜收徒::第八章",
+      "semanticTitleKey": "墨大夫发现韩立特殊体质"
+    },
+    {
+      "event_id": "event_41c0e0a9",
+      "title": "墨大夫挑走韩立张铁",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "墨大夫::挑选韩立张铁::进入神手谷::第五章",
+      "semanticTitleKey": "墨大夫挑走韩立张铁"
+    },
+    {
+      "event_id": "event_c69ba6f3",
+      "title": "墨大夫收徒，韩立入神手谷",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "墨大夫::韩立::收为记名弟子::第五章",
+      "semanticTitleKey": "doctor_mo_accepts_disciple"
+    },
+    {
+      "event_id": "event_9379bd79",
+      "title": "墨大夫收韩立为记名弟子",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "墨大夫::选中韩立张铁::带回神手谷::第五章",
+      "semanticTitleKey": "墨大夫收韩立为记名弟子"
+    },
+    {
+      "event_id": "event_5d8d42d4",
+      "title": "墨大夫收韩立张铁为记名弟子，入住神手谷",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "mo_dafu::takes_hanli_zhangtie_as_apprentices::enters_shenshou_valley::chapter5",
+      "semanticTitleKey": "墨大夫收韩立张铁为记名弟子入住神手谷"
+    },
+    {
+      "event_id": "event_1e681692",
+      "title": "墨大夫正式收韩立为亲传弟子",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "mo_dafu::formally_accepts_hanli_as_personal_disciple::zhangtie_gets_xiangjia_gong::chapter8",
+      "semanticTitleKey": "墨大夫正式收韩立为亲传弟子"
+    },
+    {
+      "event_id": "event_2f55e9bb",
+      "title": "韩立无名口诀突破第三层，墨大夫下山寻药",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "hanli::formula_layer3_bottleneck::mo_dafu_leaves_to_find_herbs::chapter15",
+      "semanticTitleKey": "cultivation_breakthrough"
+    },
+    {
+      "event_id": "event_65049b4b",
+      "title": "墨大夫发现韩立特殊真气，收为亲传弟子",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "墨大夫::发现韩立冰凉真气::升亲传::chapter8",
+      "semanticTitleKey": "墨大夫发现韩立特殊真气收为亲传弟子"
+    },
+    {
+      "event_id": "event_41b07fbf",
+      "title": "墨大夫收韩立张铁为记名弟子",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "墨大夫::收韩立张铁::记名弟子::chapter5",
+      "semanticTitleKey": "墨大夫收韩立张铁为记名弟子"
+    },
+    {
+      "event_id": "event_68934596",
+      "title": "墨大夫传授无名口诀",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "墨大夫::传授无名口诀::韩立张铁::第六章",
+      "semanticTitleKey": "墨大夫传授无名口诀"
+    },
+    {
+      "event_id": "event_a9581754",
+      "title": "墨大夫传授无名口诀",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "墨大夫::韩立::传授无名口诀::第六章",
+      "semanticTitleKey": "墨大夫传授无名口诀"
+    },
+    {
+      "event_id": "event_30f8c55a",
+      "title": "墨大夫传授无名口诀并设下半年考核",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "墨大夫::传授无名口诀::韩立修出寒性能量流::第六至第九章",
+      "semanticTitleKey": "墨大夫传授无名口诀并设下半年考核"
+    },
+    {
+      "event_id": "event_7bc65b28",
+      "title": "韩立发现并激活神秘绿瓶",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "韩立::发现神秘绿瓶::瓶子吸收月光打开::第十至第十四章",
+      "semanticTitleKey": "韩立发现并激活神秘绿瓶"
+    },
+    {
+      "event_id": "event_da79168f",
+      "title": "韩立口诀突破第一层，成亲传弟子",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "韩立::墨大夫::口诀突破第一层::第八章",
+      "semanticTitleKey": "cultivation_breakthrough"
+    },
+    {
+      "event_id": "event_228969ef",
+      "title": "墨大夫传授无名口诀，韩立发现修炼异象",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "mo_dafu::teaches_nameless_formula::hanli_produces_cold_energy::chapter6_7",
+      "semanticTitleKey": "墨大夫传授无名口诀韩立发现修炼异象"
+    },
+    {
+      "event_id": "event_9e64b65b",
+      "title": "神秘瓶子吸收月光后开启，生出绿液",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "神秘瓶子::吸收月华自动开启::绿液::chapter13-14",
+      "semanticTitleKey": "神秘瓶子吸收月光后开启生出绿液"
+    },
+    {
+      "event_id": "event_2de5923b",
+      "title": "韩立与厉飞雨缔结秘密同盟",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "韩立厉飞雨::约定止痛药互助::chapter21",
+      "semanticTitleKey": "韩立与厉飞雨缔结秘密同盟"
+    },
+    {
+      "event_id": "event_01fde84f",
+      "title": "韩立救下厉飞雨并发现抽髓丸秘密",
+      "classification": "canonical_event",
+      "reason": "candidate preserves story state, causal, or arc-level change",
+      "dedupeKey": "韩立厉飞雨::发现抽髓丸::chapter20",
+      "semanticTitleKey": "韩立救下厉飞雨并发现抽髓丸秘密"
+    }
+  ],
+  "discarded_duplicates": [],
+  "scene_beats": [],
+  "background_references": [],
+  "fork_merge_anchors": [
+    {
+      "branchId": "branch_theme_antagonist",
+      "parentBranchId": "branch_import_main",
+      "forkEventId": "event_6d31c354",
+      "mergeEventId": "event_1e681692",
+      "reason": "deterministic first canonical event fork anchor with optional model merge/callback hint"
+    },
+    {
+      "branchId": "branch_theme_training",
+      "parentBranchId": "branch_import_main",
+      "forkEventId": "event_68934596",
+      "mergeEventId": "event_9e64b65b",
+      "reason": "deterministic first canonical event fork anchor with optional model merge/callback hint"
+    },
+    {
+      "branchId": "branch_arc_rival_ally",
+      "parentBranchId": "branch_import_main",
+      "forkEventId": "event_2de5923b",
+      "mergeEventId": "event_2de5923b",
+      "reason": "deterministic first canonical event fork anchor with optional model merge/callback hint"
+    }
+  ],
+  "density_policy": {
+    "max_events_per_chunk": 8,
+    "max_events_per_branch": 36,
+    "branch_threshold": 2,
+    "minimum_canonical_events": 58,
+    "low_confidence_threshold": 0.9,
+    "canonical_classes": [
+      "canonical_event"
+    ],
+    "noncanonical_classes": [
+      "scene_beat",
+      "background_reference",
+      "discarded_duplicate"
+    ]
+  },
+  "layout_hints": {
+    "strategy": "semantic_branch_topology",
+    "max_branch_count": 10,
+    "branch_lane_spacing": 140,
+    "root_branch_policy": "mainline only for arc-level turning points or deterministic fallback"
+  },
+  "warnings": []
+}
