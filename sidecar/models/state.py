@@ -101,6 +101,9 @@ class ToolOperatingSpec(TypedDict, total=False):
     orchestrator_enabled: bool
     supervisor_enabled: bool
     max_world_entities_per_chapter: int
+    thematic_rerun_wave_cap: int
+    acceptable_floor_fraction: float   # fraction of expected_min below which needs_targeted_repair
+    require_protagonist_coverage: bool  # whether protagonist_list must be fully covered
 
 
 class ConvergeTarget(TypedDict, total=False):
@@ -111,6 +114,29 @@ class ConvergeTarget(TypedDict, total=False):
     expected_min_world_entities: int
     expected_language: str
     expected_timeline_topology: Literal["flat", "branched", "full_dag"]
+    protagonist_list: List[str]          # canonical names that must appear; missing → needs_targeted_repair
+    acceptable_min_characters: int       # floor below expected_min; between floor and target → acceptable_with_warnings
+    acceptable_min_events: int           # same floor logic for events
+
+
+class ImportGranularityProfile(TypedDict, total=False):
+    """Source-adaptive granularity constraints selected before extraction begins."""
+    profile_name: Literal["coarse_webnovel", "balanced_novel", "fine_short_story", "custom"]
+    min_characters_per_chapter: float
+    acceptable_floor_fraction: float     # e.g. 0.80 → 80% of expected is acceptable (no rerun)
+    min_events_per_chapter: float
+    rerun_on_character_gap: bool         # if False: gap below floor → acceptable_with_warnings, no rerun
+    max_world_entities_per_chapter: int
+
+
+class ImportResultClassification(TypedDict, total=False):
+    """Four-tier verdict emitted by judge_import. Replaces binary passed/failed."""
+    verdict: Literal["pass", "acceptable_with_warnings", "needs_targeted_repair", "hard_fail"]
+    warnings: List[str]
+    hard_fail_reason: str
+    protagonist_coverage: Dict[str, bool]  # {canonical_name: found}
+    character_gap: int                     # expected_min_characters - actual (negative = surplus)
+    event_gap: int                         # expected_min_events - actual
 
 
 class ThematicRerunRequest(TypedDict, total=False):
@@ -131,11 +157,13 @@ class JudgeArtifact(TypedDict, total=False):
     """Deterministic post-QA assessment that may request thematic reruns."""
     score: float
     passed: bool
+    result_status: Literal["passed", "acceptable_with_warnings", "needs_review", "failed", "budget_exhausted"]
     failed_gates: List[str]
     thematic_rerun_requests: List[ThematicRerunRequest]
     iteration: int
     metrics_snapshot: dict
     rationale: str
+    rerun_cap_reached: bool
     artifact_paths: Dict[str, str]
 
 
@@ -393,6 +421,7 @@ _TOS_DEFAULTS: "Dict[str, ToolOperatingSpec]" = {
         "orchestrator_enabled": False,
         "supervisor_enabled": False,
         "max_world_entities_per_chapter": 3,
+        "thematic_rerun_wave_cap": 0,
     },
     "balanced": {
         "min_characters_per_chapter": 0.75,
@@ -408,6 +437,7 @@ _TOS_DEFAULTS: "Dict[str, ToolOperatingSpec]" = {
         "orchestrator_enabled": False,
         "supervisor_enabled": False,
         "max_world_entities_per_chapter": 4,
+        "thematic_rerun_wave_cap": 1,
     },
     "deep": {
         "min_characters_per_chapter": 1.5,
@@ -423,6 +453,7 @@ _TOS_DEFAULTS: "Dict[str, ToolOperatingSpec]" = {
         "orchestrator_enabled": True,
         "supervisor_enabled": True,
         "max_world_entities_per_chapter": 5,
+        "thematic_rerun_wave_cap": 1,
     },
     "custom": {
         "min_characters_per_chapter": 1.5,
@@ -438,6 +469,7 @@ _TOS_DEFAULTS: "Dict[str, ToolOperatingSpec]" = {
         "orchestrator_enabled": True,
         "supervisor_enabled": True,
         "max_world_entities_per_chapter": 5,
+        "thematic_rerun_wave_cap": 2,
     },
 }
 
@@ -587,6 +619,8 @@ class ImportSupervisorState(TypedDict, total=False):
     judge_score: float
     rerun_reason: str
     converge_status: Literal["not_started", "planning", "extracting", "judging", "rerunning", "passed", "failed", "writing"]
+    budget_exhausted: bool      # True when API returned HTTP 402 — stops all reruns
+    global_rerun_count: int     # Total rerun API calls dispatched this run
 
 
 class DiffItem(TypedDict):

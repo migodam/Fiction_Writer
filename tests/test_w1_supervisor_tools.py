@@ -1124,5 +1124,159 @@ class TestProposalWriteSlimWriteInput(unittest.TestCase):
         self.assertIn("project_path", captured_state)
 
 
+# ── Cost guard: 402 budget exhaustion detection ───────────────────────────────
+
+class TestBudgetExhausted402Detection(unittest.TestCase):
+    def test_is_budget_exhausted_error_detects_402_in_message(self):
+        from sidecar.supervisor.tools import _is_budget_exhausted_error
+        exc = RuntimeError("APIStatusError: Error code: 402 - Insufficient Balance")
+        self.assertTrue(_is_budget_exhausted_error(exc))
+
+    def test_is_budget_exhausted_error_detects_insufficient_balance(self):
+        from sidecar.supervisor.tools import _is_budget_exhausted_error
+        exc = Exception("Insufficient Balance — please top up your account")
+        self.assertTrue(_is_budget_exhausted_error(exc))
+
+    def test_is_budget_exhausted_error_false_for_normal_errors(self):
+        from sidecar.supervisor.tools import _is_budget_exhausted_error
+        self.assertFalse(_is_budget_exhausted_error(RuntimeError("LLM timeout")))
+        self.assertFalse(_is_budget_exhausted_error(ValueError("bad JSON")))
+        self.assertFalse(_is_budget_exhausted_error(Exception("rate_limit_exceeded")))
+
+
+class TestExtractWindowBudgetExhausted(unittest.TestCase):
+    @patch("sidecar.supervisor.tools._get_llm")
+    @patch("sidecar.supervisor.tools._invoke_json_prompt")
+    def test_all_402_failures_set_budget_exhausted(self, mock_invoke, mock_llm):
+        """All 5 prompts returning 402 errors must set budget_exhausted=True in result."""
+        mock_llm.return_value = MagicMock()
+        mock_invoke.side_effect = RuntimeError(
+            "APIStatusError: Error code: 402 - {'error': {'message': 'Insufficient Balance'}}"
+        )
+        state = _make_state(prompt_windows=[_make_window("win_402", [0])])
+        result = asyncio.run(extract_window(state, "win_402"))
+        self.assertTrue(result.get("budget_exhausted"), "budget_exhausted must be True when all prompts return 402")
+
+    @patch("sidecar.supervisor.tools._get_llm")
+    @patch("sidecar.supervisor.tools._invoke_json_prompt")
+    def test_partial_402_failure_sets_budget_exhausted(self, mock_invoke, mock_llm):
+        """Even one 402 error among 5 prompts must set budget_exhausted."""
+        mock_llm.return_value = MagicMock()
+        mock_invoke.side_effect = [
+            RuntimeError("Error code: 402 - Insufficient Balance"),  # character fails with 402
+            {"events": []},
+            {"world_mentions": []},
+            {"relationships": []},
+            {"scene_summaries": []},
+        ]
+        state = _make_state(prompt_windows=[_make_window("win_partial_402", [0])])
+        result = asyncio.run(extract_window(state, "win_partial_402"))
+        self.assertTrue(result.get("budget_exhausted"))
+
+    @patch("sidecar.supervisor.tools._get_llm")
+    @patch("sidecar.supervisor.tools._invoke_json_prompt")
+    def test_non_402_failure_does_not_set_budget_exhausted(self, mock_invoke, mock_llm):
+        """A normal LLM timeout must not set budget_exhausted."""
+        mock_llm.return_value = MagicMock()
+        mock_invoke.side_effect = [
+            RuntimeError("LLM connection timeout"),
+            {"events": []},
+            {"world_mentions": []},
+            {"relationships": []},
+            {"scene_summaries": []},
+        ]
+        state = _make_state(prompt_windows=[_make_window("win_timeout", [0])])
+        result = asyncio.run(extract_window(state, "win_timeout"))
+        self.assertFalse(result.get("budget_exhausted", False))
+
+    @patch("sidecar.supervisor.tools._get_llm")
+    @patch("sidecar.supervisor.tools._invoke_json_prompt")
+    def test_budget_exhausted_adds_error_message(self, mock_invoke, mock_llm):
+        """budget_exhausted=True must also add a clear error string to result['errors']."""
+        mock_llm.return_value = MagicMock()
+        mock_invoke.side_effect = RuntimeError("402 Insufficient Balance")
+        state = _make_state(prompt_windows=[_make_window("win_err", [0])])
+        result = asyncio.run(extract_window(state, "win_err"))
+        errors = result.get("errors", [])
+        self.assertTrue(any("budget_exhausted" in e or "402" in e for e in errors),
+                        f"Expected budget_exhausted error message, got: {errors}")
+
+
+# ── Cost guard: judge_import result_status ────────────────────────────────────
+
+class TestJudgeImportResultStatus(unittest.TestCase):
+    def _make_state_with_chars(self, profile: str, char_count: int) -> dict:
+        chars = {f"char_{i}": {"canonical_name": f"C{i}", "importance": "supporting", "confidence": 0.8}
+                 for i in range(char_count)}
+        return _make_state(
+            prompt_profile=profile,
+            entity_registry={"characters": chars, "events": {}, "world": {}, "world_detailed": {}},
+            chunks=[{"chunk_id": i, "content": f"ch{i}"} for i in range(10)],
+            converge_target={"expected_min_characters": 20, "expected_min_events": 1},
+        )
+
+    def test_passed_status_when_all_gates_pass(self):
+        chars = {f"char_{i}": {"canonical_name": f"C{i}", "importance": "supporting", "confidence": 0.8}
+                 for i in range(30)}
+        state = _make_state(
+            prompt_profile="balanced",
+            entity_registry={"characters": chars, "events": {}, "world": {}, "world_detailed": {}},
+            chunks=[{"chunk_id": i, "content": f"ch{i}"} for i in range(10)],
+            converge_target={"expected_min_characters": 10, "expected_min_events": 1},
+            timeline_architecture={"canonical_events": [{"title": "e"}] * 15},
+        )
+        result = asyncio.run(judge_import(state))
+        artifact = result.get("judge_artifact", {})
+        self.assertEqual(artifact.get("result_status"), "passed")
+
+    def test_acceptable_with_warnings_for_balanced_char_undercoverage_only(self):
+        """Balanced profile + only character_undercoverage gate → acceptable_with_warnings."""
+        state = self._make_state_with_chars("balanced", 5)  # far below target of 20
+        state["converge_target"] = {"expected_min_characters": 20, "expected_min_events": 1}
+        state["timeline_architecture"] = {"canonical_events": [{"title": "e"}] * 15}
+        result = asyncio.run(judge_import(state))
+        artifact = result.get("judge_artifact", {})
+        self.assertIn("character_undercoverage", artifact.get("failed_gates", []))
+        self.assertEqual(artifact.get("result_status"), "acceptable_with_warnings",
+                         f"Balanced profile with only char_undercoverage should be acceptable_with_warnings, got {artifact.get('result_status')}")
+
+    def test_failed_status_for_deep_profile_char_undercoverage(self):
+        """Deep profile: character_undercoverage is a hard fail (result_status=needs_review)."""
+        state = self._make_state_with_chars("deep", 5)
+        state["converge_target"] = {"expected_min_characters": 20, "expected_min_events": 1}
+        state["timeline_architecture"] = {"canonical_events": [{"title": "e"}] * 15}
+        result = asyncio.run(judge_import(state))
+        artifact = result.get("judge_artifact", {})
+        self.assertNotEqual(artifact.get("result_status"), "acceptable_with_warnings",
+                            "Deep profile should not use acceptable_with_warnings for char_undercoverage")
+
+    def test_budget_exhausted_status_propagates(self):
+        """When state has budget_exhausted=True, judge result_status must be budget_exhausted."""
+        state = self._make_state_with_chars("balanced", 5)
+        state["budget_exhausted"] = True
+        result = asyncio.run(judge_import(state))
+        artifact = result.get("judge_artifact", {})
+        self.assertEqual(artifact.get("result_status"), "budget_exhausted")
+
+
+# ── Cost guard: TOS thematic_rerun_wave_cap ───────────────────────────────────
+
+class TestTOSThematicRerunWaveCap(unittest.TestCase):
+    def test_deep_profile_has_wave_cap_1(self):
+        from sidecar.models.state import plan_tool_operating_spec
+        spec = plan_tool_operating_spec("deep", "zh", 50)
+        self.assertEqual(spec["thematic_rerun_wave_cap"], 1)
+
+    def test_fast_profile_has_wave_cap_0(self):
+        from sidecar.models.state import plan_tool_operating_spec
+        spec = plan_tool_operating_spec("fast", "en", 10)
+        self.assertEqual(spec["thematic_rerun_wave_cap"], 0)
+
+    def test_balanced_profile_has_wave_cap_1(self):
+        from sidecar.models.state import plan_tool_operating_spec
+        spec = plan_tool_operating_spec("balanced", "en", 20)
+        self.assertEqual(spec["thematic_rerun_wave_cap"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

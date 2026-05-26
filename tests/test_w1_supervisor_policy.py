@@ -646,5 +646,190 @@ class TestMergeCorrectness(unittest.TestCase):
                       "judge_artifact.json was not written by proposal_write")
 
 
+# ── Cost guard policy tests ───────────────────────────────────────────────────
+
+class TestPolicyBudgetExhaustedStop(unittest.TestCase):
+    """Policy loop must halt extraction and skip reruns when budget_exhausted."""
+
+    def _make_budget_exhausted_extract(self, windows: list) -> dict:
+        """Returns a set of tools where extract_window returns budget_exhausted=True."""
+        empty_registry = {"characters": {}, "events": {}, "world": {}, "world_detailed": {}}
+
+        async def exhausted_extract(state, window_id):
+            metrics = {window_id: {
+                "window_id": window_id, "chapter_count": 2,
+                "char_count_extracted": 0, "event_count_extracted": 0,
+                "failed_prompts": [
+                    "character:RuntimeError:Error code: 402 - Insufficient Balance",
+                    "event:RuntimeError:Error code: 402 - Insufficient Balance",
+                ],
+                "gate_passed": False, "rerun_count": 0,
+                "missing_majors": [], "missing_majors_count": 0,
+            }}
+            return {
+                "entity_registry": empty_registry,
+                "window_metrics": metrics,
+                "budget_exhausted": True,
+                "errors": ["[budget_exhausted] API HTTP 402 during extraction"],
+                "supervisor_log": [f"extract_window {window_id}: budget_exhausted=True"],
+            }
+
+        tools = _make_tools(
+            segment_result={"prompt_windows": windows, "supervisor_log": []},
+        )
+        tools["extract_window"] = AsyncMock(side_effect=exhausted_extract)
+        return tools
+
+    def test_budget_exhausted_stops_after_first_window(self):
+        """Once a window returns budget_exhausted, remaining windows must not be extracted."""
+        from sidecar.supervisor.policy import run_supervisor_policy
+        windows = [
+            _make_window("pwin_0", [0, 1]),
+            _make_window("pwin_1", [2, 3]),
+            _make_window("pwin_2", [4, 5]),
+        ]
+        state = _make_state(windows=windows)
+        tools = self._make_budget_exhausted_extract(windows)
+        extract_calls: list[str] = []
+
+        original_side_effect = tools["extract_window"].side_effect
+        async def tracking_extract(s, wid):
+            extract_calls.append(wid)
+            return await original_side_effect(s, wid)
+
+        tools["extract_window"].side_effect = tracking_extract
+
+        result = asyncio.run(run_supervisor_policy(state, tools))
+
+        self.assertTrue(result.get("budget_exhausted"), "budget_exhausted must be set in final state")
+        # All windows in the first batch (3 concurrent) will be dispatched, but no second batch
+        self.assertLessEqual(len(extract_calls), 3,
+                             f"Expected ≤3 extract calls (one batch max), got {len(extract_calls)}: {extract_calls}")
+
+    def test_budget_exhausted_prevents_rerun(self):
+        """rerun_window must not be called after budget_exhausted."""
+        from sidecar.supervisor.policy import run_supervisor_policy
+        windows = [_make_window("pwin_budget", [0, 1])]
+        state = _make_state(windows=windows)
+        tools = self._make_budget_exhausted_extract(windows)
+
+        result = asyncio.run(run_supervisor_policy(state, tools))
+
+        tools["rerun_window"].assert_not_called()
+
+    def test_budget_exhausted_skips_thematic_reruns(self):
+        """_apply_thematic_reruns must not fire when budget_exhausted=True."""
+        from sidecar.supervisor.policy import run_supervisor_policy
+        windows = [_make_window("pwin_thematic", [0])]
+        state = _make_state(windows=windows)
+        tools = self._make_budget_exhausted_extract(windows)
+
+        # Judge would request thematic reruns — they must be skipped
+        rerun_budget_judge = {
+            "judge_artifact": {
+                "score": 0.64, "passed": False, "failed_gates": ["character_undercoverage"],
+                "thematic_rerun_requests": [{"theme": "character_undercoverage", "target_windows": ["pwin_thematic"]}],
+                "iteration": 0, "metrics_snapshot": {}, "rationale": "failed gates: character_undercoverage",
+                "result_status": "failed",
+            },
+            "judge_score": 0.64,
+            "converge_status": "failed",
+            "thematic_rerun_requests": [{"theme": "character_undercoverage", "target_windows": ["pwin_thematic"]}],
+            "tool_operating_spec": {"rerun_budget": 3, "thematic_rerun_wave_cap": 2},
+        }
+        tools["judge_import"] = AsyncMock(return_value=rerun_budget_judge)
+
+        result = asyncio.run(run_supervisor_policy(state, tools))
+
+        tools["rerun_window"].assert_not_called()
+
+
+class TestPolicyThematicRerunWaveCap(unittest.TestCase):
+    """Thematic reruns must not exceed thematic_rerun_wave_cap waves."""
+
+    def test_wave_cap_1_prevents_second_wave(self):
+        """With wave_cap=1, at most 1 thematic wave runs, then rerun_cap_reached=True."""
+        from sidecar.supervisor.policy import run_supervisor_policy
+
+        windows = [_make_window("pwin_cap", [0, 1])]
+        state = _make_state(windows=windows)
+
+        empty_registry = {"characters": {}, "events": {}, "world": {}, "world_detailed": {}}
+        call_count = {"reruns": 0}
+
+        async def mock_rerun(state, window_id, strategy="augment", missing=None, **kwargs):
+            call_count["reruns"] += 1
+            return {"entity_registry": empty_registry, "window_metrics": _passing_metrics(window_id)}
+
+        # Judge always fails with character_undercoverage to try to trigger multiple waves
+        judge_fail = {
+            "judge_artifact": {
+                "score": 0.82, "passed": False, "failed_gates": ["character_undercoverage"],
+                "thematic_rerun_requests": [{"theme": "character_undercoverage",
+                                             "target_windows": ["pwin_cap"],
+                                             "reason": "undercoverage", "parameter_overrides": {}}],
+                "iteration": 0, "metrics_snapshot": {}, "rationale": "failed: character_undercoverage",
+                "result_status": "failed",
+            },
+            "judge_score": 0.82,
+            "converge_status": "failed",
+            "thematic_rerun_requests": [{"theme": "character_undercoverage",
+                                         "target_windows": ["pwin_cap"],
+                                         "reason": "undercoverage", "parameter_overrides": {}}],
+            "tool_operating_spec": {"rerun_budget": 10, "thematic_rerun_wave_cap": 1,
+                                    "min_characters_per_chapter": 1.5},
+        }
+
+        tools = _make_tools(segment_result={"prompt_windows": windows, "supervisor_log": []})
+        tools["rerun_window"] = AsyncMock(side_effect=mock_rerun)
+        tools["judge_import"] = AsyncMock(return_value=judge_fail)
+
+        result = asyncio.run(run_supervisor_policy(state, tools))
+
+        artifact = result.get("judge_artifact", {})
+        self.assertTrue(artifact.get("rerun_cap_reached"),
+                        f"rerun_cap_reached must be True when wave_cap=1 is exhausted; artifact={artifact}")
+        self.assertLessEqual(call_count["reruns"], 1,
+                             f"Expected at most 1 thematic rerun call, got {call_count['reruns']}")
+
+    def test_wave_cap_0_prevents_all_thematic_reruns(self):
+        """With wave_cap=0, no thematic reruns run at all."""
+        from sidecar.supervisor.policy import run_supervisor_policy
+
+        windows = [_make_window("pwin_cap0", [0])]
+        state = _make_state(windows=windows)
+        call_count = {"reruns": 0}
+
+        async def mock_rerun(*args, **kwargs):
+            call_count["reruns"] += 1
+            return {}
+
+        judge_with_requests = {
+            "judge_artifact": {
+                "score": 0.64, "passed": False, "failed_gates": ["character_undercoverage"],
+                "thematic_rerun_requests": [{"theme": "character_undercoverage",
+                                             "target_windows": ["pwin_cap0"],
+                                             "reason": "undercoverage", "parameter_overrides": {}}],
+                "iteration": 0, "metrics_snapshot": {}, "rationale": "failed",
+                "result_status": "failed",
+            },
+            "judge_score": 0.64,
+            "converge_status": "failed",
+            "thematic_rerun_requests": [{"theme": "character_undercoverage",
+                                         "target_windows": ["pwin_cap0"],
+                                         "reason": "undercoverage", "parameter_overrides": {}}],
+            "tool_operating_spec": {"rerun_budget": 5, "thematic_rerun_wave_cap": 0},
+        }
+
+        tools = _make_tools(segment_result={"prompt_windows": windows, "supervisor_log": []})
+        tools["rerun_window"] = AsyncMock(side_effect=mock_rerun)
+        tools["judge_import"] = AsyncMock(return_value=judge_with_requests)
+
+        result = asyncio.run(run_supervisor_policy(state, tools))
+
+        self.assertEqual(call_count["reruns"], 0,
+                         f"Expected 0 thematic rerun calls when wave_cap=0, got {call_count['reruns']}")
+
+
 if __name__ == "__main__":
     unittest.main()

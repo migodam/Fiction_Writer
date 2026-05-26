@@ -21,7 +21,7 @@ Or from the Zustand store: `setW1UseSupervisor(true)` before `startImport`.
 
 ---
 
-## Tool Registry (10 tools)
+## Tool Registry (11 tools)
 
 All tools are in `sidecar/supervisor/tools.py` and registered in `sidecar/supervisor/tool_registry.py`.
 
@@ -80,9 +80,12 @@ run_supervisor_streaming(project_path, config)   ← async generator (same inter
         6. qa_review(state)
            IF gate_failures AND supervisor_iteration < max_supervisor_iterations:
              rerun failing windows → back to 3
-        7. judge_import(state)
-           IF thematic_rerun_requests AND rerun_budget remains:
+        7. judge_import(state)  → emits result_status, rerun_cap_reached
+           IF budget_exhausted: SKIP all reruns
+           IF thematic_rerun_requests AND rerun_budget remains AND waves < thematic_rerun_wave_cap:
              rerun targeted windows with soft parameter overrides → reduce/repair/architect/QA/judge
+             waves_applied += 1
+           IF waves_applied >= thematic_rerun_wave_cap: set rerun_cap_reached=True in JudgeArtifact
         8. proposal_write(state)
 ```
 
@@ -95,10 +98,20 @@ Before the supervisor policy loop runs, it derives a `ToolOperatingSpec` and `Co
 Deep and Custom profiles default to orchestrator/supervisor behavior. Fast and Balanced stay lighter unless `use_supervisor` or `use_orchestrator` is explicitly enabled.
 
 The deterministic judge emits `JudgeArtifact` with:
-- `score`, `passed`, `failed_gates`
+- `score`, `passed`, `result_status`, `failed_gates`
 - `thematic_rerun_requests`
 - `iteration`, `metrics_snapshot`, `rationale`
+- `rerun_cap_reached` (bool) — True when thematic wave cap is hit
 - optional `artifact_paths`
+
+`result_status` four-tier classification:
+| Status | Condition |
+|--------|-----------|
+| `passed` | All gates pass |
+| `acceptable_with_warnings` | Only `character_undercoverage` failed, profile is `fast` or `balanced` |
+| `needs_review` | Exactly 1 non-trivial gate failed |
+| `failed` | 2+ gates failed |
+| `budget_exhausted` | API 402 Insufficient Balance detected — no reruns attempted |
 
 Thematic rerun themes are:
 - `character_undercoverage`
@@ -131,6 +144,7 @@ The orchestrator may plan soft parameters and request bounded reruns. It must no
 | `chapters_per_window` | 20 | 12 | 8 |
 | `max_rerun_iterations` | 1 | 2 | 2 |
 | `max_world_entities_per_chapter` | 3 | 4 | 5 |
+| `thematic_rerun_wave_cap` | 0 | 1 | 1 |
 | `output_token_budget` | 3 000 | 3 000 | 3 000 |
 | `input_window_budget` | 64 000 | 48 000 | 32 000 |
 
@@ -179,6 +193,39 @@ GET /workflow/w1/supervisor_status?session_id=<id>
 ```
 
 ---
+
+## Cost Protection
+
+### API 402 Hard Stop
+
+`_is_budget_exhausted_error(exc)` in `tools.py` detects HTTP 402 / "insufficient balance" from any OpenAI-compatible provider (DeepSeek, OpenAI). When detected:
+1. `extract_window` sets `budget_exhausted=True` and writes a clear error to `errors[]`.
+2. `_process_window` exits immediately — no cross-validation, no per-window reruns.
+3. `run_supervisor_policy`/`_policy_with_progress` breaks out of the extraction batch loop.
+4. `_apply_thematic_reruns` returns immediately without firing any rerun.
+5. `JudgeArtifact.result_status` is set to `"budget_exhausted"`.
+
+**Effect:** A 402 on window N stops extraction of windows N+1, N+2, … and prevents thematic reruns. 148 wasted API calls (from the May 26 run 4 incident) cannot recur.
+
+### Thematic Rerun Wave Cap
+
+`thematic_rerun_wave_cap` in `ToolOperatingSpec` (defaults: fast=0, balanced=1, deep=1) limits the number of judge+thematic-rerun cycles. Each cycle:
+1. Applies up to `rerun_budget` targeted reruns.
+2. Runs reduce → repair → architect → qa → judge.
+3. Increments `waves_applied`.
+
+When `waves_applied >= wave_cap`, the loop exits even if the judge still fails. `JudgeArtifact.rerun_cap_reached=True` is set. For `deep` profile the default is 1 wave — meaning at most 1 thematic repair pass before proceeding to `proposal_write`.
+
+### Benchmark One-Shot Guard
+
+When running a validation benchmark (full 50-chapter import):
+- **Run at most one full-50 attempt per API balance top-up.**
+- If the run fails with 402, stop immediately. Do not start another run. Report in dev log.
+- If the run fails with code errors (not 402), fix the code on a new branch. One targeted smoke run (10 chapters) to validate the fix, then one full-50 run.
+- **Do not modify product code during a benchmark validation run.**
+- Do not start a second full-50 run without explicit approval from Codex.
+
+Expected cost per full-50 deep run: ~1–2 hours of DeepSeek V4 Pro. Ensure ≥ 3× balance before starting.
 
 ## Non-goals
 

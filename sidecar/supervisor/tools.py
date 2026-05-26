@@ -81,6 +81,20 @@ from sidecar.prompts.w1_prompts import (
 # Output token threshold triggering pre-flight split.
 _OUTPUT_BUDGET_SPLIT_THRESHOLD = 3_500
 
+
+def _is_budget_exhausted_error(exc: Exception) -> bool:
+    """True if exc signals an API HTTP 402 / insufficient-balance error."""
+    msg = str(exc).lower()
+    if "402" in msg or "insufficient balance" in msg or "insufficient_balance" in msg:
+        return True
+    try:
+        import openai  # type: ignore[import-not-found]
+        if isinstance(exc, openai.APIStatusError) and getattr(exc, "status_code", 0) == 402:
+            return True
+    except ImportError:
+        pass
+    return False
+
 # Tokens per chapter for output estimation:
 # 1.5 chars × 120 + 3 events × 80 + 2 world × 50
 _TOKENS_PER_CHAPTER_ESTIMATE = int(1.5 * 120 + 3 * 80 + 2 * 50)
@@ -351,8 +365,12 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
 
     labels = ["character", "event", "world", "relationship", "scene"]
     outputs: list[dict] = []
+    _budget_exhausted_in_window = False
     for i, (label, result) in enumerate(zip(labels, results)):
         if isinstance(result, Exception):
+            if _is_budget_exhausted_error(result):
+                _budget_exhausted_in_window = True
+                print(f"[extract_window] {window_id} BUDGET EXHAUSTED (402) on {label}: {result}", flush=True)
             failed_prompts.append(f"{label}:{type(result).__name__}:{result}")
             print(f"[extract_window] {window_id} {label} extraction FAILED: {result}", flush=True)
             outputs.append({})
@@ -560,13 +578,20 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
     log = list(state.get("supervisor_log", []))
     log.append(f"extract_window {window_id}: {len(new_char_ids)} chars, {len(new_events)} events, {len(new_world)} world, {len(failed_prompts)} failed")
 
-    return {
+    result: dict = {
         "entity_registry": registry,
         "raw_relationships": raw_rels,
         "window_metrics": window_metrics,
         "supervisor_log": log,
         "current_stage": "extract_window",
     }
+    if _budget_exhausted_in_window:
+        result["budget_exhausted"] = True
+        result["errors"] = list(state.get("errors", [])) + [
+            f"[budget_exhausted] API HTTP 402 during extraction of window {window_id} — insufficient balance"
+        ]
+        log.append(f"extract_window {window_id}: budget_exhausted=True — halting reruns")
+    return result
 
 
 # ── Tool: cross_validate_window ─────────────────────────────────────────────────
@@ -973,9 +998,25 @@ async def judge_import(state: ImportSupervisorState) -> dict:
     score = max(0.0, 1.0 - 0.18 * len(failed_gates))
     threshold = float(spec.get("judge_pass_threshold", 0.8))
     passed = score >= threshold and not failed_gates
+
+    # Result classification — softer than binary pass/fail
+    profile = state.get("prompt_profile", "balanced")
+    if state.get("budget_exhausted"):
+        result_status = "budget_exhausted"
+    elif passed:
+        result_status = "passed"
+    elif failed_gates == ["character_undercoverage"] and profile in ("fast", "balanced"):
+        # Soft gate: character undercoverage alone is a warning for lower-granularity profiles
+        result_status = "acceptable_with_warnings"
+    elif len(failed_gates) == 1:
+        result_status = "needs_review"
+    else:
+        result_status = "failed"
+
     artifact: JudgeArtifact = {
         "score": round(score, 3),
         "passed": passed,
+        "result_status": result_status,
         "failed_gates": failed_gates,
         "thematic_rerun_requests": requests,
         "iteration": int(state.get("supervisor_iteration", 0)),

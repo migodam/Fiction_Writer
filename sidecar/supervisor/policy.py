@@ -220,10 +220,20 @@ async def _process_window(
     # Extract
     update = await tools["extract_window"](state, window_id)
     state = _merge_window_result(state, update)
+    if update.get("budget_exhausted"):
+        state = {**state, "budget_exhausted": True}
+    if update.get("errors"):
+        state = {**state, "errors": list(state.get("errors", [])) + [
+            e for e in update["errors"] if e not in state.get("errors", [])
+        ]}
     state = _record_decision(
         state, "extract_window", "extract_window", f"primary extraction for {window_id}",
         {}, {}, "proceed",
     )
+
+    # Bail out immediately if budget exhausted — no cross-validate, no reruns
+    if state.get("budget_exhausted"):
+        return state
 
     # Cross-validate
     if validation != "off":
@@ -359,11 +369,24 @@ async def _apply_thematic_reruns(
     profile_config: dict,
     tool_operating_spec: ToolOperatingSpec,
 ) -> ImportSupervisorState:
+    # Hard stop: never run thematic reruns when budget is exhausted
+    if state.get("budget_exhausted"):
+        log = list(state.get("supervisor_log", []))
+        log.append("_apply_thematic_reruns: skipped — budget_exhausted (API 402)")
+        return _with_status(
+            {**state, "supervisor_log": log},
+            current_tool="judge_import",
+            orchestrator_phase="judging",
+            converge_status=state.get("converge_status", "failed"),
+        )
+
     budget = max(int(tool_operating_spec.get("rerun_budget", 0)), 0)
+    wave_cap = max(int(tool_operating_spec.get("thematic_rerun_wave_cap", 1)), 0)
     applied = 0
+    waves_applied = 0
     seen: set[tuple[str, str]] = set()
 
-    while applied < budget:
+    while applied < budget and waves_applied < wave_cap:
         artifact = state.get("judge_artifact", {})
         if artifact.get("passed"):
             break
@@ -442,6 +465,7 @@ async def _apply_thematic_reruns(
         if not progressed:
             break
 
+        waves_applied += 1
         reduce_update = await tools["reduce_entities"](state)
         state = {**state, **reduce_update, "current_stage": "reduce_entities"}
         repair_update = await tools["minor_repair"](state)
@@ -451,6 +475,19 @@ async def _apply_thematic_reruns(
         qa_update = await tools["qa_review"](state)
         state = {**state, **qa_update, "current_stage": "qa_review"}
         state = await _run_judge_import(state, tools)
+
+    # If wave cap was hit and judge has not passed, record rerun_cap_reached
+    cap_hit = waves_applied >= wave_cap and wave_cap > 0 and not state.get("judge_artifact", {}).get("passed")
+    if cap_hit:
+        artifact = dict(state.get("judge_artifact", {}))
+        artifact["rerun_cap_reached"] = True
+        failed = artifact.get("failed_gates", [])
+        soft_only = bool(failed) and all(g == "character_undercoverage" for g in failed)
+        if soft_only and artifact.get("result_status") not in ("passed", "acceptable_with_warnings"):
+            artifact["result_status"] = "acceptable_with_warnings"
+        log = list(state.get("supervisor_log", []))
+        log.append(f"_apply_thematic_reruns: wave_cap={wave_cap} reached after {waves_applied} waves; rerun_cap_reached=True")
+        state = {**state, "judge_artifact": artifact, "supervisor_log": log}
 
     if state.get("judge_artifact", {}).get("passed"):
         return _with_status(state, current_tool="judge_import", orchestrator_phase="judging", converge_status="passed")
@@ -481,6 +518,8 @@ async def run_supervisor_policy(
     windows = list(state.get("prompt_windows", []))
     batch_size = 3
     for batch_start in range(0, len(windows), batch_size):
+        if state.get("budget_exhausted"):
+            break
         batch = windows[batch_start: batch_start + batch_size]
         tasks = [_process_window(state, tools, w["id"], profile_config, tool_operating_spec) for w in batch]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -490,12 +529,19 @@ async def run_supervisor_policy(
                 state = {**state, "errors": errs}
             else:
                 state = _merge_window_result(state, result)
+                if result.get("budget_exhausted"):
+                    state = {**state, "budget_exhausted": True}
                 # Carry through any new prompt_windows added by reruns inside _process_window
                 if result.get("prompt_windows"):
                     merged_windows = {w["id"]: w for w in state.get("prompt_windows", [])}
                     for w in result["prompt_windows"]:
                         merged_windows.setdefault(w["id"], w)
                     state = {**state, "prompt_windows": list(merged_windows.values())}
+        if state.get("budget_exhausted"):
+            log = list(state.get("supervisor_log", []))
+            log.append("run_supervisor_policy: stopping extraction — budget_exhausted (API 402)")
+            state = {**state, "supervisor_log": log}
+            break
 
     state = {**state, "current_stage": "extract_windows"}
 
@@ -572,7 +618,9 @@ async def run_supervisor_policy(
 
     if "judge_import" in tools:
         state = await _run_judge_import(state, tools)
-        state = await _apply_thematic_reruns(state, tools, profile_config, tool_operating_spec)
+        # Re-read tool_operating_spec from state — judge_import may have updated it
+        _active_tos = state.get("tool_operating_spec") or tool_operating_spec
+        state = await _apply_thematic_reruns(state, tools, profile_config, _active_tos)
 
     # ── 7. Proposal write ────────────────────────────────────────────────────
     state = _with_status(state, current_tool="proposal_write", orchestrator_phase="writing", converge_status="writing")
@@ -725,6 +773,8 @@ async def run_supervisor_streaming(
         batch_size = 3
         window_idx = 0
         for batch_start in range(0, len(windows_local), batch_size):
+            if state.get("budget_exhausted"):
+                break
             batch = windows_local[batch_start: batch_start + batch_size]
             tasks = [_process_window(state, tools, w["id"], profile_config_local, tool_operating_spec_local) for w in batch]
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -734,11 +784,15 @@ async def run_supervisor_streaming(
                     state = {**state, "errors": errs}
                 else:
                     state = _merge_window_result(state, result)
+                    if result.get("budget_exhausted"):
+                        state = {**state, "budget_exhausted": True}
                     if result.get("prompt_windows"):
                         merged_windows = {w["id"]: w for w in state.get("prompt_windows", [])}
                         for w in result["prompt_windows"]:
                             merged_windows.setdefault(w["id"], w)
                         state = {**state, "prompt_windows": list(merged_windows.values())}
+            if state.get("budget_exhausted"):
+                break
                 window_idx += 1
             progress = _PROGRESS_EXTRACT_START + (_PROGRESS_EXTRACT_END - _PROGRESS_EXTRACT_START) * (window_idx / total_w)
             _chunk_progress[project_path] = {"completed": window_idx, "total": total_w}
@@ -782,7 +836,8 @@ async def run_supervisor_streaming(
 
         if "judge_import" in tools:
             state = await _run_judge_import(state, tools)
-            state = await _apply_thematic_reruns(state, tools, profile_config_local, tool_operating_spec_local)
+            _active_tos_local = state.get("tool_operating_spec") or tool_operating_spec_local
+            state = await _apply_thematic_reruns(state, tools, profile_config_local, _active_tos_local)
         yield _PROGRESS_QA_REVIEW, "judge_import", state.get("errors", [])
 
         # Proposal write
