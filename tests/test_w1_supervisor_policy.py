@@ -831,5 +831,75 @@ class TestPolicyThematicRerunWaveCap(unittest.TestCase):
                          f"Expected 0 thematic rerun calls when wave_cap=0, got {call_count['reruns']}")
 
 
+class TestOrchestratorPlanGranularity(unittest.TestCase):
+    """_ensure_orchestrator_plan stores granularity profile and derives converge target from it."""
+
+    def _make_zh_deep_state(self, chapter_count: int = 50) -> dict:
+        chunks = [
+            {"chunk_id": i, "content": f"chapter {i}", "manuscript_content": f"chapter {i}",
+             "raw_content": f"chapter {i}", "chapter_hint": f"Ch {i+1}",
+             "char_start": i * 500, "char_end": (i + 1) * 500,
+             "source_span": {"start": i * 500, "end": (i + 1) * 500}}
+            for i in range(chapter_count)
+        ]
+        return {
+            "project_path": "/tmp/gran_test",
+            "import_run_id": "gran_test",
+            "source_file_path": "/tmp/novel.txt",
+            "prompt_profile": "deep",
+            "profile_config": PROFILE_CONFIGS["deep"],
+            "import_mode": "import_all",
+            "source_language": "zh",
+            "context": {},
+            "chunks": chunks,
+            "import_run_manifest": {"source_hash": "abc"},
+            "entity_registry": {"characters": {}, "events": {}, "world": {}, "world_detailed": {}},
+            "prompt_windows": [],
+            "window_metrics": {},
+            "gate_failures": [],
+            "supervisor_decisions": [],
+            "supervisor_log": [],
+            "minor_repair_log": [],
+            "supervisor_iteration": 0,
+            "use_supervisor": True,
+            "errors": [],
+        }
+
+    def test_stores_import_granularity_profile(self):
+        from sidecar.supervisor.policy import _ensure_orchestrator_plan
+        state = self._make_zh_deep_state(chapter_count=50)
+        result = _ensure_orchestrator_plan(state)
+        self.assertIn("import_granularity_profile", result,
+                      "import_granularity_profile must be stored in state after orchestrator plan")
+        profile = result["import_granularity_profile"]
+        self.assertIn("profile_name", profile)
+
+    def test_50ch_zh_deep_expected_min_characters_equals_50(self):
+        """Granularity profile overrides TOS default: coarse_webnovel gives min_chars=1.0 not 1.5."""
+        from sidecar.supervisor.policy import _ensure_orchestrator_plan
+        state = self._make_zh_deep_state(chapter_count=50)
+        result = _ensure_orchestrator_plan(state)
+        target = result["converge_target"]
+        self.assertEqual(
+            target["expected_min_characters"], 50,
+            f"50-ch zh deep: expected 50 (coarse_webnovel 1.0×50), got {target['expected_min_characters']}"
+        )
+
+    def test_idempotent_when_spec_and_target_already_set(self):
+        """Second call with spec+target already in state must return early without overwriting."""
+        from sidecar.supervisor.policy import _ensure_orchestrator_plan
+        from sidecar.models.state import plan_converge_target, plan_tool_operating_spec, select_granularity_profile
+        state = self._make_zh_deep_state(chapter_count=50)
+        spec = plan_tool_operating_spec("deep", "zh", 50)
+        gp = select_granularity_profile(50, "zh", "deep", "import_all")
+        target = plan_converge_target(spec, "zh", 50, granularity_profile=gp)
+        target["expected_min_characters"] = 999  # sentinel
+        state["tool_operating_spec"] = spec
+        state["converge_target"] = target
+        result = _ensure_orchestrator_plan(state)
+        self.assertEqual(result["converge_target"]["expected_min_characters"], 999,
+                         "Early return must not overwrite existing plan")
+
+
 if __name__ == "__main__":
     unittest.main()

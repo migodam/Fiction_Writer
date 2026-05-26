@@ -93,7 +93,12 @@ run_supervisor_streaming(project_path, config)   ← async generator (same inter
 
 ## ToolOperatingSpec, ConvergeTarget, and JudgeArtifact
 
-Before the supervisor policy loop runs, it derives a `ToolOperatingSpec` and `ConvergeTarget` from `prompt_profile`, `source_language`, chapter count, and optional `context.tool_operating_spec_overrides`.
+Before the supervisor policy loop runs, `_ensure_orchestrator_plan()` performs three steps:
+1. `plan_tool_operating_spec()` — derives `ToolOperatingSpec` from `prompt_profile`, `source_language`, chapter count, and optional `context.tool_operating_spec_overrides`.
+2. `select_granularity_profile()` — selects an `ImportGranularityProfile` based on chapter count, source language, and prompt profile. Stored as `state["import_granularity_profile"]`. Decision rules: fast→coarse; CJK >30ch→coarse_webnovel; non-CJK >30ch→balanced_novel (relaxed floor); 15–30ch→balanced_novel; ≤15ch→fine_short_story.
+3. `plan_converge_target(..., granularity_profile=...)` — builds `ConvergeTarget` using the selected granularity profile to override character and event density targets.
+
+This means converge targets for a 50-chapter Chinese webnovel use `coarse_webnovel` (`min_characters_per_chapter=1.0`), not the TOS deep default of 1.5, giving `expected_min_characters=50` instead of 75.
 
 Deep and Custom profiles default to orchestrator/supervisor behavior. Fast and Balanced stay lighter unless `use_supervisor` or `use_orchestrator` is explicitly enabled.
 

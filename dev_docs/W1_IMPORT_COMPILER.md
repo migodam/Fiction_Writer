@@ -40,6 +40,8 @@ Topology branches must include `branchId`/`id`, `parentBranchId`, `forkEventId`,
 
 Timeline Architect enforces a minimum canonical-event density when `converge_targets.expected_min_events`, `tool_operating_spec.event_density_target`, or chapter-level profile evidence indicates under-extraction. Scene beats may still be downgraded, but high-confidence turning-point evidence is promoted back to canonical events with warnings when a long import would otherwise collapse to a trivial mainline.
 
+`ConvergeTarget` values are source-adaptive when supervisor mode is active: `_ensure_orchestrator_plan()` calls `select_granularity_profile()` and passes the result to `plan_converge_target()`, so character and event density targets reflect the actual source type (CJK webnovel, standard novel, short story) rather than the flat TOS default.
+
 ## World Ontology Requirements
 W1 normalizes world entries with a deterministic World Ontology before proposal write. Allowed categories are `location`, `organization`, `faction`, `item`, `artifact`, `rule`, `system`, `concept`, `culture`, and `custom`.
 

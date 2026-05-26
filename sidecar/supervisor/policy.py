@@ -16,7 +16,10 @@ from sidecar.models.state import (
     ImportSupervisorState,
     ThematicRerunRequest,
     ToolOperatingSpec,
+    plan_converge_target,
     plan_orchestrator_targets,
+    plan_tool_operating_spec,
+    select_granularity_profile,
 )
 from sidecar.supervisor.tool_registry import build_tool_registry
 from sidecar.workflows.w1_import import (
@@ -98,16 +101,28 @@ def _ensure_orchestrator_plan(state: ImportSupervisorState) -> ImportSupervisorS
     if state.get("tool_operating_spec") and state.get("converge_target"):
         return state
     context = state.get("context", {})
-    spec, target = plan_orchestrator_targets(
-        prompt_profile=state.get("prompt_profile", "balanced"),
-        source_language=state.get("source_language", "en"),
-        chapter_count=_chapter_count_from_state(state),
+    chapter_count = _chapter_count_from_state(state)
+    prompt_profile = state.get("prompt_profile", "balanced")
+    source_language = state.get("source_language", "en")
+
+    spec = plan_tool_operating_spec(
+        prompt_profile=prompt_profile,
+        source_language=source_language,
+        chapter_count=chapter_count,
         overrides=context.get("tool_operating_spec_overrides", {}),
         use_supervisor=state.get("use_supervisor"),
         use_orchestrator=context.get("use_orchestrator"),
     )
+    granularity_profile = select_granularity_profile(
+        chapter_count=chapter_count,
+        source_language=source_language,
+        prompt_profile=prompt_profile,
+        import_mode=state.get("import_mode", "import_all"),
+    )
+    target = plan_converge_target(spec, source_language, chapter_count, granularity_profile=granularity_profile)
+
     profile_config = dict(state.get("profile_config") or PROFILE_CONFIGS.get(
-        state.get("prompt_profile", "balanced"), PROFILE_CONFIGS["balanced"]
+        prompt_profile, PROFILE_CONFIGS["balanced"]
     ))
     if spec.get("chapters_per_window_max"):
         profile_config["chapters_per_window"] = int(spec["chapters_per_window_max"])
@@ -117,6 +132,7 @@ def _ensure_orchestrator_plan(state: ImportSupervisorState) -> ImportSupervisorS
         **state,
         "tool_operating_spec": spec,
         "converge_target": target,
+        "import_granularity_profile": granularity_profile,
         "profile_config": profile_config,
         "use_supervisor": bool(state.get("use_supervisor") or spec.get("supervisor_enabled")),
         "orchestrator_phase": "planning",
