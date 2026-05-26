@@ -300,6 +300,10 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
     prompt_text = "\n\n".join(str(c.get("content", c.get("text", ""))) for c in window_chunks)
     if not prompt_text:
         prompt_text = str(window.get("text", "") or window.get("source_text", ""))
+    # Prepend any supervisor hint injected by rerun_window (stored separately to survive chunk reassembly)
+    supervisor_hint = str(window.get("supervisor_hint", "") or "")
+    if supervisor_hint:
+        prompt_text = supervisor_hint + "\n\n" + prompt_text
     registry_summary = _registry_summary(registry)
     chapter_range = str(window.get("chapter_range") or f"chunk_{chunk_id}")
 
@@ -730,6 +734,9 @@ async def rerun_window(
         **parent,
         "id": new_id,
         "text": new_text,
+        # supervisor_hint stored separately so extract_window can prepend it after
+        # chunk reassembly (window["text"] is overwritten by chunks during extraction)
+        "supervisor_hint": hint_block,
         "estimated_tokens": _estimate_tokens(new_text),
         "split_reason": f"supervisor_augment_of_{window_id}",
         "output_token_budget": profile_config.get("output_token_budget", 3000),

@@ -394,12 +394,31 @@ async def _apply_thematic_reruns(
                     rerun_reason=reason,
                     converge_status="rerunning",
                 )
+                missing_names: list[str] | None = None
+                if request.get("theme") == "character_undercoverage":
+                    registry = state.get("entity_registry", {})
+                    existing_chars = list(registry.get("characters", {}).keys())
+                    current_count = len(existing_chars)
+                    target_count = int(
+                        tool_operating_spec.get("min_characters_per_chapter", 1.5)
+                        * len(state.get("chunks", []))
+                    )
+                    already_found = ", ".join(existing_chars[:40]) if existing_chars else "none"
+                    missing_names = [
+                        f"[CHARACTER_RECOVERY_PASS: found {current_count} characters, "
+                        f"target ≥{target_count}. Already registered (do NOT duplicate): "
+                        f"{already_found}. "
+                        "Search the entire text for ADDITIONAL named characters missed in prior passes — "
+                        "especially: servants, guards, merchants, elders, family members, "
+                        "characters with only 1–2 appearances, and role-only references "
+                        "(e.g. 三叔, 村长, 掌柜). Include every distinct named person.]"
+                    ]
                 rerun_update = await _call_rerun_window(
                     tools,
                     state,
                     window_id,
                     strategy,
-                    None,
+                    missing_names,
                     dict(request.get("parameter_overrides", {})),
                 )
                 state = _merge_window_result(state, rerun_update)
