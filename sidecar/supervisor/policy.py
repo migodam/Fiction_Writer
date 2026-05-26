@@ -791,9 +791,9 @@ async def run_supervisor_streaming(
                         for w in result["prompt_windows"]:
                             merged_windows.setdefault(w["id"], w)
                         state = {**state, "prompt_windows": list(merged_windows.values())}
+            window_idx += len(batch)
             if state.get("budget_exhausted"):
                 break
-                window_idx += 1
             progress = _PROGRESS_EXTRACT_START + (_PROGRESS_EXTRACT_END - _PROGRESS_EXTRACT_START) * (window_idx / total_w)
             _chunk_progress[project_path] = {"completed": window_idx, "total": total_w}
             yield progress, "extract_windows", state.get("errors", [])
