@@ -1,0 +1,103 @@
+{
+  "benchmark_id": "w1_full50_after_streaming_20260526_111158",
+  "branch": "codex/w1-orchestrated-import-quality",
+  "head_commit": "bed8ec6",
+  "key_commits": {
+    "streaming_write_fix": "6718ab0",
+    "manuscript_fix": "5db686f"
+  },
+  "model": "deepseek-v4-pro",
+  "prompt_profile": "deep",
+  "date": "2026-05-26",
+  "overall_result": "FAIL",
+  "failure_reason": "character_undercoverage: 65 of 75 after 44 supervisor decisions and deterministic convergence judgment",
+  "run": {
+    "session_id": "f920e767-9053-4d39-ba16-0980cee86bb1",
+    "import_run_id": "sup_f90a0efbbe",
+    "project_path": "/Volumes/migodam's-external-brain/home/narrative_ide/w1_full50_streaming_20260526_111158",
+    "source": "凡人修仙传_前50章.txt",
+    "start_time": "11:11 UTC+8",
+    "end_time": "13:48 UTC+8",
+    "elapsed_minutes": 157,
+    "terminal_status": "error"
+  },
+  "windows": {
+    "total": 39,
+    "primary_estimated": 14,
+    "reruns_estimated": 25,
+    "failed_402": 0,
+    "failed_prompts_total": 0
+  },
+  "supervisor": {
+    "total_decisions": 44,
+    "proceed_decisions": 28,
+    "rerun_decisions": 16,
+    "convergence_judgment": "deterministic (forced termination)"
+  },
+  "judge": {
+    "score": 0.82,
+    "passed": false,
+    "failed_gates": ["character_undercoverage"],
+    "character_count": 65,
+    "target_character_count": 75,
+    "character_gap": 10,
+    "canonical_events": 108,
+    "target_canonical_events": 90,
+    "timeline_branches": 8,
+    "iteration": 0
+  },
+  "timeline": {
+    "canonical_events": 108,
+    "branches": 8,
+    "discarded_duplicates": 13,
+    "main_branch_name": "主时间线",
+    "branch_names": ["主时间线", "Mentor Threat", "Bottle Mystery", "Rival Ally", "Bottle Mystery", "Rival Ally", "Sect Conflict", "厉飞雨盟主线"]
+  },
+  "memory": {
+    "peak_percent": 7.5,
+    "peak_gb_approx": 1.8,
+    "total_ram_gb": 24,
+    "oom_crashed": false,
+    "streaming_fix_confirmed": true,
+    "previous_run_peak_percent": 49.0,
+    "improvement_factor": "6.5x"
+  },
+  "outputs": {
+    "inbox_json_written": false,
+    "manuscript_json_written": false
+  },
+  "secret_check": {
+    "api_key_found_in_results": false
+  },
+  "acceptance_criteria": {
+    "fifty_chapters_no_oom": "PARTIAL",
+    "manuscript_chapters_50": "FAIL",
+    "inbox_exists": "FAIL",
+    "characters_gte_75": "FAIL",
+    "key_chars_present": "UNKNOWN",
+    "language_violations_zero": "UNKNOWN",
+    "qixuanmen_organization": "UNKNOWN",
+    "timeline_events_gte_90": "PASS",
+    "judge_score_1_0": "FAIL",
+    "no_api_key_in_output": "PASS"
+  },
+  "comparison_with_previous_pass": {
+    "w1_failure_closure_50ch": {
+      "character_count": 75,
+      "canonical_event_count": 102,
+      "timeline_branches": 5,
+      "judge_score": 1.0,
+      "peak_memory_percent": 49.0,
+      "result": "PASS"
+    },
+    "this_run": {
+      "character_count": 65,
+      "canonical_event_count": 108,
+      "timeline_branches": 8,
+      "judge_score": 0.82,
+      "peak_memory_percent": 7.5,
+      "result": "FAIL"
+    },
+    "assessment": "Timeline quality improved (102→108 events, 5→8 branches). Character coverage regressed (75→65) due to LLM non-determinism and R3 issue. Not a code regression — same code produced 75 chars in previous run."
+  }
+}
