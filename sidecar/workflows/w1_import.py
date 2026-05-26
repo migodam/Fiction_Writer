@@ -2419,7 +2419,8 @@ async def node_build_manuscript(state: ImportState) -> dict:
     for hint in ordered_hints2:
         chapter_extractions = sorted(chapter_map2[hint], key=lambda extraction: _chunk_sort_key(extraction.get("chunk_id")))
         content = "\n\n".join(
-            e.get("manuscript_content", "") for e in chapter_extractions
+            e.get("manuscript_content") or chunk_map2.get(e.get("chunk_id"), {}).get("content", "")
+            for e in chapter_extractions
         )
         manuscript_chapters2.append({
             "chapter_id": f"chap_{uuid.uuid4().hex[:8]}",
@@ -2429,6 +2430,14 @@ async def node_build_manuscript(state: ImportState) -> dict:
             "orderIndex": len(manuscript_chapters2),
         })
 
+    if chunks and (
+        not manuscript_chapters2
+        or all(not c.get("manuscript_content") for c in manuscript_chapters2)
+    ):
+        # Failsafe: extractions path produced no chapters, or produced chapters with all-empty
+        # content (supervisor path where chunk_extractions have no manuscript_content and
+        # chunk_map2 lookup also fails). Fall back to raw chunks.
+        return {"manuscript_chapters": _build_from_chunks(chunks), "progress": 0.88}
     return {"manuscript_chapters": _sort_manuscript_chapters(manuscript_chapters2), "progress": 0.88}
 
 
@@ -3360,6 +3369,7 @@ async def node_review_import(state: ImportState) -> dict:
 
 async def node_write_to_project(state: ImportState) -> dict:
     """Write entities to project, push proposals, write manuscript.json, trigger W2 post_import."""
+    import gc as _gc
     project_path = Path(state["project_path"])
     registry = state.get("entity_registry", {})
     manuscript_chapters = state.get("manuscript_chapters", [])
@@ -3393,10 +3403,12 @@ async def node_write_to_project(state: ImportState) -> dict:
                 character_event_links[cid].append(event_id)
     character_id_map = registry.get("character_id_map", {})
 
-    # Write character proposals — pop from registry so payloads are GC-eligible.
-    chars_snapshot = dict(registry.pop("characters", {}))
-    print(f"[proposal_write] writing {len(chars_snapshot)} character proposals...", flush=True)
-    for cid, entry in chars_snapshot.items():
+    # Write character proposals — iterate-with-pop so each entry is GC-eligible
+    # immediately after its await, rather than holding the full snapshot.
+    characters = registry.pop("characters", {})
+    print(f"[proposal_write] writing {len(characters)} character proposals...", flush=True)
+    for cid in list(characters.keys()):
+        entry = characters.pop(cid)
         if entry.get("skip_create"):
             continue
         entry = _compact_character_card(dict(entry))
@@ -3447,7 +3459,8 @@ async def node_write_to_project(state: ImportState) -> dict:
             })
         except Exception as e:
             errors.append(f"Failed to propose character {cid}: {str(e)}")
-    del chars_snapshot
+    del characters
+    _gc.collect()
     print(f"[proposal_write] characters done ({len(receipts)} receipts)", flush=True)
 
     # Determine default branch for event assignment, creating one when the
@@ -3577,6 +3590,7 @@ async def node_write_to_project(state: ImportState) -> dict:
         except Exception as e:
             errors.append(f"Failed to propose event {eid}: {str(e)}")
     del deduped_events, sorted_events
+    _gc.collect()
     print(f"[proposal_write] events done ({len(receipts)} receipts)", flush=True)
 
     # Write world item proposals
@@ -3608,7 +3622,7 @@ async def node_write_to_project(state: ImportState) -> dict:
     print(f"[proposal_write] writing {len(world_snapshot)} world item proposals...", flush=True)
     for name, category in world_snapshot.items():
         wid = f"world_{uuid.uuid4().hex[:8]}"
-        detail = world_detailed.get(name, {})
+        detail = world_detailed.pop(name, {})  # Progressive release as we iterate
         resolved_category, container_id = _resolve_container_id(name, detail.get("category", category))
         op = {
             "op_type": "create",
@@ -3640,6 +3654,7 @@ async def node_write_to_project(state: ImportState) -> dict:
         except Exception as e:
             errors.append(f"Failed to propose world entry '{name}': {str(e)}")
     del world_snapshot, world_detailed
+    _gc.collect()
     print(f"[proposal_write] world items done ({len(receipts)} receipts)", flush=True)
 
     # Write relationship proposals
@@ -3855,15 +3870,21 @@ async def node_write_to_project(state: ImportState) -> dict:
         if state.get("import_run_id"):
             _write_import_artifact(str(project_path), state["import_run_id"], "review_report.json", review_report)
 
-    # Write manuscript.json directly (verbatim source text, not AI-generated)
-    manuscript_data = {
-        "chapters": manuscript_chapters,
-        "source_file": state["source_file_path"],
-        "imported_at": datetime.now(timezone.utc).isoformat(),
-    }
+    # Write manuscript.json with incremental chapter writes to avoid building a
+    # full in-memory JSON buffer for potentially large chapter lists.
     manuscript_path = project_path / "manuscript.json"
-    with open(manuscript_path, "w", encoding="utf-8") as f:
-        json.dump(manuscript_data, f, ensure_ascii=False, indent=2)
+    _ms_now = datetime.now(timezone.utc).isoformat()
+    with open(manuscript_path, "w", encoding="utf-8") as _ms_f:
+        _ms_f.write('{\n')
+        _ms_f.write(f'  "source_file": {json.dumps(state["source_file_path"], ensure_ascii=False)},\n')
+        _ms_f.write(f'  "imported_at": {json.dumps(_ms_now)},\n')
+        _ms_f.write('  "chapters": [\n')
+        for _ms_i, _ms_ch in enumerate(manuscript_chapters):
+            if _ms_i > 0:
+                _ms_f.write(',\n')
+            _ms_f.write('    ')
+            json.dump(_ms_ch, _ms_f, ensure_ascii=False)
+        _ms_f.write('\n  ]\n}\n')
 
     # Delete checkpoint on success
     checkpoint_path = state.get("checkpoint_path", "")

@@ -1071,5 +1071,58 @@ class TestExtractWindowFailureGate(unittest.TestCase):
         )
 
 
+# ── P1: proposal_write passes only needed keys to node_write_to_project ──────
+
+class TestProposalWriteSlimWriteInput(unittest.TestCase):
+    """node_write_to_project must NOT receive unneeded large blobs."""
+
+    def test_unneeded_keys_evicted_before_write(self):
+        """timeline_architecture and prompt_windows must not reach node_write_to_project."""
+        import tempfile, json
+        from pathlib import Path
+        from sidecar.supervisor.tools import proposal_write
+
+        captured_state: dict = {}
+
+        async def _capture_write(state):
+            captured_state.update(state)
+            return {"proposals": [], "import_review_report": {}, "errors": [], "status": "done", "progress": 1.0}
+
+        with tempfile.TemporaryDirectory() as td:
+            artifact_dir = Path(td) / "system" / "imports" / "test_slim"
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+
+            state = _make_state(
+                project_path=td,
+                import_run_id="test_slim",
+                timeline_architecture={"events": [{"id": "e1"}], "branches": []},
+                prompt_windows=[{"id": "pw1", "text": "long text " * 500}],
+                entity_registry={"characters": {}, "events": {}, "world": {}, "world_detailed": {}},
+                supervisor_decisions=[{"decision": "test"}],
+                window_metrics={"pw1": {"char_count_extracted": 3}},
+            )
+
+            with (
+                patch("sidecar.supervisor.tools.node_build_manuscript", new=AsyncMock(return_value={"manuscript_chapters": []})),
+                patch("sidecar.supervisor.tools.node_synthesize_relationships", new=AsyncMock(return_value={})),
+                patch("sidecar.supervisor.tools.node_classify_character_tags", new=AsyncMock(return_value={})),
+                patch("sidecar.supervisor.tools.node_infer_world_settings", new=AsyncMock(return_value={})),
+                patch("sidecar.supervisor.tools.node_write_to_project", new=AsyncMock(side_effect=_capture_write)),
+            ):
+                _run(proposal_write(state))
+
+        self.assertNotIn("timeline_architecture", captured_state,
+                         "timeline_architecture must be evicted before node_write_to_project")
+        self.assertNotIn("prompt_windows", captured_state,
+                         "prompt_windows must be evicted before node_write_to_project")
+        self.assertNotIn("supervisor_decisions", captured_state,
+                         "supervisor_decisions must be evicted before node_write_to_project")
+        self.assertNotIn("window_metrics", captured_state,
+                         "window_metrics must be evicted before node_write_to_project")
+        # Keys that ARE needed must still be present
+        self.assertIn("entity_registry", captured_state)
+        self.assertIn("project_path", captured_state)
+
+
 if __name__ == "__main__":
     unittest.main()

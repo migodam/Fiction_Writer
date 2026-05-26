@@ -984,3 +984,129 @@ def test_node_write_to_project_manuscript_still_written(tmp_path, monkeypatch):
     manuscript = json.loads(manuscript_path.read_text(encoding="utf-8"))
     assert len(manuscript["chapters"]) == 2
     assert manuscript["chapters"][0]["title"] == "Ch 1"
+
+
+# ── P1: node_build_manuscript supervisor fallback ─────────────────────────────
+
+def test_node_build_manuscript_supervisor_fallback_empty_extractions(tmp_path):
+    """Supervisor path: chunk_extractions=[] → falls back to _build_from_chunks."""
+    chunks = [
+        {"chunk_id": 0, "chapter_hint": "Chapter 1", "content": "Chapter one text."},
+        {"chunk_id": 1, "chapter_hint": "Chapter 2", "content": "Chapter two text."},
+    ]
+    state = {
+        "project_path": str(tmp_path),
+        "import_mode": "import_all",
+        "chunks": chunks,
+        "chunk_extractions": [],
+    }
+    result = asyncio.run(w1_import.node_build_manuscript(state))
+    chapters = result["manuscript_chapters"]
+    assert len(chapters) == 2, f"Expected 2 chapters, got {len(chapters)}"
+    titles = {c["title"] for c in chapters}
+    assert "Chapter 1" in titles
+    assert "Chapter 2" in titles
+    assert all(c["manuscript_content"] for c in chapters), "All chapters must have non-empty content"
+
+
+def test_node_build_manuscript_extractions_without_manuscript_content(tmp_path):
+    """Part A fix: extractions missing manuscript_content fall back to chunk content."""
+    chunks = [
+        {"chunk_id": 0, "chapter_hint": "Chapter 1", "content": "Raw chunk text."},
+    ]
+    extractions = [
+        {"chunk_id": 0},  # No manuscript_content key
+    ]
+    state = {
+        "project_path": str(tmp_path),
+        "import_mode": "import_all",
+        "chunks": chunks,
+        "chunk_extractions": extractions,
+    }
+    result = asyncio.run(w1_import.node_build_manuscript(state))
+    chapters = result["manuscript_chapters"]
+    assert len(chapters) >= 1
+    assert "Raw chunk text." in chapters[0]["manuscript_content"], (
+        "Should fall back to raw chunk content when extraction lacks manuscript_content"
+    )
+
+
+def test_node_build_manuscript_failsafe_when_extractions_produce_no_chapters(tmp_path):
+    """Part B fix: extractions path with no matching chunk IDs → failsafe to chunks."""
+    chunks = [
+        {"chunk_id": 0, "chapter_hint": "Chapter 1", "content": "Fallback text."},
+    ]
+    extractions = [
+        {"chunk_id": 99},  # chunk_id 99 doesn't exist in chunks → empty chapter list
+    ]
+    state = {
+        "project_path": str(tmp_path),
+        "import_mode": "import_all",
+        "chunks": chunks,
+        "chunk_extractions": extractions,
+    }
+    result = asyncio.run(w1_import.node_build_manuscript(state))
+    chapters = result["manuscript_chapters"]
+    assert len(chapters) >= 1, "Failsafe must produce chapters from chunks when extractions yield none"
+    assert any("Fallback text." in c.get("manuscript_content", "") for c in chapters)
+
+
+# ── P1: node_write_to_project progressive pop + streaming manuscript ──────────
+
+def test_node_write_to_project_characters_fully_popped(tmp_path, monkeypatch):
+    """Characters dict must be empty after write — progressive pop releases each entry."""
+    import json
+
+    async def fake_propose_write(op, _project_path):
+        return {"id": f"p_{op['entity_id']}", "confidence": op["confidence"]}
+
+    monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", fake_propose_write)
+
+    registry = {
+        "characters": {
+            "char_a": {"canonical_name": "Alice", "confidence": 0.8, "importance": "core"},
+            "char_b": {"canonical_name": "Bob", "confidence": 0.7, "importance": "supporting"},
+        },
+        "events": {},
+        "world": {},
+        "world_detailed": {},
+    }
+    state = _make_write_state(tmp_path, entity_registry=registry)
+    asyncio.run(w1_import.node_write_to_project(state))
+
+    # After write, registry's characters dict must be empty (all entries popped)
+    assert "characters" not in registry or not registry.get("characters"), (
+        "entity_registry['characters'] must be fully consumed by the write loop"
+    )
+
+
+def test_node_write_to_project_streaming_manuscript_50_chapters(tmp_path, monkeypatch):
+    """Streaming manuscript write must produce valid JSON with correct chapter count."""
+    import json
+
+    async def fake_propose_write(op, _project_path):
+        return {"id": f"p_{op['entity_id']}", "confidence": op["confidence"]}
+
+    monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", fake_propose_write)
+
+    chapters = [
+        {
+            "chapter_id": f"chap_{i}",
+            "title": f"Chapter {i + 1}",
+            "orderIndex": i,
+            "chunk_ids": [i],
+            "manuscript_content": f"Content of chapter {i + 1}.",
+        }
+        for i in range(50)
+    ]
+    state = _make_write_state(tmp_path, manuscript_chapters=chapters)
+    asyncio.run(w1_import.node_write_to_project(state))
+
+    manuscript_path = tmp_path / "manuscript.json"
+    assert manuscript_path.exists()
+    manuscript = json.loads(manuscript_path.read_text(encoding="utf-8"))
+    assert len(manuscript["chapters"]) == 50
+    assert manuscript["chapters"][0]["title"] == "Chapter 1"
+    assert manuscript["chapters"][49]["title"] == "Chapter 50"
+    assert "source_file" in manuscript
+    assert "imported_at" in manuscript

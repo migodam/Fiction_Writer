@@ -1152,8 +1152,25 @@ async def proposal_write(state: ImportSupervisorState) -> dict:
     world_result = await node_infer_world_settings(merged)
     merged = {**merged, **world_result}
 
-    # Write proposals — entity_registry cleared inside node_write_to_project
-    write_result = await node_write_to_project(merged)
+    # Build a slim write_input — only the keys node_write_to_project actually reads.
+    # Evict everything else (timeline_architecture, prompt_windows, supervisor_decisions,
+    # window_metrics, chunks, cross_validation) so GC can reclaim their pages
+    # before the 400+ sequential propose_write() calls that follow.
+    _WRITE_KEYS = frozenset({
+        "entity_registry", "manuscript_chapters", "timeline_branches",
+        "chunk_extractions", "project_path", "import_run_id", "source_file_path",
+        "import_review_report", "import_mode", "source_language", "relationships",
+        "character_tags", "world_settings", "world_containers",
+        "workflow_id", "context", "errors", "checkpoint_path",
+    })
+    write_input = {k: merged[k] for k in _WRITE_KEYS if k in merged}
+    del merged
+
+    import gc
+    gc.collect()
+
+    write_result = await node_write_to_project(write_input)
+    del write_input
 
     proposals = write_result.get("proposals", [])
     log = list(state.get("supervisor_log", []))
