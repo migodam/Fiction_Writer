@@ -779,6 +779,11 @@ class TestProposalWriteEarlyArtifacts(unittest.TestCase):
                     "planner_kind": "deterministic_rules",
                     "source_type": "fine_short_story",
                 },
+                import_plan_validation={"ok": True, "errors": []},
+                source_profile={
+                    "chapter_count": 10,
+                    "recommended_granularity_profile": "fine_short_story",
+                },
                 entity_registry={"characters": {}, "events": {}, "world": {}, "world_detailed": {}},
                 manuscript_chapters=[],
                 timeline_branches=[],
@@ -810,6 +815,8 @@ class TestProposalWriteEarlyArtifacts(unittest.TestCase):
             cv_path = artifact_dir / "cross_validation.json"
             gran_path = artifact_dir / "import_granularity_profile.json"
             plan_path = artifact_dir / "import_plan.json"
+            plan_validation_path = artifact_dir / "import_plan_validation.json"
+            source_profile_path = artifact_dir / "source_profile.json"
             prompts_path = artifact_dir / "extraction_prompt_variants.json"
 
             self.assertTrue(decisions_path.exists(), "supervisor_decisions.json must be written before OOM")
@@ -818,10 +825,14 @@ class TestProposalWriteEarlyArtifacts(unittest.TestCase):
             self.assertTrue(cv_path.exists(), "cross_validation.json must be written before OOM")
             self.assertTrue(gran_path.exists(), "import_granularity_profile.json must be written before OOM")
             self.assertTrue(plan_path.exists(), "import_plan.json must be written before OOM")
+            self.assertTrue(plan_validation_path.exists(), "import_plan_validation.json must be written before OOM")
+            self.assertTrue(source_profile_path.exists(), "source_profile.json must be written before OOM")
             self.assertTrue(prompts_path.exists(), "extraction_prompt_variants.json must be written before OOM")
 
             decisions = json.loads(decisions_path.read_text())
             self.assertEqual(decisions, [{"decision": "test"}])
+            source_profile = json.loads(source_profile_path.read_text())
+            self.assertEqual(source_profile["recommended_granularity_profile"], "fine_short_story")
             prompt_manifest = json.loads(prompts_path.read_text())
             self.assertEqual(
                 prompt_manifest["character"]["prompt_constant"],

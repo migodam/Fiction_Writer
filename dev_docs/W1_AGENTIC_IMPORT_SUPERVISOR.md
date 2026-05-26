@@ -93,11 +93,13 @@ run_supervisor_streaming(project_path, config)   ← async generator (same inter
 
 ## ToolOperatingSpec, ImportPlan, ConvergeTarget, and JudgeArtifact
 
-Before the supervisor policy loop runs, `_ensure_orchestrator_plan()` performs four steps:
+Before the supervisor policy loop runs, `_ensure_orchestrator_plan()` performs six steps:
 1. `plan_tool_operating_spec()` — derives `ToolOperatingSpec` from `prompt_profile`, `source_language`, chapter count, and optional `context.tool_operating_spec_overrides`.
-2. `select_granularity_profile()` — selects an `ImportGranularityProfile` based on chapter count, source language, and prompt profile. Stored as `state["import_granularity_profile"]`. Decision rules: fast→coarse; CJK >30ch→coarse_webnovel; non-CJK >30ch→balanced_novel (relaxed floor); 15–30ch→balanced_novel; ≤15ch→fine_short_story.
-3. `plan_converge_target(..., granularity_profile=...)` — builds `ConvergeTarget` using the selected granularity profile to override character and event density targets.
-4. `plan_import_pipeline()` — builds a schema-first `ImportPlan` recording source type, window strategy, selected tool domains, prompt policy, cost policy, and safety constraints. Current execution remains deterministic; future LLM planners may propose this schema, but execution must validate it rather than accepting free-form pipeline edits.
+2. `analyze_source_profile()` — computes deterministic source metadata (chapter count, average characters, dialogue-density hint, named-entity-density hint) and stores it as `state["source_profile"]`.
+3. `select_granularity_profile()` — selects an `ImportGranularityProfile` based on chapter count, source language, and prompt profile. Stored as `state["import_granularity_profile"]`. Decision rules: fast→coarse; CJK >30ch→coarse_webnovel; non-CJK >30ch→balanced_novel (relaxed floor); 15–30ch→balanced_novel; ≤15ch→fine_short_story.
+4. `plan_converge_target(..., granularity_profile=...)` — builds `ConvergeTarget` using the selected granularity profile to override character and event density targets.
+5. `plan_import_pipeline()` — builds a schema-first `ImportPlan` recording source type, window strategy, selected tool domains, prompt policy, cost policy, and safety constraints. Current execution remains deterministic; future LLM planners may propose this schema, but execution must validate it rather than accepting free-form pipeline edits.
+6. `validate_import_plan()` — verifies the plan has only known planner/source/tool values, all required W1 tools are present and enabled, dynamic prompt edits are disabled, API 402 stop is enabled, and proposal-gate safety is intact. The result is stored as `state["import_plan_validation"]`; invalid pre-existing plans are marked `hard_fail` before execution.
 
 This means converge targets for a 50-chapter Chinese webnovel use `coarse_webnovel` (`min_characters_per_chapter=1.0`), not the TOS deep default of 1.5, giving `expected_min_characters=50` instead of 75.
 
@@ -171,6 +173,8 @@ The profile is populated by the Orchestrator before extraction begins. Scene sum
 
 Dynamic prompt edits are currently disabled. The supported adaptation mechanism is prompt variant dispatch from `ImportGranularityProfile`.
 
+`validate_import_plan()` is the execution-safety gate for future planner proposals. `planner_kind="llm_proposed"` is allowed only when the plan still satisfies the same strict schema and safety constraints as deterministic plans.
+
 ---
 
 ## Profile Config Dimensions
@@ -218,6 +222,8 @@ All artifacts land under `<project_path>/system/imports/<import_run_id>/`:
 | `tool_operating_spec.json` | **Start of `proposal_write`** (before OOM risk) | Planned soft parameters for this import run |
 | `import_granularity_profile.json` | **Start of `proposal_write`** (before OOM risk, if present) | Selected source-adaptive granularity profile |
 | `import_plan.json` | **Start of `proposal_write`** (before OOM risk, if present) | Schema-first pipeline plan and cost/prompt policy |
+| `import_plan_validation.json` | **Start of `proposal_write`** (before OOM risk, if present) | Plan validation result (`ok`, `errors`) |
+| `source_profile.json` | **Start of `proposal_write`** (before OOM risk, if present) | Deterministic source metadata used by orchestrator planning |
 | `extraction_prompt_variants.json` | **Start of `proposal_write`** (before OOM risk) | Prompt constants selected for character/event/world/relationship/scene extraction |
 | `judge_artifact.json` | **Start of `proposal_write`** (before OOM risk, if present) | Final deterministic convergence judgment |
 | `cross_validation.json` | **Start of `proposal_write`** (before OOM risk, if present) | Cross-window entity validation results |

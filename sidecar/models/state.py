@@ -133,6 +133,20 @@ class ImportGranularityProfile(TypedDict, total=False):
     relationship_depth: Literal["core", "recurring", "dense"]
 
 
+class SourceProfile(TypedDict, total=False):
+    """Deterministic metadata about a manuscript source, computed before LLM extraction."""
+    chapter_count: int
+    source_language: str
+    avg_chars_per_chapter: float
+    total_chars: int
+    estimated_source_type: Literal["coarse_webnovel", "balanced_novel", "fine_short_story"]
+    dialogue_density_hint: Literal["low", "medium", "high"]
+    named_entity_density_hint: Literal["sparse", "moderate", "dense"]
+    recommended_granularity_profile: Literal["coarse_webnovel", "balanced_novel", "fine_short_story"]
+    confidence: float
+    evidence: List[str]
+
+
 class ImportPlanToolStep(TypedDict, total=False):
     """One schema-validated tool step in an import plan."""
     tool: str
@@ -868,6 +882,84 @@ def plan_import_pipeline(
     }
 
 
+_KNOWN_TOOLS: frozenset = frozenset({
+    "segment_manifest",
+    "extract_character",
+    "extract_event",
+    "extract_world",
+    "extract_relationship",
+    "extract_scene_summary",
+    "reduce_entities",
+    "minor_repair",
+    "architect_timeline",
+    "judge_import",
+    "proposal_write",
+})
+_VALID_PLANNER_KINDS: frozenset = frozenset({"deterministic_rules", "llm_proposed"})
+_VALID_SOURCE_TYPES: frozenset = frozenset({
+    "coarse_webnovel", "balanced_novel", "fine_short_story", "custom"
+})
+
+
+def validate_import_plan(plan: ImportPlan) -> tuple[bool, list[str]]:
+    """Validate a schema-first import plan against the W1 execution contract.
+
+    Returns (True, []) for valid plans, (False, [error, ...]) otherwise.
+    All checks run regardless of earlier failures — callers see the full picture.
+    """
+    errors: list[str] = []
+
+    if plan.get("planner_kind") not in _VALID_PLANNER_KINDS:
+        errors.append(f"unknown planner_kind: {plan.get('planner_kind')!r}")
+
+    if plan.get("source_type") not in _VALID_SOURCE_TYPES:
+        errors.append(f"unknown source_type: {plan.get('source_type')!r}")
+
+    tools = plan.get("tools") or []
+    if not tools:
+        errors.append("plan.tools must be present and non-empty")
+    else:
+        present_enabled_tools: set = set()
+        seen_orders: set = set()
+        for i, step in enumerate(tools):
+            for key in ("tool", "enabled", "order"):
+                if key not in step:
+                    errors.append(f"tool step[{i}] missing required key {key!r}")
+            tool_name = step.get("tool")
+            if tool_name is not None:
+                if tool_name not in _KNOWN_TOOLS:
+                    errors.append(f"unknown tool: {tool_name!r}")
+                elif step.get("enabled") is True:
+                    present_enabled_tools.add(tool_name)
+            order = step.get("order")
+            if order is not None:
+                if order in seen_orders:
+                    errors.append(f"duplicate order value: {order}")
+                else:
+                    seen_orders.add(order)
+        missing_or_disabled = _KNOWN_TOOLS - present_enabled_tools
+        if missing_or_disabled:
+            errors.append(f"missing or disabled required tools: {sorted(missing_or_disabled)}")
+
+    prompt_policy = plan.get("prompt_policy") or {}
+    if prompt_policy.get("dynamic_prompt_edits_allowed") is not False:
+        errors.append("prompt_policy.dynamic_prompt_edits_allowed must be False")
+
+    cost_policy = plan.get("cost_policy") or {}
+    if cost_policy.get("stop_on_api_402") is not True:
+        errors.append("cost_policy.stop_on_api_402 must be True")
+
+    safety = plan.get("safety") or {}
+    if safety.get("proposal_gate_required") is not True:
+        errors.append("safety.proposal_gate_required must be True")
+    if safety.get("schema_validated_plan") is not True:
+        errors.append("safety.schema_validated_plan must be True")
+    if safety.get("llm_planner_can_propose_only") is not True:
+        errors.append("safety.llm_planner_can_propose_only must be True")
+
+    return len(errors) == 0, errors
+
+
 def plan_orchestrator_targets(
     prompt_profile: str = "balanced",
     source_language: str = "en",
@@ -886,6 +978,105 @@ def plan_orchestrator_targets(
         use_orchestrator=use_orchestrator,
     )
     return spec, plan_converge_target(spec, source_language, chapter_count)
+
+
+def _chunk_text(c: dict) -> str:
+    return c.get("content") or c.get("manuscript_content") or c.get("raw_content") or ""
+
+
+def analyze_source_profile(
+    chunks: List["Chunk"],
+    source_language: str = "en",
+    prompt_profile: str = "balanced",
+) -> "SourceProfile":
+    """Deterministic source profiler — no LLM calls, no API.
+
+    Classifies the manuscript source using the same chapter/language thresholds as
+    select_granularity_profile(). The prompt_profile 'fast' override is intentionally
+    omitted: this profiler is descriptive (what the source is), not prescriptive (how
+    to extract it). Dialogue and named-entity density hints are heuristic estimates only.
+    """
+    chapter_count = len(chunks)
+    if chapter_count == 0:
+        return {
+            "chapter_count": 0,
+            "source_language": source_language or "en",
+            "avg_chars_per_chapter": 0.0,
+            "total_chars": 0,
+            "estimated_source_type": "fine_short_story",
+            "dialogue_density_hint": "low",
+            "named_entity_density_hint": "sparse",
+            "recommended_granularity_profile": "fine_short_story",
+            "confidence": 0.5,
+            "evidence": ["no chunks provided; defaulting to fine_short_story"],
+        }  # type: ignore[return-value]
+
+    lang = (source_language or "en").lower().split("-")[0]
+    is_cjk = lang in _WEBNOVEL_LANGUAGES
+
+    total_chars = sum(len(_chunk_text(c)) for c in chunks)
+    avg_chars = round(total_chars / chapter_count, 1)
+
+    evidence: List[str] = [f"{chapter_count} chapters detected"]
+
+    if chapter_count <= 15:
+        source_type: str = "fine_short_story"
+        confidence = 0.90
+        evidence.append("short source (<=15 chapters) → fine_short_story")
+    elif chapter_count > 30 and is_cjk:
+        source_type = "coarse_webnovel"
+        confidence = 0.95
+        evidence.append(f"long CJK source (>30 chapters, lang={lang}) → coarse_webnovel")
+    elif chapter_count > 30:
+        source_type = "balanced_novel"
+        confidence = 0.85
+        evidence.append("long non-CJK source (>30 chapters) → balanced_novel")
+    else:
+        source_type = "balanced_novel"
+        confidence = 0.80
+        evidence.append("medium source (16–30 chapters) → balanced_novel")
+
+    # Dialogue density heuristic — advisory only, not a precise measurement
+    dialogue_markers = 0
+    for c in chunks:
+        text = _chunk_text(c)
+        dialogue_markers += (
+            text.count("「")  # 「
+            + text.count("」")  # 」
+            + text.count("“")  # "
+            + text.count("”")  # "
+            + text.count('"')
+        )
+    dialogue_ratio = dialogue_markers / max(total_chars, 1)
+    if dialogue_ratio > 0.05:
+        dialogue_density: str = "high"
+    elif dialogue_ratio > 0.02:
+        dialogue_density = "medium"
+    else:
+        dialogue_density = "low"
+
+    # Named entity density — missing entity_mentions treated as empty (not an error)
+    total_mentions = sum(len(c.get("entity_mentions") or []) for c in chunks)
+    avg_mentions = total_mentions / chapter_count
+    if avg_mentions > 8:
+        entity_density: str = "dense"
+    elif avg_mentions >= 3:
+        entity_density = "moderate"
+    else:
+        entity_density = "sparse"
+
+    return {
+        "chapter_count": chapter_count,
+        "source_language": source_language or "en",
+        "avg_chars_per_chapter": avg_chars,
+        "total_chars": total_chars,
+        "estimated_source_type": source_type,  # type: ignore[typeddict-item]
+        "dialogue_density_hint": dialogue_density,  # type: ignore[typeddict-item]
+        "named_entity_density_hint": entity_density,  # type: ignore[typeddict-item]
+        "recommended_granularity_profile": source_type,  # type: ignore[typeddict-item]
+        "confidence": confidence,
+        "evidence": evidence,
+    }  # type: ignore[return-value]
 
 
 class ImportSupervisorState(TypedDict, total=False):
@@ -926,6 +1117,8 @@ class ImportSupervisorState(TypedDict, total=False):
     global_rerun_count: int     # Total rerun API calls dispatched this run
     import_granularity_profile: ImportGranularityProfile
     import_plan: ImportPlan
+    import_plan_validation: Dict[str, Any]
+    source_profile: SourceProfile
 
 
 class DiffItem(TypedDict):

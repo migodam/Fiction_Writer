@@ -16,11 +16,13 @@ from sidecar.models.state import (
     ImportSupervisorState,
     ThematicRerunRequest,
     ToolOperatingSpec,
+    analyze_source_profile,
     plan_converge_target,
     plan_import_pipeline,
     plan_orchestrator_targets,
     plan_tool_operating_spec,
     select_granularity_profile,
+    validate_import_plan,
 )
 from sidecar.supervisor.tool_registry import build_tool_registry
 from sidecar.workflows.w1_import import (
@@ -100,11 +102,30 @@ def _chapter_count_from_state(state: ImportSupervisorState) -> int:
 
 def _ensure_orchestrator_plan(state: ImportSupervisorState) -> ImportSupervisorState:
     if state.get("tool_operating_spec") and state.get("converge_target"):
+        if state.get("import_plan") and not state.get("import_plan_validation"):
+            is_valid, errors = validate_import_plan(state["import_plan"])
+            return {
+                **state,
+                "import_plan_validation": {"ok": is_valid, "errors": errors},
+                "errors": list(state.get("errors", [])) + [
+                    f"import_plan_validation: {err}" for err in errors
+                ],
+                **(
+                    {"orchestrator_phase": "planning_failed", "converge_status": "hard_fail"}
+                    if not is_valid
+                    else {}
+                ),
+            }
         return state
     context = state.get("context", {})
     chapter_count = _chapter_count_from_state(state)
     prompt_profile = state.get("prompt_profile", "balanced")
     source_language = state.get("source_language", "en")
+    source_profile = analyze_source_profile(
+        state.get("chunks", []),
+        source_language=source_language,
+        prompt_profile=prompt_profile,
+    )
 
     spec = plan_tool_operating_spec(
         prompt_profile=prompt_profile,
@@ -128,6 +149,8 @@ def _ensure_orchestrator_plan(state: ImportSupervisorState) -> ImportSupervisorS
         prompt_profile=prompt_profile,
         chapter_count=chapter_count,
     )
+    plan_is_valid, plan_errors = validate_import_plan(import_plan)
+    import_plan_validation = {"ok": plan_is_valid, "errors": plan_errors}
 
     profile_config = dict(state.get("profile_config") or PROFILE_CONFIGS.get(
         prompt_profile, PROFILE_CONFIGS["balanced"]
@@ -142,10 +165,15 @@ def _ensure_orchestrator_plan(state: ImportSupervisorState) -> ImportSupervisorS
         "converge_target": target,
         "import_granularity_profile": granularity_profile,
         "import_plan": import_plan,
+        "import_plan_validation": import_plan_validation,
+        "source_profile": source_profile,
         "profile_config": profile_config,
         "use_supervisor": bool(state.get("use_supervisor") or spec.get("supervisor_enabled")),
-        "orchestrator_phase": "planning",
-        "converge_status": "planning",
+        "orchestrator_phase": "planning" if plan_is_valid else "planning_failed",
+        "converge_status": "planning" if plan_is_valid else "hard_fail",
+        "errors": list(state.get("errors", [])) + [
+            f"import_plan_validation: {err}" for err in plan_errors
+        ],
     }
 
 

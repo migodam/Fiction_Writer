@@ -884,6 +884,48 @@ class TestOrchestratorPlanGranularity(unittest.TestCase):
         self.assertTrue(plan.get("prompt_policy", {}).get("variant_dispatch"))
         self.assertFalse(plan.get("prompt_policy", {}).get("dynamic_prompt_edits_allowed"))
 
+    def test_stores_source_profile(self):
+        from sidecar.supervisor.policy import _ensure_orchestrator_plan
+        state = self._make_zh_deep_state(chapter_count=50)
+        result = _ensure_orchestrator_plan(state)
+        source_profile = result.get("source_profile", {})
+        self.assertEqual(source_profile.get("recommended_granularity_profile"), "coarse_webnovel")
+        self.assertEqual(source_profile.get("chapter_count"), 50)
+
+    def test_stores_import_plan_validation(self):
+        from sidecar.supervisor.policy import _ensure_orchestrator_plan
+        state = self._make_zh_deep_state(chapter_count=50)
+        result = _ensure_orchestrator_plan(state)
+        validation = result.get("import_plan_validation", {})
+        self.assertIs(validation.get("ok"), True)
+        self.assertEqual(validation.get("errors"), [])
+
+    def test_existing_invalid_import_plan_is_rejected_before_execution(self):
+        from sidecar.supervisor.policy import _ensure_orchestrator_plan
+        from sidecar.models.state import (
+            plan_converge_target,
+            plan_import_pipeline,
+            plan_tool_operating_spec,
+            select_granularity_profile,
+        )
+        state = self._make_zh_deep_state(chapter_count=50)
+        spec = plan_tool_operating_spec("deep", "zh", 50)
+        gp = select_granularity_profile(50, "zh", "deep", "import_all")
+        state["tool_operating_spec"] = spec
+        state["converge_target"] = plan_converge_target(spec, "zh", 50, granularity_profile=gp)
+        plan = plan_import_pipeline(gp, spec, source_language="zh", prompt_profile="deep", chapter_count=50)
+        for step in plan["tools"]:
+            if step.get("tool") == "proposal_write":
+                step["enabled"] = False
+        state["import_plan"] = plan
+
+        result = _ensure_orchestrator_plan(state)
+
+        validation = result.get("import_plan_validation", {})
+        self.assertIs(validation.get("ok"), False)
+        self.assertEqual(result.get("converge_status"), "hard_fail")
+        self.assertTrue(any("proposal_write" in err for err in validation.get("errors", [])))
+
     def test_50ch_zh_deep_expected_min_characters_equals_50(self):
         """Granularity profile overrides TOS default: coarse_webnovel gives min_chars=1.0 not 1.5."""
         from sidecar.supervisor.policy import _ensure_orchestrator_plan

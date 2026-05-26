@@ -44,6 +44,10 @@ Timeline Architect enforces a minimum canonical-event density when `converge_tar
 
 `ImportPlan` records the selected source type, window strategy, extraction tool domains, prompt policy, and cost policy before extraction. The current planner is deterministic and schema-first; future LLM/RAG planners may propose an `ImportPlan`, but execution must validate the schema and keep proposal-gate safety intact.
 
+**Source profiler**: `analyze_source_profile(chunks, source_language, prompt_profile)` in `sidecar/models/state.py` computes deterministic metadata — chapter count, avg chars per chapter, dialogue density hint, and named-entity density hint — then classifies source type using the same chapter/language thresholds as `select_granularity_profile()`. The `fast` profile override is intentionally omitted: the profiler is descriptive, not prescriptive. It has no LLM dependency. `_ensure_orchestrator_plan()` stores results in `state["source_profile"]` (`ImportSupervisorState.source_profile`), and `proposal_write` persists `source_profile.json` for benchmark review.
+
+**Import plan validation**: `validate_import_plan(plan)` in `sidecar/models/state.py` enforces the W1 execution contract before plan execution. It accepts deterministic and future `llm_proposed` plans only when the plan uses known source/tool values, all required W1 tools are present and enabled, dynamic prompt edits are disabled, API 402 stop is enabled, and proposal-gate safety fields remain true. `_ensure_orchestrator_plan()` stores the result in `state["import_plan_validation"]`, and `proposal_write` persists `import_plan_validation.json`.
+
 ## World Ontology Requirements
 W1 normalizes world entries with a deterministic World Ontology before proposal write. Allowed categories are `location`, `organization`, `faction`, `item`, `artifact`, `rule`, `system`, `concept`, `culture`, and `custom`.
 
