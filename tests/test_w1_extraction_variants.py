@@ -1,12 +1,14 @@
-"""B1 tests for W1 extraction prompt variant constants.
+"""W1 extraction prompt variant tests.
 
-All tests are pure string assertions — no LLM calls, no I/O.
 Groups:
   1. Existing constants regression guard
   2. New variant existence and template variables
   3. Policy content assertions
+  4. Dispatch selection helper (pure unit)
+  5. extract_window uses dispatch (async, mocked _invoke_json_prompt)
 """
 import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from sidecar.prompts.w1_prompts import (
     # Existing (must remain unchanged)
@@ -148,3 +150,123 @@ class TestPolicyContent:
 
     def test_core_relationship_cap_3(self):
         assert "≤3" in W1_EXTRACT_RELATIONSHIPS_CORE
+
+
+# ── Group 4: Dispatch selection helper ────────────────────────────────────────
+
+from sidecar.supervisor.tools import _select_extraction_prompts
+
+
+class TestDispatchSelectionHelper:
+    def test_empty_state_returns_old_defaults(self):
+        p = _select_extraction_prompts({})
+        assert p["character"] is W1_EXTRACT_CHARACTERS_DEEP
+        assert p["event"] is W1_EXTRACT_EVENTS_DEEP
+        assert p["world"] is W1_EXTRACT_WORLD_DEEP
+        assert p["relationship"] is W1_EXTRACT_RELATIONSHIPS_CHUNK
+
+    def test_none_profile_returns_old_defaults(self):
+        p = _select_extraction_prompts({"import_granularity_profile": None})
+        assert p["character"] is W1_EXTRACT_CHARACTERS_DEEP
+
+    def test_major_only_selects_webnovel(self):
+        p = _select_extraction_prompts({"import_granularity_profile": {"character_granularity": "major_only"}})
+        assert p["character"] is W1_EXTRACT_CHARACTERS_DEEP_WEBNOVEL
+
+    def test_named_only_selects_balanced(self):
+        p = _select_extraction_prompts({"import_granularity_profile": {"character_granularity": "named_only"}})
+        assert p["character"] is W1_EXTRACT_CHARACTERS_DEEP_BALANCED
+
+    def test_all_selects_fine(self):
+        p = _select_extraction_prompts({"import_granularity_profile": {"character_granularity": "all"}})
+        assert p["character"] is W1_EXTRACT_CHARACTERS_DEEP_FINE
+
+    def test_arc_level_selects_arc(self):
+        p = _select_extraction_prompts({"import_granularity_profile": {"event_density": "arc_level"}})
+        assert p["event"] is W1_EXTRACT_EVENTS_DEEP_ARC
+
+    def test_scene_level_selects_dense(self):
+        p = _select_extraction_prompts({"import_granularity_profile": {"event_density": "scene_level"}})
+        assert p["event"] is W1_EXTRACT_EVENTS_DEEP_DENSE
+
+    def test_full_lore_selects_lore(self):
+        p = _select_extraction_prompts({"import_granularity_profile": {"world_density": "full_lore"}})
+        assert p["world"] is W1_EXTRACT_WORLD_DEEP_LORE
+
+    def test_core_depth_selects_core(self):
+        p = _select_extraction_prompts({"import_granularity_profile": {"relationship_depth": "core"}})
+        assert p["relationship"] is W1_EXTRACT_RELATIONSHIPS_CORE
+
+    def test_full_profile_all_variants(self):
+        p = _select_extraction_prompts({"import_granularity_profile": {
+            "character_granularity": "major_only",
+            "event_density": "arc_level",
+            "world_density": "named_only",
+            "relationship_depth": "core",
+        }})
+        assert p["character"] is W1_EXTRACT_CHARACTERS_DEEP_WEBNOVEL
+        assert p["event"] is W1_EXTRACT_EVENTS_DEEP_ARC
+        assert p["world"] is W1_EXTRACT_WORLD_DEEP_SPARSE
+        assert p["relationship"] is W1_EXTRACT_RELATIONSHIPS_CORE
+
+    def test_partial_profile_mixed_fallback(self):
+        p = _select_extraction_prompts({"import_granularity_profile": {"character_granularity": "named_only"}})
+        assert p["character"] is W1_EXTRACT_CHARACTERS_DEEP_BALANCED
+        assert p["event"] is W1_EXTRACT_EVENTS_DEEP
+        assert p["world"] is W1_EXTRACT_WORLD_DEEP
+        assert p["relationship"] is W1_EXTRACT_RELATIONSHIPS_CHUNK
+
+
+# ── Group 5: extract_window uses dispatch ──────────────────────────────────────
+
+from sidecar.supervisor.tools import extract_window
+
+_MINIMAL_STATE: dict = {
+    "prompt_windows": [{"id": "w0", "chunk_ids": [0], "chapter_range": "1-1"}],
+    "chunks": [{"chunk_id": 0, "content": "test content"}],
+    "entity_registry": {"characters": {}, "events": {}, "world": {}, "world_detailed": {}},
+    "profile_config": {"chapters_per_window": 1, "event_density": "chapter_level",
+                       "character_floor": 1, "event_floor": 1, "world_floor": 0},
+    "source_language": "en",
+    "tool_operating_spec": {"language_policy": "preserve_source"},
+    "import_run_id": "",   # empty → _write_import_artifact skipped
+    "project_path": "",
+}
+
+
+import asyncio as _asyncio
+
+
+class TestExtractWindowUsesDispatch:
+    def test_no_profile_uses_old_constants(self):
+        state = {**_MINIMAL_STATE}
+        with (
+            patch("sidecar.supervisor.tools._get_llm", return_value=MagicMock()),
+            patch("sidecar.supervisor.tools._invoke_json_prompt",
+                  new_callable=AsyncMock, return_value={}) as mock_invoke,
+        ):
+            _asyncio.run(extract_window(state, "w0"))
+        templates = [call.args[1] for call in mock_invoke.call_args_list]
+        assert templates[0] is W1_EXTRACT_CHARACTERS_DEEP
+        assert templates[1] is W1_EXTRACT_EVENTS_DEEP
+        assert templates[2] is W1_EXTRACT_WORLD_DEEP
+        assert templates[3] is W1_EXTRACT_RELATIONSHIPS_CHUNK
+
+    def test_webnovel_profile_uses_variant_constants(self):
+        state = {**_MINIMAL_STATE, "import_granularity_profile": {
+            "character_granularity": "major_only",
+            "event_density": "arc_level",
+            "world_density": "named_only",
+            "relationship_depth": "core",
+        }}
+        with (
+            patch("sidecar.supervisor.tools._get_llm", return_value=MagicMock()),
+            patch("sidecar.supervisor.tools._invoke_json_prompt",
+                  new_callable=AsyncMock, return_value={}) as mock_invoke,
+        ):
+            _asyncio.run(extract_window(state, "w0"))
+        templates = [call.args[1] for call in mock_invoke.call_args_list]
+        assert templates[0] is W1_EXTRACT_CHARACTERS_DEEP_WEBNOVEL
+        assert templates[1] is W1_EXTRACT_EVENTS_DEEP_ARC
+        assert templates[2] is W1_EXTRACT_WORLD_DEEP_SPARSE
+        assert templates[3] is W1_EXTRACT_RELATIONSHIPS_CORE

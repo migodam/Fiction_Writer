@@ -72,10 +72,22 @@ from sidecar.workflows.w1_import import (
 from sidecar.prompts.w1_prompts import (
     W1_CROSS_VALIDATE_IMPORT,
     W1_EXTRACT_CHARACTERS_DEEP,
+    W1_EXTRACT_CHARACTERS_DEEP_BALANCED,
+    W1_EXTRACT_CHARACTERS_DEEP_FINE,
+    W1_EXTRACT_CHARACTERS_DEEP_WEBNOVEL,
     W1_EXTRACT_EVENTS_DEEP,
+    W1_EXTRACT_EVENTS_DEEP_ARC,
+    W1_EXTRACT_EVENTS_DEEP_CHAPTER,
+    W1_EXTRACT_EVENTS_DEEP_DENSE,
     W1_EXTRACT_RELATIONSHIPS_CHUNK,
+    W1_EXTRACT_RELATIONSHIPS_CORE,
+    W1_EXTRACT_RELATIONSHIPS_DENSE,
+    W1_EXTRACT_RELATIONSHIPS_RECURRING,
     W1_EXTRACT_SCENE_SUMMARIES,
     W1_EXTRACT_WORLD_DEEP,
+    W1_EXTRACT_WORLD_DEEP_LORE,
+    W1_EXTRACT_WORLD_DEEP_SPARSE,
+    W1_EXTRACT_WORLD_DEEP_STRUCTURAL,
 )
 
 # Output token threshold triggering pre-flight split.
@@ -287,6 +299,52 @@ async def segment_manifest(state: ImportSupervisorState) -> dict:
     }
 
 
+# ── Extraction variant dispatch ──────────────────────────────────────────────
+
+_CHAR_PROMPT_BY_GRANULARITY: dict[str, str] = {
+    "major_only": W1_EXTRACT_CHARACTERS_DEEP_WEBNOVEL,
+    "named_only": W1_EXTRACT_CHARACTERS_DEEP_BALANCED,
+    "all":        W1_EXTRACT_CHARACTERS_DEEP_FINE,
+}
+_EVENT_PROMPT_BY_DENSITY: dict[str, str] = {
+    "arc_level":     W1_EXTRACT_EVENTS_DEEP_ARC,
+    "chapter_level": W1_EXTRACT_EVENTS_DEEP_CHAPTER,
+    "scene_level":   W1_EXTRACT_EVENTS_DEEP_DENSE,
+}
+_WORLD_PROMPT_BY_DENSITY: dict[str, str] = {
+    "named_only": W1_EXTRACT_WORLD_DEEP_SPARSE,
+    "structural": W1_EXTRACT_WORLD_DEEP_STRUCTURAL,
+    "full_lore":  W1_EXTRACT_WORLD_DEEP_LORE,
+}
+_REL_PROMPT_BY_DEPTH: dict[str, str] = {
+    "core":      W1_EXTRACT_RELATIONSHIPS_CORE,
+    "recurring": W1_EXTRACT_RELATIONSHIPS_RECURRING,
+    "dense":     W1_EXTRACT_RELATIONSHIPS_DENSE,
+}
+
+
+def _select_extraction_prompts(state: ImportSupervisorState) -> dict[str, str]:
+    profile = state.get("import_granularity_profile") or {}
+    return {
+        "character": _CHAR_PROMPT_BY_GRANULARITY.get(
+            profile.get("character_granularity", ""),
+            W1_EXTRACT_CHARACTERS_DEEP,
+        ),
+        "event": _EVENT_PROMPT_BY_DENSITY.get(
+            profile.get("event_density", ""),
+            W1_EXTRACT_EVENTS_DEEP,
+        ),
+        "world": _WORLD_PROMPT_BY_DENSITY.get(
+            profile.get("world_density", ""),
+            W1_EXTRACT_WORLD_DEEP,
+        ),
+        "relationship": _REL_PROMPT_BY_DEPTH.get(
+            profile.get("relationship_depth", ""),
+            W1_EXTRACT_RELATIONSHIPS_CHUNK,
+        ),
+    }
+
+
 # ── Tool: extract_window ────────────────────────────────────────────────────────
 
 async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
@@ -328,27 +386,28 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
     _lang_policy = (state.get("tool_operating_spec") or {}).get("language_policy", "preserve_source")
 
     # 5-parallel extraction
+    _prompts = _select_extraction_prompts(state)
     results = await asyncio.gather(
         _invoke_json_prompt(
-            llm, W1_EXTRACT_CHARACTERS_DEEP,
+            llm, _prompts["character"],
             chunk_content=prompt_text, chunk_id=chunk_id,
             total_chunks=total, entity_registry_summary=registry_summary,
             source_language_label=_src_lang_label, language_policy=_lang_policy,
         ),
         _invoke_json_prompt(
-            llm, W1_EXTRACT_EVENTS_DEEP,
+            llm, _prompts["event"],
             chunk_content=prompt_text, chunk_id=chunk_id,
             total_chunks=total, entity_registry_summary=registry_summary,
             source_language_label=_src_lang_label, language_policy=_lang_policy,
         ),
         _invoke_json_prompt(
-            llm, W1_EXTRACT_WORLD_DEEP,
+            llm, _prompts["world"],
             chunk_content=prompt_text, chunk_id=chunk_id,
             total_chunks=total, entity_registry_summary=registry_summary,
             source_language_label=_src_lang_label, language_policy=_lang_policy,
         ),
         _invoke_json_prompt(
-            llm, W1_EXTRACT_RELATIONSHIPS_CHUNK,
+            llm, _prompts["relationship"],
             chunk_content=prompt_text, chunk_id=chunk_id,
             total_chunks=total, entity_registry_summary=registry_summary,
             source_language_label=_src_lang_label, language_policy=_lang_policy,

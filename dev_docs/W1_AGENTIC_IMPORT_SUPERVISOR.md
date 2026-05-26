@@ -134,6 +134,21 @@ The orchestrator may plan soft parameters and request bounded reruns. It must no
 
 ---
 
+## Extraction Variant Dispatch
+
+`extract_window` selects per-domain extraction prompts based on `state["import_granularity_profile"]` (type `ImportGranularityProfile`, optional). If the profile is absent or a field is unset, the original constant is used.
+
+| Field | Value → Variant constant |
+|-------|--------------------------|
+| `character_granularity` | `major_only` → `W1_EXTRACT_CHARACTERS_DEEP_WEBNOVEL` / `named_only` → `BALANCED` / `all` → `FINE` / absent → `W1_EXTRACT_CHARACTERS_DEEP` |
+| `event_density` | `arc_level` → `ARC` / `chapter_level` → `CHAPTER` / `scene_level` → `DENSE` / absent → `W1_EXTRACT_EVENTS_DEEP` |
+| `world_density` | `named_only` → `SPARSE` / `structural` → `STRUCTURAL` / `full_lore` → `LORE` / absent → `W1_EXTRACT_WORLD_DEEP` |
+| `relationship_depth` | `core` → `CORE` / `recurring` → `RECURRING` / `dense` → `DENSE` / absent → `W1_EXTRACT_RELATIONSHIPS_CHUNK` |
+
+The profile is populated by the Orchestrator before extraction begins. Scene summaries are not dispatched.
+
+---
+
 ## Profile Config Dimensions
 
 | Dimension | fast | balanced | deep |
