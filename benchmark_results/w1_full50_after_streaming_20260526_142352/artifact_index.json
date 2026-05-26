@@ -1,0 +1,25 @@
+{
+  "benchmark_id": "w1_full50_after_streaming_20260526_142352",
+  "import_run_id": "sup_562bd04835",
+  "generated_at": "2026-05-26",
+  "note": "Run terminated with error (character_undercoverage convergence failure). Artifacts written through judge phase; inbox.json and manuscript.json not written.",
+  "artifacts": [
+    {"file": "copied_artifacts/judge_artifact.json", "exists": true, "size_bytes": null, "phase": "judge"},
+    {"file": "copied_artifacts/manifest.json", "exists": true, "size_bytes": null, "phase": "init"},
+    {"file": "copied_artifacts/prompt_windows.json", "exists": true, "size_bytes": null, "phase": "init"},
+    {"file": "copied_artifacts/project_structure_digest.json", "exists": true, "size_bytes": null, "phase": "init"},
+    {"file": "copied_artifacts/reducer_artifact.json", "exists": true, "size_bytes": null, "phase": "reduce"},
+    {"file": "copied_artifacts/review_report.json", "exists": true, "size_bytes": null, "phase": "qa_review"},
+    {"file": "copied_artifacts/supervisor_decisions.json", "exists": true, "size_bytes": null, "phase": "supervisor"},
+    {"file": "copied_artifacts/timeline_architecture.json", "exists": true, "size_bytes": null, "phase": "architect_timeline"},
+    {"file": "copied_artifacts/tool_operating_spec.json", "exists": true, "size_bytes": null, "phase": "init"},
+    {"file": "copied_artifacts/window_metrics.json", "exists": true, "size_bytes": null, "phase": "extract_windows"},
+    {"file": "copied_artifacts/inbox.json", "exists": false, "phase": "proposal_write", "note": "Not written — run terminated before proposal_write"},
+    {"file": "copied_artifacts/manuscript.json", "exists": false, "phase": "proposal_write", "note": "Not written — run terminated before proposal_write"},
+    {"file": "raw_logs/monitor_bapzdrkr3.txt", "exists": true, "phase": "monitor"},
+    {"file": "run_config.json", "exists": true, "phase": "config"},
+    {"file": "benchmark_report.md", "exists": true, "phase": "report"},
+    {"file": "benchmark_metrics.json", "exists": true, "phase": "report"},
+    {"file": "failures_and_followups.md", "exists": true, "phase": "report"}
+  ]
+}
