@@ -874,6 +874,16 @@ class TestOrchestratorPlanGranularity(unittest.TestCase):
         profile = result["import_granularity_profile"]
         self.assertIn("profile_name", profile)
 
+    def test_stores_schema_first_import_plan(self):
+        from sidecar.supervisor.policy import _ensure_orchestrator_plan
+        state = self._make_zh_deep_state(chapter_count=50)
+        result = _ensure_orchestrator_plan(state)
+        plan = result.get("import_plan", {})
+        self.assertEqual(plan.get("planner_kind"), "deterministic_rules")
+        self.assertEqual(plan.get("source_type"), "coarse_webnovel")
+        self.assertTrue(plan.get("prompt_policy", {}).get("variant_dispatch"))
+        self.assertFalse(plan.get("prompt_policy", {}).get("dynamic_prompt_edits_allowed"))
+
     def test_50ch_zh_deep_expected_min_characters_equals_50(self):
         """Granularity profile overrides TOS default: coarse_webnovel gives min_chars=1.0 not 1.5."""
         from sidecar.supervisor.policy import _ensure_orchestrator_plan

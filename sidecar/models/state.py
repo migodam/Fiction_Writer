@@ -133,6 +133,33 @@ class ImportGranularityProfile(TypedDict, total=False):
     relationship_depth: Literal["core", "recurring", "dense"]
 
 
+class ImportPlanToolStep(TypedDict, total=False):
+    """One schema-validated tool step in an import plan."""
+    tool: str
+    enabled: bool
+    order: int
+    prompt_domain: str
+    prompt_granularity: str
+    rerun_allowed: bool
+    rationale: str
+
+
+class ImportPlan(TypedDict, total=False):
+    """Schema-first import plan used by the deterministic planner and future LLM planners."""
+    plan_version: str
+    planner_kind: Literal["deterministic_rules", "llm_proposed"]
+    source_type: Literal["coarse_webnovel", "balanced_novel", "fine_short_story", "custom"]
+    prompt_profile: str
+    source_language: str
+    chapter_count: int
+    granularity_profile: ImportGranularityProfile
+    window_strategy: Dict[str, Any]
+    tools: List[ImportPlanToolStep]
+    prompt_policy: Dict[str, Any]
+    cost_policy: Dict[str, Any]
+    safety: Dict[str, Any]
+
+
 class ImportResultClassification(TypedDict, total=False):
     """Four-tier verdict emitted by judge_import. Replaces binary passed/failed."""
     verdict: Literal["pass", "acceptable_with_warnings", "needs_targeted_repair", "hard_fail"]
@@ -699,6 +726,148 @@ def select_granularity_profile(
     return dict(_GRANULARITY_DEFAULTS["balanced_novel"])  # type: ignore[return-value]
 
 
+def plan_import_pipeline(
+    granularity_profile: ImportGranularityProfile,
+    tool_operating_spec: ToolOperatingSpec,
+    *,
+    source_language: str = "en",
+    prompt_profile: str = "balanced",
+    chapter_count: int = 1,
+) -> ImportPlan:
+    """Build a schema-first W1 import plan from selected profile and TOS.
+
+    This is intentionally deterministic: future LLM/RAG planners may propose the
+    same schema, but execution should continue to validate against this shape
+    rather than letting free-form text mutate the pipeline.
+    """
+    chapter_count = max(int(chapter_count or 1), 1)
+    profile_name = granularity_profile.get("profile_name", "balanced_novel")
+    chapters_per_window = int(tool_operating_spec.get("chapters_per_window_max", 1) or 1)
+    rerun_budget = int(tool_operating_spec.get("rerun_budget", 0) or 0)
+    wave_cap = int(tool_operating_spec.get("thematic_rerun_wave_cap", 0) or 0)
+    tool_steps: List[ImportPlanToolStep] = [
+        {
+            "tool": "segment_manifest",
+            "enabled": True,
+            "order": 1,
+            "rationale": "Build source windows before extraction.",
+        },
+        {
+            "tool": "extract_character",
+            "enabled": True,
+            "order": 2,
+            "prompt_domain": "character",
+            "prompt_granularity": str(granularity_profile.get("character_granularity", "named_only")),
+            "rerun_allowed": bool(granularity_profile.get("rerun_on_character_gap", True)),
+            "rationale": "Extract character cards at the selected source granularity.",
+        },
+        {
+            "tool": "extract_event",
+            "enabled": True,
+            "order": 3,
+            "prompt_domain": "event",
+            "prompt_granularity": str(granularity_profile.get("event_density", "chapter_level")),
+            "rerun_allowed": True,
+            "rationale": "Extract timeline candidates at the selected event density.",
+        },
+        {
+            "tool": "extract_world",
+            "enabled": True,
+            "order": 4,
+            "prompt_domain": "world",
+            "prompt_granularity": str(granularity_profile.get("world_density", "structural")),
+            "rerun_allowed": False,
+            "rationale": "Extract world entities with deterministic boundary repair downstream.",
+        },
+        {
+            "tool": "extract_relationship",
+            "enabled": True,
+            "order": 5,
+            "prompt_domain": "relationship",
+            "prompt_granularity": str(granularity_profile.get("relationship_depth", "recurring")),
+            "rerun_allowed": False,
+            "rationale": "Extract relationship evidence to support identity and topology.",
+        },
+        {
+            "tool": "extract_scene_summary",
+            "enabled": True,
+            "order": 6,
+            "prompt_domain": "scene",
+            "prompt_granularity": "fixed",
+            "rerun_allowed": False,
+            "rationale": "Scene summaries remain fixed until a dedicated scene granularity profile exists.",
+        },
+        {
+            "tool": "judge_import",
+            "enabled": True,
+            "order": 10,
+            "rationale": "Apply deterministic convergence gates after reduce/repair/architect passes.",
+        },
+        {
+            "tool": "reduce_entities",
+            "enabled": True,
+            "order": 7,
+            "rationale": "Deduplicate and reconcile extracted entities across windows.",
+        },
+        {
+            "tool": "minor_repair",
+            "enabled": True,
+            "order": 8,
+            "rationale": "Apply deterministic language, grouping, and world/person boundary repairs.",
+        },
+        {
+            "tool": "architect_timeline",
+            "enabled": True,
+            "order": 9,
+            "rationale": "Build branch-aware timeline topology before judgment.",
+        },
+        {
+            "tool": "proposal_write",
+            "enabled": True,
+            "order": 11,
+            "rationale": "Write gated proposals and manuscript artifacts after convergence.",
+        },
+    ]
+    tool_steps = sorted(tool_steps, key=lambda step: int(step.get("order", 0)))
+    return {
+        "plan_version": "w1-import-plan-v1",
+        "planner_kind": "deterministic_rules",
+        "source_type": profile_name,  # type: ignore[typeddict-item]
+        "prompt_profile": prompt_profile,
+        "source_language": source_language or "en",
+        "chapter_count": chapter_count,
+        "granularity_profile": dict(granularity_profile),  # type: ignore[typeddict-item]
+        "window_strategy": {
+            "strategy": "supervised_chapter_batching",
+            "chapters_per_window_max": chapters_per_window,
+            "late_window_cap_enabled": True,
+            "parallel_window_batch_size": 3,
+        },
+        "tools": tool_steps,
+        "prompt_policy": {
+            "variant_dispatch": True,
+            "dynamic_prompt_edits_allowed": False,
+            "prompt_variants_source": "sidecar.prompts.w1_prompts",
+        },
+        "cost_policy": {
+            "rerun_budget": rerun_budget,
+            "thematic_rerun_wave_cap": wave_cap,
+            "stop_on_api_402": True,
+            "max_world_entities_per_chapter": int(
+                granularity_profile.get(
+                    "max_world_entities_per_chapter",
+                    tool_operating_spec.get("max_world_entities_per_chapter", 4),
+                )
+            ),
+        },
+        "safety": {
+            "schema_validated_plan": True,
+            "proposal_gate_required": True,
+            "llm_planner_can_propose_only": True,
+        },
+    }
+
+
 def plan_orchestrator_targets(
     prompt_profile: str = "balanced",
     source_language: str = "en",
@@ -756,6 +925,7 @@ class ImportSupervisorState(TypedDict, total=False):
     budget_exhausted: bool      # True when API returned HTTP 402 — stops all reruns
     global_rerun_count: int     # Total rerun API calls dispatched this run
     import_granularity_profile: ImportGranularityProfile
+    import_plan: ImportPlan
 
 
 class DiffItem(TypedDict):

@@ -91,12 +91,13 @@ run_supervisor_streaming(project_path, config)   ← async generator (same inter
 
 ---
 
-## ToolOperatingSpec, ConvergeTarget, and JudgeArtifact
+## ToolOperatingSpec, ImportPlan, ConvergeTarget, and JudgeArtifact
 
-Before the supervisor policy loop runs, `_ensure_orchestrator_plan()` performs three steps:
+Before the supervisor policy loop runs, `_ensure_orchestrator_plan()` performs four steps:
 1. `plan_tool_operating_spec()` — derives `ToolOperatingSpec` from `prompt_profile`, `source_language`, chapter count, and optional `context.tool_operating_spec_overrides`.
 2. `select_granularity_profile()` — selects an `ImportGranularityProfile` based on chapter count, source language, and prompt profile. Stored as `state["import_granularity_profile"]`. Decision rules: fast→coarse; CJK >30ch→coarse_webnovel; non-CJK >30ch→balanced_novel (relaxed floor); 15–30ch→balanced_novel; ≤15ch→fine_short_story.
 3. `plan_converge_target(..., granularity_profile=...)` — builds `ConvergeTarget` using the selected granularity profile to override character and event density targets.
+4. `plan_import_pipeline()` — builds a schema-first `ImportPlan` recording source type, window strategy, selected tool domains, prompt policy, cost policy, and safety constraints. Current execution remains deterministic; future LLM planners may propose this schema, but execution must validate it rather than accepting free-form pipeline edits.
 
 This means converge targets for a 50-chapter Chinese webnovel use `coarse_webnovel` (`min_characters_per_chapter=1.0`), not the TOS deep default of 1.5, giving `expected_min_characters=50` instead of 75.
 
@@ -154,6 +155,24 @@ The profile is populated by the Orchestrator before extraction begins. Scene sum
 
 ---
 
+## ImportPlan Contract
+
+`ImportPlan` is the bridge from the current deterministic orchestrator toward a future agentic planner. It records the intended pipeline without giving an LLM direct authority to mutate code or bypass safety gates.
+
+| Field | Meaning |
+|-------|---------|
+| `planner_kind` | `deterministic_rules` today; future LLM/RAG planners may submit `llm_proposed` plans for validation |
+| `source_type` | selected profile name such as `coarse_webnovel`, `balanced_novel`, or `fine_short_story` |
+| `window_strategy` | supervised chapter batching settings, late-window cap, and parallel batch size |
+| `tools` | ordered, schema-validated tool/domain steps such as character/event/world/relationship extraction |
+| `prompt_policy` | whether variant dispatch is enabled and whether dynamic prompt edits are allowed |
+| `cost_policy` | rerun budget, wave cap, API 402 stop rule, and world entity cap |
+| `safety` | proposal gate and schema-validation assertions |
+
+Dynamic prompt edits are currently disabled. The supported adaptation mechanism is prompt variant dispatch from `ImportGranularityProfile`.
+
+---
+
 ## Profile Config Dimensions
 
 | Dimension | fast | balanced | deep |
@@ -197,6 +216,9 @@ All artifacts land under `<project_path>/system/imports/<import_run_id>/`:
 | `supervisor_decisions.json` | **Start of `proposal_write`** (before OOM risk) | All supervisor routing decisions |
 | `window_metrics.json` | **Start of `proposal_write`** (before OOM risk) | Per-window extraction quality metrics |
 | `tool_operating_spec.json` | **Start of `proposal_write`** (before OOM risk) | Planned soft parameters for this import run |
+| `import_granularity_profile.json` | **Start of `proposal_write`** (before OOM risk, if present) | Selected source-adaptive granularity profile |
+| `import_plan.json` | **Start of `proposal_write`** (before OOM risk, if present) | Schema-first pipeline plan and cost/prompt policy |
+| `extraction_prompt_variants.json` | **Start of `proposal_write`** (before OOM risk) | Prompt constants selected for character/event/world/relationship/scene extraction |
 | `judge_artifact.json` | **Start of `proposal_write`** (before OOM risk, if present) | Final deterministic convergence judgment |
 | `cross_validation.json` | **Start of `proposal_write`** (before OOM risk, if present) | Cross-window entity validation results |
 | `inbox.json` | Inside `node_write_to_project` | Per-entity `propose_write` proposals (gated) |

@@ -9,6 +9,7 @@ import pytest
 from sidecar.models.state import (
     ImportGranularityProfile,
     plan_converge_target,
+    plan_import_pipeline,
     plan_tool_operating_spec,
     select_granularity_profile,
 )
@@ -179,3 +180,45 @@ class TestPlanConvergeTargetWithGranularity:
         assert target["expected_min_characters"] == 24
         # floor: 0.85 × 24 = 20
         assert target["acceptable_min_characters"] == 20
+
+
+# ---------------------------------------------------------------------------
+# plan_import_pipeline — schema-first deterministic planner foundation
+# ---------------------------------------------------------------------------
+
+
+class TestPlanImportPipeline:
+    def test_coarse_webnovel_plan_records_window_and_prompt_policy(self):
+        tos = plan_tool_operating_spec("deep", "zh", 50)
+        profile = select_granularity_profile(50, "zh", "deep")
+        plan = plan_import_pipeline(profile, tos, source_language="zh", prompt_profile="deep", chapter_count=50)
+
+        assert plan["planner_kind"] == "deterministic_rules"
+        assert plan["source_type"] == "coarse_webnovel"
+        assert plan["window_strategy"]["strategy"] == "supervised_chapter_batching"
+        assert plan["prompt_policy"]["variant_dispatch"] is True
+        assert plan["prompt_policy"]["dynamic_prompt_edits_allowed"] is False
+        assert plan["cost_policy"]["stop_on_api_402"] is True
+        assert [step["order"] for step in plan["tools"]] == sorted(step["order"] for step in plan["tools"])
+        assert "proposal_write" in {step["tool"] for step in plan["tools"]}
+
+    def test_fine_story_plan_contains_dense_tool_granularity(self):
+        tos = plan_tool_operating_spec("deep", "zh", 10)
+        profile = select_granularity_profile(10, "zh", "deep")
+        plan = plan_import_pipeline(profile, tos, source_language="zh", prompt_profile="deep", chapter_count=10)
+        tools = {step["tool"]: step for step in plan["tools"]}
+
+        assert plan["source_type"] == "fine_short_story"
+        assert tools["extract_character"]["prompt_granularity"] == "all"
+        assert tools["extract_event"]["prompt_granularity"] == "scene_level"
+        assert tools["extract_world"]["prompt_granularity"] == "full_lore"
+        assert tools["extract_relationship"]["prompt_granularity"] == "dense"
+
+    def test_import_plan_is_schema_safe_for_future_llm_planners(self):
+        tos = plan_tool_operating_spec("balanced", "en", 20)
+        profile = select_granularity_profile(20, "en", "balanced")
+        plan = plan_import_pipeline(profile, tos, source_language="en", prompt_profile="balanced", chapter_count=20)
+
+        assert plan["safety"]["schema_validated_plan"] is True
+        assert plan["safety"]["llm_planner_can_propose_only"] is True
+        assert all("tool" in step and "enabled" in step and "order" in step for step in plan["tools"])

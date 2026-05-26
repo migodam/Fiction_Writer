@@ -17,6 +17,7 @@ from sidecar.models.state import (
     ThematicRerunRequest,
     ToolOperatingSpec,
     plan_converge_target,
+    plan_import_pipeline,
     plan_orchestrator_targets,
     plan_tool_operating_spec,
     select_granularity_profile,
@@ -120,6 +121,13 @@ def _ensure_orchestrator_plan(state: ImportSupervisorState) -> ImportSupervisorS
         import_mode=state.get("import_mode", "import_all"),
     )
     target = plan_converge_target(spec, source_language, chapter_count, granularity_profile=granularity_profile)
+    import_plan = plan_import_pipeline(
+        granularity_profile,
+        spec,
+        source_language=source_language,
+        prompt_profile=prompt_profile,
+        chapter_count=chapter_count,
+    )
 
     profile_config = dict(state.get("profile_config") or PROFILE_CONFIGS.get(
         prompt_profile, PROFILE_CONFIGS["balanced"]
@@ -133,6 +141,7 @@ def _ensure_orchestrator_plan(state: ImportSupervisorState) -> ImportSupervisorS
         "tool_operating_spec": spec,
         "converge_target": target,
         "import_granularity_profile": granularity_profile,
+        "import_plan": import_plan,
         "profile_config": profile_config,
         "use_supervisor": bool(state.get("use_supervisor") or spec.get("supervisor_enabled")),
         "orchestrator_phase": "planning",

@@ -42,6 +42,8 @@ Timeline Architect enforces a minimum canonical-event density when `converge_tar
 
 `ConvergeTarget` values are source-adaptive when supervisor mode is active: `_ensure_orchestrator_plan()` calls `select_granularity_profile()` and passes the result to `plan_converge_target()`, so character and event density targets reflect the actual source type (CJK webnovel, standard novel, short story) rather than the flat TOS default.
 
+`ImportPlan` records the selected source type, window strategy, extraction tool domains, prompt policy, and cost policy before extraction. The current planner is deterministic and schema-first; future LLM/RAG planners may propose an `ImportPlan`, but execution must validate the schema and keep proposal-gate safety intact.
+
 ## World Ontology Requirements
 W1 normalizes world entries with a deterministic World Ontology before proposal write. Allowed categories are `location`, `organization`, `faction`, `item`, `artifact`, `rule`, `system`, `concept`, `culture`, and `custom`.
 
@@ -55,6 +57,8 @@ Character extraction prompts must include project digest placeholders, alias/epi
 All five deep extraction prompts require `source_language_label` and `language_policy` template variables injected at call time from `state["source_language"]` and `tool_operating_spec["language_policy"]` respectively. This applies to both the supervisor path (`extract_window` in `sidecar/supervisor/tools.py`) and the legacy LangGraph path (`node_process_chunks` in `sidecar/workflows/w1_import.py`).
 
 **Extraction granularity dispatch**: in the supervisor path only, `extract_window` calls `_select_extraction_prompts(state)` before each gather. If `state["import_granularity_profile"]` is populated, the matching variant constant is used per domain (character / event / world / relationship). If the profile is absent or a specific field is unset, the original constant is used as the fallback. Scene summaries (`W1_EXTRACT_SCENE_SUMMARIES`) are not dispatched and remain constant regardless of profile. The legacy LangGraph path continues to use the original deep prompt constants. The `minor_repair` tool strips personality traits containing ≥4 consecutive Latin characters when `source_language == "zh"`, aligned with the `_symptom_flags` detection threshold.
+
+`extract_window` writes the selected prompt variant manifest into each window artifact. `proposal_write` also writes `import_granularity_profile.json`, `import_plan.json`, and `extraction_prompt_variants.json` before proposal writes begin so benchmark validation can prove which profile and prompt variants were active.
 
 ## Cross-Validation Requirements
 Cross-validation is wired into the packed-window scout loop. After each packed window, W1 runs the reviewer prompt against that window's character, event, relationship, and scene outputs plus the current project digest and previous validation summary. The merged `cross_validation.json` artifact is fed into the next window as `PREVIOUS_VALIDATION_SUMMARY`. It must report:

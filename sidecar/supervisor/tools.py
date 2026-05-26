@@ -37,6 +37,7 @@ from sidecar.workflows.w1_import import (
     _artifact_dir,
     _build_project_structure_digest,
     _build_prompt_windows,
+    _build_supervised_prompt_windows,
     _compact_character_card,
     _estimate_tokens,
     _get_llm,
@@ -265,11 +266,9 @@ async def segment_manifest(state: ImportSupervisorState) -> dict:
     profile_config = state.get("profile_config") or PROFILE_CONFIGS.get(state.get("prompt_profile", "balanced"), PROFILE_CONFIGS["balanced"])
     profile_state = {**state, "prompt_profile": state.get("prompt_profile", "balanced")}
 
-    # Build windows from all chunks
-    raw_windows: list[dict] = []
-    for chunk in chunks:
-        windows = _build_prompt_windows(profile_state, [chunk], digest)
-        raw_windows.extend(windows)
+    # Build supervised windows from all chunks so the planner can pack multiple
+    # chapters per extraction window instead of paying prompt overhead per chapter.
+    raw_windows = _build_supervised_prompt_windows(profile_state, chunks, digest)
 
     # Pre-flight: split windows whose estimated output > threshold
     final_windows: list[dict] = []
@@ -345,6 +344,58 @@ def _select_extraction_prompts(state: ImportSupervisorState) -> dict[str, str]:
     }
 
 
+def _selected_extraction_prompt_manifest(state: ImportSupervisorState) -> dict[str, dict[str, str]]:
+    """Return a compact, artifact-safe manifest of selected prompt variants."""
+    profile = state.get("import_granularity_profile") or {}
+    prompts = _select_extraction_prompts(state)
+    variant_names = {
+        id(W1_EXTRACT_CHARACTERS_DEEP): "W1_EXTRACT_CHARACTERS_DEEP",
+        id(W1_EXTRACT_CHARACTERS_DEEP_WEBNOVEL): "W1_EXTRACT_CHARACTERS_DEEP_WEBNOVEL",
+        id(W1_EXTRACT_CHARACTERS_DEEP_BALANCED): "W1_EXTRACT_CHARACTERS_DEEP_BALANCED",
+        id(W1_EXTRACT_CHARACTERS_DEEP_FINE): "W1_EXTRACT_CHARACTERS_DEEP_FINE",
+        id(W1_EXTRACT_EVENTS_DEEP): "W1_EXTRACT_EVENTS_DEEP",
+        id(W1_EXTRACT_EVENTS_DEEP_ARC): "W1_EXTRACT_EVENTS_DEEP_ARC",
+        id(W1_EXTRACT_EVENTS_DEEP_CHAPTER): "W1_EXTRACT_EVENTS_DEEP_CHAPTER",
+        id(W1_EXTRACT_EVENTS_DEEP_DENSE): "W1_EXTRACT_EVENTS_DEEP_DENSE",
+        id(W1_EXTRACT_WORLD_DEEP): "W1_EXTRACT_WORLD_DEEP",
+        id(W1_EXTRACT_WORLD_DEEP_SPARSE): "W1_EXTRACT_WORLD_DEEP_SPARSE",
+        id(W1_EXTRACT_WORLD_DEEP_STRUCTURAL): "W1_EXTRACT_WORLD_DEEP_STRUCTURAL",
+        id(W1_EXTRACT_WORLD_DEEP_LORE): "W1_EXTRACT_WORLD_DEEP_LORE",
+        id(W1_EXTRACT_RELATIONSHIPS_CHUNK): "W1_EXTRACT_RELATIONSHIPS_CHUNK",
+        id(W1_EXTRACT_RELATIONSHIPS_CORE): "W1_EXTRACT_RELATIONSHIPS_CORE",
+        id(W1_EXTRACT_RELATIONSHIPS_RECURRING): "W1_EXTRACT_RELATIONSHIPS_RECURRING",
+        id(W1_EXTRACT_RELATIONSHIPS_DENSE): "W1_EXTRACT_RELATIONSHIPS_DENSE",
+        id(W1_EXTRACT_SCENE_SUMMARIES): "W1_EXTRACT_SCENE_SUMMARIES",
+    }
+    return {
+        "character": {
+            "profile_field": "character_granularity",
+            "profile_value": str(profile.get("character_granularity", "")),
+            "prompt_constant": variant_names.get(id(prompts["character"]), "unknown"),
+        },
+        "event": {
+            "profile_field": "event_density",
+            "profile_value": str(profile.get("event_density", "")),
+            "prompt_constant": variant_names.get(id(prompts["event"]), "unknown"),
+        },
+        "world": {
+            "profile_field": "world_density",
+            "profile_value": str(profile.get("world_density", "")),
+            "prompt_constant": variant_names.get(id(prompts["world"]), "unknown"),
+        },
+        "relationship": {
+            "profile_field": "relationship_depth",
+            "profile_value": str(profile.get("relationship_depth", "")),
+            "prompt_constant": variant_names.get(id(prompts["relationship"]), "unknown"),
+        },
+        "scene": {
+            "profile_field": "",
+            "profile_value": "",
+            "prompt_constant": "W1_EXTRACT_SCENE_SUMMARIES",
+        },
+    }
+
+
 # ── Tool: extract_window ────────────────────────────────────────────────────────
 
 async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
@@ -387,6 +438,7 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
 
     # 5-parallel extraction
     _prompts = _select_extraction_prompts(state)
+    _prompt_manifest = _selected_extraction_prompt_manifest(state)
     results = await asyncio.gather(
         _invoke_json_prompt(
             llm, _prompts["character"],
@@ -606,6 +658,8 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
             "chapter_range": chapter_range, "failed_prompts": failed_prompts,
             "char_count": len(new_char_ids), "event_count": len(new_events),
             "world_count": len(new_world),
+            "import_granularity_profile": state.get("import_granularity_profile", {}),
+            "selected_prompt_variants": _prompt_manifest,
         }
         _write_import_artifact(project_path, import_run_id, f"windows/{window_id}.json", artifact)
 
@@ -1233,6 +1287,20 @@ async def proposal_write(state: ImportSupervisorState) -> dict:
         _write_import_artifact(
             project_path, import_run_id, "tool_operating_spec.json",
             state.get("tool_operating_spec", _active_tool_operating_spec(state)),
+        )
+        if state.get("import_granularity_profile"):
+            _write_import_artifact(
+                project_path, import_run_id, "import_granularity_profile.json",
+                state.get("import_granularity_profile", {}),
+            )
+        if state.get("import_plan"):
+            _write_import_artifact(
+                project_path, import_run_id, "import_plan.json",
+                state.get("import_plan", {}),
+            )
+        _write_import_artifact(
+            project_path, import_run_id, "extraction_prompt_variants.json",
+            _selected_extraction_prompt_manifest(state),
         )
         if state.get("judge_artifact"):
             _write_import_artifact(

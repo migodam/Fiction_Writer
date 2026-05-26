@@ -97,11 +97,28 @@ class TestSegmentManifest(unittest.TestCase):
         state = _make_state()
         built_win = _make_window("pwin_new", [0])
 
-        with patch("sidecar.supervisor.tools._build_prompt_windows", return_value=[built_win]):
+        with patch("sidecar.supervisor.tools._build_supervised_prompt_windows", return_value=[built_win]):
             result = _run(segment_manifest(state))
 
         windows = result.get("prompt_windows", [])
         self.assertGreater(len(windows), 0)
+
+    def test_uses_supervised_multi_chapter_window_builder(self):
+        state = _make_state(chunks=[
+            {"chunk_id": i, "content": f"Chapter {i + 1}", "chapter_hint": f"Chapter {i + 1}"}
+            for i in range(6)
+        ])
+        built_win = _make_window("pwin_packed", [0, 1, 2, 3, 4, 5])
+
+        with (
+            patch("sidecar.supervisor.tools._build_supervised_prompt_windows", return_value=[built_win]) as mock_supervised,
+            patch("sidecar.supervisor.tools._build_prompt_windows") as mock_legacy,
+        ):
+            result = _run(segment_manifest(state))
+
+        mock_supervised.assert_called_once()
+        mock_legacy.assert_not_called()
+        self.assertEqual(result.get("prompt_windows", [])[0]["chunk_ids"], [0, 1, 2, 3, 4, 5])
 
 
 # ── Test 2: extract_window metrics populated ─────────────────────────────────
@@ -750,6 +767,18 @@ class TestProposalWriteEarlyArtifacts(unittest.TestCase):
                 window_metrics={"pwin_a": {"char_count_extracted": 5}},
                 judge_artifact={"score": 0.9, "passed": True, "failed_gates": []},
                 cross_validation={"duplicate_characters": [], "missing_major_characters": []},
+                import_granularity_profile={
+                    "profile_name": "fine_short_story",
+                    "character_granularity": "all",
+                    "event_density": "scene_level",
+                    "world_density": "full_lore",
+                    "relationship_depth": "dense",
+                },
+                import_plan={
+                    "plan_version": "w1-import-plan-v1",
+                    "planner_kind": "deterministic_rules",
+                    "source_type": "fine_short_story",
+                },
                 entity_registry={"characters": {}, "events": {}, "world": {}, "world_detailed": {}},
                 manuscript_chapters=[],
                 timeline_branches=[],
@@ -779,14 +808,25 @@ class TestProposalWriteEarlyArtifacts(unittest.TestCase):
             metrics_path = artifact_dir / "window_metrics.json"
             judge_path = artifact_dir / "judge_artifact.json"
             cv_path = artifact_dir / "cross_validation.json"
+            gran_path = artifact_dir / "import_granularity_profile.json"
+            plan_path = artifact_dir / "import_plan.json"
+            prompts_path = artifact_dir / "extraction_prompt_variants.json"
 
             self.assertTrue(decisions_path.exists(), "supervisor_decisions.json must be written before OOM")
             self.assertTrue(metrics_path.exists(), "window_metrics.json must be written before OOM")
             self.assertTrue(judge_path.exists(), "judge_artifact.json must be written before OOM")
             self.assertTrue(cv_path.exists(), "cross_validation.json must be written before OOM")
+            self.assertTrue(gran_path.exists(), "import_granularity_profile.json must be written before OOM")
+            self.assertTrue(plan_path.exists(), "import_plan.json must be written before OOM")
+            self.assertTrue(prompts_path.exists(), "extraction_prompt_variants.json must be written before OOM")
 
             decisions = json.loads(decisions_path.read_text())
             self.assertEqual(decisions, [{"decision": "test"}])
+            prompt_manifest = json.loads(prompts_path.read_text())
+            self.assertEqual(
+                prompt_manifest["character"]["prompt_constant"],
+                "W1_EXTRACT_CHARACTERS_DEEP_FINE",
+            )
 
 
 # ── proposal_write returns compact state (no entity_registry) ─────────────────
