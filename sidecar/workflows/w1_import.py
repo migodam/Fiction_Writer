@@ -1612,19 +1612,31 @@ def _build_supervised_prompt_windows(state: ImportState, chunks: list[dict], dig
             win_id = _stable_id("pwin", import_run_id, *chunk_ids, part_idx, source_hash, iteration)
             source_start = int(batch[0].get("source_span", {}).get("start", batch[0].get("char_start", 0)) or 0)
             source_end = int(batch[-1].get("source_span", {}).get("end", batch[-1].get("char_end", source_start)) or source_start)
+            source_token_estimate = _estimate_tokens(part)
+            estimated_input_tokens = _estimate_tokens(window_text) + _SCHEMA_POLICY_RESERVE_TOKENS
             batch_windows.append({
                 "id": win_id,
                 "chunk_ids": chunk_ids,
                 "chapter_range": chapter_range if len(parts) == 1 else f"{chapter_range} part {part_idx + 1}/{len(parts)}",
                 "text": window_text,
-                "estimated_tokens": _estimate_tokens(window_text) + _SCHEMA_POLICY_RESERVE_TOKENS,
+                "estimated_tokens": estimated_input_tokens,
+                "estimated_input_tokens": estimated_input_tokens,
+                "total_token_budget": input_token_budget,
+                "source_budget_tokens": source_budget,
+                "source_token_estimate": source_token_estimate,
                 "source_chars": len(part),
                 "digest_token_estimate": digest_tokens,
                 "validation_token_estimate": validation_tokens,
+                "project_digest_token_estimate": digest_tokens,
+                "validation_summary_token_estimate": validation_tokens,
+                "schema_policy_reserve_tokens": _SCHEMA_POLICY_RESERVE_TOKENS,
+                "fill_ratio": round(source_token_estimate / max(source_budget, 1), 4),
                 "split_reason": split_reason,
                 "source_span": {"start": source_start, "end": source_end},
                 "output_token_budget": output_token_budget,
                 "late_window_cap_applied": late_zone,
+                "late_window_threshold": late_threshold,
+                "late_chapters_per_window": late_cpw,
                 "effective_chapters_per_window": effective_cpw or len(batch),
                 "chapters_per_window_config": chapters_per_window,
             })
@@ -1647,26 +1659,46 @@ def _build_supervised_prompt_windows(state: ImportState, chunks: list[dict], dig
 
 
 def _prompt_window_manifest_entry(window: dict) -> dict:
-    return {
+    estimated_input_tokens = int(window.get("estimated_input_tokens", window.get("estimated_tokens", 0)) or 0)
+    project_digest_tokens = int(
+        window.get("project_digest_token_estimate", window.get("digest_token_estimate", 0)) or 0
+    )
+    validation_summary_tokens = int(
+        window.get("validation_summary_token_estimate", window.get("validation_token_estimate", 0)) or 0
+    )
+    entry = {
         "id": window.get("id"),
         "chapter_range": window.get("chapter_range"),
         "chunk_ids": window.get("chunk_ids", []),
         "estimated_tokens": window.get("estimated_tokens", 0),
+        "estimated_input_tokens": estimated_input_tokens,
         "total_token_budget": window.get("total_token_budget", 0),
         "source_budget_tokens": window.get("source_budget_tokens", 0),
         "source_token_estimate": window.get("source_token_estimate", 0),
         "source_chars": window.get("source_chars", 0),
         "digest_token_estimate": window.get("digest_token_estimate", 0),
         "validation_token_estimate": window.get("validation_token_estimate", 0),
+        "project_digest_token_estimate": project_digest_tokens,
+        "validation_summary_token_estimate": validation_summary_tokens,
         "schema_policy_reserve_tokens": window.get("schema_policy_reserve_tokens", 0),
         "target_fill_ratio": window.get("target_fill_ratio", 0),
         "fill_ratio": window.get("fill_ratio", 0),
         "split_reason": window.get("split_reason", ""),
         "source_span": window.get("source_span", {}),
         "late_window_cap_applied": window.get("late_window_cap_applied", False),
+        "late_window_threshold": window.get("late_window_threshold", 0),
+        "late_chapters_per_window": window.get("late_chapters_per_window", 0),
         "effective_chapters_per_window": window.get("effective_chapters_per_window", 0),
         "chapters_per_window_config": window.get("chapters_per_window_config", 0),
     }
+    prompt_variant_manifest = (
+        window.get("prompt_variant_manifest")
+        or window.get("selected_prompt_variants")
+        or window.get("selected_prompt_variant_manifest")
+    )
+    if prompt_variant_manifest:
+        entry["prompt_variant_manifest"] = prompt_variant_manifest
+    return entry
 
 
 def _merge_prompt_outputs(outputs: list[dict]) -> dict:
@@ -2092,6 +2124,16 @@ async def node_split_chunks(state: ImportState) -> dict:
         prompt_windows = _build_supervised_prompt_windows(windowing_state, chunks, digest)
     else:
         prompt_windows = _build_prompt_windows(windowing_state, chunks, digest)
+    prompt_variant_manifest = (
+        state.get("prompt_variant_manifest")
+        or state.get("selected_prompt_variants")
+        or state.get("extraction_prompt_variants")
+    )
+    if prompt_variant_manifest:
+        prompt_windows = [
+            {**window, "prompt_variant_manifest": prompt_variant_manifest}
+            for window in prompt_windows
+        ]
     _write_import_artifact(
         state["project_path"],
         manifest["import_run_id"],

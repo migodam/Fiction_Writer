@@ -31,12 +31,22 @@ def _make_valid_plan_state(**overrides) -> dict:
 def _make_char_proposal(char_id: str = "char_1", name: str = "Hero") -> dict:
     return {
         "id": f"prop_{char_id}",
-        "operations": [{"op": "create", "entityType": "character", "entityId": char_id, "fields": {"name": name}}],
+        "operations": [{
+            "op": "create",
+            "entityType": "character",
+            "entityId": char_id,
+            "fields": {"name": name, "role_in_story": "protagonist", "source_segment_id": "seg_1"},
+        }],
     }
 
 
 def _make_event_proposal(event_id: str = "ev_1", *, branch_id: str = "main", order: int = 1) -> dict:
-    fields: dict = {"title": "Event", "orderIndex": order}
+    fields: dict = {
+        "title": "Event",
+        "orderIndex": order,
+        "timelineClass": "canonical_event",
+        "chapterRange": {"start": "Chapter 1", "end": "Chapter 1"},
+    }
     if branch_id:
         fields["branchId"] = branch_id
     return {
@@ -207,6 +217,73 @@ class TestImportQualityRubric(unittest.TestCase):
         state = {"prompt_windows": [{"id": "pwin_1"}, {"id": "pwin_2"}]}
         result = evaluate_import_quality(state)
         self.assertEqual(result["token_cost_ledger"]["estimated_prompt_windows"], 2)
+
+    # ── 15. Role distribution absent → warn only ─────────────────────────────
+
+    def test_missing_role_distribution_warns_only(self):
+        state = _make_valid_plan_state()
+        state["inbox_proposals"] = [{
+            "id": "prop_char_no_role",
+            "operations": [{
+                "op": "create",
+                "entityType": "character",
+                "entityId": "char_no_role",
+                "fields": {"name": "No Role", "source_segment_id": "seg_1"},
+            }],
+        }]
+        result = evaluate_import_quality(state)
+        self.assertEqual(result["hard_failures"], [])
+        self.assertEqual(result["checks"]["role_distribution"]["result"], "warn")
+
+    # ── 16. Scene beat proposals → warn only ─────────────────────────────────
+
+    def test_scene_beat_event_proposal_warns_only(self):
+        state = _make_valid_plan_state()
+        state["inbox_proposals"] = [{
+            "id": "prop_scene_beat",
+            "operations": [{
+                "op": "create",
+                "entityType": "timeline_event",
+                "entityId": "ev_scene",
+                "fields": {
+                    "title": "Repeated training beat",
+                    "branchId": "main",
+                    "orderIndex": 2,
+                    "timelineClass": "scene_beat",
+                    "chapterRange": {"start": "Chapter 2", "end": "Chapter 2"},
+                },
+            }],
+        }]
+        result = evaluate_import_quality(state)
+        self.assertEqual(result["hard_failures"], [])
+        self.assertEqual(result["checks"]["canonical_event_scene_beat"]["result"], "warn")
+
+    # ── 17. zh Latin leakage → warn only ─────────────────────────────────────
+
+    def test_zh_latin_leakage_warns_only(self):
+        state = _make_valid_plan_state(source_language="zh")
+        state["inbox_proposals"] = [_make_char_proposal(name="HanLi")]
+        result = evaluate_import_quality(state)
+        self.assertEqual(result["hard_failures"], [])
+        self.assertEqual(result["checks"]["zh_latin_leakage"]["result"], "warn")
+
+    # ── 18. Missing source provenance → warn only ────────────────────────────
+
+    def test_missing_source_provenance_warns_only(self):
+        state = _make_valid_plan_state()
+        state["inbox_proposals"] = [{
+            "id": "prop_no_provenance",
+            "operations": [{
+                "op": "create",
+                "entityType": "character",
+                "entityId": "char_no_source",
+                "fields": {"name": "No Source", "role_in_story": "ally"},
+            }],
+        }]
+        state["evidence_cards"] = [{"id": "evc_no_source", "kind": "character", "summary": "missing span"}]
+        result = evaluate_import_quality(state)
+        self.assertEqual(result["hard_failures"], [])
+        self.assertEqual(result["checks"]["source_provenance"]["result"], "warn")
 
 
 if __name__ == "__main__":

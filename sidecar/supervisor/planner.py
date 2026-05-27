@@ -18,6 +18,7 @@ from sidecar.models.state import (
     select_granularity_profile,
     validate_import_plan,
 )
+from sidecar.supervisor.prompt_policy import apply_prompt_policy_patch_to_plan
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -342,6 +343,9 @@ def planner_proposal_to_import_plan(
     for key in _KNOWN_WINDOW_STRATEGY_KEYS - {"strategy"}:
         if key in ws:
             plan["window_strategy"][key] = ws[key]
+
+    if proposal.get("prompt_policy_patch") is not None:
+        plan = apply_prompt_policy_patch_to_plan(plan, proposal.get("prompt_policy_patch"))  # type: ignore[assignment]
 
     # Final gate: converted plan must satisfy the full ImportPlan contract
     ok, errors = validate_import_plan(plan)

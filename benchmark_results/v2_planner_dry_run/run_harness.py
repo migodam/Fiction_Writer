@@ -116,6 +116,17 @@ def _secret_scan(payload_dict):
     return _SECRET_RE.search(serialized) is None
 
 
+def _quality_summary(rubric: dict) -> dict:
+    actions = list(rubric.get("suggested_next_actions") or [])
+    return {
+        "verdict": rubric.get("verdict"),
+        "warning_count": len(rubric.get("warnings") or []),
+        "hard_failure_count": len(rubric.get("hard_failures") or []),
+        "selected_suggested_actions": actions[:3],
+        "token_cost_ledger": rubric.get("token_cost_ledger", {}),
+    }
+
+
 def run_matrix(matrix=None):
     if matrix is None:
         matrix = MATRIX
@@ -172,6 +183,7 @@ def run_matrix(matrix=None):
             "failed_assertions": failed_assertions,
             "passed": passed,
             "quality_rubric": rubric,
+            "quality_summary": _quality_summary(rubric),
         })
     return results
 
@@ -206,6 +218,8 @@ def _build_metrics(cases, ts: str = None) -> dict:
         ts = datetime.now(tz=timezone.utc).isoformat()
     total = len(cases)
     passed_count = sum(1 for c in cases if c["passed"])
+    warning_count = sum(int((c.get("quality_summary") or {}).get("warning_count", 0)) for c in cases)
+    hard_failure_count = sum(int((c.get("quality_summary") or {}).get("hard_failure_count", 0)) for c in cases)
     return {
         "harness": "v2_planner_dry_run",
         "harness_schema_version": "1",
@@ -214,6 +228,26 @@ def _build_metrics(cases, ts: str = None) -> dict:
         "live_model_calls": False,
         "cases": cases,
         "secret_scan": _secret_scan_all(cases),
+        "quality_summary": {
+            "verdict": "fail" if hard_failure_count else ("warn" if warning_count else "pass"),
+            "warning_count": warning_count,
+            "hard_failure_count": hard_failure_count,
+            "selected_suggested_actions": [
+                action
+                for case in cases
+                for action in ((case.get("quality_summary") or {}).get("selected_suggested_actions") or [])
+            ][:5],
+            "token_cost_ledger": {
+                "live_model_calls": False,
+                "full50_run": False,
+                "model_used": None,
+                "estimated_prompt_windows": sum(
+                    int(((case.get("quality_summary") or {}).get("token_cost_ledger") or {}).get("estimated_prompt_windows", 0))
+                    for case in cases
+                ),
+                "estimated_api_calls": 0,
+            },
+        },
         "summary": {"total": total, "passed": passed_count, "failed": total - passed_count},
     }
 

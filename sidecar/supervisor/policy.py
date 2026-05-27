@@ -25,6 +25,7 @@ from sidecar.models.state import (
     validate_import_plan,
 )
 from sidecar.supervisor.planner import planner_proposal_to_import_plan, validate_planner_proposal
+from sidecar.supervisor.planner_llm import generate_planner_proposal_stub
 from sidecar.supervisor.tool_registry import build_tool_registry
 from sidecar.workflows.w1_import import (
     _chunk_progress,
@@ -105,6 +106,15 @@ def _ensure_orchestrator_plan(state: ImportSupervisorState) -> ImportSupervisorS
     if state.get("tool_operating_spec") and state.get("converge_target"):
         context = state.get("context", {})
         proposal = state.get("planner_proposal") or context.get("planner_proposal")
+        if proposal is None and context.get("llm_planner_mode") == "live":
+            error = "llm_planner_mode=live requires explicit approval; no model call was made"
+            return {
+                **state,
+                "import_plan_validation": {"ok": False, "errors": [error]},
+                "orchestrator_phase": "planning_failed",
+                "converge_status": "hard_fail",
+                "errors": list(state.get("errors", [])) + [error],
+            }
         if proposal is not None and not state.get("planner_proposal_validation"):
             proposal_ok, proposal_errors = validate_planner_proposal(proposal)
             if not proposal_ok:
@@ -168,6 +178,31 @@ def _ensure_orchestrator_plan(state: ImportSupervisorState) -> ImportSupervisorS
         profile_config["max_rerun_iterations"] = int(spec["rerun_budget"])
 
     proposal = state.get("planner_proposal") or context.get("planner_proposal")
+    planner_mode = context.get("llm_planner_mode")
+    if proposal is None and planner_mode == "stub":
+        proposal = generate_planner_proposal_stub({
+            **state,
+            "source_profile": source_profile,
+            "tool_operating_spec": spec,
+            "import_granularity_profile": granularity_profile,
+            "source_language": source_language,
+            "prompt_profile": prompt_profile,
+        })
+    elif proposal is None and planner_mode == "live":
+        error = "llm_planner_mode=live requires explicit approval; no model call was made"
+        return {
+            **state,
+            "tool_operating_spec": spec,
+            "converge_target": target,
+            "import_granularity_profile": granularity_profile,
+            "import_plan_validation": {"ok": False, "errors": [error]},
+            "source_profile": source_profile,
+            "profile_config": profile_config,
+            "use_supervisor": bool(state.get("use_supervisor") or spec.get("supervisor_enabled")),
+            "orchestrator_phase": "planning_failed",
+            "converge_status": "hard_fail",
+            "errors": list(state.get("errors", [])) + [error],
+        }
     planner_proposal_validation = None
 
     if proposal is not None:
@@ -212,6 +247,18 @@ def _ensure_orchestrator_plan(state: ImportSupervisorState) -> ImportSupervisorS
             chapter_count=chapter_count,
         )
         plan_is_valid, plan_errors = validate_import_plan(import_plan)
+
+    if plan_is_valid:
+        granularity_profile = dict(import_plan.get("granularity_profile") or granularity_profile)
+        target = plan_converge_target(
+            spec,
+            source_language,
+            chapter_count,
+            granularity_profile=granularity_profile,
+        )
+        window_strategy = import_plan.get("window_strategy") or {}
+        if window_strategy.get("chapters_per_window_max") is not None:
+            profile_config["chapters_per_window"] = int(window_strategy["chapters_per_window_max"])
 
     import_plan_validation = {"ok": plan_is_valid, "errors": plan_errors}
 

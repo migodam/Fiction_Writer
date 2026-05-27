@@ -61,3 +61,24 @@ class TestHarnessCLI:
         )
         scan = run_harness._scan_output_files(out)
         assert scan["passed"], f"Secret found in output files: {scan['hits']}"
+
+    def test_quality_summary_fields_present(self, tmp_path):
+        out = tmp_path / "out"
+        subprocess.run(
+            [sys.executable, str(_HARNESS_PATH), "--case", "case_1_10ch_zh_deep",
+             "--output-dir", str(out)],
+            check=True, capture_output=True,
+        )
+        metrics = json.loads((out / "benchmark_metrics.json").read_text())
+        case_summary = metrics["cases"][0]["quality_summary"]
+        for key in (
+            "verdict",
+            "warning_count",
+            "hard_failure_count",
+            "selected_suggested_actions",
+            "token_cost_ledger",
+        ):
+            assert key in case_summary
+        assert case_summary["hard_failure_count"] == 0
+        assert case_summary["token_cost_ledger"]["live_model_calls"] is False
+        assert "quality_summary" in metrics

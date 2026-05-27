@@ -963,6 +963,48 @@ class TestOrchestratorPlanGranularity(unittest.TestCase):
             "confidence": 0.9,
         }
 
+    def test_valid_proposal_aligns_state_profile_and_target_with_import_plan(self):
+        from sidecar.supervisor.policy import _ensure_orchestrator_plan
+        state = self._make_zh_deep_state(chapter_count=50)
+        proposal = self._make_valid_proposal("llm_proposed")
+        proposal["proposed_source_type"] = "fine_short_story"
+        proposal["proposed_granularity_profile"] = {
+            "profile_name": "fine_short_story",
+            "min_characters_per_chapter": 1.5,
+            "acceptable_floor_fraction": 0.9,
+            "min_events_per_chapter": 1.5,
+            "rerun_on_character_gap": True,
+            "max_world_entities_per_chapter": 5,
+            "character_granularity": "all",
+            "event_density": "scene_level",
+            "world_density": "full_lore",
+            "relationship_depth": "dense",
+        }
+        state["planner_proposal"] = proposal
+
+        result = _ensure_orchestrator_plan(state)
+
+        plan = result["import_plan"]
+        self.assertEqual(plan["source_type"], "fine_short_story")
+        self.assertEqual(result["import_granularity_profile"], plan["granularity_profile"])
+        self.assertEqual(result["import_granularity_profile"]["profile_name"], "fine_short_story")
+        self.assertEqual(result["converge_target"]["expected_min_characters"], 75)
+        self.assertEqual(result["converge_target"]["expected_min_events"], 75)
+        self.assertIs(result["planner_proposal_validation"]["ok"], True)
+        self.assertIs(result["import_plan_validation"]["ok"], True)
+
+    def test_proposed_window_strategy_syncs_chapters_per_window_to_profile_config(self):
+        from sidecar.supervisor.policy import _ensure_orchestrator_plan
+        state = self._make_zh_deep_state(chapter_count=50)
+        proposal = self._make_valid_proposal("llm_proposed")
+        proposal["proposed_window_strategy"] = {"chapters_per_window_max": 4}
+        state["planner_proposal"] = proposal
+
+        result = _ensure_orchestrator_plan(state)
+
+        self.assertEqual(result["import_plan"]["window_strategy"]["chapters_per_window_max"], 4)
+        self.assertEqual(result["profile_config"]["chapters_per_window"], 4)
+
     def test_no_proposal_preserves_deterministic_import_plan(self):
         from sidecar.supervisor.policy import _ensure_orchestrator_plan
         state = self._make_zh_deep_state(chapter_count=50)
@@ -996,6 +1038,23 @@ class TestOrchestratorPlanGranularity(unittest.TestCase):
         result = _ensure_orchestrator_plan(state)  # must not raise UnboundLocalError
         self.assertEqual(result["converge_status"], "hard_fail")
 
+    def test_invalid_proposed_window_strategy_still_hard_fails(self):
+        from sidecar.supervisor.policy import _ensure_orchestrator_plan
+        state = self._make_zh_deep_state(chapter_count=50)
+        proposal = self._make_valid_proposal("llm_proposed")
+        proposal["proposed_window_strategy"] = {"chapters_per_window_max": 20}
+        state["planner_proposal"] = proposal
+
+        result = _ensure_orchestrator_plan(state)
+
+        self.assertEqual(result["orchestrator_phase"], "planning_failed")
+        self.assertEqual(result["converge_status"], "hard_fail")
+        self.assertIs(result["planner_proposal_validation"]["ok"], False)
+        self.assertIs(result["import_plan_validation"]["ok"], False)
+        self.assertTrue(
+            any("chapters_per_window_max" in err for err in result["import_plan_validation"]["errors"])
+        )
+
     def test_invalid_proposal_disabled_proposal_write_causes_hard_fail(self):
         from sidecar.supervisor.policy import _ensure_orchestrator_plan
         state = self._make_zh_deep_state(chapter_count=50)
@@ -1014,6 +1073,30 @@ class TestOrchestratorPlanGranularity(unittest.TestCase):
         result = _ensure_orchestrator_plan(state)
         self.assertEqual(result["import_plan"]["planner_kind"], "llm_proposed")
         self.assertIs(result["import_plan_validation"]["ok"], True)
+
+    def test_llm_planner_stub_mode_generates_valid_proposal_without_live_call(self):
+        from sidecar.supervisor.policy import _ensure_orchestrator_plan
+        state = self._make_zh_deep_state(chapter_count=50)
+        state["context"] = {"llm_planner_mode": "stub"}
+
+        result = _ensure_orchestrator_plan(state)
+
+        self.assertEqual(result["import_plan"]["planner_kind"], "llm_proposed")
+        self.assertIs(result["planner_proposal_validation"]["ok"], True)
+        self.assertIs(result["import_plan_validation"]["ok"], True)
+        self.assertIn("stub performs no model call", result["planner_proposal"]["safety_notes"])
+
+    def test_llm_planner_live_mode_rejected_without_model_call(self):
+        from sidecar.supervisor.policy import _ensure_orchestrator_plan
+        state = self._make_zh_deep_state(chapter_count=50)
+        state["context"] = {"llm_planner_mode": "live"}
+
+        result = _ensure_orchestrator_plan(state)
+
+        self.assertEqual(result["orchestrator_phase"], "planning_failed")
+        self.assertEqual(result["converge_status"], "hard_fail")
+        self.assertIs(result["import_plan_validation"]["ok"], False)
+        self.assertTrue(any("no model call was made" in err for err in result["errors"]))
 
     def test_invalid_context_proposal_rejected_on_preplanned_state(self):
         from sidecar.supervisor.policy import _ensure_orchestrator_plan

@@ -281,6 +281,38 @@ class TestWindowMetadata(unittest.TestCase):
         self.assertIn("effective_chapters_per_window", entry)
         self.assertIn("chapters_per_window_config", entry)
 
+    # ── Test 5: manifest entry includes normalized observability fields ──────
+
+    def test_manifest_entry_includes_normalized_observability_fields(self):
+        from sidecar.workflows.w1_import import _prompt_window_manifest_entry
+        state, chunks = self._make_state_cpw6(12)
+        windows = _build_supervised_prompt_windows(state, chunks, self._digest())
+
+        entry = _prompt_window_manifest_entry(windows[0])
+        self.assertGreater(entry["estimated_input_tokens"], 0)
+        self.assertGreater(entry["source_budget_tokens"], 0)
+        self.assertGreater(entry["source_token_estimate"], 0)
+        self.assertIn("split_reason", entry)
+        self.assertIn("late_window_threshold", entry)
+        self.assertIn("late_chapters_per_window", entry)
+        self.assertEqual(entry["project_digest_token_estimate"], entry["digest_token_estimate"])
+        self.assertEqual(entry["validation_summary_token_estimate"], entry["validation_token_estimate"])
+
+    # ── Test 6: prompt variant manifest is preserved when available ──────────
+
+    def test_manifest_entry_preserves_prompt_variant_manifest_when_available(self):
+        from sidecar.workflows.w1_import import _prompt_window_manifest_entry
+        entry = _prompt_window_manifest_entry({
+            "id": "pwin_test",
+            "estimated_tokens": 42,
+            "selected_prompt_variants": {"character": {"prompt_constant": "W1_TEST"}},
+        })
+
+        self.assertEqual(
+            entry["prompt_variant_manifest"],
+            {"character": {"prompt_constant": "W1_TEST"}},
+        )
+
 
 class TestDetectLanguage(unittest.TestCase):
     def test_cjk_text_detected_as_zh(self):
