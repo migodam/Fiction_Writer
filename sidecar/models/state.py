@@ -174,6 +174,32 @@ class ImportPlan(TypedDict, total=False):
     safety: Dict[str, Any]
 
 
+class PlannerProposalToolOverride(TypedDict, total=False):
+    """A tool-level override a planner may propose. Only safe fields are accepted."""
+    tool: str               # must be in _KNOWN_TOOLS; validated by validate_planner_proposal
+    prompt_granularity: str  # must be in per-tool allowlist — NOT raw prompt text
+    rerun_allowed: bool
+
+
+class PlannerProposal(TypedDict, total=False):
+    """Structured proposal from an LLM/RAG planner.
+
+    This is the ONLY channel through which a future LLM planner may influence W1 execution.
+    Unknown top-level keys are rejected by validate_planner_proposal().
+    The planner may propose; the validator decides; the executor runs deterministically.
+    """
+    planner_kind: Literal["deterministic_rules", "llm_proposed"]
+    source_profile: SourceProfile
+    proposed_source_type: Literal["coarse_webnovel", "balanced_novel", "fine_short_story", "custom"]
+    proposed_granularity_profile: ImportGranularityProfile  # may be partial; merged with deterministic base
+    proposed_window_strategy: Dict[str, Any]               # only known safe keys accepted
+    proposed_tool_overrides: List[PlannerProposalToolOverride]
+    prompt_variant_preferences: Dict[str, str]             # tool_name → variant_key (allowlist enforced)
+    rationale: str                                         # free text; audit only, never executed
+    confidence: float                                      # 0.0–1.0
+    safety_notes: List[str]                                # audit only, never executed
+
+
 class ImportResultClassification(TypedDict, total=False):
     """Four-tier verdict emitted by judge_import. Replaces binary passed/failed."""
     verdict: Literal["pass", "acceptable_with_warnings", "needs_targeted_repair", "hard_fail"]

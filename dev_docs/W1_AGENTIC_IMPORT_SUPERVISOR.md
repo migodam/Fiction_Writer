@@ -131,6 +131,22 @@ The orchestrator may plan soft parameters and request bounded reruns. It must no
 
 ---
 
+## Planning Artifacts
+
+Populated by `_ensure_orchestrator_plan()` before extraction, written by `proposal_write` before the OOM-risk synthesis phase.
+
+| File | State key | Contents |
+|------|-----------|---------|
+| `source_profile.json` | `source_profile` | `SourceProfile`: chapter_count, avg_chars_per_chapter, total_chars, estimated_source_type, dialogue_density_hint, named_entity_density_hint, recommended_granularity_profile, confidence, evidence |
+| `import_granularity_profile.json` | `import_granularity_profile` | `ImportGranularityProfile`: profile_name, character_granularity, event_density, world_density, relationship_depth, density targets, floor fractions |
+| `import_plan.json` | `import_plan` | `ImportPlan`: plan_version, planner_kind, source_type, tools list, window_strategy, prompt_policy, cost_policy, safety |
+| `import_plan_validation.json` | `import_plan_validation` | `{"ok": bool, "errors": [...]}` — result of `validate_import_plan()` |
+| `extraction_prompt_variants.json` | computed by `_selected_extraction_prompt_manifest()` | Per-domain prompt constant names + profile field/value that selected them |
+
+**Note:** `source_profile.recommended_granularity_profile` reflects the source as-is (descriptive). `import_granularity_profile.profile_name` reflects the execution decision, which may differ for the `fast` profile (fast always forces coarse regardless of chapter count).
+
+---
+
 ## Gate Thresholds
 
 | Gate | Metric | Threshold | Action |
@@ -174,6 +190,25 @@ The profile is populated by the Orchestrator before extraction begins. Scene sum
 Dynamic prompt edits are currently disabled. The supported adaptation mechanism is prompt variant dispatch from `ImportGranularityProfile`.
 
 `validate_import_plan()` is the execution-safety gate for future planner proposals. `planner_kind="llm_proposed"` is allowed only when the plan still satisfies the same strict schema and safety constraints as deterministic plans.
+
+---
+
+## PlannerProposal Safety Boundary
+
+`PlannerProposal` (`sidecar/models/state.py`) is the **only channel** through which a future LLM/RAG planner may influence W1 extraction. Four defense layers enforce safety:
+
+| Layer | Mechanism |
+|-------|-----------|
+| **Schema** | `PlannerProposal` TypedDict restricts the surface: 10 known fields only |
+| **Allowlist validation** | `validate_planner_proposal()` (`sidecar/supervisor/planner.py`) rejects unknown top-level keys, unknown tool names, unknown variant keys (explicit frozenset per tool, not regex), out-of-range numeric fields, and forbidden override fields |
+| **Deterministic conversion** | `planner_proposal_to_import_plan()` merges only fields in `_GP_ALLOWED_FIELDS`; applies only `prompt_granularity` and `rerun_allowed` from tool overrides; never touches safety/cost policy flags |
+| **Final gate** | `validate_import_plan()` runs as the second gate on the converted plan before it can be stored or executed |
+
+**The LLM may propose. The validator decides. The executor runs deterministically.**
+
+A planner may influence: `proposed_source_type`, `proposed_granularity_profile` fields (known fields only, bounded numerics), `proposed_tool_overrides` (`prompt_granularity` from explicit per-tool allowlist + `rerun_allowed` only), `prompt_variant_preferences` (variant key from explicit allowlist per tool), and `proposed_window_strategy` (known safe keys only, bounded numerics).
+
+A planner may **not**: inject raw prompt text, add unknown top-level keys, disable required tools, set `stop_on_api_402=False`, set `dynamic_prompt_edits_allowed=True`, add unknown tools, use unknown variant keys, or set out-of-range numeric fields.
 
 ---
 
