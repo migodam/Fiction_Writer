@@ -119,11 +119,13 @@ def _secret_scan(payload_dict):
 def run_matrix(matrix=None):
     if matrix is None:
         matrix = MATRIX
+    from sidecar.supervisor.quality import evaluate_import_quality
     results = []
     for case_id, n, lang, profile, exp_gran, exp_src, exp_char, exp_event, exp_min_chars in matrix:
         state = _build_state(n, lang, profile)
         prompts = _select_extraction_prompts(state)
         manifest = _selected_extraction_prompt_manifest(state)
+        rubric = evaluate_import_quality(state)
 
         assertions = {
             "granularity_profile_name": state["import_granularity_profile"]["profile_name"] == exp_gran,
@@ -145,6 +147,7 @@ def run_matrix(matrix=None):
                 _secret_scan(state[k])
                 for k in ("source_profile", "import_plan", "converge_target", "import_granularity_profile")
             ),
+            "quality_rubric_no_hard_fail": rubric["verdict"] != "fail",
         }
 
         passed = all(assertions.values())
@@ -168,6 +171,7 @@ def run_matrix(matrix=None):
             "assertions": assertions,
             "failed_assertions": failed_assertions,
             "passed": passed,
+            "quality_rubric": rubric,
         })
     return results
 

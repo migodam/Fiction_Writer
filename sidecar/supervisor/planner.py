@@ -34,7 +34,29 @@ _PROPOSAL_ALLOWED_FIELDS: frozenset = frozenset({
     "rationale",
     "confidence",
     "safety_notes",
+    "prompt_policy_patch",
 })
+
+# ---------------------------------------------------------------------------
+# PromptPolicyPatch constants
+# ---------------------------------------------------------------------------
+
+_PPP_ALLOWED_FIELDS: frozenset = frozenset({
+    "emphasize_existing_timeline_topology",
+    "require_source_provenance",
+    "prefer_canonical_events",
+    "suppress_minor_npcs",
+    "relationship_evidence_required",
+    "world_boundary_strictness",
+})
+_PPP_BOOL_FIELDS: frozenset = frozenset({
+    "emphasize_existing_timeline_topology",
+    "require_source_provenance",
+    "prefer_canonical_events",
+    "suppress_minor_npcs",
+    "relationship_evidence_required",
+})
+_PPP_STRICTNESS_VALUES: frozenset = frozenset({"low", "medium", "high"})
 
 _TOOL_VARIANT_ALLOWLISTS: dict = {
     "extract_character": frozenset({"major_only", "named_only", "all"}),
@@ -203,6 +225,45 @@ def validate_planner_proposal(proposal: PlannerProposal) -> tuple[bool, list[str
         else:
             if not (0.0 <= val <= 1.0):
                 errors.append(f"confidence: {val} out of range [0.0, 1.0]")
+
+    # --- prompt_policy_patch --------------------------------------------------
+    ppp = proposal.get("prompt_policy_patch")
+    if ppp is not None:
+        ppp_ok, ppp_errors = validate_prompt_policy_patch(ppp)
+        if not ppp_ok:
+            errors.extend(f"prompt_policy_patch: {e}" for e in ppp_errors)
+
+    return len(errors) == 0, errors
+
+
+# ---------------------------------------------------------------------------
+# validate_prompt_policy_patch
+# ---------------------------------------------------------------------------
+
+def validate_prompt_policy_patch(patch: dict) -> tuple[bool, list[str]]:
+    """Validate a PromptPolicyPatch against the W1 safety contract.
+
+    Only allowlisted boolean knobs and world_boundary_strictness are accepted.
+    Raw prompt text is never allowed. Returns (True, []) or (False, [errors]).
+    """
+    errors: list[str] = []
+
+    unknown_keys = set(patch) - _PPP_ALLOWED_FIELDS
+    if unknown_keys:
+        errors.append(f"unknown fields: {sorted(unknown_keys)}")
+
+    for field in _PPP_BOOL_FIELDS:
+        if field in patch:
+            if not isinstance(patch[field], bool):
+                errors.append(
+                    f"{field}: must be bool, got {type(patch[field]).__name__} {patch[field]!r}"
+                )
+
+    ws = patch.get("world_boundary_strictness")
+    if ws is not None and ws not in _PPP_STRICTNESS_VALUES:
+        errors.append(
+            f"world_boundary_strictness: {ws!r} not in {sorted(_PPP_STRICTNESS_VALUES)}"
+        )
 
     return len(errors) == 0, errors
 

@@ -12,6 +12,7 @@ from sidecar.models.state import (
 from sidecar.supervisor.planner import (
     planner_proposal_to_import_plan,
     validate_planner_proposal,
+    validate_prompt_policy_patch,
 )
 
 
@@ -209,3 +210,66 @@ class TestInvalidWindowStrategy:
         ok, errors = validate_planner_proposal(proposal)
         assert not ok
         assert any("inject_payload" in e for e in errors)
+
+
+# ---------------------------------------------------------------------------
+# PromptPolicyPatch
+# ---------------------------------------------------------------------------
+
+
+class TestPromptPolicyPatch:
+    def test_valid_patch_all_knobs_passes(self):
+        patch = {
+            "emphasize_existing_timeline_topology": True,
+            "require_source_provenance": False,
+            "prefer_canonical_events": True,
+            "suppress_minor_npcs": True,
+            "relationship_evidence_required": False,
+            "world_boundary_strictness": "high",
+        }
+        ok, errors = validate_prompt_policy_patch(patch)
+        assert ok, errors
+
+    def test_unknown_field_in_patch_rejected(self):
+        ok, errors = validate_prompt_policy_patch({"unknown_knob": True})
+        assert not ok
+        assert any("unknown" in e for e in errors)
+
+    def test_raw_prompt_text_key_rejected(self):
+        ok, errors = validate_prompt_policy_patch({"raw_prompt_text": "inject something"})
+        assert not ok
+        assert any("unknown" in e for e in errors)
+
+    def test_invalid_strictness_value_rejected(self):
+        ok, errors = validate_prompt_policy_patch({"world_boundary_strictness": "ultra"})
+        assert not ok
+        assert any("world_boundary_strictness" in e for e in errors)
+
+    def test_non_bool_value_for_bool_field_rejected(self):
+        ok, errors = validate_prompt_policy_patch({"suppress_minor_npcs": 1})
+        assert not ok
+        assert any("bool" in e for e in errors)
+
+    def test_empty_patch_passes(self):
+        ok, errors = validate_prompt_policy_patch({})
+        assert ok, errors
+
+    def test_valid_proposal_with_patch_passes_validate_planner_proposal(self):
+        proposal = _base_proposal(
+            planner_kind="llm_proposed",
+            proposed_source_type="coarse_webnovel",
+            prompt_policy_patch={
+                "prefer_canonical_events": True,
+                "world_boundary_strictness": "medium",
+            },
+        )
+        ok, errors = validate_planner_proposal(proposal)
+        assert ok, errors
+
+    def test_invalid_patch_inside_proposal_causes_proposal_to_fail(self):
+        proposal = _base_proposal(
+            prompt_policy_patch={"raw_prompt_text": "this should fail"}
+        )
+        ok, errors = validate_planner_proposal(proposal)
+        assert not ok
+        assert any("prompt_policy_patch" in e for e in errors)

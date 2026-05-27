@@ -143,6 +143,8 @@ Populated by `_ensure_orchestrator_plan()` before extraction, written by `propos
 | `import_plan.json` | `import_plan` | `ImportPlan`: plan_version, planner_kind, source_type, tools list, window_strategy, prompt_policy, cost_policy, safety |
 | `import_plan_validation.json` | `import_plan_validation` | `{"ok": bool, "errors": [...]}` — result of `validate_import_plan()` |
 | `extraction_prompt_variants.json` | computed by `_selected_extraction_prompt_manifest()` | Per-domain prompt constant names + profile field/value that selected them |
+| `planner_proposal.json` | `planner_proposal` | `PlannerProposal`: only written when a proposal was submitted (optional) |
+| `planner_proposal_validation.json` | `planner_proposal_validation` | `{"ok": bool, "errors": [...]}` — only written when a proposal was validated (optional) |
 
 **Note:** `source_profile.recommended_granularity_profile` reflects the source as-is (descriptive). `import_granularity_profile.profile_name` reflects the execution decision, which may differ for the `fast` profile (fast always forces coarse regardless of chapter count).
 
@@ -310,6 +312,81 @@ When running a validation benchmark (full 50-chapter import):
 - Do not start a second full-50 run without explicit approval from Codex.
 
 Expected cost per full-50 deep run: ~1–2 hours of DeepSeek V4 Pro. Ensure ≥ 3× balance before starting.
+
+## Zero-Cost Quality Rubric (`sidecar/supervisor/quality.py`)
+
+Offline, deterministic QA layer. Does **not** replace `judge_import`. No model calls.
+
+**API**: `evaluate_import_quality(state: dict) -> dict`
+
+**Returns**:
+```python
+{
+    "verdict": "pass" | "warn" | "fail",
+    "warnings": [...],
+    "hard_failures": [...],
+    "quality_notes": [...],
+    "suggested_next_actions": [...],
+    "checks": {check_name: {"result": "pass"|"warn"|"fail", "detail": str}},
+    "token_cost_ledger": {"live_model_calls": False, "full50_run": False, ...},
+}
+```
+
+**Hard failures** (contract/safety breaks only):
+- `import_plan_validation["ok"] is False`
+- `import_plan.safety` missing or gates not set
+- `planner_proposal_validation["ok"] is False` (when present)
+- Proposal present but `import_plan.planner_kind == "deterministic_rules"` (gate bypass indicator)
+
+**Warn conditions** (novelist quality signals — soft):
+- No character proposals when `converge_target.expected_min_characters > 0`
+- Events missing `branchId` or `orderIndex`
+- Relationships missing `evidence`
+- `source_profile` absent from state
+- `import_plan` absent from state
+
+Partial/synthetic state never crashes the rubric — all checks guard with `.get()`.
+
+---
+
+## PromptPolicyPatch (typed, validated — application deferred)
+
+`PromptPolicyPatch` (`sidecar/models/state.py`) is a TypedDict of bounded knobs that a future
+orchestrator pass may use to adapt prompt behaviour. It is validated by
+`validate_prompt_policy_patch()` in `planner.py`. **It is not yet applied to prompt templates.**
+
+Allowed knobs:
+```
+emphasize_existing_timeline_topology: bool
+require_source_provenance: bool
+prefer_canonical_events: bool
+suppress_minor_npcs: bool
+relationship_evidence_required: bool
+world_boundary_strictness: "low" | "medium" | "high"
+```
+
+Validation rules: unknown fields rejected; `raw_prompt_text` rejected; bool fields must be `bool`
+(not int 0/1); `world_boundary_strictness` must be in `{"low", "medium", "high"}`.
+
+A `PlannerProposal` may include `prompt_policy_patch: PromptPolicyPatch`. If present,
+`validate_planner_proposal()` validates it. `planner_proposal_to_import_plan()` currently
+ignores it — applying knobs to prompt templates is deferred to a future prompt-design session.
+
+---
+
+## Window Metadata Fields
+
+Each window dict built by `_build_supervised_prompt_windows()` now includes:
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `late_window_cap_applied` | bool | True when this window was built in the late zone (last 25% of chapters), where `effective_cpw = max(3, cpw // 2)` |
+| `effective_chapters_per_window` | int | Actual cap applied for this window (reduced for late zone) |
+| `chapters_per_window_config` | int | Profile max (`chapters_per_window` from `profile_config`) |
+
+These are also exposed in `_prompt_window_manifest_entry()` output.
+
+---
 
 ## Non-goals
 

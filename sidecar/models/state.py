@@ -198,6 +198,21 @@ class PlannerProposal(TypedDict, total=False):
     rationale: str                                         # free text; audit only, never executed
     confidence: float                                      # 0.0–1.0
     safety_notes: List[str]                                # audit only, never executed
+    prompt_policy_patch: "PromptPolicyPatch"               # optional knob-only patch; validated, not yet applied
+
+
+class PromptPolicyPatch(TypedDict, total=False):
+    """Bounded knob-only patch for prompt behaviour. No raw prompt text allowed.
+
+    This is validated by validate_prompt_policy_patch() in planner.py.
+    Application to prompt templates is deferred to a future session.
+    """
+    emphasize_existing_timeline_topology: bool
+    require_source_provenance: bool
+    prefer_canonical_events: bool
+    suppress_minor_npcs: bool
+    relationship_evidence_required: bool
+    world_boundary_strictness: Literal["low", "medium", "high"]
 
 
 class ImportResultClassification(TypedDict, total=False):
@@ -1138,7 +1153,11 @@ class ImportSupervisorState(TypedDict, total=False):
     orchestrator_phase: str
     judge_score: float
     rerun_reason: str
-    converge_status: Literal["not_started", "planning", "extracting", "judging", "rerunning", "passed", "failed", "writing"]
+    converge_status: Literal[
+        "not_started", "planning", "planning_failed", "extracting",
+        "judging", "rerunning", "passed", "acceptable_with_warnings",
+        "failed", "hard_fail", "writing",
+    ]
     budget_exhausted: bool      # True when API returned HTTP 402 — stops all reruns
     global_rerun_count: int     # Total rerun API calls dispatched this run
     import_granularity_profile: ImportGranularityProfile

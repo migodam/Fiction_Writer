@@ -206,6 +206,82 @@ class TestSupervisorWindowing(unittest.TestCase):
             )
 
 
+class TestWindowMetadata(unittest.TestCase):
+    """Tests for late_window_cap_applied, effective_chapters_per_window, chapters_per_window_config."""
+
+    # Synthetic profile: cpw=6, output budget chosen so 6*520=3120 < threshold (3500),
+    # meaning budget halving does NOT fire and the only split mechanism is the late-window cap.
+    _PROFILE_CPW6 = {
+        "chapters_per_window": 6,
+        "input_window_budget": 48_000,
+        "output_token_budget": 3_000,
+    }
+
+    def _make_state_cpw6(self, n: int = 50) -> tuple[dict, list[dict]]:
+        chunks = [
+            {"chunk_id": i, "content": f"Tiny ch {i}.",
+             "chapter_hint": f"Ch{i+1}", "char_start": i * 20, "char_end": (i+1) * 20}
+            for i in range(n)
+        ]
+        state = {
+            "prompt_profile": "deep",
+            "profile_config": self._PROFILE_CPW6,
+            "import_run_id": "test_meta",
+            "import_run_manifest": {"source_hash": "abc"},
+            "source_language": "en",
+        }
+        return state, chunks
+
+    def _digest(self) -> dict:
+        return {"content": "(empty)", "estimated_tokens": 5, "artifact_path": ""}
+
+    # ── Test 1: early windows have late_window_cap_applied=False ─────────────
+
+    def test_early_windows_not_late_capped(self):
+        state, chunks = self._make_state_cpw6(50)
+        windows = _build_supervised_prompt_windows(state, chunks, self._digest())
+
+        # First window must contain chunk_id 0 which is in the early zone
+        first_window = next(w for w in windows if 0 in w["chunk_ids"])
+        self.assertFalse(first_window["late_window_cap_applied"])
+        self.assertEqual(first_window["effective_chapters_per_window"], 6)
+
+    # ── Test 2: late windows have late_window_cap_applied=True ───────────────
+
+    def test_late_windows_have_cap_applied(self):
+        state, chunks = self._make_state_cpw6(50)
+        windows = _build_supervised_prompt_windows(state, chunks, self._digest())
+
+        # Late zone: chunk_ids >= 38 (last 25% of 50)
+        late_windows = [w for w in windows if all(cid >= 38 for cid in w["chunk_ids"])]
+        self.assertTrue(late_windows, "Expected at least one late window")
+        for w in late_windows:
+            self.assertTrue(w["late_window_cap_applied"], f"Window {w['id']} should have late_window_cap_applied=True")
+            self.assertEqual(w["effective_chapters_per_window"], 3)  # late_cpw = max(3, 6//2) = 3
+
+    # ── Test 3: chapters_per_window_config is always the profile max ──────────
+
+    def test_chapters_per_window_config_always_profile_max(self):
+        state, chunks = self._make_state_cpw6(50)
+        windows = _build_supervised_prompt_windows(state, chunks, self._digest())
+
+        for w in windows:
+            self.assertEqual(w["chapters_per_window_config"], 6,
+                             f"Window {w['id']} has chapters_per_window_config={w.get('chapters_per_window_config')}, expected 6")
+
+    # ── Test 4: manifest entry includes new fields ────────────────────────────
+
+    def test_manifest_entry_includes_metadata_fields(self):
+        from sidecar.workflows.w1_import import _prompt_window_manifest_entry
+        state, chunks = self._make_state_cpw6(12)
+        windows = _build_supervised_prompt_windows(state, chunks, self._digest())
+
+        entry = _prompt_window_manifest_entry(windows[0])
+        self.assertIn("late_window_cap_applied", entry)
+        self.assertIn("effective_chapters_per_window", entry)
+        self.assertIn("chapters_per_window_config", entry)
+
+
 class TestDetectLanguage(unittest.TestCase):
     def test_cjk_text_detected_as_zh(self):
         cjk_text = "这是一段中文文字，用于测试语言检测功能。韩立是主角，他修炼法术，追求长生。" * 10

@@ -1566,15 +1566,20 @@ def _build_supervised_prompt_windows(state: ImportState, chunks: list[dict], dig
 
     windows: list[dict] = []
 
-    def _make_windows_from_batch(batch: list[dict], iteration: int = 0) -> list[dict]:
+    def _make_windows_from_batch(
+        batch: list[dict],
+        late_zone: bool = False,
+        effective_cpw: int = 0,
+        iteration: int = 0,
+    ) -> list[dict]:
         """Recursively split a chunk batch if it exceeds the output budget."""
         if not batch:
             return []
         est_output = len(batch) * _SUPERVISOR_TOKENS_PER_CHAPTER
         if est_output > _SUPERVISOR_OUTPUT_BUDGET_THRESHOLD and len(batch) > 1 and iteration < 4:
             mid = max(1, len(batch) // 2)
-            return _make_windows_from_batch(batch[:mid], iteration + 1) + \
-                   _make_windows_from_batch(batch[mid:], iteration + 1)
+            return _make_windows_from_batch(batch[:mid], late_zone, effective_cpw, iteration + 1) + \
+                   _make_windows_from_batch(batch[mid:], late_zone, effective_cpw, iteration + 1)
 
         chunk_ids = [int(c.get("chunk_id", 0)) for c in batch]
         # Combine all source text for this batch
@@ -1619,6 +1624,9 @@ def _build_supervised_prompt_windows(state: ImportState, chunks: list[dict], dig
                 "split_reason": split_reason,
                 "source_span": {"start": source_start, "end": source_end},
                 "output_token_budget": output_token_budget,
+                "late_window_cap_applied": late_zone,
+                "effective_chapters_per_window": effective_cpw or len(batch),
+                "chapters_per_window_config": chapters_per_window,
             })
         return batch_windows
 
@@ -1630,8 +1638,9 @@ def _build_supervised_prompt_windows(state: ImportState, chunks: list[dict], dig
     i = 0
     while i < total_chunks:
         effective_cpw = late_cpw if i >= late_threshold else chapters_per_window
+        late_zone = i >= late_threshold
         batch = chunks[i: i + effective_cpw]
-        windows.extend(_make_windows_from_batch(batch))
+        windows.extend(_make_windows_from_batch(batch, late_zone=late_zone, effective_cpw=effective_cpw))
         i += effective_cpw
 
     return windows
@@ -1654,6 +1663,9 @@ def _prompt_window_manifest_entry(window: dict) -> dict:
         "fill_ratio": window.get("fill_ratio", 0),
         "split_reason": window.get("split_reason", ""),
         "source_span": window.get("source_span", {}),
+        "late_window_cap_applied": window.get("late_window_cap_applied", False),
+        "effective_chapters_per_window": window.get("effective_chapters_per_window", 0),
+        "chapters_per_window_config": window.get("chapters_per_window_config", 0),
     }
 
 
