@@ -55,6 +55,13 @@ def _make_rel_proposal(rel_id: str = "rel_1", *, evidence: str = "met in chapter
     }
 
 
+def _make_world_proposal(world_id: str = "world_1", name: str = "Sect") -> dict:
+    return {
+        "id": f"prop_{world_id}",
+        "operations": [{"op": "create", "entityType": "world", "entityId": world_id, "fields": {"name": name}}],
+    }
+
+
 class TestImportQualityRubric(unittest.TestCase):
 
     # ── 1. Empty state → warn, not fail ──────────────────────────────────────
@@ -180,6 +187,26 @@ class TestImportQualityRubric(unittest.TestCase):
         result = evaluate_import_quality(state)
         if result["warnings"]:
             self.assertIsInstance(result["suggested_next_actions"], list)
+
+    # ── 13. World/person boundary collision is soft warning ─────────────────
+
+    def test_world_person_exact_name_collision_warns(self):
+        state = _make_valid_plan_state(converge_target={"expected_min_characters": 1})
+        state["inbox_proposals"] = [
+            _make_char_proposal(name="青云宗"),
+            _make_world_proposal(name="青云宗"),
+        ]
+        result = evaluate_import_quality(state)
+        self.assertEqual(result["verdict"], "warn")
+        self.assertEqual(result["checks"]["world_person_boundary"]["result"], "warn")
+        self.assertTrue(any("world/person" in w for w in result["warnings"]))
+
+    # ── 14. Prompt window count is reflected in zero-cost ledger ─────────────
+
+    def test_token_cost_ledger_estimates_prompt_windows(self):
+        state = {"prompt_windows": [{"id": "pwin_1"}, {"id": "pwin_2"}]}
+        result = evaluate_import_quality(state)
+        self.assertEqual(result["token_cost_ledger"]["estimated_prompt_windows"], 2)
 
 
 if __name__ == "__main__":

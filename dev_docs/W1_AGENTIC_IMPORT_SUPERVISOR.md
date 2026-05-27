@@ -342,6 +342,7 @@ Offline, deterministic QA layer. Does **not** replace `judge_import`. No model c
 - No character proposals when `converge_target.expected_min_characters > 0`
 - Events missing `branchId` or `orderIndex`
 - Relationships missing `evidence`
+- Exact-name collisions between character proposals and world/entity proposals
 - `source_profile` absent from state
 - `import_plan` absent from state
 

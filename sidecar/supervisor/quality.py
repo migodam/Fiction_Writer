@@ -8,15 +8,6 @@ Novelist-quality signals (missing characters, events without branchId, etc.) are
 """
 from __future__ import annotations
 
-_TOKEN_COST_LEDGER = {
-    "live_model_calls": False,
-    "full50_run": False,
-    "model_used": None,
-    "estimated_prompt_windows": 0,
-    "estimated_api_calls": 0,
-}
-
-
 def evaluate_import_quality(state: dict) -> dict:
     """Evaluate import quality from state dict. Returns a structured QualityReport.
 
@@ -184,7 +175,32 @@ def evaluate_import_quality(state: dict) -> dict:
     else:
         checks["relationship_evidence"] = {"result": "pass", "detail": "no relationships yet"}
 
-    # ── 8. Source profile present (soft warn) ─────────────────────────────────
+    # ── 8. World/person boundary (soft warn) ─────────────────────────────────
+    world_proposals = [
+        op
+        for p in proposals
+        for op in (p.get("operations") or [])
+        if _entity_type(op) in {"world", "world_entity", "organization", "faction", "location"}
+    ]
+    character_names = {_operation_name(op) for op in char_proposals if _operation_name(op)}
+    world_names = {_operation_name(op) for op in world_proposals if _operation_name(op)}
+    collisions = sorted(character_names & world_names)
+    if collisions:
+        warnings.append(
+            "world/person boundary collision: "
+            f"{', '.join(collisions[:5])} appear as both character and world entities"
+        )
+        suggested_next_actions.append(
+            "Inspect minor_repair/world boundary handling before writing canonical entities"
+        )
+        checks["world_person_boundary"] = {
+            "result": "warn",
+            "detail": f"{len(collisions)} exact-name collision(s)",
+        }
+    else:
+        checks["world_person_boundary"] = {"result": "pass", "detail": "no exact-name collisions"}
+
+    # ── 9. Source profile present (soft warn) ─────────────────────────────────
     if not state.get("source_profile"):
         warnings.append("source_profile absent from state — orchestrator may not have run planning phase")
         suggested_next_actions.append("Ensure _ensure_orchestrator_plan() has been called")
@@ -207,9 +223,38 @@ def evaluate_import_quality(state: dict) -> dict:
         "quality_notes": quality_notes,
         "suggested_next_actions": suggested_next_actions,
         "checks": checks,
-        "token_cost_ledger": dict(_TOKEN_COST_LEDGER),
+        "token_cost_ledger": _token_cost_ledger(state),
     }
 
 
 def _entity_type(operation: dict) -> str:
     return operation.get("entityType", "")
+
+
+def _operation_name(operation: dict) -> str:
+    fields = operation.get("fields") or {}
+    name = fields.get("name") or fields.get("canonicalName") or fields.get("title")
+    return str(name or operation.get("entityId") or "").strip()
+
+
+def _token_cost_ledger(state: dict) -> dict:
+    return {
+        "live_model_calls": False,
+        "full50_run": False,
+        "model_used": None,
+        "estimated_prompt_windows": _estimated_prompt_windows(state),
+        "estimated_api_calls": 0,
+    }
+
+
+def _estimated_prompt_windows(state: dict) -> int:
+    for key in (
+        "prompt_windows",
+        "prompt_window_manifest",
+        "prompt_windows_manifest",
+        "window_manifest",
+    ):
+        value = state.get(key)
+        if isinstance(value, list):
+            return len(value)
+    return 0
