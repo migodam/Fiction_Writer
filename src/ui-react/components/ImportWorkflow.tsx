@@ -32,6 +32,13 @@ const compactNumber = (value: number | undefined) => {
   return Number.isInteger(value) ? String(value) : value.toFixed(2);
 };
 
+const REVIEW_STATUS_COLOR: Record<string, string> = {
+  pass: 'text-green',
+  acceptable_with_warnings: 'text-amber',
+  warning: 'text-amber',
+  fail: 'text-red',
+};
+
 const CustomSelect: React.FC<{
   id: string;
   label: string;
@@ -86,6 +93,7 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
   const cancelImport = useProjectStore((s) => s.cancelImport);
   const { t } = useI18n();
   const [consoleOpen, setConsoleOpen] = useState(true);
+  const [showAllWarnings, setShowAllWarnings] = useState(false);
 
   const updateCustomProfile = useCallback((patch: Partial<W1CustomProfileConfig>) => {
     setW1CustomProfileConfig(patch);
@@ -427,7 +435,12 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
             <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
               <div className="rounded-lg border border-border bg-card p-2">
                 <div className="font-black uppercase tracking-widest text-text-3">{t('import.reviewStatus', 'Status')}</div>
-                <div data-testid="w1-review-status" className="mt-1 text-text">{w1ImportReviewReport?.status || 'pass'}</div>
+                <div
+                data-testid="w1-review-status"
+                className={`mt-1 ${REVIEW_STATUS_COLOR[w1ImportReviewReport?.status ?? 'pass'] ?? 'text-text'}`}
+              >
+                {w1ImportReviewReport?.status || 'pass'}
+              </div>
               </div>
               <div className="rounded-lg border border-border bg-card p-2">
                 <div className="font-black uppercase tracking-widest text-text-3">{t('import.reviewProposals', 'Proposals')}</div>
@@ -439,9 +452,26 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
               </div>
             </div>
             {Boolean(w1ImportReviewReport?.warnings?.length) && (
-              <ul data-testid="w1-review-warnings" className="mt-3 space-y-1 text-xs text-amber">
-                {w1ImportReviewReport?.warnings?.slice(0, 4).map((warning, index) => <li key={index}>{warning}</li>)}
-              </ul>
+              <div data-testid="w1-review-warnings" className="mt-3">
+                <ul className="space-y-1 text-xs text-amber">
+                  {(showAllWarnings
+                    ? w1ImportReviewReport!.warnings!
+                    : w1ImportReviewReport!.warnings!.slice(0, 4)
+                  ).map((warning, index) => <li key={index}>{warning}</li>)}
+                </ul>
+                {(w1ImportReviewReport!.warnings!.length ?? 0) > 4 && (
+                  <button
+                    type="button"
+                    data-testid="w1-review-warnings-toggle"
+                    onClick={() => setShowAllWarnings((v) => !v)}
+                    className="mt-1 text-xs text-text-3 underline hover:text-text-2"
+                  >
+                    {showAllWarnings
+                      ? 'Show less'
+                      : `Show ${w1ImportReviewReport!.warnings!.length - 4} more…`}
+                  </button>
+                )}
+              </div>
             )}
             {Boolean(w1ImportReviewReport?.failed_chunks?.length) && (
               <div data-testid="w1-review-failed-chunks" className="mt-3 rounded-lg border border-red/30 bg-red/10 p-2 text-xs text-red">

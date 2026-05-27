@@ -121,7 +121,7 @@ export interface W1StatusResult {
 
 export interface W1ImportReviewReport {
   import_run_id?: string;
-  status?: 'pass' | 'warning' | 'fail';
+  status?: 'pass' | 'warning' | 'fail' | 'acceptable_with_warnings';
   warnings?: string[];
   errors?: string[];
   proposal_counts?: Record<string, number>;

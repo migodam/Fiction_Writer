@@ -15,6 +15,25 @@ interface TimelineEventNodeProps {
   onHover: (eventId: string | null) => void;
 }
 
+function isCjkChar(char: string): boolean {
+  const code = char.codePointAt(0) ?? 0;
+  return (
+    (code >= 0x3000 && code <= 0x9fff) ||  // CJK symbols, Hiragana, Katakana, CJK Unified Ideographs
+    (code >= 0xac00 && code <= 0xd7af) ||  // Hangul Syllables
+    (code >= 0xf900 && code <= 0xfaff) ||  // CJK Compatibility Ideographs
+    (code >= 0xff01 && code <= 0xff60)     // Fullwidth ASCII variants
+  );
+}
+
+function truncateTitle(title: string, maxVisualWidth = 18): string {
+  let width = 0;
+  for (let i = 0; i < title.length; i++) {
+    width += isCjkChar(title[i]) ? 2 : 1;
+    if (width > maxVisualWidth) return `${title.slice(0, i)}…`;
+  }
+  return title;
+}
+
 const importanceRadius = (importance?: string): number => {
   if (importance === 'critical') return 13;
   if (importance === 'high') return 10;
@@ -143,7 +162,7 @@ export function TimelineEventNode({
         pointerEvents="none"
         style={{ userSelect: 'none' }}
       >
-        {event.title.length > 18 ? event.title.slice(0, 18) + '…' : event.title}
+        {truncateTitle(event.title)}
       </text>
     </g>
   );

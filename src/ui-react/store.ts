@@ -2036,3 +2036,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     return electronApi.dbSearch(projectRoot, query).catch(() => []);
   },
 }));
+
+if (typeof window !== 'undefined' && (import.meta as any).env?.DEV) {
+  (window as any).__narrativeStore = useProjectStore;
+}
