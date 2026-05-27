@@ -839,6 +839,58 @@ class TestProposalWriteEarlyArtifacts(unittest.TestCase):
                 "W1_EXTRACT_CHARACTERS_DEEP_FINE",
             )
 
+    def test_planner_proposal_artifacts_written_before_oom_crash(self):
+        import json, tempfile
+        from pathlib import Path
+        from sidecar.supervisor.tools import proposal_write
+
+        with tempfile.TemporaryDirectory() as td:
+            project_path = td
+            import_run_id = "test_planner_proposal_oom"
+            artifact_dir = Path(project_path) / "system" / "imports" / import_run_id
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+
+            state = _make_state(
+                project_path=project_path,
+                import_run_id=import_run_id,
+                supervisor_decisions=[{"decision": "test"}],
+                window_metrics={},
+                entity_registry={"characters": {}, "events": {}, "world": {}, "world_detailed": {}},
+                manuscript_chapters=[],
+                timeline_branches=[],
+                relationships=[],
+                character_tags=[],
+                world_settings={},
+                import_plan={"plan_version": "w1-import-plan-v1", "planner_kind": "llm_proposed"},
+                import_plan_validation={"ok": True, "errors": []},
+                planner_proposal={
+                    "planner_kind": "llm_proposed",
+                    "proposed_source_type": "coarse_webnovel",
+                    "rationale": "test",
+                    "confidence": 0.9,
+                },
+                planner_proposal_validation={"ok": True, "errors": []},
+            )
+
+            with (
+                patch("sidecar.supervisor.tools.node_build_manuscript", new=AsyncMock(return_value={})),
+                patch("sidecar.supervisor.tools.node_synthesize_relationships", new=AsyncMock(return_value={})),
+                patch("sidecar.supervisor.tools.node_classify_character_tags", new=AsyncMock(return_value={})),
+                patch("sidecar.supervisor.tools.node_infer_world_settings", new=AsyncMock(return_value={})),
+                patch("sidecar.supervisor.tools.node_write_to_project", new=AsyncMock(side_effect=MemoryError("simulated OOM"))),
+            ):
+                try:
+                    _run(proposal_write(state))
+                except MemoryError:
+                    pass
+
+            planner_proposal_path = artifact_dir / "planner_proposal.json"
+            planner_proposal_validation_path = artifact_dir / "planner_proposal_validation.json"
+            self.assertTrue(planner_proposal_path.exists(), "planner_proposal.json must be written before OOM")
+            self.assertTrue(planner_proposal_validation_path.exists(), "planner_proposal_validation.json must be written before OOM")
+            self.assertEqual(json.loads(planner_proposal_path.read_text())["planner_kind"], "llm_proposed")
+            self.assertIs(json.loads(planner_proposal_validation_path.read_text())["ok"], True)
+
 
 # ── proposal_write returns compact state (no entity_registry) ─────────────────
 

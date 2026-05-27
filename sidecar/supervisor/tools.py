@@ -1303,6 +1303,16 @@ async def proposal_write(state: ImportSupervisorState) -> dict:
                 project_path, import_run_id, "import_plan_validation.json",
                 state.get("import_plan_validation", {}),
             )
+        if state.get("planner_proposal"):
+            _write_import_artifact(
+                project_path, import_run_id, "planner_proposal.json",
+                state.get("planner_proposal", {}),
+            )
+        if state.get("planner_proposal_validation"):
+            _write_import_artifact(
+                project_path, import_run_id, "planner_proposal_validation.json",
+                state.get("planner_proposal_validation", {}),
+            )
         if state.get("source_profile"):
             _write_import_artifact(
                 project_path, import_run_id, "source_profile.json",

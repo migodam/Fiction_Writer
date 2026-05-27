@@ -62,6 +62,29 @@ tests/test_w1_supervisor_policy.py       } 117 passed (0.41s)
 tests/test_w1_granularity.py             }
 ```
 
+Codex integration note: removed the harness-level insertion of `<repo>/sidecar` into `sys.path`.
+Keeping only the repo root prevents `tests/test_w1_import_diagnostics.py` from resolving
+`from tools import ...` to `sidecar/tools` when the harness module is imported in the same
+pytest process.
+
+Final combined W1 regression:
+
+```
+tests/test_w1_planner_proposal.py
+tests/test_w1_orchestrator_artifacts.py
+tests/test_w1_import_plan_validator.py
+tests/test_w1_source_profile.py
+tests/test_w1_v2_harness.py
+tests/test_w1_granularity.py
+tests/test_w1_supervisor_policy.py
+tests/test_w1_supervisor_tools.py
+tests/test_w1_extraction_variants.py
+tests/test_w1_import_compiler.py
+tests/test_w1_prompt_windows.py
+tests/test_w1_import_diagnostics.py
+→ 344 passed (4.25s)
+```
+
 ---
 
 ## Unchanged

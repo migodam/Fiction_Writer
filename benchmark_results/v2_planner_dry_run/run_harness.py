@@ -36,7 +36,6 @@ from pathlib import Path
 # Add repo root to path so sidecar imports work from any CWD
 _REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_REPO))
-sys.path.insert(0, str(_REPO / "sidecar"))
 
 from sidecar.models.state import (
     analyze_source_profile,

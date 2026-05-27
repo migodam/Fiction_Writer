@@ -24,6 +24,7 @@ from sidecar.models.state import (
     select_granularity_profile,
     validate_import_plan,
 )
+from sidecar.supervisor.planner import planner_proposal_to_import_plan, validate_planner_proposal
 from sidecar.supervisor.tool_registry import build_tool_registry
 from sidecar.workflows.w1_import import (
     _chunk_progress,
@@ -102,6 +103,22 @@ def _chapter_count_from_state(state: ImportSupervisorState) -> int:
 
 def _ensure_orchestrator_plan(state: ImportSupervisorState) -> ImportSupervisorState:
     if state.get("tool_operating_spec") and state.get("converge_target"):
+        context = state.get("context", {})
+        proposal = state.get("planner_proposal") or context.get("planner_proposal")
+        if proposal is not None and not state.get("planner_proposal_validation"):
+            proposal_ok, proposal_errors = validate_planner_proposal(proposal)
+            if not proposal_ok:
+                return {
+                    **state,
+                    "planner_proposal": proposal,
+                    "planner_proposal_validation": {"ok": False, "errors": proposal_errors},
+                    "import_plan_validation": {"ok": False, "errors": proposal_errors},
+                    "orchestrator_phase": "planning_failed",
+                    "converge_status": "hard_fail",
+                    "errors": list(state.get("errors", [])) + [
+                        f"planner_proposal_validation: {err}" for err in proposal_errors
+                    ],
+                }
         if state.get("import_plan") and not state.get("import_plan_validation"):
             is_valid, errors = validate_import_plan(state["import_plan"])
             return {
@@ -142,16 +159,6 @@ def _ensure_orchestrator_plan(state: ImportSupervisorState) -> ImportSupervisorS
         import_mode=state.get("import_mode", "import_all"),
     )
     target = plan_converge_target(spec, source_language, chapter_count, granularity_profile=granularity_profile)
-    import_plan = plan_import_pipeline(
-        granularity_profile,
-        spec,
-        source_language=source_language,
-        prompt_profile=prompt_profile,
-        chapter_count=chapter_count,
-    )
-    plan_is_valid, plan_errors = validate_import_plan(import_plan)
-    import_plan_validation = {"ok": plan_is_valid, "errors": plan_errors}
-
     profile_config = dict(state.get("profile_config") or PROFILE_CONFIGS.get(
         prompt_profile, PROFILE_CONFIGS["balanced"]
     ))
@@ -159,7 +166,56 @@ def _ensure_orchestrator_plan(state: ImportSupervisorState) -> ImportSupervisorS
         profile_config["chapters_per_window"] = int(spec["chapters_per_window_max"])
     if spec.get("rerun_budget") is not None:
         profile_config["max_rerun_iterations"] = int(spec["rerun_budget"])
-    return {
+
+    proposal = state.get("planner_proposal") or context.get("planner_proposal")
+    planner_proposal_validation = None
+
+    if proposal is not None:
+        proposal_ok, proposal_errors = validate_planner_proposal(proposal)
+        planner_proposal_validation = {"ok": proposal_ok, "errors": proposal_errors}
+        if not proposal_ok:
+            return {
+                **state,
+                "tool_operating_spec": spec,
+                "converge_target": target,
+                "import_granularity_profile": granularity_profile,
+                "import_plan_validation": {"ok": False, "errors": proposal_errors},
+                "planner_proposal": proposal,
+                "planner_proposal_validation": planner_proposal_validation,
+                "source_profile": source_profile,
+                "profile_config": profile_config,
+                "use_supervisor": bool(state.get("use_supervisor") or spec.get("supervisor_enabled")),
+                "orchestrator_phase": "planning_failed",
+                "converge_status": "hard_fail",
+                "errors": list(state.get("errors", [])) + [
+                    f"planner_proposal_validation: {err}" for err in proposal_errors
+                ],
+            }
+        try:
+            import_plan = planner_proposal_to_import_plan(
+                proposal, spec,
+                source_language=source_language,
+                prompt_profile=prompt_profile,
+                chapter_count=chapter_count,
+            )
+            plan_is_valid, plan_errors = True, []
+        except ValueError as exc:
+            import_plan = {}  # type: ignore[assignment]
+            plan_is_valid, plan_errors = False, [str(exc)]
+            planner_proposal_validation = {"ok": False, "errors": plan_errors}
+    else:
+        import_plan = plan_import_pipeline(
+            granularity_profile,
+            spec,
+            source_language=source_language,
+            prompt_profile=prompt_profile,
+            chapter_count=chapter_count,
+        )
+        plan_is_valid, plan_errors = validate_import_plan(import_plan)
+
+    import_plan_validation = {"ok": plan_is_valid, "errors": plan_errors}
+
+    result = {
         **state,
         "tool_operating_spec": spec,
         "converge_target": target,
@@ -175,6 +231,10 @@ def _ensure_orchestrator_plan(state: ImportSupervisorState) -> ImportSupervisorS
             f"import_plan_validation: {err}" for err in plan_errors
         ],
     }
+    if proposal is not None:
+        result["planner_proposal"] = proposal
+        result["planner_proposal_validation"] = planner_proposal_validation
+    return result
 
 
 def _with_status(
@@ -684,11 +744,12 @@ async def run_supervisor_policy(
         {}, {}, "proceed",
     )
 
+    _ja = state.get("judge_artifact") or {}
     return _with_status(
         state,
         current_tool="proposal_write",
         orchestrator_phase="done",
-        converge_status="passed" if state.get("judge_artifact", {}).get("passed", True) else "failed",
+        converge_status="passed" if _ja.get("passed", True) else _ja.get("result_status", "failed"),
     )
 
 
@@ -921,10 +982,11 @@ async def run_supervisor_streaming(
                 pass
         yield _emit(progress, node, errors)
 
+    _ja = state.get("judge_artifact") or {}
     state = _with_status(
         state,
         current_tool="proposal_write",
         orchestrator_phase="done",
-        converge_status="passed" if state.get("judge_artifact", {}).get("passed", True) else "failed",
+        converge_status="passed" if _ja.get("passed", True) else _ja.get("result_status", "failed"),
     )
     yield _emit(_PROGRESS_DONE, "done")

@@ -1145,6 +1145,8 @@ class ImportSupervisorState(TypedDict, total=False):
     import_plan: ImportPlan
     import_plan_validation: Dict[str, Any]
     source_profile: SourceProfile
+    planner_proposal: PlannerProposal
+    planner_proposal_validation: Dict[str, Any]
 
 
 class DiffItem(TypedDict):

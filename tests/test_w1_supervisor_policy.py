@@ -952,6 +952,175 @@ class TestOrchestratorPlanGranularity(unittest.TestCase):
         self.assertEqual(result["converge_target"]["expected_min_characters"], 999,
                          "Early return must not overwrite existing plan")
 
+    def _make_valid_proposal(self, planner_kind="llm_proposed") -> dict:
+        from sidecar.models.state import select_granularity_profile
+        profile = select_granularity_profile(50, "zh", "deep")
+        return {
+            "planner_kind": planner_kind,
+            "proposed_source_type": "coarse_webnovel",
+            "proposed_granularity_profile": dict(profile),
+            "rationale": "test",
+            "confidence": 0.9,
+        }
+
+    def test_no_proposal_preserves_deterministic_import_plan(self):
+        from sidecar.supervisor.policy import _ensure_orchestrator_plan
+        state = self._make_zh_deep_state(chapter_count=50)
+        result = _ensure_orchestrator_plan(state)
+        self.assertEqual(result["import_plan"]["planner_kind"], "deterministic_rules")
+        self.assertIs(result["import_plan_validation"]["ok"], True)
+        self.assertNotIn("planner_proposal_validation", result)
+
+    def test_valid_llm_proposed_proposal_produces_llm_proposed_plan(self):
+        from sidecar.supervisor.policy import _ensure_orchestrator_plan
+        state = self._make_zh_deep_state(chapter_count=50)
+        state["planner_proposal"] = self._make_valid_proposal("llm_proposed")
+        result = _ensure_orchestrator_plan(state)
+        self.assertEqual(result["import_plan"]["planner_kind"], "llm_proposed")
+        self.assertIs(result["import_plan_validation"]["ok"], True)
+        self.assertIs(result["planner_proposal_validation"]["ok"], True)
+
+    def test_invalid_proposal_raw_prompt_text_causes_hard_fail(self):
+        from sidecar.supervisor.policy import _ensure_orchestrator_plan
+        state = self._make_zh_deep_state(chapter_count=50)
+        state["planner_proposal"] = {**self._make_valid_proposal(), "raw_prompt_text": "inject"}
+        result = _ensure_orchestrator_plan(state)
+        self.assertEqual(result["orchestrator_phase"], "planning_failed")
+        self.assertEqual(result["converge_status"], "hard_fail")
+        self.assertIs(result["import_plan_validation"]["ok"], False)
+
+    def test_invalid_proposal_raw_prompt_text_no_unbound_local_error(self):
+        from sidecar.supervisor.policy import _ensure_orchestrator_plan
+        state = self._make_zh_deep_state(chapter_count=50)
+        state["planner_proposal"] = {**self._make_valid_proposal(), "raw_prompt_text": "inject"}
+        result = _ensure_orchestrator_plan(state)  # must not raise UnboundLocalError
+        self.assertEqual(result["converge_status"], "hard_fail")
+
+    def test_invalid_proposal_disabled_proposal_write_causes_hard_fail(self):
+        from sidecar.supervisor.policy import _ensure_orchestrator_plan
+        state = self._make_zh_deep_state(chapter_count=50)
+        state["planner_proposal"] = {
+            **self._make_valid_proposal(),
+            "proposed_tool_overrides": [{"tool": "proposal_write", "enabled": False}],
+        }
+        result = _ensure_orchestrator_plan(state)
+        self.assertEqual(result["converge_status"], "hard_fail")
+        self.assertIs(result["import_plan_validation"]["ok"], False)
+
+    def test_context_planner_proposal_used_when_state_key_absent(self):
+        from sidecar.supervisor.policy import _ensure_orchestrator_plan
+        state = self._make_zh_deep_state(chapter_count=50)
+        state["context"] = {"planner_proposal": self._make_valid_proposal("llm_proposed")}
+        result = _ensure_orchestrator_plan(state)
+        self.assertEqual(result["import_plan"]["planner_kind"], "llm_proposed")
+        self.assertIs(result["import_plan_validation"]["ok"], True)
+
+    def test_invalid_context_proposal_rejected_on_preplanned_state(self):
+        from sidecar.supervisor.policy import _ensure_orchestrator_plan
+        from sidecar.models.state import plan_converge_target, plan_tool_operating_spec, select_granularity_profile
+        state = self._make_zh_deep_state(chapter_count=50)
+        spec = plan_tool_operating_spec("deep", "zh", 50)
+        gp = select_granularity_profile(50, "zh", "deep", "import_all")
+        state["tool_operating_spec"] = spec
+        state["converge_target"] = plan_converge_target(spec, "zh", 50, granularity_profile=gp)
+        state["context"] = {"planner_proposal": {**self._make_valid_proposal(), "raw_prompt_text": "inject"}}
+
+        result = _ensure_orchestrator_plan(state)
+
+        self.assertEqual(result.get("converge_status"), "hard_fail")
+        self.assertIs(result.get("planner_proposal_validation", {}).get("ok"), False)
+
+
+class TestAcceptableWithWarningsVerdict(unittest.TestCase):
+    """Wave cap hit with only soft gates → result_status and converge_status both show acceptable_with_warnings."""
+
+    def _make_soft_failing_judge(self) -> dict:
+        return {
+            "judge_artifact": {
+                "score": 0.78,
+                "passed": False,
+                "failed_gates": ["character_undercoverage"],
+                "result_status": "needs_targeted_repair",
+                "thematic_rerun_requests": [
+                    {
+                        "theme": "character_undercoverage",
+                        "target_windows": ["pwin_soft"],
+                        "reason": "characters below target",
+                        "parameter_overrides": {},
+                    }
+                ],
+                "rerun_cap_reached": False,
+                "iteration": 0,
+                "metrics_snapshot": {},
+                "rationale": "soft failure: character_undercoverage only",
+            },
+            "judge_score": 0.78,
+            "converge_status": "failed",
+            "thematic_rerun_requests": [
+                {
+                    "theme": "character_undercoverage",
+                    "target_windows": ["pwin_soft"],
+                    "reason": "characters below target",
+                    "parameter_overrides": {},
+                }
+            ],
+            "tool_operating_spec": {"rerun_budget": 10, "thematic_rerun_wave_cap": 1},
+        }
+
+    def test_wave_cap_soft_only_sets_acceptable_with_warnings(self):
+        """After wave cap hit with only character_undercoverage failed, result_status must be acceptable_with_warnings."""
+        from sidecar.supervisor.policy import run_supervisor_policy
+
+        windows = [_make_window("pwin_soft", [0, 1])]
+        state = _make_state(windows=windows)
+        tools = _make_tools(
+            segment_result={"prompt_windows": windows, "supervisor_log": []},
+            judge_result=self._make_soft_failing_judge(),
+        )
+
+        result = asyncio.run(run_supervisor_policy(state, tools))
+
+        artifact = result.get("judge_artifact", {})
+        self.assertTrue(artifact.get("rerun_cap_reached"),
+                        "rerun_cap_reached must be True when wave cap is hit")
+        self.assertEqual(
+            artifact.get("result_status"), "acceptable_with_warnings",
+            f"soft-only cap hit must yield acceptable_with_warnings; got result_status={artifact.get('result_status')!r}",
+        )
+
+    def test_acceptable_with_warnings_propagates_to_converge_status(self):
+        """converge_status must reflect acceptable_with_warnings, not 'failed', after the cap-hit soft path."""
+        from sidecar.supervisor.policy import run_supervisor_policy
+
+        windows = [_make_window("pwin_soft2", [0])]
+        state = _make_state(windows=windows)
+        tools = _make_tools(
+            segment_result={"prompt_windows": windows, "supervisor_log": []},
+            judge_result=self._make_soft_failing_judge(),
+        )
+
+        result = asyncio.run(run_supervisor_policy(state, tools))
+
+        self.assertEqual(
+            result.get("converge_status"), "acceptable_with_warnings",
+            f"converge_status must be 'acceptable_with_warnings' for soft cap-hit; got {result.get('converge_status')!r}",
+        )
+
+    def test_acceptable_with_warnings_does_not_block_proposal_write(self):
+        """proposal_write must be called even when verdict is acceptable_with_warnings."""
+        from sidecar.supervisor.policy import run_supervisor_policy
+
+        windows = [_make_window("pwin_soft3", [0])]
+        state = _make_state(windows=windows)
+        tools = _make_tools(
+            segment_result={"prompt_windows": windows, "supervisor_log": []},
+            judge_result=self._make_soft_failing_judge(),
+        )
+
+        asyncio.run(run_supervisor_policy(state, tools))
+
+        tools["proposal_write"].assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()
