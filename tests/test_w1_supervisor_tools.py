@@ -164,6 +164,77 @@ class TestExtractWindow(unittest.TestCase):
         metrics = result.get("window_metrics", {}).get("pwin_b", {})
         self.assertGreater(len(metrics.get("failed_prompts", [])), 0)
 
+    def test_prompt_receives_project_digest_and_rolling_validation_context(self):
+        win = _make_window("pwin_ctx", [0])
+        state = _make_state(
+            prompt_windows=[win],
+            project_structure_digest={"content": '{"characters":[{"name":"Existing Hero"}]}'},
+            cross_validation={"duplicate_events": [{"title": "重复事件"}], "warnings": ["avoid duplicates"]},
+            import_granularity_profile={"profile_name": "coarse_webnovel"},
+            converge_target={"expected_min_events": 10},
+        )
+        captured_prompts: list[str] = []
+
+        async def capture_prompt(_llm, _template, **kwargs):
+            captured_prompts.append(kwargs.get("chunk_content", ""))
+            return {"new_characters": [], "events": [], "world_mentions": [], "relationships": [], "scenes": []}
+
+        with (
+            patch("sidecar.supervisor.tools._get_llm", return_value=MagicMock()),
+            patch("sidecar.supervisor.tools._invoke_json_prompt", new=AsyncMock(side_effect=capture_prompt)),
+            patch("sidecar.supervisor.tools._write_import_artifact", return_value="/tmp/mock.json"),
+        ):
+            _run(extract_window(state, "pwin_ctx"))
+
+        self.assertTrue(captured_prompts)
+        self.assertIn("PROJECT_STRUCTURE_DIGEST", captured_prompts[0])
+        self.assertIn("Existing Hero", captured_prompts[0])
+        self.assertIn("PREVIOUS_VALIDATION_SUMMARY", captured_prompts[0])
+        self.assertIn("重复事件", captured_prompts[0])
+
+    def test_raw_relationship_evidence_is_preserved_for_synthesis(self):
+        win = _make_window("pwin_rel", [0])
+        state = _make_state(
+            prompt_windows=[win],
+            entity_registry={
+                "characters": {
+                    "char_han": {"canonical_name": "韩立", "aliases": []},
+                    "char_mo": {"canonical_name": "墨大夫", "aliases": []},
+                },
+                "events": {},
+                "world": {},
+                "world_detailed": {},
+            },
+        )
+        rel_output = {
+            "relationships": [{
+                "source_character_name": "韩立",
+                "target_character_name": "墨大夫",
+                "type": "师徒",
+                "description": "墨大夫收韩立为徒。",
+                "evidence": ["墨大夫收韩立为记名弟子"],
+                "confidence": 0.9,
+            }]
+        }
+
+        with (
+            patch("sidecar.supervisor.tools._get_llm", return_value=MagicMock()),
+            patch("sidecar.supervisor.tools._invoke_json_prompt", new_callable=AsyncMock) as mock_invoke,
+            patch("sidecar.supervisor.tools._write_import_artifact", return_value="/tmp/mock.json"),
+        ):
+            mock_invoke.side_effect = [
+                {"new_characters": [], "existing_character_updates": []},
+                {"events": []},
+                {"world_mentions": []},
+                rel_output,
+                {"scenes": []},
+            ]
+            result = _run(extract_window(state, "pwin_rel"))
+
+        raw_rels = result.get("raw_relationships", [])
+        self.assertEqual(len(raw_rels), 1)
+        self.assertEqual(raw_rels[0]["evidence"], ["墨大夫收韩立为记名弟子"])
+
 
 # ── Test 3: cross_validate non-fatal on failure ───────────────────────────────
 

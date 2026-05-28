@@ -1205,6 +1205,102 @@ class TestAcceptableWithWarningsVerdict(unittest.TestCase):
         tools["proposal_write"].assert_called_once()
 
 
+class TestImportPlanAwareWindowGate(unittest.TestCase):
+    def test_coarse_profile_does_not_rerun_on_character_gap_when_disabled(self):
+        from sidecar.supervisor.policy import _process_window
+
+        window = _make_window("pwin_coarse", [0, 1])
+        state = _make_state(windows=[window])
+        state.update({
+            "import_granularity_profile": {
+                "profile_name": "coarse_webnovel",
+                "min_characters_per_chapter": 1.0,
+                "min_events_per_chapter": 1.0,
+                "rerun_on_character_gap": False,
+            },
+            "tool_operating_spec": {
+                "min_characters_per_chapter": 1.5,
+                "event_density_target": 1.25,
+                "rerun_budget": 3,
+            },
+        })
+        metrics = {
+            "pwin_coarse": {
+                "window_id": "pwin_coarse",
+                "chapter_count": 2,
+                "char_count_extracted": 0,
+                "event_count_extracted": 2,
+                "failed_prompts": [],
+                "gate_passed": False,
+                "rerun_count": 0,
+            }
+        }
+        tools = {
+            "extract_window": AsyncMock(return_value={
+                "entity_registry": state["entity_registry"],
+                "window_metrics": metrics,
+            }),
+            "cross_validate_window": AsyncMock(return_value={"window_metrics": metrics}),
+            "rerun_window": AsyncMock(return_value={}),
+        }
+
+        result = asyncio.run(_process_window(
+            state,
+            tools,
+            "pwin_coarse",
+            PROFILE_CONFIGS["deep"],
+            state["tool_operating_spec"],
+        ))
+
+        tools["rerun_window"].assert_not_called()
+        self.assertIn("pwin_coarse", result.get("window_metrics", {}))
+
+    def test_thematic_character_hint_uses_converge_target_not_raw_spec(self):
+        from sidecar.supervisor.policy import _apply_thematic_reruns
+
+        window = _make_window("pwin_theme", [0, 1])
+        state = _make_state(windows=[window])
+        state.update({
+            "converge_target": {"expected_min_characters": 50},
+            "judge_artifact": {
+                "passed": False,
+                "score": 0.82,
+                "failed_gates": ["character_undercoverage"],
+                "thematic_rerun_requests": [{
+                    "theme": "character_undercoverage",
+                    "target_windows": ["pwin_theme"],
+                    "reason": "characters=46<target=50",
+                }],
+            },
+            "entity_registry": {"characters": {"char_a": {"canonical_name": "韩立"}}, "events": {}, "world": {}, "world_detailed": {}},
+        })
+        received_missing: list[str] = []
+
+        async def mock_rerun(_state, _window_id, _strategy="augment", missing_names=None, parameter_overrides=None):
+            received_missing.extend(missing_names or [])
+            return {"entity_registry": _state.get("entity_registry", {}), "window_metrics": {}}
+
+        tools = _make_tools(
+            reduce_result={"entity_registry": state["entity_registry"]},
+            repair_result={"entity_registry": state["entity_registry"], "minor_repair_log": []},
+            architect_result={"timeline_architecture": {}, "timeline_branches": []},
+            qa_result={"gate_failures": [], "import_review_report": {}},
+            judge_result={"judge_artifact": {"passed": True, "score": 1.0, "failed_gates": [], "thematic_rerun_requests": []}},
+        )
+        tools["rerun_window"] = mock_rerun
+
+        asyncio.run(_apply_thematic_reruns(
+            state,
+            tools,
+            PROFILE_CONFIGS["deep"],
+            {"min_characters_per_chapter": 1.5, "rerun_budget": 1, "thematic_rerun_wave_cap": 1},
+        ))
+
+        self.assertTrue(received_missing)
+        self.assertIn("target ≥50", received_missing[0])
+        self.assertNotIn("target ≥75", received_missing[0])
+
+
 class TestSupervisorActivityAndCancel(unittest.TestCase):
     """Activity feed must make long-running supervisor work observable and cancellable."""
 

@@ -3081,6 +3081,7 @@ async def node_architect_timeline(state: ImportState) -> dict:
     }
     seen_signatures: dict[str, str] = {}
     seen_loose_signatures: dict[str, str] = {}
+    seen_title_keys: dict[str, str] = {}
     canonical_events: dict[str, dict] = {}
     chunk_event_counts: dict[int, int] = {}
     density_limit_per_chunk = 8
@@ -3094,6 +3095,35 @@ async def node_architect_timeline(state: ImportState) -> dict:
         title = event.get("title", "").strip()
         if not title:
             discarded_duplicates.append({"event_id": event_id, "timelineClass": "discarded_duplicate", "reason": "missing title"})
+            continue
+        title_key = _normal_key(title)
+        title_numbers = tuple(re.findall(r"\d+", str(title)))
+        title_duplicate_id = seen_title_keys.get(title_key)
+        if not title_duplicate_id:
+            title_duplicate_id = next(
+                (
+                    existing_id
+                    for existing_title_key, existing_id in seen_title_keys.items()
+                    if title_key
+                    and existing_title_key
+                    and (not title_numbers or tuple(re.findall(r"\d+", existing_title_key)) == title_numbers)
+                    and difflib.SequenceMatcher(None, title_key, existing_title_key).ratio() > 0.92
+                ),
+                "",
+            )
+        if title_duplicate_id and title_duplicate_id in prelim_events:
+            primary = prelim_events[title_duplicate_id]
+            primary.setdefault("mergedEventIds", []).append(event_id)
+            primary.setdefault("mergeReasons", []).append(f"Merged '{title}' by high-confidence title similarity.")
+            primary["summary"] = _merge_text_field(primary.get("summary", ""), event.get("description", ""))
+            primary["confidence"] = max(float(primary.get("confidence", 0.7)), float(event.get("confidence", 0.7)))
+            discarded_duplicates.append({
+                "event_id": event_id,
+                "merged_into": title_duplicate_id,
+                "title": title,
+                "timelineClass": "discarded_duplicate",
+                "reason": "high-confidence duplicate title",
+            })
             continue
         existing_key = (_normal_key(title), _normal_key(event.get("description", ""))[:80])
         if existing_key in existing_event_keys:
@@ -3156,6 +3186,7 @@ async def node_architect_timeline(state: ImportState) -> dict:
         seen_signatures[signature] = event_id
         seen_signatures[semantic_signature] = event_id
         seen_loose_signatures[loose_signature] = event_id
+        seen_title_keys[title_key] = event_id
         prelim_events[event_id] = _build_prelim_timeline_event(event_id, event, character_id_map, class_reason)
 
     min_canonical_events = _minimum_canonical_event_count(state, len(events))
@@ -3421,6 +3452,23 @@ async def node_review_import(state: ImportState) -> dict:
     return {"import_review_report": report, "errors": errors, "progress": max(float(state.get("progress", 0.91)), 0.92)}
 
 
+def _write_manuscript_json(project_path: Path, state: ImportState, manuscript_chapters: list[dict]) -> None:
+    """Persist imported manuscript text before slow proposal writes begin."""
+    manuscript_path = project_path / "manuscript.json"
+    _ms_now = datetime.now(timezone.utc).isoformat()
+    with open(manuscript_path, "w", encoding="utf-8") as _ms_f:
+        _ms_f.write('{\n')
+        _ms_f.write(f'  "source_file": {json.dumps(state["source_file_path"], ensure_ascii=False)},\n')
+        _ms_f.write(f'  "imported_at": {json.dumps(_ms_now)},\n')
+        _ms_f.write('  "chapters": [\n')
+        for _ms_i, _ms_ch in enumerate(manuscript_chapters):
+            if _ms_i > 0:
+                _ms_f.write(',\n')
+            _ms_f.write('    ')
+            json.dump(_ms_ch, _ms_f, ensure_ascii=False)
+        _ms_f.write('\n  ]\n}\n')
+
+
 async def node_write_to_project(state: ImportState) -> dict:
     """Write entities to project, push proposals, write manuscript.json, trigger W2 post_import."""
     import gc as _gc
@@ -3445,6 +3493,12 @@ async def node_write_to_project(state: ImportState) -> dict:
         world_containers.append({**spec, "sortOrder": len(world_containers)})
         existing_container_keys.add(spec["importCategoryKey"])
         existing_container_ids.add(spec["id"])
+
+    # Manuscript content is deterministic and cheap to persist. Write it before
+    # hundreds of proposal operations so cancellation/OOM during proposal_write
+    # does not leave the project with no imported manuscript text.
+    _write_manuscript_json(project_path, state, manuscript_chapters)
+
     # Compact receipts — one small dict per proposal — replace the old full-payload list.
     receipts: list[dict] = []
     errors: list[str] = list(state.get("errors", []))
@@ -3924,21 +3978,13 @@ async def node_write_to_project(state: ImportState) -> dict:
         if state.get("import_run_id"):
             _write_import_artifact(str(project_path), state["import_run_id"], "review_report.json", review_report)
 
-    # Write manuscript.json with incremental chapter writes to avoid building a
-    # full in-memory JSON buffer for potentially large chapter lists.
-    manuscript_path = project_path / "manuscript.json"
-    _ms_now = datetime.now(timezone.utc).isoformat()
-    with open(manuscript_path, "w", encoding="utf-8") as _ms_f:
-        _ms_f.write('{\n')
-        _ms_f.write(f'  "source_file": {json.dumps(state["source_file_path"], ensure_ascii=False)},\n')
-        _ms_f.write(f'  "imported_at": {json.dumps(_ms_now)},\n')
-        _ms_f.write('  "chapters": [\n')
-        for _ms_i, _ms_ch in enumerate(manuscript_chapters):
-            if _ms_i > 0:
-                _ms_f.write(',\n')
-            _ms_f.write('    ')
-            json.dump(_ms_ch, _ms_f, ensure_ascii=False)
-        _ms_f.write('\n  ]\n}\n')
+    if state.get("import_run_id"):
+        _write_import_artifact(
+            str(project_path),
+            state["import_run_id"],
+            "proposal_write_receipts.json",
+            {"proposal_counts": proposal_counts, "proposal_ids": all_proposal_ids, "receipts": receipts},
+        )
 
     # Delete checkpoint on success
     checkpoint_path = state.get("checkpoint_path", "")
@@ -4021,6 +4067,55 @@ async def node_synthesize_relationships(state: ImportState) -> dict:
     registry = state.get("entity_registry", {})
     llm = _get_llm(state)
 
+    def _fallback_relationships() -> list[dict]:
+        """Deterministically preserve evidence-grounded relationship candidates."""
+        fallback: list[dict] = []
+        seen_keys: set[tuple[Any, ...]] = set()
+        for rel in raw_relationships:
+            source_id = _resolve_character_id(
+                rel.get("source_candidate_id") or rel.get("source_character_name"),
+                registry,
+            )
+            target_id = _resolve_character_id(
+                rel.get("target_candidate_id") or rel.get("target_character_name"),
+                registry,
+            )
+            if not source_id or not target_id or source_id == target_id:
+                continue
+            evidence = rel.get("evidence", [])
+            if isinstance(evidence, str):
+                evidence = [evidence]
+            evidence_list = [item.strip() for item in evidence if isinstance(item, str) and item.strip()]
+            if not evidence_list and str(rel.get("description", "")).strip():
+                evidence_list = [str(rel.get("description", "")).strip()]
+            if not evidence_list:
+                continue
+            directionality = str(rel.get("directionality", "bidirectional")).strip() or "bidirectional"
+            key_ids = tuple(sorted((source_id, target_id))) if directionality == "bidirectional" else (source_id, target_id)
+            key = (
+                key_ids,
+                str(rel.get("type", "")).strip().lower(),
+                str(rel.get("category", "")).strip().lower(),
+                directionality,
+            )
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            fallback.append({
+                "id": f"rel_{uuid.uuid4().hex[:8]}",
+                "sourceId": source_id,
+                "targetId": target_id,
+                "type": str(rel.get("type", "")).strip() or "relationship",
+                "description": str(rel.get("description", "")).strip(),
+                "strength": None,
+                "category": str(rel.get("category", "other")).strip() or "other",
+                "directionality": directionality,
+                "status": "inferred_from_import",
+                "sourceNotes": "\n".join(evidence_list[:4]),
+                "importConfidence": float(rel.get("confidence", 0.70) or 0.70),
+            })
+        return fallback
+
     registry_payload = {
         "characters": [
             {
@@ -4041,7 +4136,7 @@ async def node_synthesize_relationships(state: ImportState) -> dict:
         )
     except Exception as e:
         errors.append(f"Relationship synthesis failed: {str(e)}")
-        return {"relationships": [], "errors": errors, "progress": 0.87}
+        return {"relationships": _fallback_relationships(), "errors": errors, "progress": 0.87}
 
     relationships: list[dict] = []
     seen_keys: set[tuple[Any, ...]] = set()
@@ -4088,6 +4183,8 @@ async def node_synthesize_relationships(state: ImportState) -> dict:
             "importConfidence": float(rel.get("confidence", 0.75)),
         })
 
+    if not relationships:
+        relationships = _fallback_relationships()
     return {"relationships": relationships, "errors": errors, "progress": 0.87}
 
 

@@ -4,7 +4,7 @@
 
 The static LangGraph pipeline (`run_streaming`, `use_supervisor=False`) packs all chapters into one prompt window. With `ChatOpenAI(max_tokens=4096)` and a 50-chapter novel this produces ~26 000 output tokens needed but only 4 096 available — resulting in 24 characters instead of 50+, 10 events instead of 40+.
 
-The supervisor works around this by splitting the manuscript into small windows, extracting and validating each window independently, and re-running windows that fail quality gates.
+The supervisor works around this by splitting the manuscript into small windows, extracting and validating each window independently, and re-running windows that fail quality gates. Per-window rerun gates must honor the validated `ImportGranularityProfile`; for example, `coarse_webnovel` sets `rerun_on_character_gap=false` and must not spend budget chasing stricter flat ToolOperatingSpec character-density defaults.
 
 ---
 
@@ -28,7 +28,7 @@ All tools are in `sidecar/supervisor/tools.py` and registered in `sidecar/superv
 | Tool | Stage | Side-effects |
 |------|-------|-------------|
 | `segment_manifest` | 1 | Builds `prompt_windows` from chunks using `_build_supervised_prompt_windows`. Idempotent (skips if windows exist). |
-| `extract_window` | 2 | 5-parallel LLM calls (characters, events, world, relationships, scene). Merges into `entity_registry`. Records `WindowExtractionMetrics`. Injects `source_language_label` and `language_policy` into all five deep extraction prompts. |
+| `extract_window` | 2 | 5-parallel LLM calls (characters, events, world, relationships, scene). Merges into `entity_registry`. Records `WindowExtractionMetrics`. Injects `source_language_label`, `language_policy`, current project digest, rolling validation summary, and current registry summary into all five deep extraction prompts. |
 | `cross_validate_window` | 2 | Checks each window's characters against the full registry. Sets `missing_majors`. |
 | `rerun_window` | 2 (conditional) | strategy=`split` halves chunk count and re-runs extract; strategy=`augment` injects `SUPERVISOR_HINT` with missing names. |
 | `reduce_entities` | 3 | Deduplicates characters/events via `node_reconcile_entities` + `node_resolve_low_confidence`. |
@@ -267,7 +267,8 @@ All artifacts land under `<project_path>/system/imports/<import_run_id>/`:
 | `judge_artifact.json` | **Start of `proposal_write`** (before OOM risk, if present) | Final deterministic convergence judgment |
 | `cross_validation.json` | **Start of `proposal_write`** (before OOM risk, if present) | Cross-window entity validation results |
 | `inbox.json` | Inside `node_write_to_project` | Per-entity `propose_write` proposals (gated) |
-| `manuscript.json` | Inside `node_write_to_project` | Ordered chapter content |
+| `manuscript.json` | Start of `node_write_to_project` before proposal loops | Ordered chapter content, persisted before slow proposal writes so cancellation/OOM cannot leave imported text absent |
+| `proposal_write_receipts.json` | End of `node_write_to_project` after proposal loops | Compact proposal ids/counts by entity type for audit/recovery |
 | `review_report.json` | Inside `node_write_to_project` | Proposal counts, blocked IDs, safe-accept IDs |
 
 ---

@@ -67,7 +67,7 @@ All five deep extraction prompts require `source_language_label` and `language_p
 `extract_window` writes the selected prompt variant manifest into each window artifact. `proposal_write` also writes `import_granularity_profile.json`, `import_plan.json`, and `extraction_prompt_variants.json` before proposal writes begin so benchmark validation can prove which profile and prompt variants were active.
 
 ## Cross-Validation Requirements
-Cross-validation is wired into the packed-window scout loop. After each packed window, W1 runs the reviewer prompt against that window's character, event, relationship, and scene outputs plus the current project digest and previous validation summary. The merged `cross_validation.json` artifact is fed into the next window as `PREVIOUS_VALIDATION_SUMMARY`. It must report:
+Cross-validation is wired into the packed-window scout loop. After each packed window, W1 runs the reviewer prompt against that window's character, event, relationship, and scene outputs plus the current project digest and previous validation summary. In supervisor mode, `extract_window` dynamically prepends the current `PROJECT_STRUCTURE_DIGEST`, rolling registry summary, `PREVIOUS_VALIDATION_SUMMARY`, and `IMPORT_PLAN_CONTEXT` at call time; this prevents the chunk reassembly path from dropping window context. The merged `cross_validation.json` artifact is fed into later windows as `PREVIOUS_VALIDATION_SUMMARY`. It must report:
 - `duplicate_characters`
 - `duplicate_events`
 - `missing_major_characters`

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 from sidecar.models import state as sidecar_state
 from sidecar.prompts import w1_prompts
@@ -603,6 +604,45 @@ def test_timeline_architect_dedupes_and_fills_required_fields(tmp_path):
     assert result["timeline_architecture"]["discarded_duplicates"][0]["event_id"] == "event_b"
 
 
+def test_timeline_architect_merges_near_duplicate_chinese_titles(tmp_path):
+    state = {
+        "project_path": str(tmp_path),
+        "import_run_id": "import_near_dup_titles",
+        "entity_registry": {
+            "events": {
+                "event_a": {
+                    "title": "王护法接走韩立前往七玄门",
+                    "description": "王护法带韩立离村前往七玄门。",
+                    "character_ids": ["char_han"],
+                    "temporal_hint": "第一章",
+                    "confidence": 0.92,
+                    "importanceScore": 90,
+                    "chunk_id": 0,
+                },
+                "event_b": {
+                    "title": "王护法接韩立前往七玄门",
+                    "description": "王护法接韩立去七玄门。",
+                    "character_ids": ["char_han"],
+                    "temporal_hint": "第二章",
+                    "confidence": 0.91,
+                    "importanceScore": 88,
+                    "chunk_id": 1,
+                },
+            },
+            "character_id_map": {"char_han": "char_han"},
+        },
+        "timeline_branches": [],
+        "errors": [],
+    }
+
+    result = asyncio.run(w1_import.node_architect_timeline(state))
+    events = result["entity_registry"]["events"]
+    discarded = result["timeline_architecture"]["discarded_duplicates"]
+
+    assert list(events) == ["event_a"]
+    assert any(item.get("event_id") == "event_b" and item.get("reason") == "high-confidence duplicate title" for item in discarded)
+
+
 def test_timeline_architect_creates_semantic_branches_for_dense_import(tmp_path):
     events = {}
     for idx in range(8):
@@ -984,6 +1024,74 @@ def test_node_write_to_project_manuscript_still_written(tmp_path, monkeypatch):
     manuscript = json.loads(manuscript_path.read_text(encoding="utf-8"))
     assert len(manuscript["chapters"]) == 2
     assert manuscript["chapters"][0]["title"] == "Ch 1"
+
+
+def test_node_write_to_project_writes_manuscript_before_cancellable_proposals(tmp_path, monkeypatch):
+    async def cancelled_propose_write(_op, _project_path):
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", cancelled_propose_write)
+
+    state = _make_write_state(
+        tmp_path,
+        entity_registry={
+            "characters": {
+                "char_a": {"canonical_name": "Alice", "confidence": 0.8, "importance": "core", "aliases": [], "tag_ids": []},
+            },
+            "events": {},
+            "world": {},
+            "world_detailed": {},
+        },
+        manuscript_chapters=[
+            {"chapter_id": "chap_1", "title": "Ch 1", "orderIndex": 0, "chunk_ids": [0], "manuscript_content": "Text survives cancellation."},
+        ],
+    )
+
+    try:
+        asyncio.run(w1_import.node_write_to_project(state))
+    except asyncio.CancelledError:
+        pass
+    else:
+        raise AssertionError("Expected cancellation to propagate")
+
+    manuscript_path = tmp_path / "manuscript.json"
+    assert manuscript_path.exists(), "manuscript.json must be written before proposal loop can be cancelled"
+    manuscript = json.loads(manuscript_path.read_text(encoding="utf-8"))
+    assert manuscript["chapters"][0]["manuscript_content"] == "Text survives cancellation."
+
+
+def test_synthesize_relationships_falls_back_to_evidence_candidates(tmp_path, monkeypatch):
+    async def fake_invoke(*_args, **_kwargs):
+        return {"relationships": []}
+
+    monkeypatch.setattr(w1_import, "_invoke_json_prompt", fake_invoke)
+    monkeypatch.setattr(w1_import, "_get_llm", lambda _state: object())
+
+    state = {
+        "project_path": str(tmp_path),
+        "entity_registry": {
+            "characters": {
+                "char_han": {"canonical_name": "韩立", "aliases": []},
+                "char_mo": {"canonical_name": "墨大夫", "aliases": []},
+            }
+        },
+        "raw_relationships": [{
+            "source_character_name": "韩立",
+            "target_character_name": "墨大夫",
+            "type": "师徒",
+            "description": "墨大夫收韩立为徒。",
+            "evidence": ["墨大夫收韩立为记名弟子"],
+            "confidence": 0.9,
+        }],
+        "errors": [],
+    }
+
+    result = asyncio.run(w1_import.node_synthesize_relationships(state))
+    relationships = result["relationships"]
+    assert len(relationships) == 1
+    assert relationships[0]["sourceId"] == "char_han"
+    assert relationships[0]["targetId"] == "char_mo"
+    assert "墨大夫收韩立" in relationships[0]["sourceNotes"]
 
 
 # ── P1: node_build_manuscript supervisor fallback ─────────────────────────────

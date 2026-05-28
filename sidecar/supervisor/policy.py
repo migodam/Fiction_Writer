@@ -354,6 +354,27 @@ def _record_decision(
     return {**state, "supervisor_decisions": decisions}
 
 
+def _effective_window_gate_policy(
+    state: ImportSupervisorState,
+    tool_operating_spec: ToolOperatingSpec | None = None,
+) -> dict:
+    """Derive per-window gate thresholds from the validated ImportPlan.
+
+    ToolOperatingSpec is intentionally conservative. Once the planner has
+    selected a granularity profile, window reruns should honor that profile so
+    coarse webnovel imports do not burn budget chasing fine-grained targets.
+    """
+    spec = dict(tool_operating_spec or state.get("tool_operating_spec") or {})
+    granularity = dict(state.get("import_granularity_profile") or {})
+    if granularity.get("min_characters_per_chapter") is not None:
+        spec["min_characters_per_chapter"] = float(granularity["min_characters_per_chapter"])
+    if granularity.get("min_events_per_chapter") is not None:
+        spec["event_density_target"] = float(granularity["min_events_per_chapter"])
+    if granularity.get("rerun_on_character_gap") is not None:
+        spec["rerun_on_character_gap"] = bool(granularity["rerun_on_character_gap"])
+    return spec
+
+
 def _evaluate_window_gate(metrics: dict, profile_config: dict, tool_operating_spec: ToolOperatingSpec | None = None) -> tuple[bool, list[str]]:
     """Return (gate_passed, list_of_failure_reasons) for a window's metrics."""
     spec = tool_operating_spec or {}
@@ -364,7 +385,7 @@ def _evaluate_window_gate(metrics: dict, profile_config: dict, tool_operating_sp
     char_threshold = float(spec.get("min_characters_per_chapter", _CHAR_DENSITY_THRESHOLD))
     event_threshold = float(spec.get("event_density_target", _EVENT_DENSITY_THRESHOLD))
     reasons: list[str] = []
-    if char_density < char_threshold:
+    if bool(spec.get("rerun_on_character_gap", True)) and char_density < char_threshold:
         reasons.append(f"char_density={char_density:.2f}<{char_threshold}")
     if event_density < event_threshold:
         reasons.append(f"event_density={event_density:.2f}<{event_threshold}")
@@ -394,7 +415,7 @@ async def _process_window(
         return {**state, "status": "cancelled"}
 
     validation = profile_config.get("validation_strictness", "per_window")
-    spec = tool_operating_spec or state.get("tool_operating_spec", {})
+    spec = _effective_window_gate_policy(state, tool_operating_spec)
     max_reruns = int(spec.get("rerun_budget", profile_config.get("max_rerun_iterations", 2)))
     state = _with_status(
         state,
@@ -493,7 +514,11 @@ async def _process_window(
         missing_names = metrics.get("missing_majors", [])
 
         window = next((w for w in state.get("prompt_windows", []) if w.get("id") == window_id), {})
-        can_split = len(window.get("chunk_ids", [])) > 1 and char_density < float(spec.get("min_characters_per_chapter", _CHAR_DENSITY_THRESHOLD))
+        can_split = (
+            bool(spec.get("rerun_on_character_gap", True))
+            and len(window.get("chunk_ids", [])) > 1
+            and char_density < float(spec.get("min_characters_per_chapter", _CHAR_DENSITY_THRESHOLD))
+        )
         strategy = "split" if can_split else "augment"
 
         prev_window_ids = {w["id"] for w in state.get("prompt_windows", [])}
@@ -675,8 +700,11 @@ async def _apply_thematic_reruns(
                     existing_chars = list(registry.get("characters", {}).keys())
                     current_count = len(existing_chars)
                     target_count = int(
-                        tool_operating_spec.get("min_characters_per_chapter", 1.5)
-                        * len(state.get("chunks", []))
+                        state.get("converge_target", {}).get("expected_min_characters")
+                        or (
+                            _effective_window_gate_policy(state, tool_operating_spec).get("min_characters_per_chapter", 1.5)
+                            * len(state.get("chunks", []))
+                        )
                     )
                     already_found = ", ".join(existing_chars[:40]) if existing_chars else "none"
                     missing_names = [

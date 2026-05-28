@@ -120,6 +120,43 @@ def _session_id(state: ImportSupervisorState) -> str:
     return str(state.get("session_id") or state.get("context", {}).get("session_id") or "")
 
 
+def _clip_for_window_context(value: Any, max_chars: int) -> str:
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, sort_keys=True)
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + "\n...[truncated]"
+
+
+def _rolling_window_context(state: ImportSupervisorState, registry: dict) -> str:
+    """Build the bounded project/context preamble each window actually sees."""
+    digest = state.get("project_structure_digest") or {}
+    digest_content = digest.get("content", digest) if isinstance(digest, dict) else digest
+    cross_validation = state.get("cross_validation") or {}
+    validation_payload = {
+        "duplicate_characters": cross_validation.get("duplicate_characters", [])[-12:],
+        "duplicate_events": cross_validation.get("duplicate_events", [])[-12:],
+        "missing_major_characters": cross_validation.get("missing_major_characters", [])[-12:],
+        "event_merge_recommendations": cross_validation.get("event_merge_recommendations", [])[-12:],
+        "warnings": cross_validation.get("warnings", [])[-12:],
+    }
+    plan_payload = {
+        "granularity_profile": state.get("import_granularity_profile", {}),
+        "prompt_policy": (state.get("import_plan") or {}).get("prompt_policy", {}),
+        "converge_target": state.get("converge_target", {}),
+    }
+    return (
+        "PROJECT_STRUCTURE_DIGEST:\n"
+        f"{_clip_for_window_context(digest_content, 8000)}\n\n"
+        "ROLLING_ENTITY_REGISTRY_SUMMARY:\n"
+        f"{_clip_for_window_context(_registry_summary(registry), 6000)}\n\n"
+        "PREVIOUS_VALIDATION_SUMMARY:\n"
+        f"{_clip_for_window_context(validation_payload, 4000)}\n\n"
+        "IMPORT_PLAN_CONTEXT:\n"
+        f"{_clip_for_window_context(plan_payload, 3000)}\n\n"
+        "SOURCE_CHAPTERS:\n"
+    )
+
+
 async def _invoke_window_prompt_with_activity(
     state: ImportSupervisorState,
     window_id: str,
@@ -494,6 +531,8 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
         prompt_text = str(window.get("text", "") or window.get("source_text", ""))
     # Prepend any supervisor hint injected by rerun_window (stored separately to survive chunk reassembly)
     supervisor_hint = str(window.get("supervisor_hint", "") or "")
+    rolling_context = _rolling_window_context(state, registry)
+    prompt_text = rolling_context + prompt_text
     if supervisor_hint:
         prompt_text = supervisor_hint + "\n\n" + prompt_text
     registry_summary = _registry_summary(registry)
@@ -715,6 +754,9 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
             "description": str(rel.get("description", "")).strip(),
             "category": str(rel.get("category", "other")).strip() or "other",
             "directionality": str(rel.get("directionality", "bidirectional")).strip() or "bidirectional",
+            "evidence": rel.get("evidence", []),
+            "aliasEvidence": rel.get("aliasEvidence", []),
+            "contradictionHint": str(rel.get("contradictionHint", "")).strip(),
             "confidence": float(rel.get("confidence", 0.7)),
         })
 
