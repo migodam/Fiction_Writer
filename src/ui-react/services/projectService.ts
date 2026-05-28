@@ -78,6 +78,34 @@ const safeReadJson = <T>(fs: typeof import('fs'), filePath: string, fallback: T)
   return fs.existsSync(filePath) ? (JSON.parse(fs.readFileSync(filePath, 'utf8')) as T) : fallback;
 };
 
+const isImportProposal = (proposal: Proposal) => {
+  const raw = proposal as Proposal & { source_workflow?: string; sourceWorkflow?: string };
+  return proposal.source === 'import'
+    || raw.source_workflow === 'W1_import'
+    || raw.sourceWorkflow === 'W1_import'
+    || String(proposal.originTaskRunId || '').startsWith('W1');
+};
+
+const mergeDiskInboxForSave = (
+  fs: typeof import('fs'),
+  inboxPath: string,
+  incoming: Proposal[],
+  history: Proposal[]
+) => {
+  const diskInbox = safeReadJson<Proposal[]>(fs, inboxPath, []);
+  if (!diskInbox.length) return incoming;
+
+  const incomingIds = new Set(incoming.map((proposal) => proposal.id));
+  const resolvedIds = new Set(history.map((proposal) => proposal.id));
+  const protectedDiskProposals = diskInbox.filter((proposal) =>
+    isImportProposal(proposal)
+    && !incomingIds.has(proposal.id)
+    && !resolvedIds.has(proposal.id)
+  );
+
+  return [...protectedDiskProposals, ...incoming];
+};
+
 const safeReadText = (fs: typeof import('fs'), filePath: string, fallback = '') => {
   return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : fallback;
 };
@@ -464,7 +492,8 @@ const serializeProjectToFolder = (
       content: undefined,
     });
   });
-  writeJson(fs, path.join(systemDir, 'inbox.json'), project.proposals);
+  const inboxPath = path.join(systemDir, 'inbox.json');
+  writeJson(fs, inboxPath, mergeDiskInboxForSave(fs, inboxPath, project.proposals, project.proposalHistory));
   writeJson(fs, path.join(systemDir, 'history.json'), project.proposalHistory);
   writeJson(fs, path.join(systemDir, 'issues.json'), project.issues);
   writeJson(fs, path.join(systemDir, 'exports.json'), project.exports);

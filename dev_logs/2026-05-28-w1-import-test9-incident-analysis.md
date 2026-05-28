@@ -16,6 +16,7 @@ No live model/API calls were made in this investigation. No full50 benchmark was
 - Supervisor window context was weaker than documented: `_build_supervised_prompt_windows()` wrote digest/validation headers into `window["text"]`, but `extract_window()` reassembled prompt text from chunks and dropped that header unless chunk text was absent.
 - Relationship candidates lost evidence fields in the supervisor path before synthesis, making relationship finalization brittle and contributing to `relationships=0`.
 - `node_write_to_project()` wrote `manuscript.json` after hundreds of proposal operations, so cancellation/OOM during proposal writes could leave no manuscript content even when extraction had succeeded.
+- Frontend project save could overwrite `system/inbox.json` from stale in-memory `project.proposals`; this matches the observed empty inbox after backend artifacts reported proposal counts.
 
 ## Fixes
 
@@ -26,6 +27,7 @@ No live model/API calls were made in this investigation. No full50 benchmark was
 - `node_synthesize_relationships()` now falls back to deterministic evidence-grounded relationships when the synthesis prompt returns none or errors.
 - `node_architect_timeline()` now merges exact/high-confidence near-duplicate event titles while preserving numbered synthetic progression events.
 - `node_write_to_project()` writes `manuscript.json` before proposal loops and writes `proposal_write_receipts.json` after proposal writes.
+- `projectService.saveProject()` now preserves unresolved disk import proposals when saving from a stale UI state that has not yet reloaded backend-written inbox entries.
 
 ## Tests
 
@@ -34,6 +36,7 @@ No live model/API calls were made in this investigation. No full50 benchmark was
 - `sidecar/.venv/bin/python -m pytest tests/test_w1_supervisor_policy.py tests/test_w1_supervisor_tools.py tests/test_w1_import_compiler.py -q` — 148 passed.
 - Combined W1 regression set — 403 passed.
 - `sidecar/.venv/bin/python benchmark_results/v2_planner_dry_run/run_harness.py --no-write` — 5/5 passed, secret scan clean, live smoke skipped.
+- `npm run ui:build` — pass.
 
 ## Cost Ledger
 
@@ -44,4 +47,4 @@ No live model/API calls were made in this investigation. No full50 benchmark was
 ## Deferred
 
 - A real live smoke should not be attempted until the user explicitly approves cost.
-- Proposal inbox clobbering by later frontend saves is still a suspected risk if `system/inbox.json` was overwritten after a successful write; `proposal_write_receipts.json` now makes that failure auditable, but a separate project-save merge guard may still be warranted.
+- A real live smoke should verify that backend-written import proposals remain visible after frontend reload/save cycles.
