@@ -1,1 +1,0 @@
-Below the market awnings, Nila unrolled her layered city map across a tea crate. Rowan pointed to a corridor no patrol report admitted existed, and the ink shimmered as though the city itself disliked being found.

@@ -1,6 +1,0 @@
-[19:05:40] iter=1 elapsed=0m status=running win=? arts=? phase=planning mem=?% inbox=N ms=N
-[19:06:10] iter=2 elapsed=0m status=running win=? arts=? phase=planning mem=?% inbox=N ms=N
-[19:06:40] iter=3 elapsed=1m status=running win=? arts=? phase=planning mem=?% inbox=N ms=N
-[19:07:10] iter=4 elapsed=1m status=running win=? arts=? phase=planning mem=?% inbox=N ms=N
-[19:07:41] iter=5 elapsed=2m status=done win=? arts=? phase=done mem=?% inbox=Y ms=Y
-[19:07:41] Run ended: status=done

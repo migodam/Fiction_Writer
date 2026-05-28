@@ -57,21 +57,43 @@ env/
 Thumbs.db
 desktop.ini
 
-# --- Environment & Data ---
+# --- Environment & Credentials ---
 .env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
-# Ignore runtime data but keep the directory if needed
+*.key
+*.pem
+*_key.txt
+*api_key*
+secrets.*
+credentials.*
+
+# --- Runtime Data (generated, not source) ---
 data/*.json
+data/**/*.json
+data/**/*.backup
+data/*.backup
+data/projects/
 !data/.gitkeep
 logs/*.log
 !logs/.gitkeep
 
-# --- AI Specific ---
+# --- Benchmark & Run Artifacts ---
+benchmark_results/
+
+# --- AI / Model Weights ---
 *.model
 *.weights
 *.bin
 *.gguf
+
+# --- Worktrees ---
 .worktrees/
+
+# --- Tool-specific local state ---
+.claude/*.lock
+.claude/scheduled_tasks.lock
+.codex/
+.playwright-mcp/
