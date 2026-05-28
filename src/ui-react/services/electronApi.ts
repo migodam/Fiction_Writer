@@ -123,6 +123,20 @@ export interface W1StatusResult {
   elapsed_seconds?: number;
   idle_seconds?: number;
   cancel_requested?: boolean;
+  token_budget_exhausted?: boolean;
+}
+
+export interface ImportObservabilitySummary {
+  characters_extracted?: number;
+  events_extracted?: number;
+  world_items_extracted?: number;
+  relationships_extracted?: number;
+  manuscript_chapters_count?: number;
+  manuscript_written?: boolean;
+  canonical_events_count?: number;
+  branch_count?: number;
+  duplicate_count?: number;
+  topology_warning_count?: number;
 }
 
 export interface W1ImportReviewReport {
@@ -141,6 +155,7 @@ export interface W1ImportReviewReport {
   artifact_paths?: Record<string, string>;
   judge_artifact_summary?: W1JudgeArtifactSummary;
   judge_artifact?: W1JudgeArtifactSummary;
+  import_observability?: ImportObservabilitySummary;
 }
 
 export interface W1JudgeArtifactSummary {

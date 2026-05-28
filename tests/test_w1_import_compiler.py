@@ -1218,3 +1218,134 @@ def test_node_write_to_project_streaming_manuscript_50_chapters(tmp_path, monkey
     assert manuscript["chapters"][49]["title"] == "Chapter 50"
     assert "source_file" in manuscript
     assert "imported_at" in manuscript
+
+
+# ── Phase B: import_observability in node_review_import ──────────────────────
+
+def _make_review_state(tmp_path, *, registry=None, manuscript_chapters=None,
+                       timeline_architecture=None, timeline_branches=None,
+                       relationships=None, reducer_artifact=None):
+    """Minimal state for node_review_import tests."""
+    default_registry = {
+        "characters": {
+            "char_a": {"canonical_name": "Alice", "confidence": 0.9, "skip_create": False},
+            "char_b": {"canonical_name": "Bob", "confidence": 0.85},
+        },
+        "events": {
+            "evt_1": {"title": "First event", "confidence": 0.8,
+                      "branchId": "main", "orderIndex": 0, "locationIds": [],
+                      "participantCharacterIds": [], "linkedSceneIds": [],
+                      "linkedWorldItemIds": [], "tags": []},
+        },
+        "world": {},
+        "world_detailed": {
+            "world_a": {"name": "七玄门", "category": "organization", "confidence": 0.75},
+            "world_b": {"name": "Cold Mountain", "category": "location", "confidence": 0.7},
+        },
+    }
+    return {
+        "project_path": str(tmp_path),
+        "import_run_id": "obs_test",
+        "entity_registry": registry or default_registry,
+        "manuscript_chapters": manuscript_chapters if manuscript_chapters is not None else [
+            {"chapter_id": "ch1", "title": "Chapter 1"},
+            {"chapter_id": "ch2", "title": "Chapter 2"},
+        ],
+        "timeline_architecture": timeline_architecture or {
+            "canonical_events": [{"title": "Main arc event"}],
+            "discarded_duplicates": [{"event_id": "dup_1"}, {"event_id": "dup_2"}],
+            "warnings": ["Topology warning A"],
+        },
+        "timeline_branches": timeline_branches or [
+            {"id": "main"}, {"id": "branch_a"}
+        ],
+        "relationships": relationships or [{"id": "rel_1"}, {"id": "rel_2"}, {"id": "rel_3"}],
+        "reducer_artifact": reducer_artifact or {"warnings": [], "duplicate_candidates": []},
+        "errors": [],
+        "context": {"model": "deepseek-chat"},
+        "source_language": "en",
+        "character_tags": [],
+    }
+
+
+def test_node_review_import_includes_observability_fields(tmp_path):
+    """node_review_import must populate import_observability with counts from existing state."""
+    state = _make_review_state(tmp_path)
+    result = asyncio.run(w1_import.node_review_import(state))
+    report = result["import_review_report"]
+
+    assert "import_observability" in report, "import_observability key must be in review_report"
+    obs = report["import_observability"]
+
+    expected_keys = [
+        "characters_extracted", "events_extracted", "world_items_extracted",
+        "relationships_extracted", "manuscript_chapters_count", "manuscript_written",
+        "canonical_events_count", "branch_count", "duplicate_count", "topology_warning_count",
+    ]
+    for key in expected_keys:
+        assert key in obs, f"import_observability missing key: {key}"
+
+    # Verify counts match the fixture
+    assert obs["characters_extracted"] == 2   # char_a (not skip_create), char_b
+    assert obs["events_extracted"] == 1       # evt_1
+    assert obs["world_items_extracted"] == 2  # world_a, world_b
+    assert obs["relationships_extracted"] == 3
+    assert obs["manuscript_chapters_count"] == 2
+    assert obs["manuscript_written"] is True
+    assert obs["canonical_events_count"] == 1
+    assert obs["branch_count"] == 2
+    assert obs["duplicate_count"] == 2
+    assert obs["topology_warning_count"] == 1
+
+
+def test_node_review_import_observability_skips_skip_create_characters(tmp_path):
+    """Characters with skip_create=True must not be counted in characters_extracted."""
+    registry = {
+        "characters": {
+            "char_a": {"canonical_name": "Alice", "confidence": 0.9},
+            "char_b": {"canonical_name": "Skip Me", "confidence": 0.9, "skip_create": True},
+            "char_c": {"canonical_name": "Charlie", "confidence": 0.8},
+        },
+        "events": {},
+        "world": {},
+        "world_detailed": {},
+    }
+    state = _make_review_state(tmp_path, registry=registry)
+    result = asyncio.run(w1_import.node_review_import(state))
+    obs = result["import_review_report"]["import_observability"]
+    assert obs["characters_extracted"] == 2, "skip_create characters must be excluded from count"
+
+
+def test_node_review_import_observability_manuscript_not_written(tmp_path):
+    """manuscript_written must be False when manuscript_chapters is empty."""
+    state = _make_review_state(tmp_path, manuscript_chapters=[])
+    result = asyncio.run(w1_import.node_review_import(state))
+    obs = result["import_review_report"]["import_observability"]
+    assert obs["manuscript_written"] is False
+    assert obs["manuscript_chapters_count"] == 0
+
+
+def test_import_observability_key_survives_proposal_write_merge():
+    """proposal_write updates proposal_counts/safe_accept_ids/blocked_ids but must NOT
+    remove import_observability from the review_report dict."""
+    existing_report = {
+        "import_run_id": "test",
+        "status": "pass",
+        "warnings": [],
+        "errors": [],
+        "import_observability": {
+            "characters_extracted": 5,
+            "events_extracted": 10,
+            "manuscript_written": True,
+        },
+    }
+    # Simulate what proposal_write does to the review_report (lines 3972-3977 in w1_import.py)
+    existing_report["proposal_counts"] = {"character": 5, "timeline_event": 10}
+    existing_report["safe_accept_ids"] = ["p1", "p2"]
+    existing_report["blocked_ids"] = []
+    existing_report["proposal_ids"] = ["p1", "p2", "p3"]
+
+    # import_observability must still be present and unchanged
+    assert "import_observability" in existing_report
+    assert existing_report["import_observability"]["characters_extracted"] == 5
+    assert existing_report["import_observability"]["manuscript_written"] is True

@@ -377,6 +377,7 @@ class ImportProfileConfig(TypedDict, total=False):
     output_token_budget: int   # Max expected output tokens per window
     max_rerun_iterations: int  # Hard cap on supervisor reruns per window
     chapters_per_window: int   # Primary windowing constraint
+    max_tokens_per_call: int   # Hard cap passed to ChatOpenAI(max_tokens=...)
 
 
 class SupervisorDecision(TypedDict):
@@ -455,6 +456,7 @@ PROFILE_CONFIGS: "Dict[str, ImportProfileConfig]" = {
         "output_token_budget": 3000,
         "max_rerun_iterations": 1,
         "chapters_per_window": 20,
+        "max_tokens_per_call": 4096,
     },
     "balanced": {
         "character_granularity": "named_only",
@@ -466,6 +468,7 @@ PROFILE_CONFIGS: "Dict[str, ImportProfileConfig]" = {
         "output_token_budget": 3000,
         "max_rerun_iterations": 2,
         "chapters_per_window": 12,
+        "max_tokens_per_call": 4096,
     },
     "deep": {
         "character_granularity": "all",
@@ -477,6 +480,7 @@ PROFILE_CONFIGS: "Dict[str, ImportProfileConfig]" = {
         "output_token_budget": 3000,
         "max_rerun_iterations": 2,
         "chapters_per_window": 8,
+        "max_tokens_per_call": 5120,
     },
     "custom": {
         "character_granularity": "all",
@@ -488,6 +492,7 @@ PROFILE_CONFIGS: "Dict[str, ImportProfileConfig]" = {
         "output_token_budget": 3000,
         "max_rerun_iterations": 3,
         "chapters_per_window": 6,
+        "max_tokens_per_call": 5120,
     },
 }
 

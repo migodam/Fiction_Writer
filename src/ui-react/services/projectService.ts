@@ -922,8 +922,14 @@ export const projectService = {
       ? applyProposalOperations(project, target)
       : { project, applied: false, blockedReason: null };
     if (nextStatus === 'accepted' && applyResult.blockedReason) {
+      const annotatedProposal: Proposal = {
+        ...target,
+        lastBlockReason: applyResult.blockedReason,
+        lastBlockedAt: new Date().toISOString(),
+      };
       return {
         ...project,
+        proposals: project.proposals.map((p) => p.id === proposalId ? annotatedProposal : p),
         issues: upsertProposalBlockedIssue(project.issues, target, applyResult.blockedReason),
         unreadUpdates: markProposalUnread(project.unreadUpdates, proposalId),
       };

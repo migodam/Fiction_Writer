@@ -350,6 +350,9 @@ export interface Proposal {
   resolvedAt?: string;
   data?: Record<string, unknown>;
   entityType?: string;
+  /** Set by resolveProposal when applyProposalOperations returns a blockedReason. Display-only; not canonical. */
+  lastBlockReason?: string;
+  lastBlockedAt?: string;
 }
 
 export interface ConsistencyIssue {

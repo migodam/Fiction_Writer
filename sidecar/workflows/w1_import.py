@@ -1556,9 +1556,14 @@ def _build_supervised_prompt_windows(state: ImportState, chunks: list[dict], dig
     output_token_budget: int = profile_config.get("output_token_budget", 3_000)
 
     validation_summary = _previous_validation_summary(state)
-    digest_content = _fit_text_to_token_budget(str(digest.get("content", "")), _DIGEST_RESERVE_TOKENS)
+    # digest_content (full token-clipped) is used only in the window header fallback;
+    # for source budget computation, use the 8000-char clip that extract_window /
+    # _rolling_window_context actually sends to the model — this avoids reserving
+    # ~20k tokens that never reach the prompt, allowing larger source windows.
+    _raw_digest_str = str(digest.get("content", ""))
+    digest_content = _fit_text_to_token_budget(_raw_digest_str, _DIGEST_RESERVE_TOKENS)
     validation_content = _fit_text_to_token_budget(validation_summary, _VALIDATION_RESERVE_TOKENS)
-    digest_tokens = _estimate_tokens(digest_content)
+    digest_tokens = _estimate_tokens(_raw_digest_str[:8000])   # matches _rolling_window_context clip
     validation_tokens = _estimate_tokens(validation_content)
 
     import_run_id = state.get("import_run_id") or "import"
@@ -1984,6 +1989,7 @@ _ENDPOINT_CORRECTIONS: dict[str, str] = {
 
 
 def _get_llm(state: ImportState) -> ChatOpenAI:
+    from sidecar.models.state import PROFILE_CONFIGS
     ctx = state.get("context", {})
     api_key = ctx.get("api_key", "") or os.environ.get("DEEPSEEK_API_KEY", "")
     model = ctx.get("model", "deepseek-chat")
@@ -1991,13 +1997,17 @@ def _get_llm(state: ImportState) -> ChatOpenAI:
     # Correct common endpoint mistakes (e.g. web console URL instead of API URL)
     base_url = _ENDPOINT_CORRECTIONS.get(raw_endpoint.rstrip("/"),
                _ENDPOINT_CORRECTIONS.get(raw_endpoint, raw_endpoint))
+    # max_tokens is profile-aware: deep/custom get 5120 to allow richer per-window output.
+    profile = state.get("prompt_profile", "balanced")
+    profile_config = state.get("profile_config") or PROFILE_CONFIGS.get(profile, PROFILE_CONFIGS["balanced"])
+    max_tokens = int(profile_config.get("max_tokens_per_call", 4096))
     # streaming=False: prevents the 'str' object has no attribute 'model_dump'
     # error that occurs when DeepSeek's governor injects an error into an SSE
     # stream and LangChain tries to parse it as a ChatCompletionChunk.
     # timeout=120: prevent hung requests when DeepSeek accepts the TCP connection
     # but stops sending data mid-response (seen as ESTABLISHED socket with no progress).
     return ChatOpenAI(model=model, api_key=api_key, base_url=base_url,
-                      max_tokens=4096, streaming=False, timeout=120)
+                      max_tokens=max_tokens, streaming=False, timeout=120)
 
 
 # ── Graph nodes ─────────────────────────────────────────────────────────────────
@@ -3417,6 +3427,20 @@ async def node_review_import(state: ImportState) -> dict:
         if float(event.get("confidence", 0.7)) < 0.65:
             low_confidence_items.append({"entity_type": "timeline_event", "id": eid, "confidence": event.get("confidence", 0.7)})
 
+    manuscript_chapters = state.get("manuscript_chapters", [])
+    observability: dict = {
+        "characters_extracted": len([c for c in registry.get("characters", {}).values() if not c.get("skip_create")]),
+        "events_extracted": len(registry.get("events", {})),
+        "world_items_extracted": len(registry.get("world_detailed", {})),
+        "relationships_extracted": len(state.get("relationships", [])),
+        "manuscript_chapters_count": len(manuscript_chapters),
+        "manuscript_written": bool(manuscript_chapters),
+        "canonical_events_count": len(timeline.get("canonical_events", [])),
+        "branch_count": len(state.get("timeline_branches", [])),
+        "duplicate_count": len(timeline.get("discarded_duplicates", [])),
+        "topology_warning_count": len(timeline.get("warnings", [])),
+    }
+
     report = {
         "import_run_id": state.get("import_run_id", ""),
         "status": "fail" if errors else "warning" if warnings or low_confidence_items else "pass",
@@ -3429,6 +3453,7 @@ async def node_review_import(state: ImportState) -> dict:
             "character_tags": len(state.get("character_tags", [])),
             "timeline_branches": len(state.get("timeline_branches", [])),
         },
+        "import_observability": observability,
         "safe_accept_ids": [],
         "blocked_ids": [],
         "failed_chunks": [

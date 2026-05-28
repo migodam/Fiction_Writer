@@ -4,7 +4,7 @@ import { electronApi } from '../services/electronApi';
 import { useProjectStore } from '../store';
 import { useI18n } from '../i18n';
 import { ImportConsole } from './ImportConsole';
-import type { W1CustomProfileConfig, W1JudgeArtifactSummary, W1PromptProfile } from '../services/electronApi';
+import type { ImportObservabilitySummary, W1CustomProfileConfig, W1JudgeArtifactSummary, W1PromptProfile } from '../services/electronApi';
 
 interface ImportWorkflowProps {
   onClose: () => void;
@@ -108,6 +108,7 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
   const { t } = useI18n();
   const [consoleOpen, setConsoleOpen] = useState(true);
   const [showAllWarnings, setShowAllWarnings] = useState(false);
+  const [acceptResult, setAcceptResult] = useState<{ accepted: number; remaining: number } | null>(null);
 
   const updateCustomProfile = useCallback((patch: Partial<W1CustomProfileConfig>) => {
     setW1CustomProfileConfig(patch);
@@ -150,7 +151,8 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
     for (const proposalId of safeAcceptIds) {
       resolveProposal(proposalId, 'accepted');
     }
-  }, [resolveProposal, safeAcceptIds]);
+    setAcceptResult({ accepted: safeAcceptIds.length, remaining: proposals.length - safeAcceptIds.length });
+  }, [resolveProposal, safeAcceptIds, proposals.length]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -561,6 +563,29 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
                 )}
               </div>
             )}
+            {(() => {
+              const obs: ImportObservabilitySummary | undefined = w1ImportReviewReport?.import_observability;
+              if (!obs) return null;
+              const obsFields: Array<[string, number | boolean | undefined]> = [
+                [t('import.obsCharacters', 'Characters'), obs.characters_extracted],
+                [t('import.obsEvents', 'Events'), obs.events_extracted],
+                [t('import.obsWorld', 'World items'), obs.world_items_extracted],
+                [t('import.obsRelationships', 'Relationships'), obs.relationships_extracted],
+                [t('import.obsChapters', 'Chapters written'), obs.manuscript_chapters_count],
+                [t('import.obsBranches', 'Branches'), obs.branch_count],
+                [t('import.obsDuplicates', 'Duplicates merged'), obs.duplicate_count],
+              ];
+              return (
+                <div data-testid="w1-import-observability" className="mt-3 grid grid-cols-2 gap-1 rounded-xl border border-border bg-bg-elev-1 p-3 sm:grid-cols-4">
+                  {obsFields.map(([label, value]) => value !== undefined && (
+                    <div key={label} className="flex flex-col gap-0.5 text-[10px]">
+                      <span className="font-black uppercase tracking-widest text-text-3">{label}</span>
+                      <span className="text-sm font-semibold text-text">{String(value)}</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
             <div className="mt-4 flex flex-wrap items-center gap-2">
               <button
                 type="button"
@@ -582,6 +607,11 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
                 {t('import.console', 'Console')}
               </button>
             </div>
+            {acceptResult && (
+              <p data-testid="w1-accept-result" className="mt-2 text-xs text-text-2">
+                {t('import.acceptResult', `${acceptResult.accepted} accepted. ${acceptResult.remaining} proposals require manual review.`)}
+              </p>
+            )}
           </div>
         )}
 

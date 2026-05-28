@@ -57,4 +57,27 @@ test.describe('Workbench proposal safety', () => {
     await expect(page.getByTestId('workbench-issues-list')).toContainText('Proposal blocked: Review imported metadata candidates');
     await expect(page.getByTestId('workbench-issues-list')).toContainText('supported canonical change');
   });
+
+  test('blocked proposal shows reason banner on card after accept attempt', async ({ page }) => {
+    await expect(page.getByTestId('proposal-card-proposal_import_entities_seed')).toBeVisible();
+
+    // First attempt — triggers the block
+    await page.getByTestId('proposal-accept-proposal_import_entities_seed').click();
+
+    // Reason banner must appear on the card
+    const reasonBanner = page.getByTestId('proposal-blocked-reason-proposal_import_entities_seed');
+    await expect(reasonBanner).toBeVisible();
+    await expect(reasonBanner).toContainText('supported canonical change');
+  });
+
+  test('accept button is disabled after a proposal is blocked', async ({ page }) => {
+    await expect(page.getByTestId('proposal-card-proposal_import_entities_seed')).toBeVisible();
+
+    // First attempt — triggers the block
+    await page.getByTestId('proposal-accept-proposal_import_entities_seed').click();
+
+    // Accept button must be disabled — no silent re-click possible
+    const acceptBtn = page.getByTestId('proposal-accept-proposal_import_entities_seed');
+    await expect(acceptBtn).toBeDisabled();
+  });
 });

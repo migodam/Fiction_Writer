@@ -238,6 +238,7 @@ class W1StatusResponse(BaseModel):
     elapsed_seconds: int = 0
     idle_seconds: int = 0
     cancel_requested: bool = False
+    token_budget_exhausted: bool = False
 
 
 class W1ConsoleResponse(BaseModel):
@@ -679,12 +680,19 @@ async def w1_status(session_id: str = "") -> W1StatusResponse:
     """Return current W1 Import workflow status."""
     from sidecar.workflows.w1_run_events import session_status
 
+    import re as _re
     session = _w1_sessions.get(session_id, {})
     activity = session_status(session_id)
+    errors = session.get("errors", [])
+    _budget_pattern = _re.compile(r"budget_exhausted|402|insufficient.?balance", _re.IGNORECASE)
+    token_budget_exhausted = (
+        any(_budget_pattern.search(str(e)) for e in errors)
+        or session.get("converge_status") == "budget_exhausted"
+    )
     return W1StatusResponse(
         status=session.get("status", "idle"),
         progress=session.get("progress", 0.0),
-        errors=session.get("errors", []),
+        errors=errors,
         completed_chunks=session.get("completed_chunks", 0),
         total_chunks=session.get("total_chunks", 0),
         current_step=session.get("current_step", ""),
@@ -705,6 +713,7 @@ async def w1_status(session_id: str = "") -> W1StatusResponse:
         elapsed_seconds=int(activity.get("elapsed_seconds", 0) or 0),
         idle_seconds=int(activity.get("idle_seconds", 0) or 0),
         cancel_requested=bool(activity.get("cancel_requested", False)),
+        token_budget_exhausted=token_budget_exhausted,
     )
 
 

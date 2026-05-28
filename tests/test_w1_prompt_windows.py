@@ -314,6 +314,55 @@ class TestWindowMetadata(unittest.TestCase):
         )
 
 
+class TestDigestBudgetFix(unittest.TestCase):
+    """Phase A: verify supervisor windowing uses 8000-char digest clip for source budget."""
+
+    def _make_long_digest(self) -> dict:
+        # ~12000-char digest — longer than 8000 chars
+        content = "项目摘要：主角韩立修炼路途。" * 900  # ~12600 chars
+        return {"content": content, "estimated_tokens": 6000, "artifact_path": "/tmp/x.json", "counts": {}}
+
+    def test_digest_clip_estimate_smaller_than_full_reserve(self):
+        from sidecar.workflows.w1_import import _estimate_tokens, _DIGEST_RESERVE_TOKENS, _fit_text_to_token_budget
+        digest_content = "项目摘要" * 3000  # ~12000 chars
+        full_estimate = _estimate_tokens(_fit_text_to_token_budget(digest_content, _DIGEST_RESERVE_TOKENS))
+        clip_estimate = _estimate_tokens(digest_content[:8000])
+        self.assertLess(clip_estimate, full_estimate,
+                        "8000-char clip should produce smaller token estimate than full 24000-token reserve")
+
+    def test_long_digest_allows_larger_source_budget(self):
+        """Windows with a long digest should have more source token capacity after the fix."""
+        from sidecar.workflows.w1_import import _estimate_tokens, _SCHEMA_POLICY_RESERVE_TOKENS
+        digest = self._make_long_digest()
+        chunks = [_make_chunk(i, chars=1000) for i in range(8)]
+        state = _make_state(profile="deep", chunks=chunks)
+        windows = _build_supervised_prompt_windows(state, chunks, digest)
+        # The key assertion: no paragraph-split windows (source_budget should be generous enough
+        # to fit each chapter batch without overflow)
+        for w in windows:
+            self.assertIn(
+                w.get("split_reason", "complete_chapter_batch"),
+                ("complete_chapter_batch",),
+                f"Window {w['id']} unexpectedly paragraph-split with split_reason={w.get('split_reason')}",
+            )
+
+    def test_max_tokens_per_call_in_profile_configs(self):
+        """Phase A: PROFILE_CONFIGS must have max_tokens_per_call for all profiles."""
+        for profile_name in ("fast", "balanced", "deep", "custom"):
+            config = PROFILE_CONFIGS[profile_name]
+            self.assertIn("max_tokens_per_call", config,
+                          f"Profile '{profile_name}' missing max_tokens_per_call")
+            self.assertIsInstance(config["max_tokens_per_call"], int)
+            self.assertGreaterEqual(config["max_tokens_per_call"], 4096)
+
+    def test_deep_and_custom_have_larger_max_tokens(self):
+        """deep/custom profiles should have max_tokens_per_call > fast/balanced."""
+        self.assertGreater(PROFILE_CONFIGS["deep"]["max_tokens_per_call"],
+                           PROFILE_CONFIGS["fast"]["max_tokens_per_call"])
+        self.assertGreater(PROFILE_CONFIGS["custom"]["max_tokens_per_call"],
+                           PROFILE_CONFIGS["balanced"]["max_tokens_per_call"])
+
+
 class TestDetectLanguage(unittest.TestCase):
     def test_cjk_text_detected_as_zh(self):
         cjk_text = "这是一段中文文字，用于测试语言检测功能。韩立是主角，他修炼法术，追求长生。" * 10

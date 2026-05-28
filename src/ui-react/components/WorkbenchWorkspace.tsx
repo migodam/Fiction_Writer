@@ -193,8 +193,24 @@ export const WorkbenchWorkspace = () => {
                 </div>
                 <p className="text-sm leading-relaxed text-text-2">{proposal.description}</p>
                 <div className="mt-4 rounded-xl border border-border bg-bg-elev-1 p-4 text-sm text-text-2">{proposal.preview}</div>
+                {proposal.lastBlockReason && (
+                  <div
+                    data-testid={`proposal-blocked-reason-${proposal.id}`}
+                    className="mt-3 rounded-lg border border-amber/40 bg-amber/10 px-3 py-1.5 text-xs text-amber"
+                  >
+                    <span className="font-black uppercase tracking-widest">{t('workbench.blocked', 'Blocked')}: </span>
+                    {proposal.lastBlockReason}
+                  </div>
+                )}
                 <div className="mt-5 flex items-center gap-3">
-                  <button type="button" data-testid={`proposal-accept-${proposal.id}`} className="inline-flex items-center gap-2 rounded-lg bg-green px-4 py-2 text-[11px] font-black uppercase tracking-widest text-text-invert" onClick={() => resolveProposal(proposal.id, 'accepted')}>
+                  <button
+                    type="button"
+                    data-testid={`proposal-accept-${proposal.id}`}
+                    disabled={Boolean(proposal.lastBlockReason)}
+                    title={proposal.lastBlockReason ? `${t('workbench.blocked', 'Blocked')}: ${proposal.lastBlockReason}` : undefined}
+                    className="inline-flex items-center gap-2 rounded-lg bg-green px-4 py-2 text-[11px] font-black uppercase tracking-widest text-text-invert disabled:cursor-not-allowed disabled:opacity-40"
+                    onClick={() => resolveProposal(proposal.id, 'accepted')}
+                  >
                     <CheckCircle2 size={14} />
                     {t('workbench.accept')}
                   </button>
@@ -607,14 +623,25 @@ const TasksPanel = ({
                   </div>
                   <h2 className="mt-2 text-lg font-black text-text">{proposal.title}</h2>
                   <p className="mt-1 text-sm text-text-2">{proposal.description}</p>
+                  {proposal.lastBlockReason && (
+                    <div
+                      data-testid={`proposal-blocked-reason-${proposal.id}`}
+                      className="mt-2 rounded-lg border border-amber/40 bg-amber/10 px-3 py-1.5 text-xs text-amber"
+                    >
+                      <span className="font-black uppercase tracking-widest">{t('todo.blocked', 'Blocked')}: </span>
+                      {proposal.lastBlockReason}
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   data-testid={`proposal-accept-${proposal.id}`}
+                  disabled={Boolean(proposal.lastBlockReason)}
+                  title={proposal.lastBlockReason ? `${t('todo.blocked', 'Blocked')}: ${proposal.lastBlockReason}` : undefined}
                   onClick={() => resolveProposal(proposal.id, 'accepted')}
-                  className="inline-flex items-center gap-2 rounded-lg bg-green px-4 py-2 text-[11px] font-black uppercase tracking-widest text-text-invert"
+                  className="inline-flex items-center gap-2 rounded-lg bg-green px-4 py-2 text-[11px] font-black uppercase tracking-widest text-text-invert disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <CheckCircle2 size={13} />
                   {t('todo.accept')}
