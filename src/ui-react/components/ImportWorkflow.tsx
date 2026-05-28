@@ -91,6 +91,7 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
   const w1CustomProfileConfig = useProjectStore((s) => s.w1CustomProfileConfig);
   const w1RuntimeStatus = useProjectStore((s) => s.w1RuntimeStatus);
   const w1ProposalCount = useProjectStore((s) => s.w1ProposalCount);
+  const w1ExtractionCounts = useProjectStore((s) => s.w1ExtractionCounts);
   const w1ImportReviewReport = useProjectStore((s) => s.w1ImportReviewReport);
   const w1ActivityLog = useProjectStore((s) => s.w1ActivityLog);
   const w1IdleSeconds = useProjectStore((s) => s.w1IdleSeconds);
@@ -390,6 +391,14 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
                 </span>
               )}
             </div>
+            {w1ExtractionCounts && (
+              <div data-testid="w1-extraction-counts" className="grid gap-2 rounded-xl border border-border bg-bg-elev-1 p-3 text-xs text-text-2 sm:grid-cols-4">
+                <RuntimeField testId="w1-extraction-counts-characters" label={t('import.obsCharacters', 'Characters')} value={String(w1ExtractionCounts.characters)} />
+                <RuntimeField testId="w1-extraction-counts-events" label={t('import.obsEvents', 'Events')} value={String(w1ExtractionCounts.events)} />
+                <RuntimeField testId="w1-extraction-counts-world" label={t('import.obsWorld', 'World items')} value={String(w1ExtractionCounts.world_items)} />
+                <RuntimeField testId="w1-extraction-counts-relationships" label={t('import.obsRelationships', 'Relationships')} value={String(w1ExtractionCounts.relationships)} />
+              </div>
+            )}
             <div
               data-testid="w1-current-activity-card"
               className={`rounded-xl border p-3 text-xs ${

@@ -223,6 +223,7 @@ class W1StatusResponse(BaseModel):
     current_step: str = ""
     prompt_profile: str = "balanced"
     proposals_count: int = 0
+    extraction_counts: dict = {}
     import_review_report: dict = {}
     current_tool: str = ""
     current_window: Any = ""
@@ -346,6 +347,7 @@ async def _run_w1(session_id: str, config: dict) -> None:
                 "current_step": state_update.get("current_node", ""),
                 "prompt_profile": current.get("prompt_profile", config.get("prompt_profile", "balanced")),
                 "proposals_count": state_update.get("proposals_count", current.get("proposals_count", 0)),
+                "window_metrics": state_update.get("window_metrics") or current.get("window_metrics", {}),
                 "import_review_report": state_update.get("import_review_report") or current.get("import_review_report", {}),
                 "current_tool": state_update.get("current_tool", current.get("current_tool", "")),
                 "current_window": state_update.get("current_window", current.get("current_window", "")),
@@ -689,6 +691,13 @@ async def w1_status(session_id: str = "") -> W1StatusResponse:
         any(_budget_pattern.search(str(e)) for e in errors)
         or session.get("converge_status") == "budget_exhausted"
     )
+    window_metrics = session.get("window_metrics", {}) or {}
+    extraction_counts = {
+        "characters": sum(int(m.get("char_count_extracted", 0) or 0) for m in window_metrics.values() if isinstance(m, dict)),
+        "events": sum(int(m.get("event_count_extracted", 0) or 0) for m in window_metrics.values() if isinstance(m, dict)),
+        "world_items": sum(int(m.get("world_count_extracted", 0) or 0) for m in window_metrics.values() if isinstance(m, dict)),
+        "relationships": sum(int(m.get("relationship_count_extracted", 0) or 0) for m in window_metrics.values() if isinstance(m, dict)),
+    }
     return W1StatusResponse(
         status=session.get("status", "idle"),
         progress=session.get("progress", 0.0),
@@ -698,6 +707,7 @@ async def w1_status(session_id: str = "") -> W1StatusResponse:
         current_step=session.get("current_step", ""),
         prompt_profile=session.get("prompt_profile", "balanced"),
         proposals_count=session.get("proposals_count", 0),
+        extraction_counts=extraction_counts,
         import_review_report=session.get("import_review_report", {}),
         current_tool=session.get("current_tool", ""),
         current_window=session.get("current_window", ""),

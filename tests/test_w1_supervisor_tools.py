@@ -131,7 +131,7 @@ class TestExtractWindow(unittest.TestCase):
         char_output = {"new_characters": [{"canonical_name": "Alice", "confidence": 0.9, "importance": "core"}], "existing_character_updates": []}
         event_output = {"events": [{"title": "Battle", "description": "A fight", "confidence": 0.85}]}
         world_output = {"world_mentions": [{"name": "Rivendell", "category": "location"}]}
-        rel_output = {"relationships": []}
+        rel_output = {"relationships": [{"source": "Alice", "target": "Bob", "type": "ally", "confidence": 0.9}]}
         scene_output = {"scenes": []}
 
         with (
@@ -147,6 +147,7 @@ class TestExtractWindow(unittest.TestCase):
         self.assertEqual(metrics.get("char_count_extracted"), 1)
         self.assertEqual(metrics.get("event_count_extracted"), 1)
         self.assertEqual(metrics.get("world_count_extracted"), 1)
+        self.assertEqual(metrics.get("relationship_count_extracted"), 1)
         self.assertIsInstance(metrics.get("failed_prompts"), list)
 
     def test_failed_prompts_captured(self):
@@ -191,6 +192,35 @@ class TestExtractWindow(unittest.TestCase):
         self.assertIn("Existing Hero", captured_prompts[0])
         self.assertIn("PREVIOUS_VALIDATION_SUMMARY", captured_prompts[0])
         self.assertIn("重复事件", captured_prompts[0])
+
+    def test_prompt_window_with_existing_digest_does_not_duplicate_digest(self):
+        win = _make_window("pwin_digest", [99])
+        state = _make_state(
+            prompt_windows=[win],
+            entity_registry={
+                "characters": {"char_existing": {"canonical_name": "Existing Hero", "aliases": []}},
+                "events": {},
+                "world": {},
+                "world_detailed": {},
+            },
+        )
+        captured_prompts: list[str] = []
+
+        async def capture_prompt(_llm, _template, **kwargs):
+            captured_prompts.append(kwargs.get("chunk_content", ""))
+            return {"new_characters": [], "events": [], "world_mentions": [], "relationships": [], "scenes": []}
+
+        with (
+            patch("sidecar.supervisor.tools._get_llm", return_value=MagicMock()),
+            patch("sidecar.supervisor.tools._invoke_json_prompt", new=AsyncMock(side_effect=capture_prompt)),
+            patch("sidecar.supervisor.tools._write_import_artifact", return_value="/tmp/mock.json"),
+        ):
+            _run(extract_window(state, "pwin_digest"))
+
+        self.assertTrue(captured_prompts)
+        self.assertEqual(captured_prompts[0].count("PROJECT_STRUCTURE_DIGEST:"), 1)
+        self.assertIn("ROLLING_ENTITY_REGISTRY_SUMMARY", captured_prompts[0])
+        self.assertIn("Existing Hero", captured_prompts[0])
 
     def test_raw_relationship_evidence_is_preserved_for_synthesis(self):
         win = _make_window("pwin_rel", [0])

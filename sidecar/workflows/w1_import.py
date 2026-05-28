@@ -1553,7 +1553,7 @@ def _build_supervised_prompt_windows(state: ImportState, chunks: list[dict], dig
     profile_config = state.get("profile_config") or PROFILE_CONFIGS.get(profile, PROFILE_CONFIGS["balanced"])
     chapters_per_window: int = profile_config.get("chapters_per_window", 12)
     input_token_budget: int = profile_config.get("input_window_budget", 48_000)
-    output_token_budget: int = profile_config.get("output_token_budget", 3_000)
+    output_token_budget: int = profile_config.get("output_token_budget", 4_000)
 
     validation_summary = _previous_validation_summary(state)
     # digest_content (full token-clipped) is used only in the window header fallback;
@@ -5356,4 +5356,5 @@ async def run_streaming(project_path: str, config: dict):
                 "current_node": node_name,
                 "import_review_report": node_output.get("import_review_report", {}),
                 "proposals_count": len(node_output.get("proposals", [])) if isinstance(node_output.get("proposals", []), list) else 0,
+                "window_metrics": node_output.get("window_metrics", {}),
             }

@@ -108,6 +108,7 @@ export interface W1StatusResult {
   current_step?: string;
   prompt_profile?: W1PromptProfile;
   proposals_count?: number;
+  extraction_counts?: W1ExtractionCounts;
   import_review_report?: W1ImportReviewReport;
   current_tool?: string;
   current_window?: string | number;
@@ -124,6 +125,13 @@ export interface W1StatusResult {
   idle_seconds?: number;
   cancel_requested?: boolean;
   token_budget_exhausted?: boolean;
+}
+
+export interface W1ExtractionCounts {
+  characters: number;
+  events: number;
+  world_items: number;
+  relationships: number;
 }
 
 export interface ImportObservabilitySummary {

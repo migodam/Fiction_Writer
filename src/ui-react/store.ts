@@ -73,7 +73,7 @@ export const defaultW1CustomProfileConfig: W1CustomProfileConfig = {
   judge_pass_threshold: 0.85,
   language_policy: 'normalize_to_source',
   input_window_budget: 32000,
-  output_token_budget: 3000,
+  output_token_budget: 4000,
 };
 
 const buildW1OrchestratorOverrides = (config: W1CustomProfileConfig, enabled = true): W1OrchestratorOverrides => ({
@@ -346,6 +346,7 @@ interface ProjectState {
   w1OrchestratorOverrides: W1OrchestratorOverrides;
   w1RuntimeStatus: W1RuntimeStatus | null;
   w1ProposalCount: number;
+  w1ExtractionCounts: import('./services/electronApi').W1ExtractionCounts | null;
   w1ImportReviewReport: import('./services/electronApi').W1ImportReviewReport | null;
   w1UseSupervisor: boolean;
   w1SupervisorDecisions: unknown[];
@@ -1542,6 +1543,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   w1OrchestratorOverrides: buildW1OrchestratorOverrides(defaultW1CustomProfileConfig),
   w1RuntimeStatus: null,
   w1ProposalCount: 0,
+  w1ExtractionCounts: null,
   w1ImportReviewReport: null,
   w1UseSupervisor: false,
   w1SupervisorDecisions: [],
@@ -1687,6 +1689,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           w1CurrentStep: s.current_step ?? '',
           w1PromptProfile: s.prompt_profile ?? w1PromptProfile,
           w1ProposalCount: s.proposals_count ?? 0,
+          w1ExtractionCounts: s.extraction_counts ?? null,
           w1ImportReviewReport: s.import_review_report ?? null,
           w1LastActivityAt: s.last_activity_at ?? '',
           w1IdleSeconds: s.idle_seconds ?? 0,
@@ -1784,6 +1787,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     w1Paused: false,
     w1BreakpointChunk: null,
     w1ProposalCount: 0,
+    w1ExtractionCounts: null,
     w1ImportReviewReport: null,
     w1RuntimeStatus: null,
   }),

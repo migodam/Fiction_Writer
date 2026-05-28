@@ -127,7 +127,13 @@ def _clip_for_window_context(value: Any, max_chars: int) -> str:
     return text[:max_chars] + "\n...[truncated]"
 
 
-def _rolling_window_context(state: ImportSupervisorState, registry: dict) -> str:
+def _rolling_window_context(
+    state: ImportSupervisorState,
+    registry: dict,
+    *,
+    include_digest: bool = True,
+    include_source_marker: bool = True,
+) -> str:
     """Build the bounded project/context preamble each window actually sees."""
     digest = state.get("project_structure_digest") or {}
     digest_content = digest.get("content", digest) if isinstance(digest, dict) else digest
@@ -144,17 +150,23 @@ def _rolling_window_context(state: ImportSupervisorState, registry: dict) -> str
         "prompt_policy": (state.get("import_plan") or {}).get("prompt_policy", {}),
         "converge_target": state.get("converge_target", {}),
     }
-    return (
-        "PROJECT_STRUCTURE_DIGEST:\n"
-        f"{_clip_for_window_context(digest_content, 8000)}\n\n"
+    parts: list[str] = []
+    if include_digest:
+        parts.append(
+            "PROJECT_STRUCTURE_DIGEST:\n"
+            f"{_clip_for_window_context(digest_content, 8000)}\n\n"
+        )
+    parts.extend([
         "ROLLING_ENTITY_REGISTRY_SUMMARY:\n"
-        f"{_clip_for_window_context(_registry_summary(registry), 6000)}\n\n"
+        f"{_clip_for_window_context(_registry_summary(registry), 6000)}\n\n",
         "PREVIOUS_VALIDATION_SUMMARY:\n"
-        f"{_clip_for_window_context(validation_payload, 4000)}\n\n"
+        f"{_clip_for_window_context(validation_payload, 4000)}\n\n",
         "IMPORT_PLAN_CONTEXT:\n"
-        f"{_clip_for_window_context(plan_payload, 3000)}\n\n"
-        "SOURCE_CHAPTERS:\n"
-    )
+        f"{_clip_for_window_context(plan_payload, 3000)}\n\n",
+    ])
+    if include_source_marker:
+        parts.append("SOURCE_CHAPTERS:\n")
+    return "".join(parts)
 
 
 async def _invoke_window_prompt_with_activity(
@@ -388,10 +400,10 @@ async def segment_manifest(state: ImportSupervisorState) -> dict:
                 for sw in sub_wins:
                     sw["id"] = _stable_id("pwin", import_run_id, *part_chunk_ids, "split", part_idx, source_hash[:8])
                     sw["split_reason"] = "output_budget_preflight"
-                    sw["output_token_budget"] = profile_config.get("output_token_budget", 3000)
+                    sw["output_token_budget"] = profile_config.get("output_token_budget", 4000)
                     final_windows.append(sw)
         else:
-            win["output_token_budget"] = profile_config.get("output_token_budget", 3000)
+            win["output_token_budget"] = profile_config.get("output_token_budget", 4000)
             final_windows.append(win)
 
     log = list(state.get("supervisor_log", []))
@@ -531,7 +543,13 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
         prompt_text = str(window.get("text", "") or window.get("source_text", ""))
     # Prepend any supervisor hint injected by rerun_window (stored separately to survive chunk reassembly)
     supervisor_hint = str(window.get("supervisor_hint", "") or "")
-    rolling_context = _rolling_window_context(state, registry)
+    prompt_has_digest = "PROJECT_STRUCTURE_DIGEST:" in prompt_text
+    rolling_context = _rolling_window_context(
+        state,
+        registry,
+        include_digest=not prompt_has_digest,
+        include_source_marker=not prompt_has_digest,
+    )
     prompt_text = rolling_context + prompt_text
     if supervisor_hint:
         prompt_text = supervisor_hint + "\n\n" + prompt_text
@@ -738,6 +756,7 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
 
     # ── Register raw relationships ──────────────────────────────────────────
     raw_rels: list[dict] = list(state.get("raw_relationships", []))
+    new_relationship_count = 0
     for rel in rel_data.get("relationships", []):
         src = str(rel.get("source_character_name") or rel.get("source_name") or rel.get("source", "")).strip()
         tgt = str(rel.get("target_character_name") or rel.get("target_name") or rel.get("target", "")).strip()
@@ -759,6 +778,7 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
             "contradictionHint": str(rel.get("contradictionHint", "")).strip(),
             "confidence": float(rel.get("confidence", 0.7)),
         })
+        new_relationship_count += 1
 
     # ── Write window artifact ────────────────────────────────────────────────
     import_run_id = state.get("import_run_id", "")
@@ -788,6 +808,7 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
         "char_count_extracted": len(new_char_ids),
         "event_count_extracted": len(new_events),
         "world_count_extracted": len(new_world),
+        "relationship_count_extracted": new_relationship_count,
         "failed_prompts": failed_prompts,
         "confidence_distribution": {},
         "missing_majors_count": 0,
@@ -942,7 +963,7 @@ async def rerun_window(
             for sw in sub_wins:
                 sw["id"] = new_id
                 sw["split_reason"] = f"supervisor_split_of_{window_id}"
-                sw["output_token_budget"] = profile_config.get("output_token_budget", 3000)
+                sw["output_token_budget"] = profile_config.get("output_token_budget", 4000)
                 prompt_windows.append(sw)
                 new_ids.append(new_id)
 
@@ -988,7 +1009,7 @@ async def rerun_window(
         "supervisor_hint": hint_block,
         "estimated_tokens": _estimate_tokens(new_text),
         "split_reason": f"supervisor_augment_of_{window_id}",
-        "output_token_budget": profile_config.get("output_token_budget", 3000),
+        "output_token_budget": profile_config.get("output_token_budget", 4000),
     }
     prompt_windows.append(new_win)
 

@@ -354,6 +354,7 @@ class TestDigestBudgetFix(unittest.TestCase):
                           f"Profile '{profile_name}' missing max_tokens_per_call")
             self.assertIsInstance(config["max_tokens_per_call"], int)
             self.assertGreaterEqual(config["max_tokens_per_call"], 4096)
+            self.assertGreaterEqual(config["output_token_budget"], 4000)
 
     def test_deep_and_custom_have_larger_max_tokens(self):
         """deep/custom profiles should have max_tokens_per_call > fast/balanced."""

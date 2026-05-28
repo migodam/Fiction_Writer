@@ -400,6 +400,7 @@ class WindowExtractionMetrics(TypedDict):
     char_count_extracted: int
     event_count_extracted: int
     world_count_extracted: int
+    relationship_count_extracted: int
     failed_prompts: List[str]
     confidence_distribution: dict
     missing_majors_count: int
@@ -453,7 +454,7 @@ PROFILE_CONFIGS: "Dict[str, ImportProfileConfig]" = {
         "timeline_topology_depth": "flat",
         "validation_strictness": "off",
         "input_window_budget": 64_000,
-        "output_token_budget": 3000,
+        "output_token_budget": 4000,
         "max_rerun_iterations": 1,
         "chapters_per_window": 20,
         "max_tokens_per_call": 4096,
@@ -465,7 +466,7 @@ PROFILE_CONFIGS: "Dict[str, ImportProfileConfig]" = {
         "timeline_topology_depth": "branched",
         "validation_strictness": "per_window",
         "input_window_budget": 48_000,
-        "output_token_budget": 3000,
+        "output_token_budget": 4000,
         "max_rerun_iterations": 2,
         "chapters_per_window": 12,
         "max_tokens_per_call": 4096,
@@ -477,7 +478,7 @@ PROFILE_CONFIGS: "Dict[str, ImportProfileConfig]" = {
         "timeline_topology_depth": "full_dag",
         "validation_strictness": "per_window",
         "input_window_budget": 32_000,
-        "output_token_budget": 3000,
+        "output_token_budget": 4000,
         "max_rerun_iterations": 2,
         "chapters_per_window": 8,
         "max_tokens_per_call": 5120,
@@ -489,7 +490,7 @@ PROFILE_CONFIGS: "Dict[str, ImportProfileConfig]" = {
         "timeline_topology_depth": "full_dag",
         "validation_strictness": "per_arc",
         "input_window_budget": 24_000,
-        "output_token_budget": 3000,
+        "output_token_budget": 4000,
         "max_rerun_iterations": 3,
         "chapters_per_window": 6,
         "max_tokens_per_call": 5120,

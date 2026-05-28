@@ -20,6 +20,12 @@ interface MockState {
     completed_chunks: number;
     total_chunks: number;
     current_step: string;
+    extraction_counts?: {
+      characters: number;
+      events: number;
+      world_items: number;
+      relationships: number;
+    };
     current_tool?: string;
     current_window?: string | number;
     chapter_range?: string;
@@ -212,8 +218,17 @@ test.describe('W1 Import Workflow — running state', () => {
           judge_score: 0.76,
           rerun_reason: 'character undercoverage',
           converge_status: 'rerunning',
+          extraction_counts: { characters: 4, events: 9, world_items: 2, relationships: 3 },
         },
-        { status: 'running', progress: 0.5, errors: [], completed_chunks: 773, total_chunks: 1547, current_step: 'process_chunks' },
+        {
+          status: 'running',
+          progress: 0.5,
+          errors: [],
+          completed_chunks: 773,
+          total_chunks: 1547,
+          current_step: 'process_chunks',
+          extraction_counts: { characters: 4, events: 9, world_items: 2, relationships: 3 },
+        },
         { status: 'done',    progress: 1.0, errors: [], completed_chunks: 1547, total_chunks: 1547, current_step: 'write_to_project' },
       ],
     });
@@ -249,6 +264,14 @@ test.describe('W1 Import Workflow — running state', () => {
     await expect(page.getByTestId('w1-status-judge-score')).toContainText('0.76');
     await expect(page.getByTestId('w1-status-rerun-reason')).toContainText('character undercoverage');
     await expect(page.getByTestId('w1-status-converge-status')).toContainText('rerunning');
+  });
+
+  test('running extraction counts render when status includes window metrics summary', async ({ page }) => {
+    await expect(page.getByTestId('w1-extraction-counts')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId('w1-extraction-counts-characters')).toContainText('4');
+    await expect(page.getByTestId('w1-extraction-counts-events')).toContainText('9');
+    await expect(page.getByTestId('w1-extraction-counts-world')).toContainText('2');
+    await expect(page.getByTestId('w1-extraction-counts-relationships')).toContainText('3');
   });
 });
 

@@ -81,7 +81,10 @@ logs/*.log
 !logs/.gitkeep
 
 # --- Benchmark & Run Artifacts ---
-benchmark_results/
+benchmark_results/**
+!benchmark_results/
+!benchmark_results/v2_planner_dry_run/
+!benchmark_results/v2_planner_dry_run/run_harness.py
 
 # --- AI / Model Weights ---
 *.model
