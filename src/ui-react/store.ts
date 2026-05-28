@@ -94,6 +94,10 @@ interface W1RuntimeStatus {
   rerun_reason?: string;
   converge_status?: string;
   judge_artifact_summary?: import('./services/electronApi').W1JudgeArtifactSummary;
+  last_activity_message?: string;
+  active_api_calls?: number;
+  elapsed_seconds?: number;
+  idle_seconds?: number;
 }
 
 type PanelKind = 'sidebar' | 'inspector' | 'agentDock' | 'writingOutline' | 'writingContext';
@@ -328,6 +332,13 @@ interface ProjectState {
   w1SessionId: string | null;
   w1ImportMode: 'import_content_only' | 'import_all';
   w1ConsoleLog: import('./services/electronApi').ChunkLogEntry[];
+  w1ActivityLog: import('./services/electronApi').W1ActivityEntry[];
+  w1LastActivityAt: string;
+  w1IdleSeconds: number;
+  w1ElapsedSeconds: number;
+  w1ActiveApiCalls: number;
+  w1CancelRequested: boolean;
+  w1ConnectionWarning: string | null;
   w1Paused: boolean;
   w1BreakpointChunk: number | null;
   w1PromptProfile: W1PromptProfile;
@@ -1517,6 +1528,13 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   w1SessionId: null,
   w1ImportMode: 'import_all',
   w1ConsoleLog: [],
+  w1ActivityLog: [],
+  w1LastActivityAt: '',
+  w1IdleSeconds: 0,
+  w1ElapsedSeconds: 0,
+  w1ActiveApiCalls: 0,
+  w1CancelRequested: false,
+  w1ConnectionWarning: null,
   w1Paused: false,
   w1BreakpointChunk: null,
   w1PromptProfile: 'balanced',
@@ -1568,7 +1586,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     if (!projectRoot || !w1SessionId) return;
     const result = await electronApi.w1Rewind(projectRoot, w1SessionId, toChunkId);
     if (result.ok && result.new_session_id) {
-      set({ w1SessionId: result.new_session_id, w1Status: 'running', w1Paused: false, w1BreakpointChunk: null, w1ConsoleLog: [] });
+      set({ w1SessionId: result.new_session_id, w1Status: 'running', w1Paused: false, w1BreakpointChunk: null, w1ConsoleLog: [], w1ActivityLog: [], w1ConnectionWarning: null });
     }
   },
   startImport: async (payload) => {
@@ -1585,7 +1603,24 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const modelProfiles = appSettings?.modelProfiles ?? [];
     const providerProfile = profiles.find((p: { id: string }) => p.id === appSettings?.selectedProviderProfileId) ?? profiles[0] as { apiKey?: string; endpoint?: string } | undefined;
     const modelProfile = modelProfiles.find((m: { id: string }) => m.id === appSettings?.selectedModelProfileId) ?? modelProfiles[0] as { model?: string } | undefined;
-    set({ w1Status: 'running', w1Progress: 0, w1Errors: [], w1SessionId: null, w1CurrentStep: '', w1ProposalCount: 0, w1ImportReviewReport: null, w1RuntimeStatus: null });
+    set({
+      w1Status: 'running',
+      w1Progress: 0,
+      w1Errors: [],
+      w1SessionId: null,
+      w1CurrentStep: '',
+      w1ProposalCount: 0,
+      w1ImportReviewReport: null,
+      w1RuntimeStatus: null,
+      w1ConsoleLog: [],
+      w1ActivityLog: [],
+      w1LastActivityAt: '',
+      w1IdleSeconds: 0,
+      w1ElapsedSeconds: 0,
+      w1ActiveApiCalls: 0,
+      w1CancelRequested: false,
+      w1ConnectionWarning: null,
+    });
     // Ensure sidecar is alive before calling start
     try { await electronApi.sidecarSpawn(effectiveRoot); } catch { /* best effort */ }
     let sessionId: string | null = null;
@@ -1633,14 +1668,17 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       set({ w1Status: 'error', w1Errors: [String(e)] });
       return;
     }
-    // Poll sidecar for progress — up to 3 hours (3600 × 3s) for large novels
+    // Poll sidecar for progress — hard stop after 30 minutes to avoid silent spend.
     let consoleLogOffset = 0;
-    for (let i = 0; i < 3600; i++) {
+    let activityLogOffset = 0;
+    let consecutivePollFailures = 0;
+    for (let i = 0; i < 600; i++) {
       await new Promise(r => setTimeout(r, 3000));
       const { w1Status: cur } = get();
       if (cur === 'cancelled') return;
       try {
         const s = await electronApi.w1Status(effectiveRoot, sessionId ?? undefined);
+        consecutivePollFailures = 0;
         set({
           w1Progress: s.progress ?? 0,
           w1CompletedChunks: s.completed_chunks ?? 0,
@@ -1650,6 +1688,12 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           w1PromptProfile: s.prompt_profile ?? w1PromptProfile,
           w1ProposalCount: s.proposals_count ?? 0,
           w1ImportReviewReport: s.import_review_report ?? null,
+          w1LastActivityAt: s.last_activity_at ?? '',
+          w1IdleSeconds: s.idle_seconds ?? 0,
+          w1ElapsedSeconds: s.elapsed_seconds ?? 0,
+          w1ActiveApiCalls: s.active_api_calls ?? 0,
+          w1CancelRequested: Boolean(s.cancel_requested),
+          w1ConnectionWarning: null,
           w1RuntimeStatus: {
             current_tool: s.current_tool,
             current_window: s.current_window,
@@ -1659,21 +1703,33 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
             rerun_reason: s.rerun_reason,
             converge_status: s.converge_status,
             judge_artifact_summary: s.judge_artifact_summary,
+            last_activity_message: s.last_activity_message,
+            active_api_calls: s.active_api_calls,
+            elapsed_seconds: s.elapsed_seconds,
+            idle_seconds: s.idle_seconds,
           },
         });
         // Also poll console log for real-time chunk detail
         try {
-          const console = await electronApi.w1Console(effectiveRoot, sessionId ?? '', consoleLogOffset);
-          if (console.entries.length > 0) {
-            consoleLogOffset += console.entries.length;
-            set((state) => ({ w1ConsoleLog: [...state.w1ConsoleLog, ...console.entries] }));
+          const console = await electronApi.w1Console(effectiveRoot, sessionId ?? '', consoleLogOffset, activityLogOffset);
+          const chunkEntries = console.entries ?? [];
+          const activityEntries = console.activity_entries ?? [];
+          if (chunkEntries.length > 0) {
+            consoleLogOffset += chunkEntries.length;
+            set((state) => ({ w1ConsoleLog: [...state.w1ConsoleLog, ...chunkEntries] }));
+          }
+          if (activityEntries.length > 0) {
+            activityLogOffset += activityEntries.length;
+            set((state) => ({ w1ActivityLog: [...state.w1ActivityLog, ...activityEntries] }));
           }
           set({ w1Paused: console.paused, w1BreakpointChunk: console.breakpoint_chunk });
           if (console.paused) {
             set({ w1Status: 'paused' });
             // Keep polling while paused so resume is reflected promptly
           }
-        } catch { /* console endpoint optional */ }
+        } catch (consoleError) {
+          set({ w1ConnectionWarning: `Console activity feed unavailable: ${String(consoleError)}` });
+        }
         if (s.status === 'done') {
           set({ w1Status: 'done' });
           // Reload project from disk to surface newly-written proposals in system/inbox.json
@@ -1690,9 +1746,17 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         }
         if (s.status === 'error') { set({ w1Status: 'error' }); return; }
         if (s.status === 'cancelled') { set({ w1Status: 'cancelled' }); return; }
-      } catch { /* sidecar temporarily unreachable — keep polling */ }
+      } catch (statusError) {
+        consecutivePollFailures += 1;
+        if (consecutivePollFailures >= 3) {
+          set({ w1ConnectionWarning: `Sidecar status polling failed ${consecutivePollFailures} times: ${String(statusError)}` });
+        }
+      }
     }
-    set({ w1Status: 'error', w1Errors: ['Import timed out after 3 hours'] });
+    try {
+      if (sessionId) await electronApi.w1Cancel({ session_id: sessionId });
+    } catch { /* best effort */ }
+    set({ w1Status: 'error', w1Errors: ['Import timed out after 30 minutes and was cancelled to prevent silent spend.'] });
   },
   cancelImport: async () => {
     const { w1SessionId } = get();
@@ -1701,7 +1765,28 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       try { await electronApi.w1Cancel({ session_id: w1SessionId }); } catch { /* already cancelled */ }
     }
   },
-  resetImport: () => set({ w1Status: 'idle', w1Progress: 0, w1CompletedChunks: 0, w1TotalChunks: 0, w1Errors: [], w1CurrentStep: '', w1SessionId: null, w1ConsoleLog: [], w1Paused: false, w1BreakpointChunk: null, w1ProposalCount: 0, w1ImportReviewReport: null, w1RuntimeStatus: null }),
+  resetImport: () => set({
+    w1Status: 'idle',
+    w1Progress: 0,
+    w1CompletedChunks: 0,
+    w1TotalChunks: 0,
+    w1Errors: [],
+    w1CurrentStep: '',
+    w1SessionId: null,
+    w1ConsoleLog: [],
+    w1ActivityLog: [],
+    w1LastActivityAt: '',
+    w1IdleSeconds: 0,
+    w1ElapsedSeconds: 0,
+    w1ActiveApiCalls: 0,
+    w1CancelRequested: false,
+    w1ConnectionWarning: null,
+    w1Paused: false,
+    w1BreakpointChunk: null,
+    w1ProposalCount: 0,
+    w1ImportReviewReport: null,
+    w1RuntimeStatus: null,
+  }),
 
   // ── W2 Manuscript Sync ────────────────────────────────────────────────────
   w2Status: 'idle',

@@ -2,7 +2,7 @@ import React, { useRef, useEffect, useState } from 'react';
 import { ChevronDown, ChevronUp, Pause, Play, RotateCcw } from 'lucide-react';
 import { useProjectStore } from '../store';
 import { useI18n } from '../i18n';
-import type { ChunkLogEntry } from '../services/electronApi';
+import type { ChunkLogEntry, W1ActivityEntry } from '../services/electronApi';
 
 interface ImportConsoleProps {
   visible: boolean;
@@ -11,6 +11,8 @@ interface ImportConsoleProps {
 export const ImportConsole: React.FC<ImportConsoleProps> = ({ visible }) => {
   const { t } = useI18n();
   const w1ConsoleLog = useProjectStore((s) => s.w1ConsoleLog);
+  const w1ActivityLog = useProjectStore((s) => s.w1ActivityLog);
+  const w1RuntimeStatus = useProjectStore((s) => s.w1RuntimeStatus);
   const w1Paused = useProjectStore((s) => s.w1Paused);
   const w1BreakpointChunk = useProjectStore((s) => s.w1BreakpointChunk);
   const w1TotalChunks = useProjectStore((s) => s.w1TotalChunks);
@@ -27,7 +29,7 @@ export const ImportConsole: React.FC<ImportConsoleProps> = ({ visible }) => {
     if (visible && logEndRef.current) {
       logEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [w1ConsoleLog.length, visible]);
+  }, [w1ConsoleLog.length, w1ActivityLog.length, visible]);
 
   const handleSetBreakpoint = () => {
     const val = parseInt(breakpointInput, 10);
@@ -53,6 +55,8 @@ export const ImportConsole: React.FC<ImportConsoleProps> = ({ visible }) => {
   if (!visible) return null;
 
   const reversedLog = [...w1ConsoleLog].reverse();
+  const reversedActivity = [...w1ActivityLog].reverse();
+  const currentHint = w1RuntimeStatus?.last_activity_message || w1RuntimeStatus?.current_tool || '';
 
   return (
     <div className="border-t border-border bg-bg-elev-2" data-testid="import-console">
@@ -117,11 +121,40 @@ export const ImportConsole: React.FC<ImportConsoleProps> = ({ visible }) => {
 
       {/* Log entries */}
       <div className="h-48 overflow-y-auto custom-scrollbar" data-testid="console-log-list">
-        {reversedLog.length === 0 && (
+        {reversedActivity.length === 0 && reversedLog.length === 0 && (
           <div className="px-4 py-6 text-center text-xs text-text-3">
-            {t('console.waiting', 'Waiting for chunks…')}
+            {currentHint
+              ? t('console.waitingActivity', 'No chunk outputs yet; AI is currently processing.')
+              : t('console.waitingStart', 'Starting import… waiting for first activity event.')}
           </div>
         )}
+        {reversedActivity.map((entry: W1ActivityEntry) => {
+          const tone = entry.level === 'error' || entry.status === 'fail'
+            ? 'text-red'
+            : entry.level === 'warning' || entry.status === 'cancelled'
+              ? 'text-amber'
+              : 'text-text-2';
+          return (
+            <div
+              key={`activity-${entry.id}-${entry.timestamp}`}
+              className="border-b border-border/50 px-3 py-2"
+              data-testid={`console-activity-${entry.id}`}
+            >
+              <div className="flex flex-wrap items-center gap-2 text-[10px]">
+                <span className="font-black uppercase tracking-widest text-text-3">{entry.phase || entry.tool || 'activity'}</span>
+                {entry.window_id && <span className="text-text-3">{entry.window_id}</span>}
+                {entry.prompt_label && <span className="rounded bg-bg px-1.5 py-0.5 text-text-2">{entry.prompt_label}</span>}
+                {typeof entry.active_api_calls === 'number' && (
+                  <span className="ml-auto text-text-3">{entry.active_api_calls} active API</span>
+                )}
+              </div>
+              <div className={`mt-1 text-xs ${tone}`}>
+                {entry.message || entry.status}
+              </div>
+              {entry.error && <div className="mt-1 text-[10px] text-red">{entry.error}</div>}
+            </div>
+          );
+        })}
         {reversedLog.map((entry: ChunkLogEntry) => {
           const isExpanded = expandedChunks.has(entry.chunk_id);
           const hasErrors = entry.errors.length > 0;

@@ -279,14 +279,36 @@ GET /workflow/w1/supervisor_status?session_id=<id>
 → { supervisor_decisions, gate_failures, window_metrics, supervisor_iteration, current_tool, current_window, chapter_range, orchestrator_phase, judge_score, rerun_reason, converge_status, judge_artifact }
 ```
 
+## Real-Time Activity Feed
+
+Long-running supervisor imports expose an activity feed separate from legacy chunk logs. This prevents the UI from going silent while a prompt window is still running and no chunk-level output has been committed yet.
+
+```
+GET /workflow/w1/status?session_id=<id>
+→ { ..., last_activity_at, last_activity_message, active_api_calls, elapsed_seconds, idle_seconds, cancel_requested }
+
+GET /workflow/w1/console?session_id=<id>&after=<chunk_offset>&activity_after=<activity_offset>
+→ { entries, activity_entries, paused, breakpoint_chunk }
+```
+
+Activity events are recorded by `sidecar/workflows/w1_run_events.py` and include `phase`, `tool`, `window_id`, `chapter_range`, `prompt_label`, `status`, `message`, elapsed/duration fields, and `active_api_calls`. The supervisor emits events for validation, chunk splitting, planning, segmentation, extraction batches, each window, each extraction prompt, cross-validation, reruns, reduce/repair/timeline/QA/judge, proposal write, cancellation, and budget exhaustion. Event payloads redact secret-like keys and strings before storage.
+
+Frontend W1 import status uses this feed as the primary "what is the AI doing now?" surface. `ImportWorkflow` shows a Current AI Activity card while running/paused, including phase/tool/window/prompt, active API calls, elapsed time, idle seconds, and connection warnings. `ImportConsole` defaults to the activity feed and keeps chunk logs as the detailed output layer.
+
 ---
 
 ## Cost Protection
 
+### Cancellation and Silent-Idle Stop-Loss
+
+`/workflow/w1/start` stores the background task by session id. `/workflow/w1/cancel` now marks the activity feed as cancel-requested, sets the workflow cancel event, cancels the background task, and emits a `cancelled` activity event. Supervisor loops check cancellation before starting new window/rerun work, so cancellation prevents additional API calls rather than only changing the UI state.
+
+The frontend no longer waits for a three-hour silent timeout. It shows an amber idle warning after `idle_seconds >= 90` and hard-cancels a running import after 30 minutes of polling to prevent silent spend. Status/console polling failures are surfaced as connection warnings after repeated failures rather than being swallowed.
+
 ### API 402 Hard Stop
 
 `_is_budget_exhausted_error(exc)` in `tools.py` detects HTTP 402 / "insufficient balance" from any OpenAI-compatible provider (DeepSeek, OpenAI). When detected:
-1. `extract_window` sets `budget_exhausted=True` and writes a clear error to `errors[]`.
+1. `extract_window` sets `budget_exhausted=True`, emits prompt-level `fail` activity with `Budget exhausted...`, and writes a clear error to `errors[]`.
 2. `_process_window` exits immediately — no cross-validation, no per-window reruns.
 3. `run_supervisor_policy`/`_policy_with_progress` breaks out of the extraction batch loop.
 4. `_apply_thematic_reruns` returns immediately without firing any rerun.

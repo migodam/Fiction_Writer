@@ -1305,6 +1305,62 @@ class TestExtractWindowBudgetExhausted(unittest.TestCase):
                         f"Expected budget_exhausted error message, got: {errors}")
 
 
+class TestExtractWindowActivityEvents(unittest.TestCase):
+    @patch("sidecar.supervisor.tools._get_llm")
+    @patch("sidecar.supervisor.tools._invoke_json_prompt")
+    def test_extract_window_emits_prompt_activity_events(self, mock_invoke, mock_llm):
+        from sidecar.workflows import w1_run_events
+
+        session_id = "test_extract_activity"
+        w1_run_events.clear_session(session_id)
+        mock_llm.return_value = MagicMock()
+        mock_invoke.side_effect = [
+            {"new_characters": [{"canonical_name": "Hero", "confidence": 0.9, "importance": "core", "aliases": []}]},
+            {"events": []},
+            {"world_mentions": []},
+            {"relationships": []},
+            {"scene_summaries": []},
+        ]
+        state = _make_state(
+            session_id=session_id,
+            context={"session_id": session_id},
+            prompt_windows=[_make_window("win_activity", [0])],
+        )
+
+        asyncio.run(extract_window(state, "win_activity"))
+        activity = w1_run_events.list_events(session_id)
+        labels = [entry.get("prompt_label") for entry in activity]
+
+        self.assertIn("character", labels)
+        self.assertIn("event", labels)
+        self.assertTrue(any(entry.get("status") == "start" for entry in activity))
+        self.assertTrue(any(entry.get("status") == "success" for entry in activity))
+        w1_run_events.clear_session(session_id)
+
+    @patch("sidecar.supervisor.tools._get_llm")
+    @patch("sidecar.supervisor.tools._invoke_json_prompt")
+    def test_extract_window_402_emits_budget_exhausted_activity(self, mock_invoke, mock_llm):
+        from sidecar.workflows import w1_run_events
+
+        session_id = "test_extract_402_activity"
+        w1_run_events.clear_session(session_id)
+        mock_llm.return_value = MagicMock()
+        mock_invoke.side_effect = RuntimeError("Error code: 402 - Insufficient Balance")
+        state = _make_state(
+            session_id=session_id,
+            context={"session_id": session_id},
+            prompt_windows=[_make_window("win_402_activity", [0])],
+        )
+
+        result = asyncio.run(extract_window(state, "win_402_activity"))
+        activity = w1_run_events.list_events(session_id)
+
+        self.assertTrue(result.get("budget_exhausted"))
+        self.assertTrue(any("Budget exhausted" in entry.get("message", "") for entry in activity))
+        self.assertTrue(any(entry.get("status") == "fail" for entry in activity))
+        w1_run_events.clear_session(session_id)
+
+
 # ── Cost guard: judge_import result_status ────────────────────────────────────
 
 class TestJudgeImportResultStatus(unittest.TestCase):

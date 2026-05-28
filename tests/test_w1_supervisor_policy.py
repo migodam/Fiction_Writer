@@ -1205,5 +1205,52 @@ class TestAcceptableWithWarningsVerdict(unittest.TestCase):
         tools["proposal_write"].assert_called_once()
 
 
+class TestSupervisorActivityAndCancel(unittest.TestCase):
+    """Activity feed must make long-running supervisor work observable and cancellable."""
+
+    def test_process_window_cancel_before_extract_skips_tool_calls(self):
+        from sidecar.supervisor.policy import _process_window
+        from sidecar.workflows import w1_run_events
+
+        session_id = "policy_cancel_before_window"
+        w1_run_events.clear_session(session_id)
+        w1_run_events.mark_cancel_requested(session_id)
+        windows = [_make_window("pwin_cancel", [0])]
+        state = _make_state(windows=windows)
+        state["session_id"] = session_id
+        state["context"] = {"session_id": session_id}
+        tools = _make_tools()
+
+        result = asyncio.run(_process_window(state, tools, "pwin_cancel", PROFILE_CONFIGS["balanced"]))
+
+        self.assertEqual(result.get("status"), "cancelled")
+        tools["extract_window"].assert_not_called()
+        self.assertTrue(
+            any(event.get("status") == "cancelled" for event in w1_run_events.list_events(session_id)),
+            "cancelled activity event should be emitted before skipping work",
+        )
+        w1_run_events.clear_session(session_id)
+
+    def test_process_window_emits_window_activity_events(self):
+        from sidecar.supervisor.policy import _process_window
+        from sidecar.workflows import w1_run_events
+
+        session_id = "policy_window_activity"
+        w1_run_events.clear_session(session_id)
+        windows = [_make_window("pwin_activity", [0, 1])]
+        state = _make_state(windows=windows)
+        state["session_id"] = session_id
+        state["context"] = {"session_id": session_id}
+        tools = _make_tools()
+
+        result = asyncio.run(_process_window(state, tools, "pwin_activity", PROFILE_CONFIGS["balanced"]))
+
+        self.assertIn("window_metrics", result)
+        messages = [event.get("message", "") for event in w1_run_events.list_events(session_id)]
+        self.assertTrue(any("Extracting window pwin_activity" in msg for msg in messages))
+        self.assertTrue(any("Finished extracting window pwin_activity" in msg for msg in messages))
+        w1_run_events.clear_session(session_id)
+
+
 if __name__ == "__main__":
     unittest.main()

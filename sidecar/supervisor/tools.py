@@ -11,10 +11,12 @@ graph invocation.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import re
 import unicodedata
 import uuid
+from time import perf_counter
 from typing import Any
 
 from langchain_core.messages import HumanMessage
@@ -70,6 +72,7 @@ from sidecar.workflows.w1_import import (
     node_synthesize_relationships,
     node_write_to_project,
 )
+from sidecar.workflows.w1_run_events import append_event, set_active_call
 from sidecar.prompts.w1_prompts import (
     W1_CROSS_VALIDATE_IMPORT,
     W1_EXTRACT_CHARACTERS_DEEP,
@@ -111,6 +114,72 @@ def _is_budget_exhausted_error(exc: Exception) -> bool:
 # Tokens per chapter for output estimation:
 # 1.5 chars × 120 + 3 events × 80 + 2 world × 50
 _TOKENS_PER_CHAPTER_ESTIMATE = int(1.5 * 120 + 3 * 80 + 2 * 50)
+
+
+def _session_id(state: ImportSupervisorState) -> str:
+    return str(state.get("session_id") or state.get("context", {}).get("session_id") or "")
+
+
+async def _invoke_window_prompt_with_activity(
+    state: ImportSupervisorState,
+    window_id: str,
+    chapter_range: str,
+    label: str,
+    llm: Any,
+    prompt_template: str,
+    **kwargs: Any,
+) -> dict:
+    session_id = _session_id(state)
+    started = perf_counter()
+    if session_id:
+        append_event(session_id, {
+            "phase": "extracting",
+            "tool": "extract_window",
+            "window_id": window_id,
+            "chapter_range": chapter_range,
+            "prompt_label": label,
+            "status": "start",
+            "message": f"Running {label} prompt for {window_id}.",
+        })
+        set_active_call(session_id, 1)
+    try:
+        maybe_result = _invoke_json_prompt(llm, prompt_template, **kwargs)
+        result = await maybe_result if inspect.isawaitable(maybe_result) else maybe_result
+        if session_id:
+            append_event(session_id, {
+                "phase": "extracting",
+                "tool": "extract_window",
+                "window_id": window_id,
+                "chapter_range": chapter_range,
+                "prompt_label": label,
+                "status": "success",
+                "message": f"Finished {label} prompt for {window_id}.",
+                "duration_ms": int((perf_counter() - started) * 1000),
+            })
+        return result
+    except Exception as exc:
+        if session_id:
+            is_budget = _is_budget_exhausted_error(exc)
+            append_event(session_id, {
+                "phase": "extracting",
+                "tool": "extract_window",
+                "window_id": window_id,
+                "chapter_range": chapter_range,
+                "prompt_label": label,
+                "status": "fail",
+                "level": "error",
+                "message": (
+                    f"Budget exhausted while running {label} prompt for {window_id}."
+                    if is_budget
+                    else f"Failed {label} prompt for {window_id}."
+                ),
+                "duration_ms": int((perf_counter() - started) * 1000),
+                "error": str(exc),
+            })
+        raise
+    finally:
+        if session_id:
+            set_active_call(session_id, -1)
 
 
 # ── Output budget pre-flight ────────────────────────────────────────────────────
@@ -440,32 +509,32 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
     _prompts = _select_extraction_prompts(state)
     _prompt_manifest = _selected_extraction_prompt_manifest(state)
     results = await asyncio.gather(
-        _invoke_json_prompt(
-            llm, _prompts["character"],
+        _invoke_window_prompt_with_activity(
+            state, window_id, chapter_range, "character", llm, _prompts["character"],
             chunk_content=prompt_text, chunk_id=chunk_id,
             total_chunks=total, entity_registry_summary=registry_summary,
             source_language_label=_src_lang_label, language_policy=_lang_policy,
         ),
-        _invoke_json_prompt(
-            llm, _prompts["event"],
+        _invoke_window_prompt_with_activity(
+            state, window_id, chapter_range, "event", llm, _prompts["event"],
             chunk_content=prompt_text, chunk_id=chunk_id,
             total_chunks=total, entity_registry_summary=registry_summary,
             source_language_label=_src_lang_label, language_policy=_lang_policy,
         ),
-        _invoke_json_prompt(
-            llm, _prompts["world"],
+        _invoke_window_prompt_with_activity(
+            state, window_id, chapter_range, "world", llm, _prompts["world"],
             chunk_content=prompt_text, chunk_id=chunk_id,
             total_chunks=total, entity_registry_summary=registry_summary,
             source_language_label=_src_lang_label, language_policy=_lang_policy,
         ),
-        _invoke_json_prompt(
-            llm, _prompts["relationship"],
+        _invoke_window_prompt_with_activity(
+            state, window_id, chapter_range, "relationship", llm, _prompts["relationship"],
             chunk_content=prompt_text, chunk_id=chunk_id,
             total_chunks=total, entity_registry_summary=registry_summary,
             source_language_label=_src_lang_label, language_policy=_lang_policy,
         ),
-        _invoke_json_prompt(
-            llm, W1_EXTRACT_SCENE_SUMMARIES,
+        _invoke_window_prompt_with_activity(
+            state, window_id, chapter_range, "scene", llm, W1_EXTRACT_SCENE_SUMMARIES,
             chunk_content=prompt_text, chunk_id=chunk_id,
             total_chunks=total, entity_registry_summary=registry_summary,
             chapter_hint=chapter_range,

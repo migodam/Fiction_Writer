@@ -544,12 +544,12 @@ ipcMain.handle('w1:status', async (_event, { projectRoot, session_id }) => {
   }
 });
 
-ipcMain.handle('w1:console', async (_event, { projectRoot, session_id, after = 0 }) => {
+ipcMain.handle('w1:console', async (_event, { projectRoot, session_id, after = 0, activity_after = 0 }) => {
   try {
-    const qs = `?session_id=${session_id}&after=${after}`;
+    const qs = `?session_id=${session_id}&after=${after}&activity_after=${activity_after}`;
     return await proxyToSidecar(projectRoot, `/workflow/w1/console${qs}`, 'GET');
   } catch {
-    return { entries: [], paused: false, breakpoint_chunk: null };
+    return { entries: [], activity_entries: [], paused: false, breakpoint_chunk: null };
   }
 });
 

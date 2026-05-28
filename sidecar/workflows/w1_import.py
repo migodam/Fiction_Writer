@@ -5130,6 +5130,15 @@ async def run_streaming(project_path: str, config: dict):
     The caller can use these to update a status endpoint in real time.
     """
     prompt_profile = config.get("prompt_profile") or config.get("context", {}).get("prompt_profile", "balanced")
+    session_id = str(config.get("session_id", "") or config.get("context", {}).get("session_id", "") or "")
+    if session_id:
+        from sidecar.workflows.w1_run_events import append_event
+        append_event(session_id, {
+            "phase": "start",
+            "tool": "run_streaming",
+            "status": "start",
+            "message": f"W1 streaming runner started with profile={prompt_profile}.",
+        })
     supervisor_configured = config.get("use_supervisor")
     context_supervisor_configured = config.get("context", {}).get("use_supervisor")
     supervisor_defaulted = (
@@ -5150,7 +5159,8 @@ async def run_streaming(project_path: str, config: dict):
         "source_file_path": config.get("source_file_path", ""),
         "import_mode": import_mode,
         "prompt_profile": prompt_profile,
-        "context": config.get("context", {}),
+        "context": {**config.get("context", {}), "session_id": session_id},
+        "session_id": session_id,
         "chunks": [],
         "import_run_manifest": {},
         "evidence_cards": [],
@@ -5203,6 +5213,18 @@ async def run_streaming(project_path: str, config: dict):
 
             progress = node_output.get("progress", 0.0)
             errors = node_output.get("errors", [])
+            if session_id:
+                from sidecar.workflows.w1_run_events import append_event
+                append_event(session_id, {
+                    "phase": node_name,
+                    "tool": node_name,
+                    "status": "fail" if errors else "success",
+                    "level": "error" if errors else "info",
+                    "message": f"Completed W1 node {node_name}.",
+                    "completed": completed_chunks,
+                    "total": total_chunks,
+                    "error": "; ".join(str(e) for e in errors[:3]) if isinstance(errors, list) and errors else "",
+                })
 
             yield {
                 "progress": progress,

@@ -22,6 +22,7 @@ _sessions: dict[str, dict] = {}
 
 # Per-workflow session stores for W1/W2/W4/W5/W6
 _w1_sessions: dict[str, dict] = {}
+_w1_tasks: dict[str, asyncio.Task] = {}
 _w2_sessions: dict[str, dict] = {}
 _w4_sessions: dict[str, dict] = {}
 _w5_sessions: dict[str, dict] = {}
@@ -231,10 +232,17 @@ class W1StatusResponse(BaseModel):
     rerun_reason: str = ""
     converge_status: str = ""
     judge_artifact_summary: dict = {}
+    last_activity_at: str = ""
+    last_activity_message: str = ""
+    active_api_calls: int = 0
+    elapsed_seconds: int = 0
+    idle_seconds: int = 0
+    cancel_requested: bool = False
 
 
 class W1ConsoleResponse(BaseModel):
     entries: List[Any] = []
+    activity_entries: List[Any] = []
     paused: bool = False
     breakpoint_chunk: Optional[int] = None
 
@@ -280,6 +288,7 @@ class W2StatusResult(BaseModel):
 
 async def _run_w1(session_id: str, config: dict) -> None:
     from sidecar.workflows.w1_import import run_streaming, _chunk_progress, _chunk_log
+    from sidecar.workflows.w1_run_events import append_event, session_status, set_active_call
     project_path = config["project_path"]
 
     # Poll _chunk_progress and _chunk_log every second so that mid-node chunk
@@ -313,8 +322,19 @@ async def _run_w1(session_id: str, config: dict) -> None:
     poll_task = asyncio.create_task(_poll_chunk_progress())
 
     try:
+        append_event(session_id, {
+            "phase": "start",
+            "tool": "start_import",
+            "status": "start",
+            "message": (
+                f"Starting W1 import: profile={config.get('prompt_profile', 'balanced')}, "
+                f"mode={config.get('import_mode', 'import_all')}, "
+                f"model={config.get('context', {}).get('model', '')}"
+            ),
+        })
         async for state_update in run_streaming(project_path, config):
             current = _w1_sessions.get(session_id, {})
+            activity = session_status(session_id)
             _w1_sessions[session_id] = {
                 **current,
                 "status": "running",
@@ -336,24 +356,63 @@ async def _run_w1(session_id: str, config: dict) -> None:
                 "judge_artifact_summary": state_update.get("judge_artifact_summary")
                 or state_update.get("judge_artifact")
                 or current.get("judge_artifact_summary", {}),
+                **activity,
             }
         # Final state from the last update
         final = _w1_sessions.get(session_id, {})
         final["status"] = "done"
         final["progress"] = 1.0
+        final.update(session_status(session_id))
+        append_event(session_id, {
+            "phase": "done",
+            "tool": "workflow",
+            "status": "success",
+            "message": "W1 import completed.",
+        })
         _w1_sessions[session_id] = final
+    except asyncio.CancelledError:
+        append_event(session_id, {
+            "phase": "cancelled",
+            "tool": "workflow",
+            "status": "cancelled",
+            "level": "warning",
+            "message": "W1 import cancelled; no new API calls will be started.",
+        })
+        current = _w1_sessions.get(session_id, {})
+        _w1_sessions[session_id] = {
+            **current,
+            "status": "cancelled",
+            "progress": current.get("progress", 0.0),
+            **session_status(session_id),
+        }
+        raise
     except Exception as e:
+        append_event(session_id, {
+            "phase": "error",
+            "tool": "workflow",
+            "status": "fail",
+            "level": "error",
+            "message": "W1 import failed.",
+            "error": str(e),
+        })
         _w1_sessions[session_id] = {
             "status": "error", "progress": 0.0, "errors": [str(e)],
             "completed_chunks": 0, "total_chunks": 0,
             "chunk_log": _chunk_log.get(project_path, []),
             "paused": False, "breakpoint_chunk": None,
+            **session_status(session_id),
         }
     finally:
         ctrl["active"] = False
+        set_active_call(session_id, -9999)
         poll_task.cancel()
+        _w1_tasks.pop(session_id, None)
         _chunk_progress.pop(project_path, None)
         _chunk_log.pop(project_path, None)
+        try:
+            await release_lock(project_path)
+        except Exception:
+            pass
 
 
 # ── W2 background task ────────────────────────────────────────────────────────
@@ -379,7 +438,10 @@ async def _run_w2(session_id: str, config: dict) -> None:
 @router.post("/workflow/w1/start", response_model=W1StartResponse)
 async def w1_start(body: W1StartRequest) -> W1StartResponse:
     """Start a W1 Import workflow run."""
+    from sidecar.workflows.w1_run_events import append_event, ensure_session, session_status
+
     session_id = str(uuid.uuid4())
+    ensure_session(session_id)
     custom_profile_config = body.custom_profile_config or {}
     orchestrator_overrides = body.orchestrator_overrides or {}
     effective_use_orchestrator = (
@@ -441,16 +503,45 @@ async def w1_start(body: W1StartRequest) -> W1StartResponse:
         "breakpoint_chunk": None,
         "project_path": body.project_path,
         "config": config,
+        **session_status(session_id),
     }
-    asyncio.create_task(_run_w1(session_id, config))
+    append_event(session_id, {
+        "phase": "queued",
+        "tool": "start_import",
+        "status": "start",
+        "message": (
+            f"Queued W1 import: profile={body.prompt_profile}, mode={body.import_mode}, "
+            f"model={body.model}, supervisor={effective_use_supervisor}"
+        ),
+    })
+    _w1_tasks[session_id] = asyncio.create_task(_run_w1(session_id, config))
     return W1StartResponse(session_id=session_id, status="started")
 
 
 @router.post("/workflow/w1/cancel", response_model=W1CancelResponse)
 async def w1_cancel(body: W1CancelRequest) -> W1CancelResponse:
-    """Cancel a running W1 Import session (best-effort — marks session as cancelled)."""
+    """Cancel a running W1 Import session and stop scheduling new work."""
+    from sidecar.workflows.w1_import import _cancel_events, _pause_events
+    from sidecar.workflows.w1_run_events import append_event, mark_cancel_requested
+
     session = _w1_sessions.get(body.session_id, {})
     if session:
+        mark_cancel_requested(body.session_id)
+        project_path = session.get("project_path", "")
+        if project_path in _cancel_events:
+            _cancel_events[project_path].set()
+        if project_path in _pause_events:
+            _pause_events[project_path].set()
+        task = _w1_tasks.get(body.session_id)
+        if task and not task.done():
+            task.cancel()
+        append_event(body.session_id, {
+            "phase": "cancel",
+            "tool": "cancel",
+            "status": "cancelled",
+            "level": "warning",
+            "message": "Cancel requested by user.",
+        })
         _w1_sessions[body.session_id] = {**session, "status": "cancelled"}
     return W1CancelResponse(status="cancelled")
 
@@ -476,12 +567,15 @@ async def w1_supervisor_status(session_id: str = "") -> dict:
 
 
 @router.get("/workflow/w1/console", response_model=W1ConsoleResponse)
-async def w1_console(session_id: str = "", after: int = 0) -> W1ConsoleResponse:
+async def w1_console(session_id: str = "", after: int = 0, activity_after: int = 0) -> W1ConsoleResponse:
     """Return new chunk log entries since index `after`."""
+    from sidecar.workflows.w1_run_events import list_events
+
     session = _w1_sessions.get(session_id, {})
     all_entries = session.get("chunk_log", [])
     return W1ConsoleResponse(
         entries=all_entries[after:],
+        activity_entries=list_events(session_id, activity_after),
         paused=session.get("paused", False),
         breakpoint_chunk=session.get("breakpoint_chunk"),
     )
@@ -583,7 +677,10 @@ async def w1_rewind(body: W1RewindRequest) -> dict:
 @router.get("/workflow/w1/status", response_model=W1StatusResponse)
 async def w1_status(session_id: str = "") -> W1StatusResponse:
     """Return current W1 Import workflow status."""
+    from sidecar.workflows.w1_run_events import session_status
+
     session = _w1_sessions.get(session_id, {})
+    activity = session_status(session_id)
     return W1StatusResponse(
         status=session.get("status", "idle"),
         progress=session.get("progress", 0.0),
@@ -602,6 +699,12 @@ async def w1_status(session_id: str = "") -> W1StatusResponse:
         rerun_reason=session.get("rerun_reason", ""),
         converge_status=session.get("converge_status", ""),
         judge_artifact_summary=session.get("judge_artifact_summary", session.get("judge_artifact", {})),
+        last_activity_at=activity.get("last_activity_at", ""),
+        last_activity_message=activity.get("last_activity_message", ""),
+        active_api_calls=int(activity.get("active_api_calls", 0) or 0),
+        elapsed_seconds=int(activity.get("elapsed_seconds", 0) or 0),
+        idle_seconds=int(activity.get("idle_seconds", 0) or 0),
+        cancel_requested=bool(activity.get("cancel_requested", False)),
     )
 
 

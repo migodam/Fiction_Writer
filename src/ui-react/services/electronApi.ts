@@ -117,6 +117,12 @@ export interface W1StatusResult {
   rerun_reason?: string;
   converge_status?: string;
   judge_artifact_summary?: W1JudgeArtifactSummary;
+  last_activity_at?: string;
+  last_activity_message?: string;
+  active_api_calls?: number;
+  elapsed_seconds?: number;
+  idle_seconds?: number;
+  cancel_requested?: boolean;
 }
 
 export interface W1ImportReviewReport {
@@ -164,8 +170,28 @@ export interface ChunkLogEntry {
   timestamp: string;
 }
 
+export interface W1ActivityEntry {
+  id: number;
+  timestamp: string;
+  level: 'info' | 'warning' | 'error' | string;
+  phase: string;
+  tool: string;
+  window_id?: string;
+  chapter_range?: string;
+  prompt_label?: string;
+  status: 'start' | 'success' | 'retry' | 'fail' | 'skip' | 'heartbeat' | 'cancelled' | string;
+  message: string;
+  elapsed_ms?: number;
+  duration_ms?: number | null;
+  completed?: number | null;
+  total?: number | null;
+  active_api_calls?: number;
+  error?: string;
+}
+
 export interface W1ConsoleResult {
   entries: ChunkLogEntry[];
+  activity_entries: W1ActivityEntry[];
   paused: boolean;
   breakpoint_chunk: number | null;
 }
@@ -526,10 +552,10 @@ export const electronApi = {
     return (await ipcRenderer.invoke('w1:status', { projectRoot, session_id: sessionId })) as W1StatusResult;
   },
 
-  async w1Console(projectRoot: string, sessionId: string, after = 0): Promise<W1ConsoleResult> {
+  async w1Console(projectRoot: string, sessionId: string, after = 0, activityAfter = 0): Promise<W1ConsoleResult> {
     const ipcRenderer = getIpcRenderer();
-    if (!ipcRenderer) return { entries: [], paused: false, breakpoint_chunk: null };
-    return (await ipcRenderer.invoke('w1:console', { projectRoot, session_id: sessionId, after })) as W1ConsoleResult;
+    if (!ipcRenderer) return { entries: [], activity_entries: [], paused: false, breakpoint_chunk: null };
+    return (await ipcRenderer.invoke('w1:console', { projectRoot, session_id: sessionId, after, activity_after: activityAfter })) as W1ConsoleResult;
   },
 
   async w1SetBreakpoint(projectRoot: string, sessionId: string, chunkId: number | null): Promise<{ ok: boolean }> {

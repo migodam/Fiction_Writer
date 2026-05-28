@@ -32,6 +32,7 @@ from sidecar.workflows.w1_import import (
     node_split_chunks,
     node_validate_file,
 )
+from sidecar.workflows.w1_run_events import append_event, cancel_requested
 
 
 # ── Gate thresholds ─────────────────────────────────────────────────────────────
@@ -55,6 +56,21 @@ _PROGRESS_DONE = 1.0
 
 def _now_iso() -> str:
     return datetime.now(tz=timezone.utc).isoformat()
+
+
+def _session_id(state: ImportSupervisorState) -> str:
+    return str(state.get("session_id") or state.get("context", {}).get("session_id") or "")
+
+
+def _emit_activity(state: ImportSupervisorState, **event: object) -> None:
+    session_id = _session_id(state)
+    if session_id:
+        append_event(session_id, dict(event))
+
+
+def _cancel_requested(state: ImportSupervisorState) -> bool:
+    session_id = _session_id(state)
+    return bool(session_id and cancel_requested(session_id))
 
 
 def _merge_registries(base: dict, update: dict) -> dict:
@@ -365,6 +381,18 @@ async def _process_window(
     tool_operating_spec: ToolOperatingSpec | None = None,
 ) -> ImportSupervisorState:
     """Extract + optionally cross-validate + gate-check one window. Mutates nothing — returns new state."""
+    if _cancel_requested(state):
+        _emit_activity(
+            state,
+            phase="cancelled",
+            tool="extract_window",
+            window_id=window_id,
+            status="cancelled",
+            level="warning",
+            message=f"Skipping {window_id}; import was cancelled.",
+        )
+        return {**state, "status": "cancelled"}
+
     validation = profile_config.get("validation_strictness", "per_window")
     spec = tool_operating_spec or state.get("tool_operating_spec", {})
     max_reruns = int(spec.get("rerun_budget", profile_config.get("max_rerun_iterations", 2)))
@@ -378,8 +406,32 @@ async def _process_window(
     )
 
     # Extract
+    _emit_activity(
+        state,
+        phase="extracting",
+        tool="extract_window",
+        window_id=window_id,
+        chapter_range=_window_chapter_range(state, window_id),
+        status="start",
+        message=f"Extracting window {window_id} ({_window_chapter_range(state, window_id) or 'unknown chapters'}).",
+    )
     update = await tools["extract_window"](state, window_id)
     state = _merge_window_result(state, update)
+    _emit_activity(
+        state,
+        phase="extracting",
+        tool="extract_window",
+        window_id=window_id,
+        chapter_range=_window_chapter_range(state, window_id),
+        status="fail" if update.get("budget_exhausted") or update.get("errors") else "success",
+        level="error" if update.get("budget_exhausted") else "info",
+        message=(
+            f"Budget exhausted while extracting {window_id}."
+            if update.get("budget_exhausted")
+            else f"Finished extracting window {window_id}."
+        ),
+        error="; ".join(str(e) for e in update.get("errors", [])[:3]) if update.get("errors") else "",
+    )
     if update.get("budget_exhausted"):
         state = {**state, "budget_exhausted": True}
     if update.get("errors"):
@@ -397,8 +449,28 @@ async def _process_window(
 
     # Cross-validate
     if validation != "off":
+        if _cancel_requested(state):
+            return {**state, "status": "cancelled"}
+        _emit_activity(
+            state,
+            phase="validating",
+            tool="cross_validate_window",
+            window_id=window_id,
+            chapter_range=_window_chapter_range(state, window_id),
+            status="start",
+            message=f"Cross-validating window {window_id}.",
+        )
         cv_update = await tools["cross_validate_window"](state, window_id)
         state = _merge_window_result(state, cv_update)
+        _emit_activity(
+            state,
+            phase="validating",
+            tool="cross_validate_window",
+            window_id=window_id,
+            chapter_range=_window_chapter_range(state, window_id),
+            status="success",
+            message=f"Finished cross-validation for {window_id}.",
+        )
         state = _record_decision(
             state, "cross_validate_window", "cross_validate_window",
             f"cross-validate {window_id}", {}, {}, "proceed",
@@ -410,6 +482,8 @@ async def _process_window(
     rerun_count = 0
 
     while rerun_count < max_reruns:
+        if _cancel_requested(state):
+            return {**state, "status": "cancelled"}
         gate_passed, reasons = _evaluate_window_gate(metrics, profile_config, spec)
         if gate_passed:
             break
@@ -432,8 +506,26 @@ async def _process_window(
             rerun_reason="; ".join(reasons),
             converge_status="rerunning",
         )
+        _emit_activity(
+            state,
+            phase="rerunning",
+            tool="rerun_window",
+            window_id=window_id,
+            chapter_range=_window_chapter_range(state, window_id),
+            status="start",
+            message=f"Rerunning {window_id}: {'; '.join(reasons)}.",
+        )
         rerun_update = await tools["rerun_window"](state, window_id, strategy, missing_names or None)
         state = _merge_window_result(state, rerun_update)
+        _emit_activity(
+            state,
+            phase="rerunning",
+            tool="rerun_window",
+            window_id=window_id,
+            chapter_range=_window_chapter_range(state, window_id),
+            status="success",
+            message=f"Finished rerun for {window_id} using {strategy}.",
+        )
         # carry through any new prompt_windows added by rerun
         if "prompt_windows" in rerun_update:
             state = {**state, "prompt_windows": rerun_update["prompt_windows"]}
@@ -821,7 +913,8 @@ async def run_supervisor_streaming(
         "import_mode": import_mode,
         "prompt_profile": profile,
         "profile_config": profile_config,
-        "context": config.get("context", {}),
+        "context": {**config.get("context", {}), "session_id": session_id},
+        "session_id": session_id,
         "chunks": [],
         "import_run_id": import_run_id,
         "import_run_manifest": {},
@@ -897,16 +990,29 @@ async def run_supervisor_streaming(
 
     # ── Validate file + split chunks ─────────────────────────────────────────
     try:
+        _emit_activity(state, phase="validate", tool="validate_file", status="start", message="Validating source file and workflow lock.")
         validate_result = await node_validate_file(state)
         state = {**state, **validate_result}
+        _emit_activity(state, phase="validate", tool="validate_file", status="success", message="Source file validated.")
         yield _emit(0.02, "validate_file", state.get("errors", []))
 
+        _emit_activity(state, phase="windowing", tool="split_chunks", status="start", message="Splitting manuscript and building prompt windows.")
         split_result = await node_split_chunks(state)
         state = {**state, **split_result}
         total_chunks = len(state.get("chunks", []))
         _chunk_progress[project_path] = {"completed": 0, "total": total_chunks}
+        _emit_activity(
+            state,
+            phase="windowing",
+            tool="split_chunks",
+            status="success",
+            message=f"Built {len(state.get('prompt_windows', []))} prompt windows from {total_chunks} chunks.",
+            completed=0,
+            total=len(state.get("prompt_windows", [])),
+        )
         yield _emit(0.05, "split_chunks", state.get("errors", []))
     except Exception as exc:
+        _emit_activity(state, phase="error", tool="split_chunks", status="fail", level="error", message="Failed before extraction.", error=str(exc))
         yield _emit(0.0, "error", [str(exc)])
         return
 
@@ -918,14 +1024,25 @@ async def run_supervisor_streaming(
 
     async def _policy_with_progress():
         nonlocal state
+        _emit_activity(state, phase="planning", tool="planner", status="start", message="Preparing orchestrator import plan.")
         state = _ensure_orchestrator_plan(state)
+        _emit_activity(
+            state,
+            phase="planning",
+            tool="planner",
+            status="success" if state.get("import_plan_validation", {}).get("ok", True) else "fail",
+            level="info" if state.get("import_plan_validation", {}).get("ok", True) else "error",
+            message=f"Planner selected {state.get('import_granularity_profile', {}).get('profile_name', 'unknown')} granularity.",
+        )
         profile_config_local = state.get("profile_config") or profile_config
         tool_operating_spec_local = state.get("tool_operating_spec", {})
 
         # segment_manifest
         state = _with_status(state, current_tool="segment_manifest", orchestrator_phase="planning", converge_status="planning")
+        _emit_activity(state, phase="planning", tool="segment_manifest", status="start", message="Writing segment manifest.")
         seg_update = await tools["segment_manifest"](state)
         state = {**state, **seg_update, "current_stage": "segment_manifest"}
+        _emit_activity(state, phase="planning", tool="segment_manifest", status="success", message="Segment manifest ready.")
         _emit(_PROGRESS_SEGMENT_MANIFEST, "segment_manifest")
 
         # Extract windows (batches of 3, progress linearly from 0.10 → 0.65)
@@ -934,9 +1051,18 @@ async def run_supervisor_streaming(
         batch_size = 3
         window_idx = 0
         for batch_start in range(0, len(windows_local), batch_size):
-            if state.get("budget_exhausted"):
+            if state.get("budget_exhausted") or _cancel_requested(state):
                 break
             batch = windows_local[batch_start: batch_start + batch_size]
+            _emit_activity(
+                state,
+                phase="extracting",
+                tool="extract_batch",
+                status="start",
+                message=f"Starting extraction batch {batch_start // batch_size + 1}: {len(batch)} windows.",
+                completed=window_idx,
+                total=total_w,
+            )
             tasks = [_process_window(state, tools, w["id"], profile_config_local, tool_operating_spec_local) for w in batch]
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for result in results:
@@ -953,27 +1079,50 @@ async def run_supervisor_streaming(
                             merged_windows.setdefault(w["id"], w)
                         state = {**state, "prompt_windows": list(merged_windows.values())}
             window_idx += len(batch)
-            if state.get("budget_exhausted"):
+            _emit_activity(
+                state,
+                phase="extracting",
+                tool="extract_batch",
+                status="fail" if state.get("budget_exhausted") else "success",
+                level="error" if state.get("budget_exhausted") else "info",
+                message=(
+                    "Extraction batch stopped because budget was exhausted."
+                    if state.get("budget_exhausted")
+                    else f"Finished extraction batch; {window_idx}/{total_w} windows processed."
+                ),
+                completed=window_idx,
+                total=total_w,
+            )
+            if state.get("budget_exhausted") or _cancel_requested(state):
                 break
             progress = _PROGRESS_EXTRACT_START + (_PROGRESS_EXTRACT_END - _PROGRESS_EXTRACT_START) * (window_idx / total_w)
             _chunk_progress[project_path] = {"completed": window_idx, "total": total_w}
             yield progress, "extract_windows", state.get("errors", [])
 
         state = {**state, "current_stage": "extract_windows"}
+        if _cancel_requested(state):
+            _emit_activity(state, phase="cancelled", tool="workflow", status="cancelled", level="warning", message="Import cancelled after extraction loop.")
+            return
 
         # Reduce + repair
         state = _with_status(state, current_tool="reduce_entities", orchestrator_phase="reducing")
+        _emit_activity(state, phase="reducing", tool="reduce_entities", status="start", message="Reducing extracted entities.")
         reduce_update = await tools["reduce_entities"](state)
         state = {**state, **reduce_update, "current_stage": "reduce_entities"}
+        _emit_activity(state, phase="reducing", tool="reduce_entities", status="success", message="Entity reduction complete.")
         state = _with_status(state, current_tool="minor_repair", orchestrator_phase="repairing")
+        _emit_activity(state, phase="repairing", tool="minor_repair", status="start", message="Running deterministic repair.")
         repair_update = await tools["minor_repair"](state)
         state = {**state, **repair_update, "current_stage": "minor_repair"}
+        _emit_activity(state, phase="repairing", tool="minor_repair", status="success", message="Deterministic repair complete.")
         yield _PROGRESS_REDUCE_REPAIR, "reduce_repair", state.get("errors", [])
 
         # Architect
         state = _with_status(state, current_tool="architect_timeline", orchestrator_phase="architecting")
+        _emit_activity(state, phase="architecting", tool="architect_timeline", status="start", message="Architecting timeline topology.")
         arch_update = await tools["architect_timeline"](state)
         state = {**state, **arch_update, "current_stage": "architect_timeline"}
+        _emit_activity(state, phase="architecting", tool="architect_timeline", status="success", message="Timeline architecture complete.")
         yield _PROGRESS_ARCHITECT, "architect_timeline", state.get("errors", [])
 
         # QA + optional reruns
@@ -981,13 +1130,17 @@ async def run_supervisor_streaming(
         for sup_iter in range(max_sup_iters):
             state = {**state, "supervisor_iteration": sup_iter}
             state = _with_status(state, current_tool="qa_review", orchestrator_phase="reviewing")
+            _emit_activity(state, phase="reviewing", tool="qa_review", status="start", message=f"Running QA review iteration {sup_iter + 1}.")
             qa_update = await tools["qa_review"](state)
             state = {**state, **qa_update, "current_stage": "qa_review"}
+            _emit_activity(state, phase="reviewing", tool="qa_review", status="success", message=f"QA review iteration {sup_iter + 1} complete.")
             gate_failures = list(state.get("gate_failures", []))
             if not gate_failures:
                 break
             failing_ids = list({f["window_id"] for f in gate_failures if "window_id" in f})
             for wid in failing_ids:
+                if _cancel_requested(state):
+                    break
                 state = await _process_window(state, tools, wid, profile_config_local, tool_operating_spec_local)
             reduce_u = await tools["reduce_entities"](state)
             state = {**state, **reduce_u}
@@ -996,15 +1149,19 @@ async def run_supervisor_streaming(
         yield _PROGRESS_QA_REVIEW, "qa_review", state.get("errors", [])
 
         if "judge_import" in tools:
+            _emit_activity(state, phase="judging", tool="judge_import", status="start", message="Judging import quality.")
             state = await _run_judge_import(state, tools)
             _active_tos_local = state.get("tool_operating_spec") or tool_operating_spec_local
             state = await _apply_thematic_reruns(state, tools, profile_config_local, _active_tos_local)
+            _emit_activity(state, phase="judging", tool="judge_import", status="success", message="Import quality judgment complete.")
         yield _PROGRESS_QA_REVIEW, "judge_import", state.get("errors", [])
 
         # Proposal write
         state = _with_status(state, current_tool="proposal_write", orchestrator_phase="writing", converge_status="writing")
+        _emit_activity(state, phase="writing", tool="proposal_write", status="start", message="Writing import proposals and artifacts.")
         proposal_update = await tools["proposal_write"](state)
         state = {**state, **proposal_update, "current_stage": "proposal_write"}
+        _emit_activity(state, phase="writing", tool="proposal_write", status="success", message="Import proposals written.")
         yield _PROGRESS_PROPOSAL, "proposal_write", state.get("errors", [])
 
     async for progress, node, errors in _policy_with_progress():

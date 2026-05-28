@@ -32,6 +32,14 @@ const compactNumber = (value: number | undefined) => {
   return Number.isInteger(value) ? String(value) : value.toFixed(2);
 };
 
+const formatDuration = (seconds: number | undefined) => {
+  const total = Math.max(0, Math.floor(seconds ?? 0));
+  const minutes = Math.floor(total / 60);
+  const remainder = total % 60;
+  if (minutes <= 0) return `${remainder}s`;
+  return `${minutes}m ${remainder}s`;
+};
+
 const REVIEW_STATUS_COLOR: Record<string, string> = {
   pass: 'text-green',
   acceptable_with_warnings: 'text-amber',
@@ -84,6 +92,12 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
   const w1RuntimeStatus = useProjectStore((s) => s.w1RuntimeStatus);
   const w1ProposalCount = useProjectStore((s) => s.w1ProposalCount);
   const w1ImportReviewReport = useProjectStore((s) => s.w1ImportReviewReport);
+  const w1ActivityLog = useProjectStore((s) => s.w1ActivityLog);
+  const w1IdleSeconds = useProjectStore((s) => s.w1IdleSeconds);
+  const w1ElapsedSeconds = useProjectStore((s) => s.w1ElapsedSeconds);
+  const w1ActiveApiCalls = useProjectStore((s) => s.w1ActiveApiCalls);
+  const w1CancelRequested = useProjectStore((s) => s.w1CancelRequested);
+  const w1ConnectionWarning = useProjectStore((s) => s.w1ConnectionWarning);
   const proposals = useProjectStore((s) => s.proposals);
   const resolveProposal = useProjectStore((s) => s.resolveProposal);
   const setW1ImportMode = useProjectStore((s) => s.setW1ImportMode);
@@ -128,6 +142,10 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
     w1RuntimeStatus.rerun_reason ||
     w1RuntimeStatus.converge_status
   ));
+  const latestActivity = w1ActivityLog[w1ActivityLog.length - 1];
+  const activityMessage = latestActivity?.message || w1RuntimeStatus?.last_activity_message || t('import.activityStarting', 'Starting import… waiting for first activity event.');
+  const isActivityIdle = w1IdleSeconds >= 90;
+  const isBudgetExhausted = w1Errors.some((err) => /budget_exhausted|402|insufficient balance/i.test(err)) || w1RuntimeStatus?.converge_status === 'budget_exhausted';
   const acceptSafeAll = useCallback(() => {
     for (const proposalId of safeAcceptIds) {
       resolveProposal(proposalId, 'accepted');
@@ -368,6 +386,57 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
                 <span data-testid="w1-current-step" className="text-xs text-text-3">
                   {t('import.currentStep')}: {w1CurrentStep.replace(/_/g, ' ')}
                 </span>
+              )}
+            </div>
+            <div
+              data-testid="w1-current-activity-card"
+              className={`rounded-xl border p-3 text-xs ${
+                isBudgetExhausted || w1CancelRequested
+                  ? 'border-red/40 bg-red/10'
+                  : isActivityIdle || w1ConnectionWarning
+                    ? 'border-amber/40 bg-amber/10'
+                    : 'border-border bg-bg-elev-1'
+              }`}
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="text-[10px] font-black uppercase tracking-widest text-text-3">
+                    {t('import.currentActivity', 'Current AI Activity')}
+                  </div>
+                  <div data-testid="w1-current-activity-message" className="mt-1 text-sm font-semibold text-text">
+                    {activityMessage}
+                  </div>
+                  {latestActivity?.error && (
+                    <div data-testid="w1-current-activity-error" className="mt-1 text-red">
+                      {latestActivity.error}
+                    </div>
+                  )}
+                  {w1ConnectionWarning && (
+                    <div data-testid="w1-connection-warning" className="mt-1 text-amber">
+                      {w1ConnectionWarning}
+                    </div>
+                  )}
+                  {isActivityIdle && !w1ConnectionWarning && (
+                    <div data-testid="w1-idle-warning" className="mt-1 text-amber">
+                      {t('import.idleWarning', 'No new AI activity for a while. The model may be waiting on network or a long response.')}
+                    </div>
+                  )}
+                </div>
+                <div className="grid min-w-[220px] grid-cols-2 gap-2 text-[10px] text-text-2">
+                  <RuntimeField testId="w1-activity-phase" label={t('import.activityPhase', 'Phase')} value={latestActivity?.phase || w1RuntimeStatus?.orchestrator_phase || w1CurrentStep} />
+                  <RuntimeField testId="w1-activity-tool" label={t('import.currentTool', 'Tool')} value={latestActivity?.tool || w1RuntimeStatus?.current_tool} />
+                  <RuntimeField testId="w1-activity-window" label={t('import.currentWindow', 'Window')} value={latestActivity?.window_id || w1RuntimeStatus?.current_window} />
+                  <RuntimeField testId="w1-activity-prompt" label={t('import.prompt', 'Prompt')} value={latestActivity?.prompt_label} />
+                  <RuntimeField testId="w1-activity-api-calls" label={t('import.activeApiCalls', 'API calls')} value={String(w1ActiveApiCalls)} />
+                  <RuntimeField testId="w1-activity-elapsed" label={t('import.elapsed', 'Elapsed')} value={formatDuration(w1ElapsedSeconds)} />
+                  <RuntimeField testId="w1-activity-idle" label={t('import.idle', 'Idle')} value={formatDuration(w1IdleSeconds)} />
+                  <RuntimeField testId="w1-activity-profile" label={t('import.profile', 'Profile')} value={`${w1PromptProfile} / ${w1ImportMode}`} />
+                </div>
+              </div>
+              {w1CancelRequested && (
+                <div data-testid="w1-cancel-requested" className="mt-2 rounded bg-red/10 px-2 py-1 text-red">
+                  {t('import.cancelRequested', 'Cancel requested. Stopping before new model calls.')}
+                </div>
               )}
             </div>
             {hasRuntimeStatus && w1RuntimeStatus && (
