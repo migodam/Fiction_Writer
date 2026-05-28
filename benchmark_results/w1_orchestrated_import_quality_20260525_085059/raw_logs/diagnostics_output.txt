@@ -1,3 +1,0 @@
-
---- STDERR ---
-w1_import_diagnostics: Required JSON file is missing: /Volumes/migodam's-external-brain/home/narrative_ide/w1_benchmark_orchestrated_20260525_085059/system/inbox.json

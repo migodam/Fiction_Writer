@@ -1,1 +1,0 @@
-Vesper spoke like a man tidying an inconvenience rather than defending a crime scene. Every answer he offered was elegant, plausible, and positioned exactly one step away from the truth.
