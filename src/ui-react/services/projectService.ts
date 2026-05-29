@@ -918,8 +918,9 @@ export const projectService = {
       return project;
     }
 
+    const preparedProject = nextStatus === 'accepted' ? prepareProjectForImportApply(project, [target]) : project;
     const applyResult = nextStatus === 'accepted'
-      ? applyProposalOperations(project, target)
+      ? applyProposalOperations(preparedProject, target)
       : { project, applied: false, blockedReason: null };
     if (nextStatus === 'accepted' && applyResult.blockedReason) {
       const annotatedProposal: Proposal = {
@@ -982,6 +983,16 @@ export const projectService = {
 
     return withHistory;
   },
+
+  resolveProposals(project: NarrativeProject, proposalIds: string[], nextStatus: Proposal['status']): NarrativeProject {
+    const idSet = new Set(proposalIds);
+    const targets = project.proposals.filter((proposal) => idSet.has(proposal.id));
+    if (!targets.length) return project;
+    if (nextStatus !== 'accepted') {
+      return targets.reduce((draft, proposal) => projectService.resolveProposal(draft, proposal.id, nextStatus), project);
+    }
+    return applyProposalBatch(project, targets);
+  },
 };
 
 type ProposalApplyResult = { project: NarrativeProject; applied: boolean; blockedReason: string | null };
@@ -1011,6 +1022,29 @@ const proposalEntityCollections: Partial<Record<EntityKind, EntityCollectionKey>
   world_item: 'worldItems',
 };
 
+const proposalApplyPriority: Partial<Record<EntityKind, number>> = {
+  world_container: 0,
+  character_tag: 1,
+  timeline_branch: 2,
+  chapter: 3,
+  scene: 4,
+  world_item: 5,
+  character: 6,
+  timeline_event: 7,
+  relationship: 8,
+};
+
+type ReferenceSets = {
+  characters: Set<string>;
+  scenes: Set<string>;
+  events: Set<string>;
+  branches: Set<string>;
+  worldItems: Set<string>;
+  containers: Set<string>;
+  tags: Set<string>;
+  chapters: Set<string>;
+};
+
 const getProposalOperations = (proposal: Proposal): RawProposalOperation[] => {
   const sidecarOps = (proposal as unknown as { operations?: RawProposalOperation[] }).operations;
   if (Array.isArray(sidecarOps) && sidecarOps.length) return sidecarOps;
@@ -1029,7 +1063,198 @@ const getProposalOperations = (proposal: Proposal): RawProposalOperation[] => {
 const proposalScopedId = (proposal: Proposal, entityType: string) =>
   `${entityType}_${proposal.id.replace(/^proposal_/, '').replace(/[^a-zA-Z0-9_]+/g, '_')}`;
 
-const applyProposalOperations = (project: NarrativeProject, proposal: Proposal): ProposalApplyResult => {
+const operationEntityId = (proposal: Proposal, operation: RawProposalOperation, entityType: EntityKind) =>
+  String(operation.entityId || operation.fields?.id || proposal.targetEntityId || proposalScopedId(proposal, entityType));
+
+const collectReferenceSets = (project: NarrativeProject, proposals: Proposal[] = []): ReferenceSets => {
+  const refs: ReferenceSets = {
+    characters: new Set(project.characters.map((item) => item.id)),
+    scenes: new Set(project.scenes.map((item) => item.id)),
+    events: new Set(project.timelineEvents.map((item) => item.id)),
+    branches: new Set(project.timelineBranches.map((item) => item.id)),
+    worldItems: new Set(project.worldItems.map((item) => item.id)),
+    containers: new Set(project.worldContainers.map((item) => item.id)),
+    tags: new Set(project.characterTags.map((item) => item.id)),
+    chapters: new Set(project.chapters.map((item) => item.id)),
+  };
+  const adders: Partial<Record<EntityKind, Set<string>>> = {
+    character: refs.characters,
+    scene: refs.scenes,
+    timeline_event: refs.events,
+    timeline_branch: refs.branches,
+    world_item: refs.worldItems,
+    world_container: refs.containers,
+    character_tag: refs.tags,
+    chapter: refs.chapters,
+  };
+  proposals.forEach((proposal) => {
+    getProposalOperations(proposal).forEach((operation) => {
+      const entityType = operation.entityType as EntityKind | undefined;
+      if (!entityType || operation.op === 'delete') return;
+      adders[entityType]?.add(operationEntityId(proposal, operation, entityType));
+    });
+  });
+  return refs;
+};
+
+const importProposalHasCanonicalWrites = (proposal: Proposal) =>
+  proposal.source === 'import' && getProposalOperations(proposal).some((operation) => {
+    const entityType = operation.entityType as EntityKind | undefined;
+    return Boolean(entityType && proposalEntityCollections[entityType]);
+  });
+
+const prepareProjectForImportApply = (project: NarrativeProject, proposals: Proposal[]): NarrativeProject => {
+  if (!proposals.some(importProposalHasCanonicalWrites)) return project;
+
+  let draft = project;
+  const hasOnlyStarterChapter =
+    draft.chapters.length === 1 &&
+    draft.chapters[0]?.id === 'chap_1' &&
+    /^chapter 1$/i.test(draft.chapters[0]?.title || '') &&
+    draft.scenes.length === 1 &&
+    draft.scenes[0]?.id === 'scene_1' &&
+    draft.scenes[0]?.chapterId === 'chap_1' &&
+    !(draft.scenes[0]?.content || '').trim();
+  if (hasOnlyStarterChapter) {
+    draft = { ...draft, chapters: [], scenes: [] };
+  }
+
+  const hasOnlyStarterBranch =
+    draft.timelineBranches.length === 1 &&
+    draft.timelineBranches[0]?.id === 'branch_main' &&
+    /^main branch$/i.test(draft.timelineBranches[0]?.name || '') &&
+    draft.timelineEvents.length === 0;
+  if (hasOnlyStarterBranch && proposals.some((proposal) => getProposalOperations(proposal).some((op) => op.entityType === 'timeline_branch'))) {
+    draft = { ...draft, timelineBranches: [] };
+  }
+
+  const starterContainerIds = new Set(['cont_locations', 'cont_orgs', 'cont_items', 'cont_lore', 'cont_world_map', 'cont_notes']);
+  if (proposals.some((proposal) => getProposalOperations(proposal).some((op) => op.entityType === 'world_container'))) {
+    draft = {
+      ...draft,
+      worldContainers: draft.worldContainers.filter((container) => !starterContainerIds.has(container.id)),
+      worldItems: draft.worldItems.filter((item) => !starterContainerIds.has(item.containerId)),
+    };
+  }
+
+  return draft;
+};
+
+const applyProposalBatch = (project: NarrativeProject, proposals: Proposal[]): NarrativeProject => {
+  const preparedProject = prepareProjectForImportApply(project, proposals);
+  const references = collectReferenceSets(preparedProject, proposals);
+  const sorted = [...proposals].sort((a, b) => {
+    const aType = getProposalOperations(a)[0]?.entityType as EntityKind | undefined;
+    const bType = getProposalOperations(b)[0]?.entityType as EntityKind | undefined;
+    return (proposalApplyPriority[aType || 'proposal'] ?? 99) - (proposalApplyPriority[bType || 'proposal'] ?? 99);
+  });
+
+  let draft = preparedProject;
+  const accepted: Proposal[] = [];
+  const blocked: Proposal[] = [];
+
+  sorted.forEach((proposal) => {
+    const result = applyProposalOperations(draft, proposal, references);
+    if (result.blockedReason) {
+      blocked.push({
+        ...proposal,
+        lastBlockReason: result.blockedReason,
+        lastBlockedAt: new Date().toISOString(),
+      });
+      draft = {
+        ...draft,
+        issues: upsertProposalBlockedIssue(draft.issues, proposal, result.blockedReason),
+        unreadUpdates: markProposalUnread(draft.unreadUpdates, proposal.id),
+      };
+      return;
+    }
+    draft = result.project;
+    accepted.push({ ...proposal, status: 'accepted', resolvedAt: new Date().toISOString() });
+  });
+
+  draft = pruneDanglingProposalReferences(draft);
+
+  const acceptedIds = new Set(accepted.map((proposal) => proposal.id));
+  const blockedById = new Map(blocked.map((proposal) => [proposal.id, proposal]));
+  const remainingProposals = draft.proposals
+    .filter((proposal) => !acceptedIds.has(proposal.id))
+    .map((proposal) => blockedById.get(proposal.id) || proposal);
+  const hasUnreadInbox = remainingProposals.some((proposal) => proposal.status === 'pending' || !proposal.status);
+  const acceptedRefUpdates = Object.assign({}, ...accepted.map(buildResolvedProposalUnreadMap));
+
+  return {
+    ...draft,
+    proposals: remainingProposals,
+    proposalHistory: [...accepted, ...project.proposalHistory],
+    issues: draft.issues.map((issue) => {
+      const acceptedRelatedIds = issue.suggestedProposalIds?.filter((id) => acceptedIds.has(id)) || [];
+      if (!acceptedRelatedIds.length) return issue;
+      const suggestedProposalIds = issue.suggestedProposalIds?.filter((id) => !acceptedIds.has(id));
+      return {
+        ...issue,
+        status: 'resolved',
+        visibility: 'history',
+        dismissedAt: new Date().toISOString(),
+        resolvedByProposalId: acceptedRelatedIds[0] || issue.resolvedByProposalId || null,
+        suggestedProposalIds,
+      };
+    }),
+    unreadUpdates: {
+      ...draft.unreadUpdates,
+      entities: {
+        ...draft.unreadUpdates.entities,
+        ...Object.fromEntries(accepted.map((proposal) => [proposal.id, false])),
+        ...acceptedRefUpdates,
+      },
+      activities: { ...draft.unreadUpdates.activities, workbench: hasUnreadInbox },
+      sections: { ...draft.unreadUpdates.sections, 'workbench.inbox': hasUnreadInbox },
+    },
+  };
+};
+
+const pruneDanglingProposalReferences = (project: NarrativeProject): NarrativeProject => {
+  const refs = collectReferenceSets(project);
+  const firstBranchId = project.timelineBranches[0]?.id || '';
+  const firstChapterId = project.chapters[0]?.id || '';
+  return {
+    ...project,
+    chapters: project.chapters.map((chapter) => ({
+      ...chapter,
+      sceneIds: chapter.sceneIds.filter((id) => refs.scenes.has(id)),
+    })),
+    scenes: project.scenes.map((scene) => ({
+      ...scene,
+      chapterId: refs.chapters.has(scene.chapterId) ? scene.chapterId : firstChapterId,
+      linkedCharacterIds: scene.linkedCharacterIds.filter((id) => refs.characters.has(id)),
+      linkedEventIds: scene.linkedEventIds.filter((id) => refs.events.has(id)),
+      linkedWorldItemIds: scene.linkedWorldItemIds.filter((id) => refs.worldItems.has(id)),
+    })),
+    characters: project.characters.map((character) => ({
+      ...character,
+      tagIds: character.tagIds.filter((id) => refs.tags.has(id)),
+      linkedSceneIds: character.linkedSceneIds.filter((id) => refs.scenes.has(id)),
+      linkedEventIds: character.linkedEventIds.filter((id) => refs.events.has(id)),
+      linkedWorldItemIds: character.linkedWorldItemIds.filter((id) => refs.worldItems.has(id)),
+    })),
+    timelineEvents: project.timelineEvents.map((event) => ({
+      ...event,
+      branchId: refs.branches.has(event.branchId) ? event.branchId : firstBranchId,
+      participantCharacterIds: event.participantCharacterIds.filter((id) => refs.characters.has(id)),
+      linkedSceneIds: event.linkedSceneIds.filter((id) => refs.scenes.has(id)),
+      linkedWorldItemIds: event.linkedWorldItemIds.filter((id) => refs.worldItems.has(id)),
+      locationIds: event.locationIds.filter((id) => refs.worldItems.has(id)),
+    })),
+    worldItems: project.worldItems.map((item) => ({
+      ...item,
+      linkedCharacterIds: item.linkedCharacterIds.filter((id) => refs.characters.has(id)),
+      linkedEventIds: item.linkedEventIds.filter((id) => refs.events.has(id)),
+      linkedSceneIds: item.linkedSceneIds.filter((id) => refs.scenes.has(id)),
+    })),
+    relationships: project.relationships.filter((rel) => refs.characters.has(rel.sourceId) && refs.characters.has(rel.targetId)),
+  };
+};
+
+const applyProposalOperations = (project: NarrativeProject, proposal: Proposal, referenceSets?: ReferenceSets): ProposalApplyResult => {
   const operations = getProposalOperations(proposal);
   if (!operations.length) return { project, applied: false, blockedReason: null };
 
@@ -1043,7 +1268,7 @@ const applyProposalOperations = (project: NarrativeProject, proposal: Proposal):
       continue;
     }
 
-    const result = applyProposalOperation(draft, proposal, operation, entityType, collectionKey);
+    const result = applyProposalOperation(draft, proposal, operation, entityType, collectionKey, referenceSets);
     if (result.blockedReason) {
       return { project, applied: false, blockedReason: result.blockedReason };
     }
@@ -1064,10 +1289,11 @@ const applyProposalOperation = (
   operation: RawProposalOperation,
   entityType: EntityKind,
   collectionKey: EntityCollectionKey,
+  referenceSets?: ReferenceSets,
 ): ProposalApplyResult => {
   const records = project[collectionKey] as unknown as Array<Record<string, unknown>>;
   const fields = operation.fields || {};
-  const id = String(operation.entityId || fields.id || proposal.targetEntityId || proposalScopedId(proposal, entityType));
+  const id = operationEntityId(proposal, operation, entityType);
 
   if (operation.op === 'delete') {
     if (hasEntityReferences(project, entityType, id)) {
@@ -1088,7 +1314,7 @@ const applyProposalOperation = (
   const nextEntity = operation.op === 'update'
     ? { ...(existing || {}), ...fields, id }
     : buildProposalEntity(project, proposal, entityType, id, fields);
-  const validationError = validateProposalEntityReferences(project, entityType, nextEntity);
+  const validationError = validateProposalEntityReferences(project, entityType, nextEntity, referenceSets);
   if (validationError) {
     return { project, applied: false, blockedReason: validationError };
   }
@@ -1097,8 +1323,9 @@ const applyProposalOperation = (
     if (!existing) {
       return { project, applied: false, blockedReason: `Cannot update missing ${entityType} ${id}.` };
     }
+    const updatedProject = { ...project, [collectionKey]: records.map((entry) => entry.id === id ? nextEntity : entry) } as NarrativeProject;
     return {
-      project: { ...project, [collectionKey]: records.map((entry) => entry.id === id ? nextEntity : entry) } as NarrativeProject,
+      project: syncSceneChapterMembership(updatedProject, entityType, id, nextEntity),
       applied: true,
       blockedReason: null,
     };
@@ -1108,10 +1335,28 @@ const applyProposalOperation = (
     return { project, applied: false, blockedReason: `Cannot create duplicate ${entityType} ${id}.` };
   }
 
+  const createdProject = { ...project, [collectionKey]: [...records, nextEntity] } as NarrativeProject;
   return {
-    project: { ...project, [collectionKey]: [...records, nextEntity] } as NarrativeProject,
+    project: syncSceneChapterMembership(createdProject, entityType, id, nextEntity),
     applied: true,
     blockedReason: null,
+  };
+};
+
+const syncSceneChapterMembership = (
+  project: NarrativeProject,
+  entityType: EntityKind,
+  sceneId: string,
+  entity: Record<string, unknown>,
+): NarrativeProject => {
+  if (entityType !== 'scene' || !entity.chapterId) return project;
+  const chapterId = String(entity.chapterId);
+  return {
+    ...project,
+    chapters: project.chapters.map((chapter) => {
+      if (chapter.id !== chapterId || chapter.sceneIds.includes(sceneId)) return chapter;
+      return { ...chapter, sceneIds: [...chapter.sceneIds, sceneId] };
+    }),
   };
 };
 
@@ -1162,15 +1407,10 @@ const validateProposalEntityReferences = (
   project: NarrativeProject,
   entityType: EntityKind,
   entity: Record<string, unknown>,
+  referenceSets?: ReferenceSets,
 ): string | null => {
-  const characters = new Set(project.characters.map((item) => item.id));
-  const scenes = new Set(project.scenes.map((item) => item.id));
-  const events = new Set(project.timelineEvents.map((item) => item.id));
-  const branches = new Set(project.timelineBranches.map((item) => item.id));
-  const worldItems = new Set(project.worldItems.map((item) => item.id));
-  const containers = new Set(project.worldContainers.map((item) => item.id));
-  const tags = new Set(project.characterTags.map((item) => item.id));
-  const chapters = new Set(project.chapters.map((item) => item.id));
+  const refs = referenceSets || collectReferenceSets(project);
+  const { characters, scenes, events, branches, worldItems, containers, tags, chapters } = refs;
 
   const fail = (label: string, ids: string[]) => ids.length ? `${entityType} ${entity.id} references missing ${label}: ${ids.join(', ')}` : null;
 

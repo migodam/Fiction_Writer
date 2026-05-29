@@ -337,13 +337,16 @@ def test_default_world_container_specs_are_semantic_and_localized():
     assert w1_import._normalize_world_category("七玄门", "地名") != "location"
     assert w1_import._normalize_world_category("掩月宗", "宗门") == "organization"
     assert w1_import._normalize_world_category("天南势力", "势力") == "faction"
-    assert w1_import._normalize_world_category("长春功", "功法") == "system"
+    assert w1_import._normalize_world_category("长春功", "功法") == "cultivation_method"
+    assert w1_import._normalize_world_category("七绝堂", "") == "location"
+    assert w1_import._normalize_world_category("供奉堂", "organization") == "location"
     assert w1_import._normalize_world_category("小绿瓶", "法器") == "artifact"
     assert w1_import.WORLD_ONTOLOGY_LABELS["organization"]["zh"] == "组织"
     assert "门派" in w1_import.WORLD_ONTOLOGY_LABELS["organization"]["zh_description"]
     assert w1_import._world_container_key("organization") == "organizations"
     assert w1_import._world_container_key("faction") == "organizations"
     assert w1_import._world_container_key("artifact") == "items"
+    assert w1_import._world_container_key("cultivation_method") == "cultivation_methods"
     assert w1_import._world_container_key("system") == "rules"
 
 
@@ -515,12 +518,12 @@ def test_write_to_project_preserves_chapter_content_and_world_container_routing(
             "world": {
                 "七玄门": "organization",
                 "青牛镇": "location",
-                "长春功": "rule",
+                "长春功": "功法",
             },
             "world_detailed": {
                 "七玄门": {"category": "organization", "description": "江湖门派。"},
                 "青牛镇": {"category": "location", "description": "故事早期地点。"},
-                "长春功": {"category": "rule", "description": "修炼功法。"},
+                "长春功": {"category": "功法", "description": "修炼功法。"},
             },
         },
         "manuscript_chapters": [
@@ -554,7 +557,7 @@ def test_write_to_project_preserves_chapter_content_and_world_container_routing(
     assert by_name["七玄门"]["category"] == "organization"
     assert by_name["七玄门"]["containerId"] == "cont_import_organizations"
     assert by_name["青牛镇"]["containerId"] == "cont_import_locations"
-    assert by_name["长春功"]["containerId"] == "cont_import_rules"
+    assert by_name["长春功"]["containerId"] == "cont_import_cultivation_methods"
     assert [chapter["title"] for chapter in chapters] == ["第一章", "第二章"]
     assert [chapter["content"] for chapter in chapters] == ["第一章正文", "第二章正文"]
     assert chapters[0]["manuscriptContent"] == "第一章正文"
@@ -1024,6 +1027,96 @@ def test_node_write_to_project_manuscript_still_written(tmp_path, monkeypatch):
     manuscript = json.loads(manuscript_path.read_text(encoding="utf-8"))
     assert len(manuscript["chapters"]) == 2
     assert manuscript["chapters"][0]["title"] == "Ch 1"
+
+
+def test_sort_manuscript_chapters_handles_mixed_chinese_and_arabic_titles():
+    chapters = [
+        {"title": "第七章", "manuscript_content": "7"},
+        {"title": "第三章", "manuscript_content": "3"},
+        {"title": "第十章", "manuscript_content": "10"},
+        {"title": "Chapter 5", "manuscript_content": "5"},
+    ]
+    ordered = w1_import._sort_manuscript_chapters(chapters)
+    assert [chapter["title"] for chapter in ordered] == ["第三章", "Chapter 5", "第七章", "第十章"]
+
+
+def test_chunk_sort_key_extracts_numeric_suffixes():
+    chunks = [{"chunk_id": "chunk_10"}, {"chunk_id": "chunk_2"}, {"chunk_id": "chunk_1"}]
+    ordered = sorted(chunks, key=lambda chunk: w1_import._chunk_sort_key(chunk["chunk_id"]))
+    assert [chunk["chunk_id"] for chunk in ordered] == ["chunk_1", "chunk_2", "chunk_10"]
+
+
+def test_node_write_to_project_proposes_chapter_and_content_scene(tmp_path, monkeypatch):
+    captured_ops = []
+
+    async def fake_propose_write(op, _project_path):
+        captured_ops.append(op)
+        return {"id": f"p_{op['entity_id']}", "confidence": op["confidence"], "status": "pending"}
+
+    monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", fake_propose_write)
+
+    state = _make_write_state(
+        tmp_path,
+        manuscript_chapters=[
+            {
+                "chapter_id": "chap_3",
+                "title": "第三章",
+                "orderIndex": 2,
+                "chunk_ids": ["chunk_3"],
+                "manuscript_content": "韩立进入七绝堂，发现长春功残卷。",
+            },
+        ],
+        entity_registry={"characters": {}, "events": {}, "world": {}, "world_detailed": {}},
+    )
+    state["source_language"] = "zh"
+
+    asyncio.run(w1_import.node_write_to_project(state))
+
+    chapter_op = next(op for op in captured_ops if op["entity_type"] == "chapter")
+    scene_op = next(op for op in captured_ops if op["entity_type"] == "scene")
+    assert chapter_op["data"]["title"] == "第三章"
+    assert chapter_op["data"]["summary"]
+    assert chapter_op["data"]["goal"]
+    assert scene_op["data"]["chapterId"] == "chap_3"
+    assert scene_op["data"]["content"] == "韩立进入七绝堂，发现长春功残卷。"
+    assert scene_op["depends_on"] == ["chap_3"]
+
+
+def test_node_write_to_project_world_containers_before_items_and_skips_people(tmp_path, monkeypatch):
+    captured_ops = []
+
+    async def fake_propose_write(op, _project_path):
+        captured_ops.append(op)
+        return {"id": f"p_{op['entity_id']}", "confidence": op["confidence"], "status": "pending"}
+
+    monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", fake_propose_write)
+
+    state = _make_write_state(
+        tmp_path,
+        entity_registry={
+            "characters": {
+                "char_zhang_er": {"canonical_name": "张二", "confidence": 0.8, "importance": "supporting", "aliases": [], "tag_ids": []},
+            },
+            "events": {},
+            "world": {"七绝堂": "organization", "长春功": "功法", "张二": "person"},
+            "world_detailed": {
+                "七绝堂": {"category": "organization", "description": "宗门内的一处堂口。"},
+                "长春功": {"category": "功法", "description": "基础功法。"},
+                "张二": {"category": "person", "description": "门丁。"},
+            },
+        },
+    )
+    state["source_language"] = "zh"
+
+    asyncio.run(w1_import.node_write_to_project(state))
+
+    first_world_container = next(i for i, op in enumerate(captured_ops) if op["entity_type"] == "world_container")
+    first_world_item = next(i for i, op in enumerate(captured_ops) if op["entity_type"] == "world_item")
+    assert first_world_container < first_world_item
+    world_items = [op["data"] for op in captured_ops if op["entity_type"] == "world_item"]
+    assert {item["name"] for item in world_items} == {"七绝堂", "长春功"}
+    assert next(item for item in world_items if item["name"] == "七绝堂")["category"] == "location"
+    assert next(item for item in world_items if item["name"] == "长春功")["category"] == "cultivation_method"
 
 
 def test_node_write_to_project_writes_manuscript_before_cancellable_proposals(tmp_path, monkeypatch):

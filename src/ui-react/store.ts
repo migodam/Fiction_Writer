@@ -263,6 +263,7 @@ interface ProjectState {
   updateGraphEdge: (boardId: string, edge: Partial<GraphBoard['edges'][number]> & { id: string }) => void;
   setGraphBoardView: (boardId: string, view: GraphBoard['view']) => void;
   resolveProposal: (proposalId: string, status: Proposal['status']) => void;
+  resolveProposals: (proposalIds: string[], status: Proposal['status']) => void;
   resolveAllProposals: (status: Proposal['status']) => void;
   resolveIssue: (issueId: string, resolution: 'resolved' | 'ignored') => void;
   dismissIssue: (issueId: string) => void;
@@ -1157,16 +1158,15 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   updateGraphEdge: (boardId, edge) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, edges: board.edges.map((e) => e.id === edge.id ? { ...e, ...edge } : e) } : board) })),
   setGraphBoardView: (boardId, view) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, view } : board) })),
   resolveProposal: (proposalId, status) => set((state) => withDirtyState(projectService.resolveProposal(cloneProject(state, useUIStore.getState().locale), proposalId, status))),
+  resolveProposals: (proposalIds, status) => set((state) => withDirtyState(projectService.resolveProposals(cloneProject(state, useUIStore.getState().locale), proposalIds, status))),
   resolveAllProposals: (status) => {
     const pending = get().proposals.filter((p) => p.status === 'pending' || !p.status);
     if (!pending.length) return;
-    set((state) => {
-      let project = cloneProject(state, useUIStore.getState().locale);
-      for (const proposal of pending) {
-        project = projectService.resolveProposal(project, proposal.id, status);
-      }
-      return withDirtyState(project);
-    });
+    set((state) => withDirtyState(projectService.resolveProposals(
+      cloneProject(state, useUIStore.getState().locale),
+      pending.map((proposal) => proposal.id),
+      status,
+    )));
   },
   resolveIssue: (issueId, resolution) => set((state) => withDirtyState({
     issues: state.issues.map((issue) => issue.id === issueId ? { ...issue, status: resolution, visibility: 'history', dismissedAt: new Date().toISOString() } : issue),

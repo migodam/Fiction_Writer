@@ -100,7 +100,7 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
   const w1CancelRequested = useProjectStore((s) => s.w1CancelRequested);
   const w1ConnectionWarning = useProjectStore((s) => s.w1ConnectionWarning);
   const proposals = useProjectStore((s) => s.proposals);
-  const resolveProposal = useProjectStore((s) => s.resolveProposal);
+  const resolveProposals = useProjectStore((s) => s.resolveProposals);
   const setW1ImportMode = useProjectStore((s) => s.setW1ImportMode);
   const setW1PromptProfile = useProjectStore((s) => s.setW1PromptProfile);
   const setW1CustomProfileConfig = useProjectStore((s) => s.setW1CustomProfileConfig);
@@ -149,11 +149,9 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
   const isActivityIdle = w1IdleSeconds >= 90;
   const isBudgetExhausted = w1Errors.some((err) => /budget_exhausted|402|insufficient balance/i.test(err)) || w1RuntimeStatus?.converge_status === 'budget_exhausted';
   const acceptSafeAll = useCallback(() => {
-    for (const proposalId of safeAcceptIds) {
-      resolveProposal(proposalId, 'accepted');
-    }
+    resolveProposals(safeAcceptIds, 'accepted');
     setAcceptResult({ accepted: safeAcceptIds.length, remaining: proposals.length - safeAcceptIds.length });
-  }, [resolveProposal, safeAcceptIds, proposals.length]);
+  }, [resolveProposals, safeAcceptIds, proposals.length]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">

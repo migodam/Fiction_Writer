@@ -489,6 +489,10 @@ def _stable_generated_id(prefix: str, label: str, used_ids: set[str]) -> str:
 
 
 def _chunk_sort_key(value: Any) -> tuple[int, str]:
+    if isinstance(value, str):
+        match = re.search(r"\d+", value)
+        if match:
+            return (int(match.group(0)), value)
     try:
         return (int(value), "")
     except (TypeError, ValueError):
@@ -504,7 +508,64 @@ def _chapter_sort_key(chapter: dict) -> tuple[int, str]:
     chunk_ids = chapter.get("chunk_ids", [])
     if isinstance(chunk_ids, list) and chunk_ids:
         return min(_chunk_sort_key(chunk_id) for chunk_id in chunk_ids)
-    return (10_000_000, str(chapter.get("title", "")))
+    if chapter.get("orderIndex") is not None:
+        try:
+            return (int(chapter.get("orderIndex")), str(chapter.get("title", "")))
+        except (TypeError, ValueError):
+            pass
+    title = str(chapter.get("title", ""))
+    chapter_number = _chapter_number_from_title(title)
+    if chapter_number is not None:
+        return (chapter_number, title)
+    return (10_000_000, title)
+
+
+_ZH_DIGITS = {
+    "零": 0,
+    "〇": 0,
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+}
+
+
+def _parse_zh_int(value: str) -> int | None:
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    if cleaned.isdigit():
+        return int(cleaned)
+    total = 0
+    current = 0
+    units = {"十": 10, "百": 100, "千": 1000}
+    for char in cleaned:
+        if char in _ZH_DIGITS:
+            current = _ZH_DIGITS[char]
+            continue
+        if char in units:
+            unit = units[char]
+            total += (current or 1) * unit
+            current = 0
+            continue
+        return None
+    return total + current if total or current else None
+
+
+def _chapter_number_from_title(title: str) -> int | None:
+    arabic = re.search(r"(?:chapter|ch\.?|第)?\s*(\d+)\s*(?:章|回|节)?", title, flags=re.IGNORECASE)
+    if arabic:
+        return int(arabic.group(1))
+    zh = re.search(r"第\s*([零〇一二两三四五六七八九十百千\d]+)\s*[章节回]", title)
+    if zh:
+        return _parse_zh_int(zh.group(1))
+    return None
 
 
 def _sort_manuscript_chapters(chapters: list[dict]) -> list[dict]:
@@ -524,8 +585,8 @@ _WORLD_ENTITY_NAME_PATTERNS = (
     "门", "派", "宗", "帮", "会", "盟", "阁", "殿", "宫", "谷", "山庄", "书院",
     "城", "镇", "村", "谷", "山", "峰", "河", "湖", "岛", "国", "州", "府",
 )
-_ORGANIZATION_HINTS = ("门", "派", "宗", "帮", "会", "盟", "阁", "殿", "宫", "山庄", "书院")
-_LOCATION_HINTS = ("城", "镇", "村", "谷", "山", "峰", "河", "湖", "岛", "国", "州", "府", "岭", "洞")
+_ORGANIZATION_HINTS = ("门", "派", "宗", "帮", "会", "盟", "山庄", "书院")
+_LOCATION_HINTS = ("城", "镇", "村", "谷", "山", "峰", "河", "湖", "岛", "国", "州", "府", "岭", "洞", "堂", "院", "阁", "殿", "宫", "楼", "台")
 WORLD_ONTOLOGY_CATEGORIES: tuple[str, ...] = (
     "location",
     "organization",
@@ -534,6 +595,7 @@ WORLD_ONTOLOGY_CATEGORIES: tuple[str, ...] = (
     "artifact",
     "rule",
     "system",
+    "cultivation_method",
     "concept",
     "culture",
     "custom",
@@ -546,6 +608,7 @@ WORLD_ONTOLOGY_LABELS: dict[str, dict[str, str]] = {
     "artifact": {"en": "Artifact", "zh": "法器", "zh_description": "法器、宝物、灵器或特殊器物。"},
     "rule": {"en": "Rule", "zh": "规则", "zh_description": "明确规则、禁制、法则或制度约束。"},
     "system": {"en": "System", "zh": "体系", "zh_description": "功法、法术、修炼体系或能力系统。"},
+    "cultivation_method": {"en": "Cultivation Method", "zh": "功法与术法", "zh_description": "功法、法诀、术法、秘术或修炼法门。"},
     "concept": {"en": "Concept", "zh": "概念", "zh_description": "世界观概念、术语或设定。"},
     "culture": {"en": "Culture", "zh": "文化", "zh_description": "文化、习俗、礼法或社会惯例。"},
     "custom": {"en": "Custom", "zh": "自定义", "zh_description": "无法归入固定类别但需要保留的设定。"},
@@ -604,10 +667,12 @@ _WORLD_CATEGORY_ALIASES: dict[str, str] = {
     "rule": "rule",
     "规则": "rule",
     "system": "system",
-    "功法": "system",
-    "法术": "system",
+    "功法": "cultivation_method",
+    "法术": "cultivation_method",
+    "术法": "cultivation_method",
+    "法诀": "cultivation_method",
     "magic": "rule",
-    "cultivation": "system",
+    "cultivation": "cultivation_method",
     "culture": "culture",
     "custom": "custom",
 }
@@ -661,7 +726,13 @@ def _localized_text(state_or_language: ImportState | dict | str, zh: str, en: st
 def _normalize_world_category(name: str, category: Any = "") -> str:
     raw = str(category or "").strip().lower()
     clean_name = str(name or "").strip()
-    if any(token in clean_name for token in _ORGANIZATION_HINTS) and not any(token in clean_name for token in _LOCATION_HINTS):
+    if any(token in raw for token in ("person", "character", "人物", "角色", "人名")):
+        return "custom"
+    if any(token in raw for token in ("method", "spell", "cultivation", "功法", "法术", "术法", "法诀", "秘术", "修炼法门")):
+        return "cultivation_method"
+    if any(token in clean_name for token in _LOCATION_HINTS):
+        return "location"
+    if any(token in clean_name for token in _ORGANIZATION_HINTS):
         return "organization"
     normalized = _WORLD_CATEGORY_ALIASES.get(raw)
     if normalized:
@@ -676,7 +747,7 @@ def _normalize_world_category(name: str, category: Any = "") -> str:
         return "artifact"
     if any(token in raw for token in ("item", "object", "物品", "丹药", "道具")):
         return "item"
-    if any(token in raw for token in ("system", "cultivation", "功法", "法术", "体系", "修炼")):
+    if any(token in raw for token in ("system", "体系", "修炼")):
         return "system"
     if any(token in raw for token in ("rule", "law", "规则", "法则", "制度")):
         return "rule"
@@ -684,10 +755,10 @@ def _normalize_world_category(name: str, category: Any = "") -> str:
         return "culture"
     if any(token in raw for token in ("custom", "自定义")):
         return "custom"
-    if any(token in name for token in _ORGANIZATION_HINTS):
-        return "organization"
     if any(token in name for token in _LOCATION_HINTS):
         return "location"
+    if any(token in name for token in _ORGANIZATION_HINTS):
+        return "organization"
     return "concept"
 
 
@@ -699,6 +770,8 @@ def _world_container_key(category: Any) -> str:
         return "organizations"
     if normalized in {"item", "artifact"}:
         return "items"
+    if normalized == "cultivation_method":
+        return "cultivation_methods"
     if normalized in {"rule", "system"}:
         return "rules"
     if normalized == "culture":
@@ -712,6 +785,7 @@ def _default_world_container_specs(language: str) -> list[dict]:
         "locations": ("地点", "Locations", "map"),
         "organizations": ("组织与势力", "Organizations & Factions", "notebook"),
         "items": ("物品与法器", "Items & Artifacts", "notebook"),
+        "cultivation_methods": ("功法与术法", "Cultivation Methods", "notebook"),
         "rules": ("规则与修炼体系", "Rules & Systems", "notebook"),
         "concepts": ("概念与设定", "Concepts & Lore", "notebook"),
         "culture": ("文化与习俗", "Culture", "notebook"),
@@ -3535,6 +3609,11 @@ async def node_write_to_project(state: ImportState) -> dict:
             if event_id not in character_event_links[cid]:
                 character_event_links[cid].append(event_id)
     character_id_map = registry.get("character_id_map", {})
+    imported_character_names = {
+        str(entry.get("canonical_name") or entry.get("name") or "").strip()
+        for entry in registry.get("characters", {}).values()
+        if str(entry.get("canonical_name") or entry.get("name") or "").strip()
+    }
 
     # Write character proposals — iterate-with-pop so each entry is GC-eligible
     # immediately after its await, rather than holding the full snapshot.
@@ -3749,6 +3828,40 @@ async def node_write_to_project(state: ImportState) -> dict:
         container_key = _world_container_key(resolved_category)
         return resolved_category, container_by_key.get(container_key) or fallback_world_container_id
 
+    # Write world container proposals before items so batch or sequential accept
+    # can satisfy item.containerId references without manual ordering.
+    for container in world_containers:
+        container_id = container.get("id") or f"cont_{uuid.uuid4().hex[:8]}"
+        op = {
+            "op_type": "create",
+            "entity_type": "world_container",
+            "entity_id": container_id,
+            "data": {**container, "id": container_id},
+            "source_workflow": "W1_import",
+            "confidence": 0.75,
+            "auto_apply": False,
+            "depends_on": [],
+        }
+        try:
+            proposal = await s2_memory_writer.propose_write(op, str(project_path))
+            receipts.append({
+                "id": proposal.get("id", ""),
+                "entity_type": "world_container",
+                "status": proposal.get("status", ""),
+                "confidence": float(proposal.get("confidence", 0.75) or 0.75),
+                "blocked": bool(proposal.get("blockedReason") or proposal.get("requiresManualReview")),
+            })
+        except Exception as e:
+            errors.append(f"Failed to propose world container {container_id}: {str(e)}")
+
+    def _is_person_like_world_entry(name: str, detail: dict, category: str) -> bool:
+        raw_category = str(detail.get("category") or category or "").lower()
+        if name in imported_character_names:
+            return True
+        if any(token in raw_category for token in ("person", "character", "人物", "角色", "人名")):
+            return True
+        return False
+
     # Pop world dicts from registry — they can be large (366 entries × attributes).
     world_detailed = registry.pop("world_detailed", {})
     world_snapshot = registry.pop("world", {})
@@ -3756,6 +3869,8 @@ async def node_write_to_project(state: ImportState) -> dict:
     for name, category in world_snapshot.items():
         wid = f"world_{uuid.uuid4().hex[:8]}"
         detail = world_detailed.pop(name, {})  # Progressive release as we iterate
+        if _is_person_like_world_entry(name, detail, category):
+            continue
         resolved_category, container_id = _resolve_container_id(name, detail.get("category", category))
         op = {
             "op_type": "create",
@@ -3864,85 +3979,40 @@ async def node_write_to_project(state: ImportState) -> dict:
         except Exception as e:
             errors.append(f"Failed to propose world settings: {str(e)}")
 
-    # Write world container proposals
-    for container in world_containers:
-        container_id = container.get("id") or f"cont_{uuid.uuid4().hex[:8]}"
-        op = {
-            "op_type": "create",
-            "entity_type": "world_container",
-            "entity_id": container_id,
-            "data": {**container, "id": container_id},
-            "source_workflow": "W1_import",
-            "confidence": 0.75,
-            "auto_apply": False,
-            "depends_on": [],
-        }
-        try:
-            proposal = await s2_memory_writer.propose_write(op, str(project_path))
-            receipts.append({
-                "id": proposal.get("id", ""),
-                "entity_type": "world_container",
-                "status": proposal.get("status", ""),
-                "confidence": float(proposal.get("confidence", 0.75) or 0.75),
-                "blocked": bool(proposal.get("blockedReason") or proposal.get("requiresManualReview")),
-            })
-        except Exception as e:
-            errors.append(f"Failed to propose world container {container_id}: {str(e)}")
-
-    # ── Scene proposals ───────────────────────────────────────────────────────
-    # Scenes are extracted per-chunk by W1_EXTRACT_SCENE_SUMMARIES.
-    # Deduplicate by title to avoid creating the same scene multiple times
-    # (scenes may appear in multiple chunk extractions with overlap).
-    seen_scene_titles: set[str] = set()
-    for extraction in state.get("chunk_extractions", []):
-        for scene in extraction.get("scenes", []):
-            title = scene.get("title", "").strip()
-            if not title or title in seen_scene_titles:
-                continue
-            seen_scene_titles.add(title)
-            scene_id = f"scene_{uuid.uuid4().hex[:8]}"
-            op = {
-                "op_type": "create",
-                "entity_type": "scene",
-                "entity_id": scene_id,
-                "data": {
-                    "id": scene_id,
-                    "title": title,
-                    "summary": scene.get("summary", ""),
-                    "povCharacterId": None,
-                    "linkedCharacterIds": [],
-                    "linkedEventIds": [],
-                    "linkedWorldItemIds": [],
-                    "status": "draft",
-                    "notes": "",
-                    "chapterId": None,
-                    "location": scene.get("location_hint", ""),
-                },
-                "source_workflow": "W1_import",
-                "confidence": float(scene.get("confidence", 0.70)),
-                "auto_apply": False,
-                "depends_on": [],
-            }
-            try:
-                proposal = await s2_memory_writer.propose_write(op, str(project_path))
-                receipts.append({
-                    "id": proposal.get("id", ""),
-                    "entity_type": "scene",
-                    "status": proposal.get("status", ""),
-                    "confidence": float(proposal.get("confidence", 0.70) or 0.70),
-                    "blocked": bool(proposal.get("blockedReason") or proposal.get("requiresManualReview")),
-                })
-            except Exception as e:
-                errors.append(f"Failed to propose scene '{title}': {str(e)}")
-
-    # ── Chapter proposals ─────────────────────────────────────────────────────
+    # ── Chapter + manuscript scene proposals ──────────────────────────────────
     # manuscript_chapters are assembled by node_build_manuscript from chapter_hint grouping.
     # Each one becomes a Chapter entity proposal for user review.
+    manuscript_scene_pairs: list[tuple[dict, dict]] = []
+    source_is_zh = source_language == "zh"
+
+    def _chapter_excerpt(text: str, limit: int = 180) -> str:
+        return re.sub(r"\s+", " ", text or "").strip()[:limit]
+
     for idx, mc in enumerate(_sort_manuscript_chapters(list(state.get("manuscript_chapters", [])))):
         chap_id = mc.get("chapter_id") or f"chap_{uuid.uuid4().hex[:8]}"
         title = mc.get("title", "Untitled Chapter").strip()
         if not title:
             continue
+        manuscript_content = str(mc.get("manuscript_content", "") or "")
+        scene_id = mc.get("scene_id") or f"scene_{str(chap_id).removeprefix('chap_')}"
+        summary = str(mc.get("summary") or _chapter_excerpt(manuscript_content, 220))
+        goal = str(
+            mc.get("goal")
+            or ("梳理本章导入正文并核对人物、事件与设定引用。" if source_is_zh else "Review imported chapter text and reconcile character, event, and world references.")
+        )
+        manuscript_scene_pairs.append((
+            {
+                "chapter_id": chap_id,
+                "scene_id": scene_id,
+                "title": title,
+                "summary": summary,
+                "goal": goal,
+                "notes": f"Imported from: {state.get('source_file_path', '')}; chunks: {', '.join(map(str, mc.get('chunk_ids', [])))}",
+                "orderIndex": idx,
+                "content": manuscript_content,
+            },
+            mc,
+        ))
         op = {
             "op_type": "create",
             "entity_type": "chapter",
@@ -3953,9 +4023,9 @@ async def node_write_to_project(state: ImportState) -> dict:
                 "orderIndex": idx,
                 "content": mc.get("manuscript_content", ""),
                 "manuscriptContent": mc.get("manuscript_content", ""),
-                "summary": "",
-                "goal": "",
-                "notes": f"Imported from: {state.get('source_file_path', '')}",
+                "summary": summary,
+                "goal": goal,
+                "notes": f"Imported from: {state.get('source_file_path', '')}; chunks: {', '.join(map(str, mc.get('chunk_ids', [])))}",
                 "sceneIds": [],
                 "status": "draft",
             },
@@ -3975,10 +4045,47 @@ async def node_write_to_project(state: ImportState) -> dict:
             })
         except Exception as e:
             errors.append(f"Failed to propose chapter '{title}': {str(e)}")
+
+    for chapter_info, _mc in manuscript_scene_pairs:
+        scene_title = "章节正文" if source_is_zh else "Chapter Text"
+        op = {
+            "op_type": "create",
+            "entity_type": "scene",
+            "entity_id": chapter_info["scene_id"],
+            "data": {
+                "id": chapter_info["scene_id"],
+                "chapterId": chapter_info["chapter_id"],
+                "title": scene_title,
+                "summary": chapter_info["summary"],
+                "content": chapter_info["content"],
+                "orderIndex": 0,
+                "povCharacterId": None,
+                "linkedCharacterIds": [],
+                "linkedEventIds": [],
+                "linkedWorldItemIds": [],
+                "status": "draft",
+                "notes": chapter_info["notes"],
+            },
+            "source_workflow": "W1_import",
+            "confidence": 0.90,
+            "auto_apply": False,
+            "depends_on": [chapter_info["chapter_id"]],
+        }
+        try:
+            proposal = await s2_memory_writer.propose_write(op, str(project_path))
+            receipts.append({
+                "id": proposal.get("id", ""),
+                "entity_type": "scene",
+                "status": proposal.get("status", ""),
+                "confidence": float(proposal.get("confidence", 0.90) or 0.90),
+                "blocked": bool(proposal.get("blockedReason") or proposal.get("requiresManualReview")),
+            })
+        except Exception as e:
+            errors.append(f"Failed to propose manuscript scene for chapter '{chapter_info['title']}': {str(e)}")
     print(f"[proposal_write] all entity groups done — {len(receipts)} total receipts", flush=True)
 
     # Build review_report counts and ID lists from compact receipts.
-    safe_types = {"character_tag", "timeline_branch", "chapter", "scene"}
+    safe_types = {"character_tag", "timeline_branch", "world_container", "chapter", "scene"}
     proposal_counts: dict[str, int] = {}
     all_proposal_ids: list[str] = []
     blocked_ids: list[str] = []
