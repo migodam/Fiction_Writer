@@ -1003,6 +1003,46 @@ def test_node_write_to_project_returns_compact_receipts(tmp_path, monkeypatch):
     assert "world_item" in entity_types
 
 
+def test_node_write_to_project_normalizes_event_branch_to_imported_root(tmp_path, monkeypatch):
+    captured_ops = []
+
+    async def fake_propose_write(op, _project_path):
+        captured_ops.append(op)
+        return {"id": f"p_{op['entity_id']}", "confidence": op["confidence"], "status": "pending"}
+
+    monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", fake_propose_write)
+
+    state = _make_write_state(
+        tmp_path,
+        entity_registry={
+            "characters": {},
+            "events": {
+                "event_stale": {
+                    "title": "Stale branch event",
+                    "description": "Timeline architect left branch_main on the event.",
+                    "confidence": 0.8,
+                    "branchId": "branch_main",
+                    "orderIndex": 1,
+                },
+            },
+            "world": {},
+            "world_detailed": {},
+        },
+    )
+    state["timeline_branches"] = [{
+        "id": "branch_item",
+        "name": "韩立修仙之路",
+        "mode": "root",
+        "sortOrder": 0,
+    }]
+
+    asyncio.run(w1_import.node_write_to_project(state))
+
+    event_op = next(op for op in captured_ops if op["entity_type"] == "timeline_event")
+    assert event_op["data"]["branchId"] == "branch_item"
+    assert event_op["depends_on"] == ["branch_item"]
+
+
 def test_node_write_to_project_manuscript_still_written(tmp_path, monkeypatch):
     """manuscript.json must be written even after switching to compact receipts."""
     import json

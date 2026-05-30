@@ -18,6 +18,13 @@ const makeProposal = (id: string, entityType: string, fields: Record<string, unk
   createdAt: now(),
 });
 
+const makeUpdateProposal = (id: string, entityType: string, fields: Record<string, unknown>) => ({
+  ...makeProposal(id, entityType, fields),
+  title: `Update ${entityType}`,
+  targetEntityId: (fields.id as string) ?? entityType,
+  proposedOperations: [{ op: 'update', entityType, entityId: (fields.id as string) ?? entityType, fields }],
+});
+
 async function injectW1ImportBatch(page: import('@playwright/test').Page) {
   await page.goto('http://localhost:3000');
   await page.evaluate(({ proposals }) => {
@@ -89,6 +96,129 @@ test.describe('W1 import smoke acceptance', () => {
     expect(state.relationships).toEqual(['rel_han_mo']);
     expect(state.containers).toEqual(['地点', '功法与术法']);
     expect(state.worldItems.map((item: any) => item.name).sort()).toEqual(['七绝堂', '长春功']);
+  });
+
+  test('Accept All recovers stale W1 proposals with branch_main, duplicates, and world settings', async ({ page }) => {
+    await page.goto('http://localhost:3000');
+    await page.evaluate(({ proposals }) => {
+      const store = (window as any).__narrativeStore;
+      if (!store) throw new Error('__narrativeStore is not exposed in DEV mode');
+      store.setState((state: any) => ({
+        ...state,
+        timelineBranches: [{
+          id: 'branch_item',
+          name: '韩立修仙之路',
+          description: 'Imported root branch.',
+          sortOrder: 0,
+          collapsed: false,
+          mode: 'root',
+        }],
+        timelineEvents: [],
+        characters: [],
+        chapters: [{
+          id: 'chap_1',
+          title: '第一章',
+          summary: 'Already accepted chapter.',
+          goal: '',
+          notes: '',
+          sceneIds: ['scene_1'],
+          orderIndex: 0,
+          status: 'draft',
+        }],
+        scenes: [{
+          id: 'scene_1',
+          chapterId: 'chap_1',
+          title: '章节正文',
+          summary: 'Existing scene.',
+          content: 'Existing manuscript text.',
+          orderIndex: 0,
+          povCharacterId: null,
+          linkedCharacterIds: [],
+          linkedEventIds: [],
+          linkedWorldItemIds: [],
+          status: 'draft',
+        }],
+        relationships: [],
+        worldSettings: {
+          projectType: 'novel',
+          narrativePacing: '',
+          languageStyle: '',
+          narrativePerspective: '',
+          lengthStrategy: '',
+          worldRulesSummary: '',
+        },
+        proposals,
+        proposalHistory: [],
+        issues: [],
+      }));
+    }, {
+      proposals: [
+        makeProposal('p_event_stale_branch', 'timeline_event', {
+          id: 'event_legacy_branch',
+          title: '七玄门王护法接走韩立',
+          summary: '事件来自 W1 遗留 proposal。',
+          branchId: 'branch_main',
+          orderIndex: 0,
+          locationIds: [],
+          participantCharacterIds: ['char_han_li'],
+          linkedSceneIds: ['scene_1'],
+          linkedWorldItemIds: [],
+          tags: ['imported'],
+        }),
+        makeProposal('p_char_depends_event', 'character', {
+          id: 'char_han_li',
+          name: '韩立',
+          summary: '主角。',
+          background: '',
+          aliases: [],
+          tagIds: [],
+          organizationIds: [],
+          linkedSceneIds: ['scene_1'],
+          linkedEventIds: ['event_legacy_branch'],
+          linkedWorldItemIds: [],
+          statusFlags: {},
+          importance: 'core',
+        }),
+        makeProposal('p_duplicate_chapter', 'chapter', {
+          id: 'chap_1',
+          title: '第一章',
+          summary: 'Duplicate proposal from an already accepted W1 chapter.',
+          goal: '',
+          notes: '',
+          sceneIds: ['scene_1'],
+          orderIndex: 0,
+          status: 'draft',
+        }),
+        makeUpdateProposal('p_world_settings', 'world_settings', {
+          projectType: 'xianxia',
+          worldRulesSummary: '七玄门、修仙功法、江湖门派并存。',
+        }),
+      ],
+    });
+
+    await page.getByTestId('activity-btn-workbench').click();
+    await expect(page.getByTestId('accept-all-proposals-btn')).toBeVisible();
+    await page.getByTestId('accept-all-proposals-btn').click();
+    await expect(page.getByTestId('workbench-inbox-list')).toContainText('Inbox clear');
+
+    const state = await page.evaluate(() => {
+      const s = (window as any).__narrativeStore.getState();
+      return {
+        proposals: s.proposals,
+        history: s.proposalHistory.map((proposal: any) => proposal.id),
+        events: s.timelineEvents.map((event: any) => ({ id: event.id, branchId: event.branchId })),
+        characters: s.characters.map((character: any) => ({ id: character.id, linkedEventIds: character.linkedEventIds })),
+        chapters: s.chapters.map((chapter: any) => ({ id: chapter.id, title: chapter.title })),
+        worldSettings: s.worldSettings,
+      };
+    });
+
+    expect(state.proposals).toEqual([]);
+    expect(state.history).toEqual(expect.arrayContaining(['p_event_stale_branch', 'p_char_depends_event', 'p_duplicate_chapter', 'p_world_settings']));
+    expect(state.events).toEqual([{ id: 'event_legacy_branch', branchId: 'branch_item' }]);
+    expect(state.characters).toEqual([{ id: 'char_han_li', linkedEventIds: ['event_legacy_branch'] }]);
+    expect(state.chapters).toEqual([{ id: 'chap_1', title: '第一章' }]);
+    expect(state.worldSettings.worldRulesSummary).toContain('七玄门');
   });
 
   test('imported chapter detail and manuscript scene content are visible in Writing', async ({ page }) => {

@@ -3723,6 +3723,14 @@ async def node_write_to_project(state: ImportState) -> dict:
         except Exception as e:
             errors.append(f"Failed to propose timeline branch {branch_id}: {str(e)}")
 
+    valid_branch_ids = {str(branch.get("id", "")).strip() for branch in timeline_branches if str(branch.get("id", "")).strip()}
+
+    def _proposal_event_branch_id(entry: dict) -> str:
+        branch_id = str(entry.get("branchId") or entry.get("branch_id") or "").strip()
+        if branch_id in valid_branch_ids:
+            return branch_id
+        return str(default_branch_id or next(iter(valid_branch_ids), "")).strip()
+
     # Deduplicate events by title before writing proposals.
     # Pop events from registry so the payload dicts are GC-eligible after dedup.
     def _is_duplicate_event(title: str, seen_titles: list[str]) -> bool:
@@ -3751,7 +3759,7 @@ async def node_write_to_project(state: ImportState) -> dict:
     sorted_events = sorted(
         deduped_events.items(),
         key=lambda kv: (
-            kv[1].get("branchId", default_branch_id),
+            _proposal_event_branch_id(kv[1]),
             int(kv[1].get("orderIndex", 10_000) or 0),
             kv[1].get("temporal_hint", "") or "",
         ),
@@ -3761,6 +3769,7 @@ async def node_write_to_project(state: ImportState) -> dict:
     print(f"[proposal_write] writing {len(sorted_events)} event proposals...", flush=True)
     for fallback_order_idx, (eid, entry) in enumerate(sorted_events):
         order_index = int(entry.get("orderIndex", fallback_order_idx) or 0)
+        branch_id = _proposal_event_branch_id(entry)
         op = {
             "op_type": "create",
             "entity_type": "timeline_event",
@@ -3769,7 +3778,7 @@ async def node_write_to_project(state: ImportState) -> dict:
                 "id": eid,
                 "title": entry.get("title", ""),
                 "summary": entry.get("summary", entry.get("description", "")),
-                "branchId": entry.get("branchId") or default_branch_id,
+                "branchId": branch_id,
                 "orderIndex": order_index,
                 "locationIds": entry.get("locationIds", []),
                 "participantCharacterIds": entry.get("participantCharacterIds")
@@ -3788,7 +3797,7 @@ async def node_write_to_project(state: ImportState) -> dict:
             "source_workflow": "W1_import",
             "confidence": 0.75,
             "auto_apply": False,
-            "depends_on": [entry.get("branchId") or default_branch_id],
+            "depends_on": [branch_id],
         }
         try:
             proposal = await s2_memory_writer.propose_write(op, str(project_path))

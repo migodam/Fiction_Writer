@@ -11,6 +11,7 @@ export type EntityKind =
   | 'chapter'
   | 'scene'
   | 'world_container'
+  | 'world_settings'
   | 'proposal'
   | 'issue'
   | 'graph_node'

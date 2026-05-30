@@ -1024,6 +1024,7 @@ const proposalEntityCollections: Partial<Record<EntityKind, EntityCollectionKey>
 
 const proposalApplyPriority: Partial<Record<EntityKind, number>> = {
   world_container: 0,
+  world_settings: 0,
   character_tag: 1,
   timeline_branch: 2,
   chapter: 3,
@@ -1032,6 +1033,29 @@ const proposalApplyPriority: Partial<Record<EntityKind, number>> = {
   character: 6,
   timeline_event: 7,
   relationship: 8,
+};
+
+const importedProposalSource = (proposal: Proposal) => proposal.source === 'import';
+
+const fallbackTimelineBranchId = (project: NarrativeProject) =>
+  project.timelineBranches.find((branch) => branch.mode === 'root')?.id
+  || project.timelineBranches[0]?.id
+  || '';
+
+const normalizeImportedProposalEntity = (
+  project: NarrativeProject,
+  proposal: Proposal,
+  entityType: EntityKind,
+  entity: Record<string, unknown>,
+): Record<string, unknown> => {
+  if (!importedProposalSource(proposal) || entityType !== 'timeline_event') return entity;
+
+  const branchId = String(entity.branchId || '');
+  if (!branchId || project.timelineBranches.some((branch) => branch.id === branchId)) return entity;
+
+  const fallbackBranchId = fallbackTimelineBranchId(project);
+  if (!fallbackBranchId) return entity;
+  return { ...entity, branchId: fallbackBranchId };
 };
 
 type ReferenceSets = {
@@ -1264,7 +1288,21 @@ const applyProposalOperations = (project: NarrativeProject, proposal: Proposal, 
   for (const operation of operations) {
     const entityType = operation.entityType as EntityKind | undefined;
     const collectionKey = entityType ? proposalEntityCollections[entityType] : undefined;
-    if (!entityType || !collectionKey) {
+    if (!entityType) {
+      continue;
+    }
+
+    if (entityType === 'world_settings') {
+      const result = applyWorldSettingsProposalOperation(draft, proposal, operation);
+      if (result.blockedReason) {
+        return { project, applied: false, blockedReason: result.blockedReason };
+      }
+      draft = result.project;
+      applied = applied || result.applied;
+      continue;
+    }
+
+    if (!collectionKey) {
       continue;
     }
 
@@ -1281,6 +1319,32 @@ const applyProposalOperations = (project: NarrativeProject, proposal: Proposal, 
   }
 
   return { project: draft, applied, blockedReason: null };
+};
+
+const applyWorldSettingsProposalOperation = (
+  project: NarrativeProject,
+  proposal: Proposal,
+  operation: RawProposalOperation,
+): ProposalApplyResult => {
+  if (operation.op === 'delete') {
+    return { project, applied: false, blockedReason: 'World settings cannot be deleted from the Workbench safety applier.' };
+  }
+  if (operation.op === 'link' || operation.op === 'unlink') {
+    return { project, applied: false, blockedReason: `Proposal operation ${operation.op} is not supported for world settings.` };
+  }
+
+  const fields = operation.fields || proposal.data || {};
+  return {
+    project: {
+      ...project,
+      worldSettings: {
+        ...project.worldSettings,
+        ...fields,
+      },
+    },
+    applied: true,
+    blockedReason: null,
+  };
 };
 
 const applyProposalOperation = (
@@ -1311,9 +1375,15 @@ const applyProposalOperation = (
   }
 
   const existing = records.find((entry) => entry.id === id);
-  const nextEntity = operation.op === 'update'
+  const rawNextEntity = operation.op === 'update'
     ? { ...(existing || {}), ...fields, id }
     : buildProposalEntity(project, proposal, entityType, id, fields);
+  const nextEntity = normalizeImportedProposalEntity(project, proposal, entityType, rawNextEntity);
+
+  if (operation.op === 'create' && existing && importedProposalSource(proposal)) {
+    return { project, applied: true, blockedReason: null };
+  }
+
   const validationError = validateProposalEntityReferences(project, entityType, nextEntity, referenceSets);
   if (validationError) {
     return { project, applied: false, blockedReason: validationError };
