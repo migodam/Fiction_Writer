@@ -78,6 +78,12 @@ const safeReadJson = <T>(fs: typeof import('fs'), filePath: string, fallback: T)
   return fs.existsSync(filePath) ? (JSON.parse(fs.readFileSync(filePath, 'utf8')) as T) : fallback;
 };
 
+const normalizeIdentityKey = (value: unknown) =>
+  String(value || '').trim().toLowerCase().replace(/\s+/g, '');
+
+const uniqueStrings = (values: unknown[]) =>
+  Array.from(new Set(values.flatMap((value) => Array.isArray(value) ? value : [value]).map((value) => String(value || '').trim()).filter(Boolean)));
+
 const isImportProposal = (proposal: Proposal) => {
   const raw = proposal as Proposal & { source_workflow?: string; sourceWorkflow?: string };
   return proposal.source === 'import'
@@ -239,6 +245,80 @@ const normalizeUiState = (raw: unknown, fallbackProject: NarrativeProject): Narr
   };
 };
 
+const isBlankStarterChapter = (chapter: NarrativeProject['chapters'][number], scenes: NarrativeProject['scenes']) =>
+  chapter.id === 'chap_1'
+  && /^chapter 1$/i.test(chapter.title || '')
+  && (chapter.summary || '').trim() === 'Starting chapter.'
+  && scenes.some((scene) =>
+    scene.id === 'scene_1'
+    && scene.chapterId === 'chap_1'
+    && /^scene 1$/i.test(scene.title || '')
+    && !(scene.content || '').trim()
+  );
+
+const cleanupImportedWritingArtifacts = (project: NarrativeProject): NarrativeProject => {
+  const importedChapters = project.chapters.filter((chapter) => chapter.id !== 'chap_1');
+  if (!importedChapters.length) return project;
+
+  const starterChapterIds = new Set(
+    project.chapters
+      .filter((chapter) => isBlankStarterChapter(chapter, project.scenes))
+      .map((chapter) => chapter.id)
+  );
+  const starterSceneIds = new Set(
+    project.scenes
+      .filter((scene) => starterChapterIds.has(scene.chapterId) && !(scene.content || '').trim())
+      .map((scene) => scene.id)
+  );
+
+  const duplicateSceneIds = new Set<string>();
+  const scenesByChapter = new Map<string, NarrativeProject['scenes']>();
+  for (const scene of project.scenes) {
+    if (starterSceneIds.has(scene.id)) continue;
+    const list = scenesByChapter.get(scene.chapterId) || [];
+    list.push(scene);
+    scenesByChapter.set(scene.chapterId, list);
+  }
+  for (const scenes of scenesByChapter.values()) {
+    const byContent = new Map<string, NarrativeProject['scenes'][number]>();
+    for (const scene of scenes) {
+      const contentKey = (scene.content || '').trim();
+      if (!contentKey) continue;
+      const existing = byContent.get(contentKey);
+      if (!existing) {
+        byContent.set(contentKey, scene);
+        continue;
+      }
+      const sceneLooksGenerated = /— content$/.test(scene.title || '');
+      const existingLooksGenerated = /— content$/.test(existing.title || '');
+      duplicateSceneIds.add(sceneLooksGenerated || !existingLooksGenerated ? scene.id : existing.id);
+      if (!sceneLooksGenerated && existingLooksGenerated) {
+        byContent.set(contentKey, scene);
+      }
+    }
+  }
+
+  const removedSceneIds = new Set([...starterSceneIds, ...duplicateSceneIds]);
+  const chapters = project.chapters
+    .filter((chapter) => !starterChapterIds.has(chapter.id))
+    .sort((a, b) => a.orderIndex - b.orderIndex || a.title.localeCompare(b.title))
+    .map((chapter, index) => ({
+      ...chapter,
+      orderIndex: index,
+      sceneIds: chapter.sceneIds.filter((id) => !removedSceneIds.has(id)),
+    }));
+  const scenes = project.scenes
+    .filter((scene) => !removedSceneIds.has(scene.id) && !starterChapterIds.has(scene.chapterId))
+    .map((scene) => {
+      const chapterScenes = project.scenes
+        .filter((candidate) => candidate.chapterId === scene.chapterId && !removedSceneIds.has(candidate.id))
+        .sort((a, b) => a.orderIndex - b.orderIndex || a.id.localeCompare(b.id));
+      return { ...scene, orderIndex: Math.max(0, chapterScenes.findIndex((candidate) => candidate.id === scene.id)) };
+    });
+
+  return { ...project, chapters, scenes };
+};
+
 const migrateProject = (
   rawProject: Partial<NarrativeProject>,
   rootPath: string,
@@ -354,7 +434,7 @@ const migrateProject = (
     migrated.uiState.view.lastOpenedSceneId = migrated.scenes[0]?.id || null;
   }
 
-  return migrated;
+  return cleanupImportedWritingArtifacts(migrated);
 };
 
 const serializeProjectToFolder = (
@@ -1047,8 +1127,23 @@ const normalizeImportedProposalEntity = (
   proposal: Proposal,
   entityType: EntityKind,
   entity: Record<string, unknown>,
+  referenceSets?: ReferenceSets,
 ): Record<string, unknown> => {
-  if (!importedProposalSource(proposal) || entityType !== 'timeline_event') return entity;
+  if (!importedProposalSource(proposal)) return entity;
+
+  const refs = referenceSets || collectReferenceSets(project);
+
+  if (entityType === 'character') {
+    return {
+      ...entity,
+      tagIds: uniqueStrings([entity.tagIds]).filter((id) => refs.tags.has(id)),
+      linkedSceneIds: uniqueStrings([entity.linkedSceneIds]).filter((id) => refs.scenes.has(id)),
+      linkedEventIds: uniqueStrings([entity.linkedEventIds]).filter((id) => refs.events.has(id)),
+      linkedWorldItemIds: uniqueStrings([entity.linkedWorldItemIds]).filter((id) => refs.worldItems.has(id)),
+    };
+  }
+
+  if (entityType !== 'timeline_event') return entity;
 
   const branchId = String(entity.branchId || '');
   if (!branchId || project.timelineBranches.some((branch) => branch.id === branchId)) return entity;
@@ -1347,6 +1442,71 @@ const applyWorldSettingsProposalOperation = (
   };
 };
 
+const characterIdentityKeys = (entity: Record<string, unknown>) =>
+  new Set(
+    uniqueStrings([entity.name, entity.aliases])
+      .map(normalizeIdentityKey)
+      .filter(Boolean)
+  );
+
+const findImportedCharacterDuplicate = (
+  records: Array<Record<string, unknown>>,
+  id: string,
+  entity: Record<string, unknown>,
+) => {
+  const keys = characterIdentityKeys(entity);
+  if (!keys.size) return undefined;
+  return records.find((entry) => {
+    if (entry.id === id) return false;
+    for (const key of characterIdentityKeys(entry)) {
+      if (keys.has(key)) return true;
+    }
+    return false;
+  });
+};
+
+const richerText = (left: unknown, right: unknown) => {
+  const a = String(left || '').trim();
+  const b = String(right || '').trim();
+  return b.length > a.length ? b : a;
+};
+
+const importanceRank: Record<string, number> = {
+  core: 4,
+  major: 3,
+  supporting: 2,
+  minor: 1,
+  ungrouped: 0,
+};
+
+const mergeImportedCharacterEntity = (
+  existing: Record<string, unknown>,
+  incoming: Record<string, unknown>,
+) => {
+  const existingImportance = String(existing.importance || existing.importImportance || 'ungrouped');
+  const incomingImportance = String(incoming.importance || incoming.importImportance || 'ungrouped');
+  const importance = importanceRank[incomingImportance] > importanceRank[existingImportance] ? incomingImportance : existingImportance;
+  return {
+    ...existing,
+    aliases: uniqueStrings([existing.aliases, incoming.aliases, incoming.name]).filter((alias) => normalizeIdentityKey(alias) !== normalizeIdentityKey(existing.name)),
+    summary: richerText(existing.summary, incoming.summary),
+    background: richerText(existing.background, incoming.background),
+    traits: uniqueStrings([existing.traits, incoming.traits]),
+    tagIds: uniqueStrings([existing.tagIds, incoming.tagIds]),
+    organizationIds: uniqueStrings([existing.organizationIds, incoming.organizationIds]),
+    linkedSceneIds: uniqueStrings([existing.linkedSceneIds, incoming.linkedSceneIds]),
+    linkedEventIds: uniqueStrings([existing.linkedEventIds, incoming.linkedEventIds]),
+    linkedWorldItemIds: uniqueStrings([existing.linkedWorldItemIds, incoming.linkedWorldItemIds]),
+    roleInStory: richerText(existing.roleInStory, incoming.roleInStory),
+    physicalDescription: richerText(existing.physicalDescription, incoming.physicalDescription),
+    notes: uniqueStrings([existing.notes, incoming.notes]),
+    importConfidence: Math.max(Number(existing.importConfidence || 0), Number(incoming.importConfidence || 0)),
+    importance,
+    importImportance: importance,
+    enrichmentRecommended: Boolean(existing.enrichmentRecommended || incoming.enrichmentRecommended),
+  };
+};
+
 const applyProposalOperation = (
   project: NarrativeProject,
   proposal: Proposal,
@@ -1378,10 +1538,32 @@ const applyProposalOperation = (
   const rawNextEntity = operation.op === 'update'
     ? { ...(existing || {}), ...fields, id }
     : buildProposalEntity(project, proposal, entityType, id, fields);
-  const nextEntity = normalizeImportedProposalEntity(project, proposal, entityType, rawNextEntity);
+  const nextEntity = normalizeImportedProposalEntity(project, proposal, entityType, rawNextEntity, referenceSets);
 
   if (operation.op === 'create' && existing && importedProposalSource(proposal)) {
     return { project, applied: true, blockedReason: null };
+  }
+
+  if (operation.op === 'create' && entityType === 'character' && importedProposalSource(proposal)) {
+    const duplicate = findImportedCharacterDuplicate(records, id, nextEntity);
+    if (duplicate) {
+      const merged = normalizeImportedProposalEntity(
+        project,
+        proposal,
+        entityType,
+        mergeImportedCharacterEntity(duplicate, nextEntity),
+        referenceSets,
+      );
+      const validationError = validateProposalEntityReferences(project, entityType, merged, referenceSets);
+      if (validationError) {
+        return { project, applied: false, blockedReason: validationError };
+      }
+      return {
+        project: { ...project, [collectionKey]: records.map((entry) => entry.id === duplicate.id ? merged : entry) } as NarrativeProject,
+        applied: true,
+        blockedReason: null,
+      };
+    }
   }
 
   const validationError = validateProposalEntityReferences(project, entityType, nextEntity, referenceSets);

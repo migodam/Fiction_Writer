@@ -3602,6 +3602,53 @@ async def node_write_to_project(state: ImportState) -> dict:
     receipts: list[dict] = []
     errors: list[str] = list(state.get("errors", []))
 
+    def _dedupe_registry_characters_for_write() -> None:
+        characters = registry.get("characters", {})
+        if not isinstance(characters, dict):
+            return
+        character_id_map = registry.setdefault("character_id_map", {})
+        by_identity: dict[str, str] = {}
+        importance_rank = {"core": 4, "major": 3, "supporting": 2, "minor": 1}
+        for cid, entry in list(characters.items()):
+            identities = [
+                _normal_key(entry.get("canonical_name") or entry.get("name") or ""),
+                *[_normal_key(alias) for alias in entry.get("aliases", []) if alias],
+            ]
+            primary_id = next((by_identity[key] for key in identities if key and key in by_identity), "")
+            if not primary_id:
+                for key in identities:
+                    if key:
+                        by_identity.setdefault(key, cid)
+                continue
+            primary = characters[primary_id]
+            primary["aliases"] = list(dict.fromkeys([
+                *primary.get("aliases", []),
+                *entry.get("aliases", []),
+                entry.get("canonical_name") or entry.get("name") or "",
+            ]))
+            primary["summary"] = _merge_text_field(primary.get("summary", ""), entry.get("summary", ""))
+            primary["notes"] = list(dict.fromkeys([*primary.get("notes", []), *entry.get("notes", [])]))
+            primary["open_questions"] = list(dict.fromkeys([*primary.get("open_questions", []), *entry.get("open_questions", [])]))
+            primary["tag_ids"] = list(dict.fromkeys([*primary.get("tag_ids", []), *entry.get("tag_ids", [])]))
+            primary["confidence"] = max(float(primary.get("confidence", 0.7) or 0.7), float(entry.get("confidence", 0.7) or 0.7))
+            if importance_rank.get(str(entry.get("importance", "")), 0) > importance_rank.get(str(primary.get("importance", "")), 0):
+                primary["importance"] = entry.get("importance")
+                primary["groupKey"] = entry.get("groupKey", primary.get("groupKey", ""))
+            character_id_map[cid] = primary_id
+            del characters[cid]
+
+        def _map_character_ids(ids: list) -> list:
+            return list(dict.fromkeys([character_id_map.get(cid, cid) for cid in ids if cid]))
+
+        for event in registry.get("events", {}).values():
+            event["character_ids"] = _map_character_ids(event.get("character_ids", []))
+            event["participantCharacterIds"] = _map_character_ids(event.get("participantCharacterIds", []))
+        for relationship in relationships:
+            relationship["sourceId"] = character_id_map.get(relationship.get("sourceId", ""), relationship.get("sourceId", ""))
+            relationship["targetId"] = character_id_map.get(relationship.get("targetId", ""), relationship.get("targetId", ""))
+
+    _dedupe_registry_characters_for_write()
+
     character_event_links: dict[str, list[str]] = {}
     for event_id, event in registry.get("events", {}).items():
         for cid in event.get("character_ids", []):
@@ -4496,42 +4543,49 @@ async def node_infer_world_settings(state: ImportState) -> dict:
 
     raw_branches = result.get("inferred_timeline_branches", [])
     timeline_branches: list[dict] = []
+    existing_timeline_branches = [branch for branch in state.get("timeline_branches", []) if branch.get("id")]
     used_branch_ids: set[str] = set()
     branch_name_to_id: dict[str, str] = {}
-    for index, branch in enumerate(raw_branches):
-        name = str(branch.get("name", "")).strip()
-        if not name:
-            continue
-        branch_id = branch.get("id") or _stable_generated_id("branch", name, used_branch_ids)
-        mode = str(branch.get("mode", "independent")).strip().lower() or "independent"
-        if mode not in {"root", "forked", "independent"}:
-            mode = "independent"
-        if index == 0 and mode != "root":
-            mode = "root"
-        branch_name_to_id[name.lower()] = branch_id
-        timeline_branches.append({
-            "id": branch_id,
-            "name": name,
-            "description": str(branch.get("description", "")).strip(),
-            "parentBranchId": None,
-            "forkEventId": None,
-            "mergeEventId": None,
-            "color": str(branch.get("color", "")).strip() or _tag_color(index),
-            "sortOrder": index,
-            "collapsed": False,
-            "mode": mode,
-            "startAnchor": None,
-            "endAnchor": None,
-            "endMode": "open",
-            "mergeTargetBranchId": None,
-        })
+    if existing_timeline_branches:
+        # Timeline Architect owns branch topology. World-settings inference may
+        # suggest broad story lanes, but it must not overwrite fork/merge-ready
+        # branches already inferred from concrete event candidates.
+        timeline_branches = existing_timeline_branches
+    else:
+        for index, branch in enumerate(raw_branches):
+            name = str(branch.get("name", "")).strip()
+            if not name:
+                continue
+            branch_id = branch.get("id") or _stable_generated_id("branch", name, used_branch_ids)
+            mode = str(branch.get("mode", "independent")).strip().lower() or "independent"
+            if mode not in {"root", "forked", "independent"}:
+                mode = "independent"
+            if index == 0 and mode != "root":
+                mode = "root"
+            branch_name_to_id[name.lower()] = branch_id
+            timeline_branches.append({
+                "id": branch_id,
+                "name": name,
+                "description": str(branch.get("description", "")).strip(),
+                "parentBranchId": None,
+                "forkEventId": None,
+                "mergeEventId": None,
+                "color": str(branch.get("color", "")).strip() or _tag_color(index),
+                "sortOrder": index,
+                "collapsed": False,
+                "mode": mode,
+                "startAnchor": None,
+                "endAnchor": None,
+                "endMode": "open",
+                "mergeTargetBranchId": None,
+            })
 
-    for branch, raw_branch in zip(timeline_branches, raw_branches):
-        parent_name = str(raw_branch.get("parent_branch_name", "")).strip().lower()
-        if parent_name and parent_name in branch_name_to_id:
-            branch["parentBranchId"] = branch_name_to_id[parent_name]
-        elif branch.get("mode") == "forked" and timeline_branches:
-            branch["parentBranchId"] = timeline_branches[0]["id"]
+        for branch, raw_branch in zip(timeline_branches, raw_branches):
+            parent_name = str(raw_branch.get("parent_branch_name", "")).strip().lower()
+            if parent_name and parent_name in branch_name_to_id:
+                branch["parentBranchId"] = branch_name_to_id[parent_name]
+            elif branch.get("mode") == "forked" and timeline_branches:
+                branch["parentBranchId"] = timeline_branches[0]["id"]
 
     return {
         "world_settings": world_settings,

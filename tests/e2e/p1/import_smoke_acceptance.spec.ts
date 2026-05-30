@@ -179,6 +179,20 @@ test.describe('W1 import smoke acceptance', () => {
           statusFlags: {},
           importance: 'core',
         }),
+        makeProposal('p_char_duplicate_with_demoted_event', 'character', {
+          id: 'char_han_li_duplicate',
+          name: '韩立',
+          summary: '同一主角的后续窗口补充信息。',
+          background: '',
+          aliases: ['二愣子'],
+          tagIds: [],
+          organizationIds: [],
+          linkedSceneIds: ['scene_1'],
+          linkedEventIds: ['event_legacy_branch', 'event_demoted_scene_beat'],
+          linkedWorldItemIds: [],
+          statusFlags: {},
+          importance: 'core',
+        }),
         makeProposal('p_duplicate_chapter', 'chapter', {
           id: 'chap_1',
           title: '第一章',
@@ -207,7 +221,7 @@ test.describe('W1 import smoke acceptance', () => {
         proposals: s.proposals,
         history: s.proposalHistory.map((proposal: any) => proposal.id),
         events: s.timelineEvents.map((event: any) => ({ id: event.id, branchId: event.branchId })),
-        characters: s.characters.map((character: any) => ({ id: character.id, linkedEventIds: character.linkedEventIds })),
+        characters: s.characters.map((character: any) => ({ id: character.id, name: character.name, linkedEventIds: character.linkedEventIds })),
         chapters: s.chapters.map((chapter: any) => ({ id: chapter.id, title: chapter.title })),
         worldSettings: s.worldSettings,
       };
@@ -216,7 +230,7 @@ test.describe('W1 import smoke acceptance', () => {
     expect(state.proposals).toEqual([]);
     expect(state.history).toEqual(expect.arrayContaining(['p_event_stale_branch', 'p_char_depends_event', 'p_duplicate_chapter', 'p_world_settings']));
     expect(state.events).toEqual([{ id: 'event_legacy_branch', branchId: 'branch_item' }]);
-    expect(state.characters).toEqual([{ id: 'char_han_li', linkedEventIds: ['event_legacy_branch'] }]);
+    expect(state.characters).toEqual([{ id: 'char_han_li', name: '韩立', linkedEventIds: ['event_legacy_branch'] }]);
     expect(state.chapters).toEqual([{ id: 'chap_1', title: '第一章' }]);
     expect(state.worldSettings.worldRulesSummary).toContain('七玄门');
   });

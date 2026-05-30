@@ -1043,6 +1043,77 @@ def test_node_write_to_project_normalizes_event_branch_to_imported_root(tmp_path
     assert event_op["depends_on"] == ["branch_item"]
 
 
+def test_node_write_to_project_dedupes_duplicate_character_names_before_proposals(tmp_path, monkeypatch):
+    captured_ops = []
+
+    async def fake_propose_write(op, _project_path):
+        captured_ops.append(op)
+        return {"id": f"p_{op['entity_id']}", "confidence": op["confidence"], "status": "pending"}
+
+    monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", fake_propose_write)
+
+    state = _make_write_state(
+        tmp_path,
+        entity_registry={
+            "characters": {
+                "char_han_a": {"canonical_name": "韩立", "confidence": 0.8, "importance": "core", "aliases": ["二愣子"], "tag_ids": []},
+                "char_han_b": {"canonical_name": "韩立", "confidence": 0.9, "importance": "core", "aliases": ["韩立"], "tag_ids": []},
+            },
+            "events": {
+                "event_1": {
+                    "title": "韩立离家",
+                    "description": "韩立踏上旅途。",
+                    "confidence": 0.9,
+                    "branchId": "branch_main",
+                    "orderIndex": 0,
+                    "character_ids": ["char_han_a", "char_han_b"],
+                },
+            },
+            "world": {},
+            "world_detailed": {},
+        },
+    )
+
+    asyncio.run(w1_import.node_write_to_project(state))
+
+    character_ops = [op for op in captured_ops if op["entity_type"] == "character"]
+    assert len(character_ops) == 1
+    assert character_ops[0]["data"]["name"] == "韩立"
+    event_op = next(op for op in captured_ops if op["entity_type"] == "timeline_event")
+    assert event_op["data"]["participantCharacterIds"] == ["char_han_a"]
+
+
+def test_node_infer_world_settings_preserves_existing_timeline_architect_branches(monkeypatch):
+    async def fake_invoke_json_prompt(*_args, **_kwargs):
+        return {
+            "world_settings": {"projectType": "xianxia"},
+            "suggested_world_containers": [],
+            "inferred_timeline_branches": [
+                {"id": "branch_world_settings", "name": "World Settings Branch", "mode": "root"},
+            ],
+        }
+
+    monkeypatch.setattr(w1_import, "_HAS_DEEP_PROMPTS", True)
+    monkeypatch.setattr(w1_import, "_get_llm", lambda _state: object())
+    monkeypatch.setattr(w1_import, "_invoke_json_prompt", fake_invoke_json_prompt)
+
+    state = {
+        "source_language": "zh",
+        "manuscript_chapters": [{"manuscript_content": "第一章 韩立离家。"}],
+        "chunk_extractions": [],
+        "timeline_branches": [
+            {"id": "branch_main", "name": "主线", "mode": "root"},
+            {"id": "branch_training", "name": "修炼支线", "mode": "forked", "parentBranchId": "branch_main"},
+        ],
+        "errors": [],
+        "progress": 0.9,
+    }
+
+    result = asyncio.run(w1_import.node_infer_world_settings(state))
+
+    assert [branch["id"] for branch in result["timeline_branches"]] == ["branch_main", "branch_training"]
+
+
 def test_node_write_to_project_manuscript_still_written(tmp_path, monkeypatch):
     """manuscript.json must be written even after switching to compact receipts."""
     import json
