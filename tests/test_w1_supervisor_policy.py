@@ -937,6 +937,30 @@ class TestOrchestratorPlanGranularity(unittest.TestCase):
             f"50-ch zh deep: expected 50 (coarse_webnovel 1.0×50), got {target['expected_min_characters']}"
         )
 
+    def test_sparse_turning_point_policy_lowers_event_target_for_zh_webnovel(self):
+        """Orchestrator-selected sparse density must affect converge target, not just prompt text."""
+        from sidecar.supervisor.policy import _ensure_orchestrator_plan
+        state = self._make_zh_deep_state(chapter_count=50)
+        state["chunks"] = [
+            {
+                **chunk,
+                "content": "韩立修炼。" * 400,
+                "manuscript_content": "韩立修炼。" * 400,
+                "raw_content": "韩立修炼。" * 400,
+            }
+            for chunk in state["chunks"]
+        ]
+
+        result = _ensure_orchestrator_plan(state)
+
+        self.assertEqual(result["import_granularity_profile"]["event_density"], "sparse_turning_points")
+        self.assertEqual(result["import_granularity_profile"]["min_events_per_chapter"], 0.4)
+        self.assertEqual(result["converge_target"]["expected_min_events"], 20)
+        self.assertEqual(
+            result["prompt_policy_decision"]["prompt_policy_patch"]["event_density_strategy"],
+            "sparse_turning_points",
+        )
+
     def test_idempotent_when_spec_and_target_already_set(self):
         """Second call with spec+target already in state must return early without overwriting."""
         from sidecar.supervisor.policy import _ensure_orchestrator_plan

@@ -22,7 +22,10 @@ from sidecar.supervisor.planner_llm import (
 )
 from sidecar.supervisor.prompt_policy import (
     apply_prompt_policy_patch_to_plan,
+    build_directives_header,
+    choose_prompt_policy_patch,
     normalize_prompt_policy_patch,
+    prompt_policy_decision,
     prompt_policy_directives,
 )
 
@@ -307,11 +310,15 @@ class TestPromptPolicyPatch:
         joined = "\n".join(directives.values())
         assert set(directives) == {
             "canonical_events",
+            "event_density",
             "minor_npcs",
             "relationship_evidence",
             "source_provenance",
             "timeline_topology",
+            "timeline_labels",
+            "topology_fidelity",
             "world_boundary",
+            "world_scope",
         }
         assert "Prefer canonical turning-point events" in joined
         assert "World boundary strictness is high" in joined
@@ -361,6 +368,44 @@ class TestPromptPolicyPatch:
         assert plan["prompt_policy"]["prompt_policy_patch"] == proposal["prompt_policy_patch"]
         assert "canonical_events" in plan["prompt_policy"]["directive_keys"]
         assert "World boundary strictness is medium" in plan["prompt_policy"]["static_policy_directives"]["world_boundary"]
+
+    def test_extended_prompt_policy_knobs_are_allowlisted_and_static(self):
+        patch = {
+            "event_density_strategy": "sparse_turning_points",
+            "topology_fidelity": "high",
+            "world_model_scope": "world_only",
+            "timeline_label_granularity": "compact",
+            "raw_prompt_text": "write this unsafe prompt text",
+        }
+        ok, errors = validate_prompt_policy_patch(patch)
+        assert not ok
+        assert any("unknown fields" in err for err in errors)
+
+        normalized = normalize_prompt_policy_patch(patch)
+        assert normalized == {
+            "event_density_strategy": "sparse_turning_points",
+            "topology_fidelity": "high",
+            "world_model_scope": "world_only",
+            "timeline_label_granularity": "compact",
+        }
+        header = build_directives_header(normalized)
+        assert "sparse turning-point density" in header
+        assert "branch/fork/merge fidelity" in header
+        assert "write this unsafe prompt text" not in header
+
+    def test_orchestrator_policy_decision_selects_sparse_density_for_zh_webnovel(self):
+        source_profile = {
+            "chapter_count": 10,
+            "source_language": "zh",
+            "avg_chars_per_chapter": 2100,
+            "estimated_source_type": "coarse_webnovel",
+        }
+        patch = choose_prompt_policy_patch(source_profile, {"warnings": ["timeline branch over budget"]})
+        assert patch["event_density_strategy"] == "sparse_turning_points"
+        assert patch["topology_fidelity"] == "high"
+        artifact = prompt_policy_decision(source_profile, patch)
+        assert artifact["prompt_policy_patch"]["world_model_scope"] == "world_only"
+        assert "event_density" in artifact["directive_keys"]
 
 
 class TestPlannerLlmZeroCostHelpers:

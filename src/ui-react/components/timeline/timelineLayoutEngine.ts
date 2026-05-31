@@ -46,6 +46,35 @@ export interface TimelineLayoutOptions {
   clusterBox?: TimelineNodeBox;
 }
 
+export interface TimelineLabelInput {
+  id: string;
+  title: string;
+  x: number;
+  y: number;
+  importance?: 'critical' | 'high' | 'medium' | 'low' | string;
+  nodeRadius?: number;
+}
+
+export interface TimelineLabelPlacement {
+  id: string;
+  text: string;
+  visible: boolean;
+  dx: number;
+  dy: number;
+  width: number;
+  height: number;
+  hiddenReason?: 'collision';
+}
+
+export interface TimelineLabelOptions {
+  maxVisualWidth?: number;
+  fontSize?: number;
+  lineHeight?: number;
+  charWidth?: number;
+  paddingX?: number;
+  collisionPadding?: number;
+}
+
 export interface TimelineLayoutBranchGeometry {
   branchId: string;
   laneIndex: number;
@@ -122,6 +151,15 @@ const DEFAULT_OPTIONS: Required<TimelineLayoutOptions> = {
 
 const SUBLANE_STEP_PX = 42;
 const MAX_RELAXATION_PASSES = 6;
+
+const DEFAULT_LABEL_OPTIONS: Required<TimelineLabelOptions> = {
+  maxVisualWidth: 18,
+  fontSize: 10,
+  lineHeight: 14,
+  charWidth: 5.8,
+  paddingX: 8,
+  collisionPadding: 4,
+};
 
 export function layoutTimelineV2(
   events: TimelineLayoutEventInput[],
@@ -201,6 +239,93 @@ export function boxesOverlap(
     a.bottom + padding <= b.top ||
     b.bottom + padding <= a.top
   );
+}
+
+export function timelineLabelVisualWidth(text: string): number {
+  return Array.from(text).reduce((width, char) => width + (isCjkChar(char) ? 2 : 1), 0);
+}
+
+export function truncateTimelineLabel(title: string, maxVisualWidth = DEFAULT_LABEL_OPTIONS.maxVisualWidth): string {
+  let width = 0;
+  const chars = Array.from(title);
+
+  for (let index = 0; index < chars.length; index++) {
+    width += isCjkChar(chars[index]) ? 2 : 1;
+    if (width > maxVisualWidth) return `${chars.slice(0, index).join('')}…`;
+  }
+
+  return title;
+}
+
+export function placeTimelineLabels(
+  labels: TimelineLabelInput[],
+  options: TimelineLabelOptions = {},
+): Map<string, TimelineLabelPlacement> {
+  const opts = { ...DEFAULT_LABEL_OPTIONS, ...options };
+  const occupied: Array<{ id: string; left: number; right: number; top: number; bottom: number }> = [];
+  const placements = new Map<string, TimelineLabelPlacement>();
+  const labelsById = new Map(labels.map((label) => [label.id, label]));
+
+  const orderedLabels = [...labels].sort((left, right) => {
+    const priorityDelta = labelPriority(left.importance) - labelPriority(right.importance);
+    return priorityDelta || left.y - right.y || left.x - right.x || left.id.localeCompare(right.id);
+  });
+
+  for (const label of orderedLabels) {
+    const text = truncateTimelineLabel(label.title, opts.maxVisualWidth);
+    const visualWidth = Math.max(1, timelineLabelVisualWidth(text));
+    const width = Math.ceil(visualWidth * opts.charWidth + opts.paddingX * 2);
+    const height = opts.lineHeight;
+    const nodeRadius = label.nodeRadius ?? 8;
+    const candidates = labelCandidates(nodeRadius, height);
+    let placement: TimelineLabelPlacement | null = null;
+
+    for (const candidate of candidates) {
+      const bounds = labelBounds(label.x + candidate.dx, label.y + candidate.dy, width, height, opts.collisionPadding);
+      if (occupied.some((entry) => rectsOverlap(bounds, entry))) continue;
+      if (labels.some((other) => other.id !== label.id && labelIntersectsNode(bounds, other))) continue;
+
+      placement = {
+        id: label.id,
+        text,
+        visible: true,
+        dx: candidate.dx,
+        dy: candidate.dy,
+        width,
+        height,
+      };
+      occupied.push({ id: label.id, ...bounds });
+      break;
+    }
+
+    placements.set(label.id, placement ?? {
+      id: label.id,
+      text,
+      visible: false,
+      dx: 0,
+      dy: nodeRadius + 16,
+      width,
+      height,
+      hiddenReason: 'collision',
+    });
+  }
+
+  for (const label of labelsById.values()) {
+    if (!placements.has(label.id)) {
+      placements.set(label.id, {
+        id: label.id,
+        text: truncateTimelineLabel(label.title, opts.maxVisualWidth),
+        visible: false,
+        dx: 0,
+        dy: (label.nodeRadius ?? 8) + 16,
+        width: 0,
+        height: opts.lineHeight,
+        hiddenReason: 'collision',
+      });
+    }
+  }
+
+  return placements;
 }
 
 function normalizeBranches(
@@ -420,4 +545,74 @@ function relaxCollisions<T extends TimelineLayoutNodeGeometry | TimelineLayoutCl
   }
 
   return relaxed;
+}
+
+function isCjkChar(char: string): boolean {
+  const code = char.codePointAt(0) ?? 0;
+  return (
+    (code >= 0x3000 && code <= 0x9fff) ||
+    (code >= 0xac00 && code <= 0xd7af) ||
+    (code >= 0xf900 && code <= 0xfaff) ||
+    (code >= 0xff01 && code <= 0xff60)
+  );
+}
+
+function labelPriority(importance?: string): number {
+  if (importance === 'critical') return 0;
+  if (importance === 'high') return 1;
+  if (importance === 'medium') return 2;
+  return 3;
+}
+
+function labelCandidates(nodeRadius: number, height: number): Array<{ dx: number; dy: number }> {
+  const nearBelow = nodeRadius + 16;
+  const nearAbove = -nodeRadius - 10;
+  const farBelow = nearBelow + height + 4;
+  const farAbove = nearAbove - height - 4;
+
+  return [
+    { dx: 0, dy: nearBelow },
+    { dx: 0, dy: nearAbove },
+    { dx: 0, dy: farBelow },
+    { dx: 0, dy: farAbove },
+    { dx: 34, dy: 4 },
+    { dx: -34, dy: 4 },
+    { dx: 44, dy: nearBelow },
+    { dx: -44, dy: nearBelow },
+  ];
+}
+
+function labelBounds(
+  x: number,
+  baselineY: number,
+  width: number,
+  height: number,
+  padding: number,
+) {
+  return {
+    left: x - width / 2 - padding,
+    right: x + width / 2 + padding,
+    top: baselineY - height - padding,
+    bottom: baselineY + padding,
+  };
+}
+
+function rectsOverlap(
+  left: { left: number; right: number; top: number; bottom: number },
+  right: { left: number; right: number; top: number; bottom: number },
+): boolean {
+  return !(left.right <= right.left || right.right <= left.left || left.bottom <= right.top || right.bottom <= left.top);
+}
+
+function labelIntersectsNode(
+  label: { left: number; right: number; top: number; bottom: number },
+  node: TimelineLabelInput,
+): boolean {
+  const radius = (node.nodeRadius ?? 8) + 4;
+  return rectsOverlap(label, {
+    left: node.x - radius,
+    right: node.x + radius,
+    top: node.y - radius,
+    bottom: node.y + radius,
+  });
 }

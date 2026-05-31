@@ -18,6 +18,10 @@ _BOOL_DEFAULTS: dict[str, bool] = {
 }
 
 _STRICTNESS_VALUES: frozenset[str] = frozenset({"low", "medium", "high"})
+_EVENT_DENSITY_VALUES: frozenset[str] = frozenset({"sparse_turning_points", "arc_level", "chapter_level", "scene_level"})
+_TOPOLOGY_VALUES: frozenset[str] = frozenset({"low", "medium", "high"})
+_WORLD_SCOPE_VALUES: frozenset[str] = frozenset({"minimal", "world_only", "full_lore"})
+_LABEL_GRANULARITY_VALUES: frozenset[str] = frozenset({"compact", "standard", "detailed"})
 
 _BOOL_DIRECTIVES: dict[tuple[str, bool], tuple[str, str]] = {
     ("emphasize_existing_timeline_topology", True): (
@@ -71,6 +75,43 @@ _STRICTNESS_DIRECTIVES: dict[str, tuple[str, str]] = {
     ),
 }
 
+_EVENT_DENSITY_DIRECTIVES: dict[str, tuple[str, str]] = {
+    "sparse_turning_points": (
+        "event_density",
+        "Use sparse turning-point density: only irreversible state changes become canonical events; route scene beats to notes.",
+    ),
+    "arc_level": (
+        "event_density",
+        "Use arc-level density: keep only phase transitions, breakthroughs, deaths, betrayals, and faction-level shifts.",
+    ),
+    "chapter_level": (
+        "event_density",
+        "Use chapter-level density: select a few causally important chapter events, not every action beat.",
+    ),
+    "scene_level": (
+        "event_density",
+        "Use scene-level density only for short/dense sources; each event still needs causal state change.",
+    ),
+}
+
+_TOPOLOGY_DIRECTIVES: dict[str, tuple[str, str]] = {
+    "low": ("topology_fidelity", "Keep topology simple unless source evidence clearly requires branches."),
+    "medium": ("topology_fidelity", "Preserve recurring arcs and fork/merge hints when supported by source evidence."),
+    "high": ("topology_fidelity", "Prioritize branch/fork/merge fidelity; every event should carry arc and causal topology hints."),
+}
+
+_WORLD_SCOPE_DIRECTIVES: dict[str, tuple[str, str]] = {
+    "minimal": ("world_scope", "World Model scope is minimal: include only reusable setting entities, not people, relationships, or timeline beats."),
+    "world_only": ("world_scope", "World Model scope is world-only: exclude relationship graphs, timeline events, ranks-as-characters, and scene beats."),
+    "full_lore": ("world_scope", "World Model scope is full lore but still separated from characters, relationships, and timeline modules."),
+}
+
+_LABEL_DIRECTIVES: dict[str, tuple[str, str]] = {
+    "compact": ("timeline_labels", "Timeline labels should be compact and title-like for dense visual layouts."),
+    "standard": ("timeline_labels", "Timeline labels should balance readability and specificity."),
+    "detailed": ("timeline_labels", "Timeline labels may be more detailed when density is low and readability allows."),
+}
+
 
 def normalize_prompt_policy_patch(patch: dict[str, Any] | None) -> dict[str, Any]:
     """Return only valid allowlisted prompt-policy knobs.
@@ -91,6 +132,18 @@ def normalize_prompt_policy_patch(patch: dict[str, Any] | None) -> dict[str, Any
     strictness = patch.get("world_boundary_strictness")
     if strictness in _STRICTNESS_VALUES:
         normalized["world_boundary_strictness"] = strictness
+    density = patch.get("event_density_strategy")
+    if density in _EVENT_DENSITY_VALUES:
+        normalized["event_density_strategy"] = density
+    topology = patch.get("topology_fidelity")
+    if topology in _TOPOLOGY_VALUES:
+        normalized["topology_fidelity"] = topology
+    world_scope = patch.get("world_model_scope")
+    if world_scope in _WORLD_SCOPE_VALUES:
+        normalized["world_model_scope"] = world_scope
+    label_granularity = patch.get("timeline_label_granularity")
+    if label_granularity in _LABEL_GRANULARITY_VALUES:
+        normalized["timeline_label_granularity"] = label_granularity
 
     return normalized
 
@@ -107,6 +160,18 @@ def prompt_policy_directives(patch: dict[str, Any] | None) -> dict[str, str]:
 
     strictness = str(normalized.get("world_boundary_strictness", "medium"))
     key, directive = _STRICTNESS_DIRECTIVES[strictness]
+    directives[key] = directive
+    density = str(normalized.get("event_density_strategy", "chapter_level"))
+    key, directive = _EVENT_DENSITY_DIRECTIVES[density]
+    directives[key] = directive
+    topology = str(normalized.get("topology_fidelity", "medium"))
+    key, directive = _TOPOLOGY_DIRECTIVES[topology]
+    directives[key] = directive
+    world_scope = str(normalized.get("world_model_scope", "world_only"))
+    key, directive = _WORLD_SCOPE_DIRECTIVES[world_scope]
+    directives[key] = directive
+    label_granularity = str(normalized.get("timeline_label_granularity", "compact"))
+    key, directive = _LABEL_DIRECTIVES[label_granularity]
     directives[key] = directive
     return directives
 
@@ -126,3 +191,75 @@ def apply_prompt_policy_patch_to_plan(
     prompt_policy["dynamic_prompt_edits_allowed"] = False
     updated["prompt_policy"] = prompt_policy
     return updated
+
+
+def build_directives_header(patch_or_policy: dict[str, Any] | None) -> str:
+    """Convert allowlisted prompt policy metadata into a bounded static prompt header."""
+    if not isinstance(patch_or_policy, dict):
+        return ""
+    patch = patch_or_policy.get("prompt_policy_patch") if "prompt_policy_patch" in patch_or_policy else patch_or_policy
+    directives = prompt_policy_directives(patch if isinstance(patch, dict) else {})
+    if not directives:
+        return ""
+    lines = ["EXTRACTION_POLICY_DIRECTIVES:"]
+    for key in sorted(directives):
+        lines.append(f"- {key}: {directives[key]}")
+    return "\n".join(lines)
+
+
+def choose_prompt_policy_patch(source_profile: dict[str, Any] | None, quality_hints: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Deterministically choose prompt knobs from source/profile signals.
+
+    This is the zero-cost Orchestrator decision layer. It explains density
+    choices without letting raw model text become prompt text.
+    """
+    profile = source_profile if isinstance(source_profile, dict) else {}
+    hints = quality_hints if isinstance(quality_hints, dict) else {}
+    chapter_count = int(profile.get("chapter_count") or 1)
+    avg_chars = float(profile.get("avg_chars_per_chapter") or 0)
+    source_language = str(profile.get("source_language") or "").lower()
+    estimated_type = str(profile.get("estimated_source_type") or "")
+    warnings = hints.get("warnings") or []
+
+    if estimated_type == "coarse_webnovel" or (source_language.startswith(("zh", "ja", "ko")) and chapter_count >= 8 and avg_chars >= 1500):
+        density = "sparse_turning_points"
+    elif chapter_count > 30:
+        density = "arc_level"
+    elif chapter_count <= 5 and avg_chars < 2500:
+        density = "scene_level"
+    else:
+        density = "chapter_level"
+
+    if any("timeline" in str(w).lower() or "branch" in str(w).lower() for w in warnings):
+        topology = "high"
+    else:
+        topology = "high" if chapter_count >= 8 else "medium"
+
+    return {
+        "emphasize_existing_timeline_topology": topology != "low",
+        "require_source_provenance": True,
+        "prefer_canonical_events": density in {"sparse_turning_points", "arc_level", "chapter_level"},
+        "suppress_minor_npcs": chapter_count >= 8,
+        "relationship_evidence_required": True,
+        "world_boundary_strictness": "high",
+        "event_density_strategy": density,
+        "topology_fidelity": topology,
+        "world_model_scope": "world_only",
+        "timeline_label_granularity": "compact" if density in {"sparse_turning_points", "arc_level"} else "standard",
+    }
+
+
+def prompt_policy_decision(source_profile: dict[str, Any] | None, patch: dict[str, Any]) -> dict[str, Any]:
+    """Artifact payload explaining Orchestrator prompt policy choices."""
+    normalized = normalize_prompt_policy_patch(patch)
+    return {
+        "decision_version": "w1-prompt-policy-decision-v1",
+        "source_profile": source_profile or {},
+        "prompt_policy_patch": normalized,
+        "directive_keys": sorted(prompt_policy_directives(normalized)),
+        "rationale": [
+            "Density is selected by source profile and quality hints, not hard-coded by the prompt author.",
+            "Raw prompt text is rejected; only allowlisted static directives are injected.",
+            "World Model scope excludes timeline events, relationship graphs, and character-only facts.",
+        ],
+    }

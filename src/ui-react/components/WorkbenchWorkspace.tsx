@@ -5,6 +5,7 @@ import { ImportWorkflow } from './ImportWorkflow';
 import { useProjectStore, useUIStore } from '../store';
 import { useI18n } from '../i18n';
 import type { Chapter, ImportJob, Proposal, Scene, TodoItem, TodoPriority, TodoStatus } from '../models/project';
+import { getProposalImportPackageKey } from '../services/projectService';
 
 export const WorkbenchWorkspace = () => {
   const { sidebarSection, setLastActionStatus } = useUIStore();
@@ -18,6 +19,7 @@ export const WorkbenchWorkspace = () => {
     promptTemplates,
     todos,
     resolveProposal,
+    resolveProposals,
     resolveAllProposals,
     addImportJob,
     updateImportJob,
@@ -50,6 +52,26 @@ export const WorkbenchWorkspace = () => {
     runs: taskRuns.filter((run) => ['queued', 'running', 'awaiting_user_input'].includes(run.status)).length,
     prompts: promptTemplates.length,
   };
+  const importProposalPackages = useMemo(() => {
+    const groups = new Map<string, Proposal[]>();
+    proposals
+      .filter((proposal) => proposal.status === 'pending' || !proposal.status)
+      .forEach((proposal) => {
+        const packageKey = getProposalImportPackageKey(proposal);
+        if (!packageKey) return;
+        groups.set(packageKey, [...(groups.get(packageKey) || []), proposal]);
+      });
+
+    return [...groups.entries()]
+      .filter(([, packageProposals]) => packageProposals.length > 1)
+      .map(([packageKey, packageProposals]) => ({
+        key: packageKey,
+        testId: packageKey.replace(/[^a-zA-Z0-9_-]+/g, '-'),
+        proposals: packageProposals,
+        blockedReason: packageProposals.find((proposal) => proposal.lastBlockReason)?.lastBlockReason || null,
+        entityTypes: Array.from(new Set(packageProposals.map((proposal) => proposal.targetEntityType))).join(', '),
+      }));
+  }, [proposals]);
 
   const confirmImport = () => {
     if (!importState.previewChapters.length) return;
@@ -169,6 +191,50 @@ export const WorkbenchWorkspace = () => {
 
         {sidebarSection === 'inbox' && (
           <div className="space-y-4" data-testid="workbench-inbox-list">
+            {importProposalPackages.length > 0 && (
+              <div className="space-y-3" data-testid="import-proposal-packages">
+                {importProposalPackages.map((proposalPackage) => (
+                  <div
+                    key={proposalPackage.key}
+                    data-testid={`import-package-${proposalPackage.testId}`}
+                    className="rounded-2xl border border-brand/30 bg-brand/5 p-5 shadow-1"
+                  >
+                    <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                      <div>
+                        <div className="text-[10px] font-black uppercase tracking-[0.22em] text-brand-2">
+                          {t('workbench.importPackage', 'Import package')}
+                        </div>
+                        <h2 className="mt-2 text-lg font-black text-text">
+                          {t('workbench.packageAcceptTitle', 'Accept as one transaction')}
+                        </h2>
+                        <p className="mt-2 text-sm leading-relaxed text-text-2">
+                          {proposalPackage.proposals.length} {t('workbench.packageProposalCount', 'proposals')} · {proposalPackage.entityTypes}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        data-testid={`accept-import-package-${proposalPackage.testId}`}
+                        title={proposalPackage.blockedReason ? `${t('workbench.retryBlockedPackage', 'Retry blocked package')}: ${proposalPackage.blockedReason}` : undefined}
+                        className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-green px-5 py-2 text-[11px] font-black uppercase tracking-widest text-text-invert"
+                        onClick={() => resolveProposals(proposalPackage.proposals.map((proposal) => proposal.id), 'accepted')}
+                      >
+                        <CheckCircle2 size={14} />
+                        {t('workbench.acceptPackage', 'Accept Package')}
+                      </button>
+                    </div>
+                    {proposalPackage.blockedReason && (
+                      <div
+                        data-testid={`import-package-blocked-reason-${proposalPackage.testId}`}
+                        className="mt-4 rounded-lg border border-amber/40 bg-amber/10 px-3 py-2 text-xs leading-relaxed text-amber"
+                      >
+                        <span className="font-black uppercase tracking-widest">{t('workbench.blocked', 'Blocked')}: </span>
+                        {proposalPackage.blockedReason}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
             {proposals.length > 1 && (
               <div className="flex justify-end mb-4">
                 <button

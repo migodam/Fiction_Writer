@@ -331,8 +331,8 @@ def test_default_world_container_specs_are_semantic_and_localized():
     specs = w1_import._default_world_container_specs("zh")
     by_key = {spec["importCategoryKey"]: spec for spec in specs}
 
-    assert by_key["locations"]["name"] == "地点"
-    assert by_key["organizations"]["name"] == "组织与势力"
+    assert by_key["locations"]["name"] == "地理位置"
+    assert by_key["organizations"]["name"] == "门派组织"
     assert w1_import._normalize_world_category("七玄门", "sect") == "organization"
     assert w1_import._normalize_world_category("七玄门", "地名") != "location"
     assert w1_import._normalize_world_category("掩月宗", "宗门") == "organization"
@@ -852,7 +852,7 @@ def test_character_prompt_preserves_identity_group_and_card_contract():
         "allies_family",
         "minor_characters",
         "alias_reconciliation_rationale",
-        "ANTI-SUMMARY-BLOAT RULES",
+        "OUTPUT RULES",
         "Do NOT translate",
         "existing_character_updates",
         "new_characters",
@@ -1422,6 +1422,29 @@ def test_node_write_to_project_streaming_manuscript_50_chapters(tmp_path, monkey
     assert manuscript["chapters"][49]["title"] == "Chapter 50"
     assert "source_file" in manuscript
     assert "imported_at" in manuscript
+
+
+def test_world_organizer_filters_module_contamination_and_sets_category_paths():
+    """World Model organizer must not duplicate Timeline/Relationship modules."""
+    assert w1_import._is_world_model_module_contamination("人物关系图", "graph")
+    assert w1_import._is_world_model_module_contamination("事件时间线", "timeline")
+    assert not w1_import._is_world_model_module_contamination("七玄门", "notebook")
+
+    specs = w1_import._default_world_container_specs("zh")
+    names = {spec["name"] for spec in specs}
+    assert "人物关系图" not in names
+    assert "事件时间线" not in names
+    assert {"地理位置", "门派组织", "功法与术法", "修炼境界与制度"}.issubset(names)
+    assert w1_import._world_category_path("cultivation_method", "长春功") == ["世界模型", "功法与术法"]
+    assert w1_import._world_category_path("rule", "记名弟子") == ["世界模型", "修炼境界与制度"]
+
+
+def test_world_taxonomy_keeps_roles_out_of_cultivation_methods():
+    assert w1_import._normalize_world_category("记名弟子", "修炼体系") == "rule"
+    assert w1_import._normalize_world_category("内门弟子", "cultivation") == "rule"
+    assert w1_import._normalize_world_category("长春功", "功法") == "cultivation_method"
+    assert w1_import._normalize_world_category("神手谷", "organization") == "location"
+    assert w1_import._normalize_world_category("七玄门", "location") == "organization"
 
 
 # ── Phase B: import_observability in node_review_import ──────────────────────

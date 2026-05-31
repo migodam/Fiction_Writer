@@ -128,7 +128,7 @@ class ImportGranularityProfile(TypedDict, total=False):
     rerun_on_character_gap: bool         # if False: gap below floor → acceptable_with_warnings, no rerun
     max_world_entities_per_chapter: int
     character_granularity: Literal["major_only", "named_only", "all"]
-    event_density: Literal["arc_level", "chapter_level", "scene_level"]
+    event_density: Literal["sparse_turning_points", "arc_level", "chapter_level", "scene_level"]
     world_density: Literal["named_only", "structural", "full_lore"]
     relationship_depth: Literal["core", "recurring", "dense"]
 
@@ -213,6 +213,10 @@ class PromptPolicyPatch(TypedDict, total=False):
     suppress_minor_npcs: bool
     relationship_evidence_required: bool
     world_boundary_strictness: Literal["low", "medium", "high"]
+    event_density_strategy: Literal["sparse_turning_points", "arc_level", "chapter_level", "scene_level"]
+    topology_fidelity: Literal["low", "medium", "high"]
+    world_model_scope: Literal["minimal", "world_only", "full_lore"]
+    timeline_label_granularity: Literal["compact", "standard", "detailed"]
 
 
 class ImportResultClassification(TypedDict, total=False):
@@ -369,7 +373,7 @@ class PromptWindow(TypedDict, total=False):
 class ImportProfileConfig(TypedDict, total=False):
     """Multi-dimensional replacement for the flat PromptProfile string."""
     character_granularity: Literal["major_only", "named_only", "all"]
-    event_density: Literal["arc_level", "chapter_level", "scene_level"]
+    event_density: Literal["sparse_turning_points", "arc_level", "chapter_level", "scene_level"]
     world_strictness: Literal["named_only", "with_description", "full_attributes"]
     timeline_topology_depth: Literal["flat", "branched", "full_dag"]
     validation_strictness: Literal["off", "per_window", "per_arc"]
@@ -449,7 +453,7 @@ class ImportState(TypedDict, total=False):
 PROFILE_CONFIGS: "Dict[str, ImportProfileConfig]" = {
     "fast": {
         "character_granularity": "major_only",
-        "event_density": "arc_level",
+        "event_density": "sparse_turning_points",
         "world_strictness": "named_only",
         "timeline_topology_depth": "flat",
         "validation_strictness": "off",
@@ -608,7 +612,8 @@ def plan_tool_operating_spec(
         if "event_density" in overrides and "event_density_target" not in overrides:
             density = str(overrides.get("event_density") or "")
             spec["event_density_target"] = {
-                "arc_level": 0.5,
+            "sparse_turning_points": 0.35,
+            "arc_level": 0.5,
                 "chapter_level": 1.25,
                 "scene_level": 1.75,
             }.get(density, float(spec.get("event_density_target", 0.75)))
@@ -732,7 +737,7 @@ _GRANULARITY_DEFAULTS["coarse_fast"] = {
     "min_events_per_chapter": 0.5,
     "rerun_on_character_gap": False,
     "max_world_entities_per_chapter": 3,
-    "event_density": "arc_level",
+        "event_density": "sparse_turning_points",
     "world_density": "named_only",
     "relationship_depth": "core",
 }

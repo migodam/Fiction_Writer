@@ -25,8 +25,8 @@ const DENSE_BRANCHES = [
 ];
 
 const DENSE_EVENTS = [
-  // 15 mainline events — every 3rd has a Chinese title (CJK truncation test)
-  ...Array.from({ length: 15 }, (_, i) => ({
+  // 32 mainline events — every 3rd has a Chinese title (CJK truncation test)
+  ...Array.from({ length: 32 }, (_, i) => ({
     id: `de_${String(i + 1).padStart(2, '0')}`,
     title: i % 3 === 0 ? `修炼突破第${i + 1}境界成功之战` : `Dense Main Event ${i + 1}`,
     summary: `Mainline dense event ${i + 1}`,
@@ -37,11 +37,11 @@ const DENSE_EVENTS = [
     locationIds: [] as string[], participantCharacterIds: [] as string[],
     linkedSceneIds: [] as string[], linkedWorldItemIds: [] as string[],
     tags: [] as string[],
-    sharedBranchIds: (i === 4 || i === 12) ? ['branch_dense_fork'] : [] as string[],
+    sharedBranchIds: (i === 4 || i === 12 || i === 24) ? ['branch_dense_fork'] : [] as string[],
     colorToken: 'amber', layoutLock: false, modalStateHints: [] as string[],
   })),
-  // 8 fork branch events — alternating English/Chinese titles
-  ...Array.from({ length: 8 }, (_, i) => ({
+  // 10 fork branch events — alternating English/Chinese titles
+  ...Array.from({ length: 10 }, (_, i) => ({
     id: `df_${String(i + 1).padStart(2, '0')}`,
     title: i % 2 === 0 ? `支线势力扩张第${i + 1}阶段` : `Fork Side Event ${i + 1}`,
     summary: `Fork event ${i + 1}`,
@@ -93,6 +93,21 @@ async function getAllNodePositions(page: import('@playwright/test').Page) {
     if (!isNaN(x) && !isNaN(y)) positions.push({ id, x, y });
   }
   return positions;
+}
+
+async function getVisibleLabelBoxes(page: import('@playwright/test').Page) {
+  return page.evaluate(() =>
+    Array.from(document.querySelectorAll<SVGTextElement>('[data-testid^="timeline-event-label-"]')).map((label) => {
+      const rect = label.getBoundingClientRect();
+      return {
+        id: label.getAttribute('data-testid') || '',
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+        bottom: rect.bottom,
+      };
+    }),
+  );
 }
 
 // ── Suite 1: Seed-project topology ───────────────────────────────────────────
@@ -163,14 +178,14 @@ test.describe('Timeline topology: dense imported events', () => {
     await goToTimeline(page);
   });
 
-  test('at least 20 event nodes are visible after dense injection', async ({ page }) => {
+  test('at least 30 event nodes are visible after dense injection', async ({ page }) => {
     const positions = await getAllNodePositions(page);
-    expect(positions.length).toBeGreaterThanOrEqual(20);
+    expect(positions.length).toBeGreaterThanOrEqual(30);
   });
 
   test('dense nodes do not overlap (pairwise distance > 15px)', async ({ page }) => {
     const positions = await getAllNodePositions(page);
-    expect(positions.length).toBeGreaterThanOrEqual(20);
+    expect(positions.length).toBeGreaterThanOrEqual(30);
     for (let i = 0; i < positions.length; i++) {
       for (let j = i + 1; j < positions.length; j++) {
         const dx = positions[i].x - positions[j].x;
@@ -178,6 +193,32 @@ test.describe('Timeline topology: dense imported events', () => {
         const dist = Math.sqrt(dx * dx + dy * dy);
         expect(dist, `overlap: ${positions[i].id} vs ${positions[j].id}`).toBeGreaterThan(15);
       }
+    }
+  });
+
+  test('dense event labels do not overlap and hidden labels still expose tooltip', async ({ page }) => {
+    const labelBoxes = await getVisibleLabelBoxes(page);
+    expect(labelBoxes.length).toBeGreaterThan(0);
+
+    for (let i = 0; i < labelBoxes.length; i++) {
+      for (let j = i + 1; j < labelBoxes.length; j++) {
+        const overlap = !(
+          labelBoxes[i].right <= labelBoxes[j].left ||
+          labelBoxes[j].right <= labelBoxes[i].left ||
+          labelBoxes[i].bottom <= labelBoxes[j].top ||
+          labelBoxes[j].bottom <= labelBoxes[i].top
+        );
+        expect(overlap, `label overlap: ${labelBoxes[i].id} vs ${labelBoxes[j].id}`).toBe(false);
+      }
+    }
+
+    const hiddenNodes = page.locator('[data-testid^="timeline-event-node-"][data-label-visible="false"]');
+    if ((await hiddenNodes.count()) > 0) {
+      const firstHidden = hiddenNodes.first();
+      const testId = (await firstHidden.getAttribute('data-testid')) || '';
+      const eventId = testId.replace('timeline-event-node-', '');
+      await page.getByTestId(`timeline-event-hitarea-${eventId}`).dispatchEvent('pointerover', { bubbles: true });
+      await expect(page.getByTestId(`timeline-event-tooltip-${eventId}`)).toBeVisible();
     }
   });
 

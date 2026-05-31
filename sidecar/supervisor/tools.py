@@ -73,6 +73,7 @@ from sidecar.workflows.w1_import import (
     node_write_to_project,
 )
 from sidecar.workflows.w1_run_events import append_event, set_active_call
+from sidecar.supervisor.prompt_policy import build_directives_header
 from sidecar.prompts.w1_prompts import (
     W1_CROSS_VALIDATE_IMPORT,
     W1_EXTRACT_CHARACTERS_DEEP,
@@ -247,6 +248,8 @@ def window_exceeds_output_budget(window: dict, profile_config: dict) -> bool:
 
 def _event_cap_from_profile(profile_config: dict, chapter_count: int) -> int:
     density = profile_config.get("event_density", "chapter_level")
+    if density == "sparse_turning_points":
+        return max(2, min(8, (chapter_count + 2) // 3))
     if density == "arc_level":
         return max(2, chapter_count // 2)
     if density == "scene_level":
@@ -424,6 +427,7 @@ _CHAR_PROMPT_BY_GRANULARITY: dict[str, str] = {
     "all":        W1_EXTRACT_CHARACTERS_DEEP_FINE,
 }
 _EVENT_PROMPT_BY_DENSITY: dict[str, str] = {
+    "sparse_turning_points": W1_EXTRACT_EVENTS_DEEP_ARC,
     "arc_level":     W1_EXTRACT_EVENTS_DEEP_ARC,
     "chapter_level": W1_EXTRACT_EVENTS_DEEP_CHAPTER,
     "scene_level":   W1_EXTRACT_EVENTS_DEEP_DENSE,
@@ -553,6 +557,9 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
     prompt_text = rolling_context + prompt_text
     if supervisor_hint:
         prompt_text = supervisor_hint + "\n\n" + prompt_text
+    directives_header = build_directives_header((state.get("import_plan") or {}).get("prompt_policy", {}))
+    if directives_header:
+        prompt_text = directives_header + "\n\n" + prompt_text
     registry_summary = _registry_summary(registry)
     chapter_range = str(window.get("chapter_range") or f"chunk_{chunk_id}")
 
@@ -1434,6 +1441,11 @@ async def proposal_write(state: ImportSupervisorState) -> dict:
             _write_import_artifact(
                 project_path, import_run_id, "import_plan_validation.json",
                 state.get("import_plan_validation", {}),
+            )
+        if state.get("prompt_policy_decision"):
+            _write_import_artifact(
+                project_path, import_run_id, "prompt_policy_decision.json",
+                state.get("prompt_policy_decision", {}),
             )
         if state.get("planner_proposal"):
             _write_import_artifact(

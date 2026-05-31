@@ -1071,7 +1071,7 @@ export const projectService = {
     if (nextStatus !== 'accepted') {
       return targets.reduce((draft, proposal) => projectService.resolveProposal(draft, proposal.id, nextStatus), project);
     }
-    return applyProposalBatch(project, targets);
+    return applyImportPackageBatches(project, targets);
   },
 };
 
@@ -1177,6 +1177,57 @@ const getProposalOperations = (proposal: Proposal): RawProposalOperation[] => {
     }];
   }
   return [];
+};
+
+const rawProposalValue = (proposal: Proposal, key: string): unknown =>
+  (proposal as Proposal & Record<string, unknown>)[key];
+
+const extractImportRunFromPayloadPath = (payloadPath: string | null | undefined) => {
+  const match = String(payloadPath || '').match(/system\/imports\/(?:staging\/)?([^/]+)/);
+  return match?.[1] || '';
+};
+
+export const getProposalImportPackageKey = (proposal: Proposal): string | null => {
+  const sourceWorkflow = String(rawProposalValue(proposal, 'source_workflow') || rawProposalValue(proposal, 'sourceWorkflow') || '');
+  const isW1Import = proposal.source === 'import' || sourceWorkflow === 'W1_import';
+  if (!isW1Import) return null;
+
+  const explicitPackageId =
+    rawProposalValue(proposal, 'importPackageId')
+    || rawProposalValue(proposal, 'packageId')
+    || rawProposalValue(proposal, 'importRunId')
+    || rawProposalValue(proposal, 'import_run_id')
+    || proposal.originTaskRunId
+    || extractImportRunFromPayloadPath(proposal.payloadPath);
+  const operationImportRunId = getProposalOperations(proposal)
+    .map((operation) => operation.fields?.importRunId || operation.fields?.import_run_id)
+    .find(Boolean);
+
+  return `import:${String(explicitPackageId || operationImportRunId || sourceWorkflow || 'unscoped')}`;
+};
+
+const isFullImportPackageSelection = (
+  project: NarrativeProject,
+  targets: Proposal[],
+  packageKey: string,
+) => {
+  const selectedIds = new Set(targets.map((proposal) => proposal.id));
+  const pendingPackageIds = project.proposals
+    .filter((proposal) => (proposal.status === 'pending' || !proposal.status) && getProposalImportPackageKey(proposal) === packageKey)
+    .map((proposal) => proposal.id);
+  return pendingPackageIds.length > 1 && pendingPackageIds.every((id) => selectedIds.has(id));
+};
+
+const groupFullImportPackageSelections = (project: NarrativeProject, targets: Proposal[]) => {
+  const groups = new Map<string, Proposal[]>();
+  targets.forEach((proposal) => {
+    const packageKey = getProposalImportPackageKey(proposal);
+    if (!packageKey) return;
+    groups.set(packageKey, [...(groups.get(packageKey) || []), proposal]);
+  });
+  return [...groups.entries()]
+    .filter(([packageKey]) => isFullImportPackageSelection(project, targets, packageKey))
+    .map(([, proposals]) => proposals);
 };
 
 const proposalScopedId = (proposal: Proposal, entityType: string) =>
@@ -1305,6 +1356,114 @@ const applyProposalBatch = (project: NarrativeProject, proposals: Proposal[]): N
     ...draft,
     proposals: remainingProposals,
     proposalHistory: [...accepted, ...project.proposalHistory],
+    issues: draft.issues.map((issue) => {
+      const acceptedRelatedIds = issue.suggestedProposalIds?.filter((id) => acceptedIds.has(id)) || [];
+      if (!acceptedRelatedIds.length) return issue;
+      const suggestedProposalIds = issue.suggestedProposalIds?.filter((id) => !acceptedIds.has(id));
+      return {
+        ...issue,
+        status: 'resolved',
+        visibility: 'history',
+        dismissedAt: new Date().toISOString(),
+        resolvedByProposalId: acceptedRelatedIds[0] || issue.resolvedByProposalId || null,
+        suggestedProposalIds,
+      };
+    }),
+    unreadUpdates: {
+      ...draft.unreadUpdates,
+      entities: {
+        ...draft.unreadUpdates.entities,
+        ...Object.fromEntries(accepted.map((proposal) => [proposal.id, false])),
+        ...acceptedRefUpdates,
+      },
+      activities: { ...draft.unreadUpdates.activities, workbench: hasUnreadInbox },
+      sections: { ...draft.unreadUpdates.sections, 'workbench.inbox': hasUnreadInbox },
+    },
+  };
+};
+
+const applyImportPackageBatches = (project: NarrativeProject, targets: Proposal[]): NarrativeProject => {
+  const packageGroups = groupFullImportPackageSelections(project, targets);
+  const packageIds = new Set(packageGroups.flatMap((group) => group.map((proposal) => proposal.id)));
+  const nonPackageTargets = targets.filter((proposal) => !packageIds.has(proposal.id));
+
+  let draft = project;
+  packageGroups.forEach((group) => {
+    draft = applyProposalPackageTransaction(draft, group);
+  });
+
+  return nonPackageTargets.length ? applyProposalBatch(draft, nonPackageTargets) : draft;
+};
+
+const applyProposalPackageTransaction = (project: NarrativeProject, proposals: Proposal[]): NarrativeProject => {
+  const preparedProject = prepareProjectForImportApply(project, proposals);
+  const references = collectReferenceSets(preparedProject, proposals);
+  const sorted = [...proposals].sort((a, b) => {
+    const aType = getProposalOperations(a)[0]?.entityType as EntityKind | undefined;
+    const bType = getProposalOperations(b)[0]?.entityType as EntityKind | undefined;
+    return (proposalApplyPriority[aType || 'proposal'] ?? 99) - (proposalApplyPriority[bType || 'proposal'] ?? 99);
+  });
+
+  let draft = preparedProject;
+  const accepted: Proposal[] = [];
+
+  for (const proposal of sorted) {
+    const result = applyProposalOperations(draft, proposal, references);
+    if (result.blockedReason) {
+      return blockImportPackage(project, proposals, proposal, result.blockedReason);
+    }
+    draft = result.project;
+    accepted.push({ ...proposal, status: 'accepted', resolvedAt: new Date().toISOString() });
+  }
+
+  return finalizeAcceptedProposalBatch(project, pruneDanglingProposalReferences(draft), accepted);
+};
+
+const formatPackageBlockedReason = (proposal: Proposal, blockedReason: string) => {
+  const edge = blockedReason.match(/^(.+?) references missing ([^:]+): (.+)$/);
+  if (!edge) {
+    return `Import package blocked by ${proposal.id}. Reason: ${blockedReason}`;
+  }
+  return `Import package blocked by ${proposal.id}. Blocking edge: ${edge[1]} -> ${edge[2]} ${edge[3]}. Reason: ${blockedReason}`;
+};
+
+const blockImportPackage = (
+  project: NarrativeProject,
+  proposals: Proposal[],
+  culprit: Proposal,
+  blockedReason: string,
+): NarrativeProject => {
+  const packageIds = new Set(proposals.map((proposal) => proposal.id));
+  const reason = formatPackageBlockedReason(culprit, blockedReason);
+  return {
+    ...project,
+    proposals: project.proposals.map((proposal) =>
+      packageIds.has(proposal.id)
+        ? { ...proposal, lastBlockReason: reason, lastBlockedAt: new Date().toISOString() }
+        : proposal
+    ),
+    issues: upsertProposalBlockedIssue(project.issues, culprit, reason),
+    unreadUpdates: proposals.reduce(
+      (updates, proposal) => markProposalUnread(updates, proposal.id),
+      project.unreadUpdates,
+    ),
+  };
+};
+
+const finalizeAcceptedProposalBatch = (
+  baseProject: NarrativeProject,
+  draft: NarrativeProject,
+  accepted: Proposal[],
+): NarrativeProject => {
+  const acceptedIds = new Set(accepted.map((proposal) => proposal.id));
+  const remainingProposals = draft.proposals.filter((proposal) => !acceptedIds.has(proposal.id));
+  const hasUnreadInbox = remainingProposals.some((proposal) => proposal.status === 'pending' || !proposal.status);
+  const acceptedRefUpdates = Object.assign({}, ...accepted.map(buildResolvedProposalUnreadMap));
+
+  return {
+    ...draft,
+    proposals: remainingProposals,
+    proposalHistory: [...accepted, ...baseProject.proposalHistory],
     issues: draft.issues.map((issue) => {
       const acceptedRelatedIds = issue.suggestedProposalIds?.filter((id) => acceptedIds.has(id)) || [];
       if (!acceptedRelatedIds.length) return issue;

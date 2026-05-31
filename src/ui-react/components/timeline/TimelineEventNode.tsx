@@ -1,5 +1,6 @@
 import React, { useCallback } from 'react';
 import type { TimelineEvent } from '../../models/project';
+import { truncateTimelineLabel, type TimelineLabelPlacement } from './timelineLayoutEngine';
 import type { Point } from './bezierMath';
 import { EventTooltip } from './EventTooltip';
 
@@ -13,25 +14,7 @@ interface TimelineEventNodeProps {
   onPointerMove: (eventId: string, e: React.PointerEvent<SVGCircleElement>) => void;
   onContextMenu: (eventId: string, e: React.MouseEvent<SVGCircleElement>) => void;
   onHover: (eventId: string | null) => void;
-}
-
-function isCjkChar(char: string): boolean {
-  const code = char.codePointAt(0) ?? 0;
-  return (
-    (code >= 0x3000 && code <= 0x9fff) ||  // CJK symbols, Hiragana, Katakana, CJK Unified Ideographs
-    (code >= 0xac00 && code <= 0xd7af) ||  // Hangul Syllables
-    (code >= 0xf900 && code <= 0xfaff) ||  // CJK Compatibility Ideographs
-    (code >= 0xff01 && code <= 0xff60)     // Fullwidth ASCII variants
-  );
-}
-
-function truncateTitle(title: string, maxVisualWidth = 18): string {
-  let width = 0;
-  for (let i = 0; i < title.length; i++) {
-    width += isCjkChar(title[i]) ? 2 : 1;
-    if (width > maxVisualWidth) return `${title.slice(0, i)}…`;
-  }
-  return title;
+  labelPlacement?: TimelineLabelPlacement;
 }
 
 const importanceRadius = (importance?: string): number => {
@@ -58,11 +41,21 @@ export function TimelineEventNode({
   onPointerMove,
   onContextMenu,
   onHover,
+  labelPlacement,
 }: TimelineEventNodeProps) {
   const baseR = importanceRadius(event.importance);
   const color = importanceColor(event.importance);
   const isDragging = dragMode !== null;
   const isDropDragging = dragMode === 'drop';
+  const label = labelPlacement ?? {
+    id: event.id,
+    text: truncateTimelineLabel(event.title),
+    visible: true,
+    dx: 0,
+    dy: baseR + 16,
+    width: 0,
+    height: 14,
+  };
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent<SVGCircleElement>) => {
@@ -98,7 +91,11 @@ export function TimelineEventNode({
       data-testid={`timeline-event-node-${event.id}`}
       data-position-x={position.x}
       data-position-y={position.y}
+      data-label-visible={label.visible ? 'true' : 'false'}
+      data-label-x={position.x + label.dx}
+      data-label-y={position.y + label.dy}
     >
+      <title>{event.title}</title>
       {/* Hover ring — expands on hover */}
       <circle
         r={isHovered ? baseR + 8 : baseR + 2}
@@ -151,19 +148,24 @@ export function TimelineEventNode({
       {/* Tooltip on hover (not during drag) */}
       <EventTooltip event={event} visible={isHovered && !isDragging} />
 
-      {/* Title label below node */}
-      <text
-        y={baseR + 16}
-        textAnchor="middle"
-        fill="currentColor"
-        fontSize={10}
-        fontWeight={600}
-        opacity={0.8}
-        pointerEvents="none"
-        style={{ userSelect: 'none' }}
-      >
-        {truncateTitle(event.title)}
-      </text>
+      {label.visible && (
+        <text
+          x={label.dx}
+          y={label.dy}
+          textAnchor="middle"
+          fill="currentColor"
+          fontSize={10}
+          fontWeight={600}
+          opacity={0.8}
+          pointerEvents="none"
+          style={{ userSelect: 'none' }}
+          data-testid={`timeline-event-label-${event.id}`}
+          data-label-width={label.width}
+          data-label-height={label.height}
+        >
+          {label.text}
+        </text>
+      )}
     </g>
   );
 }

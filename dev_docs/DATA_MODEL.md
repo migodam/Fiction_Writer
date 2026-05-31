@@ -115,6 +115,8 @@ Narrative IDE stores each project as a folder.
 - name
 - type
 - isDefault
+- categoryPath
+- parentId
 
 ### World Item
 - id
@@ -123,6 +125,8 @@ Narrative IDE stores each project as a folder.
 - name
 - description
 - attributes
+- categoryPath
+- parentId
 - linkedCharacterIds
 - linkedEventIds
 - linkedSceneIds
@@ -146,6 +150,10 @@ Narrative IDE stores each project as a folder.
 - status
 - createdAt
 - resolvedAt
+- operations
+- source_workflow
+- importRunId / packageId (optional import package grouping)
+- lastBlockReason
 
 ### Consistency Issue
 - id
@@ -168,6 +176,7 @@ Narrative IDE stores each project as a folder.
 ## Reference and Lifecycle Rules
 - Cross-page links are always stored by ID.
 - AI-originated changes enter Workbench as proposals.
+- W1 import proposals may be grouped into a package by `importRunId`; accepting the full package uses transaction-style draft apply so same-package IDs can satisfy character/event/branch/world/relationship references.
 - Manual structured creation in Graph writes directly to canonical project state.
 - Accepted or rejected proposals move to history and stop contributing unread highlights.
 - Archive is the default delete behavior.

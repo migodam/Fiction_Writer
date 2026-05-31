@@ -5,6 +5,13 @@ import { useProjectStore, useUIStore } from '../store';
 import type { TimelineBranch, TimelineEvent } from '../models/project';
 import { useI18n } from '../i18n';
 import { TimelineCanvas } from './timeline/TimelineCanvas';
+import {
+  BRANCH_RUNTIME_FIELDS,
+  EVENT_RUNTIME_FIELDS,
+  collectTimelineSyncEntityFieldMismatches,
+  collectTimelineSyncSchemaMissingFields,
+  findTimelineSyncValueMismatches,
+} from './timeline/timelineSyncAnalysis';
 
 const MAIN_BRANCH_ID = 'branch_main';
 
@@ -131,17 +138,21 @@ export const TimelineWorkspace = () => {
         ...(!('timelineBranches' in projectJsonCounts) ? ['counts.timelineBranches'] : []),
         ...(!('timelineEvents' in projectJsonCounts) ? ['counts.timelineEvents'] : []),
       ];
-      const missingSchemaFields = [
-        ...collectFields<TimelineBranch>(timelineBranches).filter((field) => timelineBranchSchemaFields.size > 0 && !timelineBranchSchemaFields.has(field)).map((field) => `schema.timelineBranch.${field}`),
-        ...collectFields<TimelineEvent>(timelineEvents).filter((field) => timelineEventSchemaFields.size > 0 && !timelineEventSchemaFields.has(field)).map((field) => `schema.timelineEvent.${field}`),
-      ];
-      const entityFieldMismatches = [
-        ...findMissingEntityFields(backendBranches, timelineBranches, 'timelineBranches[]'),
-        ...findMissingEntityFields(backendEvents, timelineEvents, 'timelineEvents[]'),
-      ];
+      const missingSchemaFields = collectTimelineSyncSchemaMissingFields(
+        timelineBranches,
+        timelineEvents,
+        timelineBranchSchemaFields,
+        timelineEventSchemaFields,
+      );
+      const entityFieldMismatches = collectTimelineSyncEntityFieldMismatches(
+        backendBranches,
+        timelineBranches,
+        backendEvents,
+        timelineEvents,
+      );
       const entityValueMismatches = [
-        ...findValueMismatches(backendBranches, timelineBranches, 'timelineBranches', BRANCH_RUNTIME_FIELDS),
-        ...findValueMismatches(backendEvents, timelineEvents, 'timelineEvents', EVENT_RUNTIME_FIELDS),
+        ...findTimelineSyncValueMismatches(backendBranches, timelineBranches, 'timelineBranches', BRANCH_RUNTIME_FIELDS),
+        ...findTimelineSyncValueMismatches(backendEvents, timelineEvents, 'timelineEvents', EVENT_RUNTIME_FIELDS),
       ];
 
       const projectJsonMatchesCanvas =
@@ -330,114 +341,6 @@ export const TimelineWorkspace = () => {
       )}
     </div>
   );
-};
-
-const collectFields = <T extends object>(records: T[]) =>
-  Array.from(
-    records.reduce((fields, record) => {
-      Object.keys(record).forEach((field) => fields.add(field));
-      return fields;
-    }, new Set<string>()),
-  ).sort();
-
-const findMissingEntityFields = <T extends object>(
-  backendRecords: T[],
-  frontendRecords: T[],
-  prefix: string,
-) => {
-  const backendFields = new Set(collectFields(backendRecords));
-  return collectFields(frontendRecords)
-    .filter((field) => !backendFields.has(field))
-    .map((field) => `${prefix}.${field}`);
-};
-
-// Fields that are recomputed at runtime and intentionally diverge from disk state.
-// Comparing these always produces false positives in the Synchronize report.
-const BRANCH_RUNTIME_FIELDS = new Set([
-  'anchorStartPos',    // recomputed from event positions by propagateTimelineAnchorDependencies()
-  'anchorEndPos',      // same
-  'endAnchor',         // normalized from anchor semantics on load
-  'endMode',           // same
-  'mergeEventId',      // same
-  'mergeTargetBranchId', // same
-]);
-
-const EVENT_RUNTIME_FIELDS = new Set([
-  'position',          // SVG canvas coord derived from tFromOrderIndex + Bézier; not persisted
-  'sharedBranchIds',   // derived from cross-branch membership at render time
-]);
-
-const sortComparableObject = (value: unknown): unknown => {
-  if (Array.isArray(value)) {
-    return value.map((entry) => sortComparableObject(entry));
-  }
-
-  if (!value || typeof value !== 'object') {
-    return value ?? null;
-  }
-
-  return Object.keys(value as Record<string, unknown>)
-    .sort()
-    .reduce<Record<string, unknown>>((acc, key) => {
-      acc[key] = sortComparableObject((value as Record<string, unknown>)[key]);
-      return acc;
-    }, {});
-};
-
-const normalizeComparableFieldValue = (field: string, value: unknown) => {
-  if (field === 'startAnchor' || field === 'endAnchor') {
-    const anchor = value as Partial<{ branchId: unknown; eventId: unknown }> | null | undefined;
-    if (!anchor?.branchId || !anchor?.eventId) {
-      return null;
-    }
-
-    return {
-      branchId: String(anchor.branchId),
-      eventId: String(anchor.eventId),
-    };
-  }
-
-  return sortComparableObject(value ?? null);
-};
-
-const findValueMismatches = <T extends { id?: string }>(
-  backendRecords: T[],
-  frontendRecords: T[],
-  prefix: string,
-  skipFields: Set<string> = new Set(),
-) => {
-  const backendById = new Map(backendRecords.map((record) => [record.id || JSON.stringify(record), record]));
-  const frontendById = new Map(frontendRecords.map((record) => [record.id || JSON.stringify(record), record]));
-  const mismatches: string[] = [];
-
-  frontendById.forEach((frontendRecord, recordId) => {
-    const backendRecord = backendById.get(recordId);
-    if (!backendRecord) {
-      mismatches.push(`${prefix}.${recordId}: missing backend record`);
-      return;
-    }
-
-    collectFields([frontendRecord]).forEach((field) => {
-      if (skipFields.has(field)) return;
-      const frontendValue = JSON.stringify(
-        normalizeComparableFieldValue(field, (frontendRecord as Record<string, unknown>)[field]),
-      );
-      const backendValue = JSON.stringify(
-        normalizeComparableFieldValue(field, (backendRecord as Record<string, unknown>)[field]),
-      );
-      if (frontendValue !== backendValue) {
-        mismatches.push(`${prefix}.${recordId}.${field}`);
-      }
-    });
-  });
-
-  backendById.forEach((_backendRecord, recordId) => {
-    if (!frontendById.has(recordId)) {
-      mismatches.push(`${prefix}.${recordId}: extra backend record`);
-    }
-  });
-
-  return mismatches;
 };
 
 const CreateEventModal = ({

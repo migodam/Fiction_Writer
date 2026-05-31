@@ -49,6 +49,10 @@ _PPP_ALLOWED_FIELDS: frozenset = frozenset({
     "suppress_minor_npcs",
     "relationship_evidence_required",
     "world_boundary_strictness",
+    "event_density_strategy",
+    "topology_fidelity",
+    "world_model_scope",
+    "timeline_label_granularity",
 })
 _PPP_BOOL_FIELDS: frozenset = frozenset({
     "emphasize_existing_timeline_topology",
@@ -58,10 +62,14 @@ _PPP_BOOL_FIELDS: frozenset = frozenset({
     "relationship_evidence_required",
 })
 _PPP_STRICTNESS_VALUES: frozenset = frozenset({"low", "medium", "high"})
+_PPP_EVENT_DENSITY_VALUES: frozenset = frozenset({"sparse_turning_points", "arc_level", "chapter_level", "scene_level"})
+_PPP_TOPOLOGY_VALUES: frozenset = frozenset({"low", "medium", "high"})
+_PPP_WORLD_SCOPE_VALUES: frozenset = frozenset({"minimal", "world_only", "full_lore"})
+_PPP_LABEL_VALUES: frozenset = frozenset({"compact", "standard", "detailed"})
 
 _TOOL_VARIANT_ALLOWLISTS: dict = {
     "extract_character": frozenset({"major_only", "named_only", "all"}),
-    "extract_event": frozenset({"arc_level", "chapter_level", "scene_level"}),
+    "extract_event": frozenset({"sparse_turning_points", "arc_level", "chapter_level", "scene_level"}),
     "extract_world": frozenset({"named_only", "structural", "full_lore"}),
     "extract_relationship": frozenset({"core", "recurring", "dense"}),
     "extract_scene_summary": frozenset({"fixed"}),
@@ -82,7 +90,7 @@ _GP_ALLOWED_FIELDS: frozenset = frozenset({
 _GP_LITERAL_FIELDS: dict = {
     "profile_name": frozenset({"coarse_webnovel", "balanced_novel", "fine_short_story", "custom"}),
     "character_granularity": frozenset({"major_only", "named_only", "all"}),
-    "event_density": frozenset({"arc_level", "chapter_level", "scene_level"}),
+    "event_density": frozenset({"sparse_turning_points", "arc_level", "chapter_level", "scene_level"}),
     "world_density": frozenset({"named_only", "structural", "full_lore"}),
     "relationship_depth": frozenset({"core", "recurring", "dense"}),
 }
@@ -265,6 +273,20 @@ def validate_prompt_policy_patch(patch: dict) -> tuple[bool, list[str]]:
         errors.append(
             f"world_boundary_strictness: {ws!r} not in {sorted(_PPP_STRICTNESS_VALUES)}"
         )
+    density = patch.get("event_density_strategy")
+    if density is not None and density not in _PPP_EVENT_DENSITY_VALUES:
+        errors.append(
+            f"event_density_strategy: {density!r} not in {sorted(_PPP_EVENT_DENSITY_VALUES)}"
+        )
+    topology = patch.get("topology_fidelity")
+    if topology is not None and topology not in _PPP_TOPOLOGY_VALUES:
+        errors.append(f"topology_fidelity: {topology!r} not in {sorted(_PPP_TOPOLOGY_VALUES)}")
+    world_scope = patch.get("world_model_scope")
+    if world_scope is not None and world_scope not in _PPP_WORLD_SCOPE_VALUES:
+        errors.append(f"world_model_scope: {world_scope!r} not in {sorted(_PPP_WORLD_SCOPE_VALUES)}")
+    label = patch.get("timeline_label_granularity")
+    if label is not None and label not in _PPP_LABEL_VALUES:
+        errors.append(f"timeline_label_granularity: {label!r} not in {sorted(_PPP_LABEL_VALUES)}")
 
     return len(errors) == 0, errors
 

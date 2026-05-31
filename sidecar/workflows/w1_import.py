@@ -30,7 +30,7 @@ from langgraph.checkpoint.memory import MemorySaver
 import os
 
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from sidecar.models.state import ImportState, ManuscriptChapter
 from sidecar.shared import s2_memory_writer, s3_chunk_manager
@@ -48,6 +48,12 @@ from sidecar.prompts.w1_prompts import (
     W1_SYNTHESIZE_RELATIONSHIPS,
     W1_CLASSIFY_CHARACTER_TAGS,
     W1_INFER_WORLD_SETTINGS,
+    W1_WINDOW_SYSTEM_CONTEXT,
+    W1_CHARS_DEEP_TASK,
+    W1_EVENTS_DEEP_TASK,
+    W1_WORLD_DEEP_TASK,
+    W1_RELS_CHUNK_TASK,
+    W1_SCENES_TASK,
 )
 # Deep extraction prompts (import_all only) — added in Step 3
 _HAS_DEEP_PROMPTS = True
@@ -294,8 +300,19 @@ Malformed JSON:
     return _parse_json_response(repaired)
 
 
-async def _invoke_json_prompt(llm: ChatOpenAI, prompt_template: str, **kwargs: Any) -> dict:
+async def _invoke_json_prompt(
+    llm: ChatOpenAI,
+    prompt_template: str,
+    *,
+    system_content: str | None = None,
+    **kwargs: Any,
+) -> dict:
     """Render a prompt template, invoke the LLM, and parse the JSON response.
+
+    When system_content is provided, it is sent as a SystemMessage before the
+    user HumanMessage. All 5 parallel extraction calls within a prompt window
+    share the same system_content (entity registry + source text), enabling KV
+    prefix caching on the shared tokens.
 
     Retries up to 4 times with exponential backoff for transient failures:
     - Rate-limit / governor errors (429, 503, 'Authentication Fails (governor)')
@@ -304,11 +321,16 @@ async def _invoke_json_prompt(llm: ChatOpenAI, prompt_template: str, **kwargs: A
     - JSON parse failures (model returned prose instead of JSON).
     """
     prompt = prompt_template.format(**kwargs)
+    messages = (
+        [SystemMessage(content=system_content), HumanMessage(content=prompt)]
+        if system_content is not None
+        else [HumanMessage(content=prompt)]
+    )
     max_attempts = 4
     for attempt in range(max_attempts):
         try:
             async with _API_SEMAPHORE:
-                response = await llm.ainvoke([HumanMessage(content=prompt)])
+                response = await llm.ainvoke(messages)
             raw = response.content if isinstance(response.content, str) else str(response.content)
             try:
                 return _parse_json_response(raw)
@@ -587,6 +609,10 @@ _WORLD_ENTITY_NAME_PATTERNS = (
 )
 _ORGANIZATION_HINTS = ("门", "派", "宗", "帮", "会", "盟", "山庄", "书院")
 _LOCATION_HINTS = ("城", "镇", "村", "谷", "山", "峰", "河", "湖", "岛", "国", "州", "府", "岭", "洞", "堂", "院", "阁", "殿", "宫", "楼", "台")
+_WORLD_MODULE_CONTAMINATION_NAMES = {
+    "人物关系图", "人物关系", "关系图", "关系网络", "事件时间线", "时间线", "timeline", "relationship graph",
+}
+_WORLD_ROLE_RANK_HINTS = ("弟子", "门丁", "护法", "堂主", "师兄", "师弟", "师姐", "师妹", "长老", "供奉")
 WORLD_ONTOLOGY_CATEGORIES: tuple[str, ...] = (
     "location",
     "organization",
@@ -728,6 +754,10 @@ def _normalize_world_category(name: str, category: Any = "") -> str:
     clean_name = str(name or "").strip()
     if any(token in raw for token in ("person", "character", "人物", "角色", "人名")):
         return "custom"
+    if any(token in clean_name for token in _WORLD_ROLE_RANK_HINTS) and not any(clean_name.endswith(token) for token in ("堂", "峰", "谷", "院", "阁", "殿", "宫", "楼", "台")):
+        # Ranks/roles are organizational concepts, not cultivation methods and
+        # not standalone people in the World Model.
+        return "rule"
     if any(token in raw for token in ("method", "spell", "cultivation", "功法", "法术", "术法", "法诀", "秘术", "修炼法门")):
         return "cultivation_method"
     if any(token in clean_name for token in _LOCATION_HINTS):
@@ -782,11 +812,11 @@ def _world_container_key(category: Any) -> str:
 def _default_world_container_specs(language: str) -> list[dict]:
     zh = language == "zh"
     labels = {
-        "locations": ("地点", "Locations", "map"),
-        "organizations": ("组织与势力", "Organizations & Factions", "notebook"),
+        "locations": ("地理位置", "Locations", "map"),
+        "organizations": ("门派组织", "Organizations & Factions", "notebook"),
         "items": ("物品与法器", "Items & Artifacts", "notebook"),
         "cultivation_methods": ("功法与术法", "Cultivation Methods", "notebook"),
-        "rules": ("规则与修炼体系", "Rules & Systems", "notebook"),
+        "rules": ("修炼境界与制度", "Rules & Systems", "notebook"),
         "concepts": ("概念与设定", "Concepts & Lore", "notebook"),
         "culture": ("文化与习俗", "Culture", "notebook"),
     }
@@ -801,8 +831,39 @@ def _default_world_container_specs(language: str) -> list[dict]:
             "sortOrder": index,
             "description": _localized_text(language, f"W1 导入的{name}条目。", f"W1 imported {name.lower()} entries."),
             "importCategoryKey": key,
+            "categoryPath": ["世界模型", name] if zh else ["World Model", name],
         })
     return specs
+
+
+def _is_world_model_module_contamination(name: Any, container_type: Any = "") -> bool:
+    text = str(name or "").strip().lower()
+    ctype = str(container_type or "").strip().lower()
+    if not text:
+        return False
+    if text in {item.lower() for item in _WORLD_MODULE_CONTAMINATION_NAMES}:
+        return True
+    return ctype in {"timeline", "graph"} and any(
+        token in text for token in ("时间线", "timeline", "关系", "relationship")
+    )
+
+
+def _world_category_path(category: str, name: str = "") -> list[str]:
+    category = _normalize_world_category(name, category)
+    labels = {
+        "location": ["世界模型", "地理位置"],
+        "organization": ["世界模型", "门派组织"],
+        "faction": ["世界模型", "门派组织", "势力派系"],
+        "item": ["世界模型", "物品与法器"],
+        "artifact": ["世界模型", "物品与法器", "法器宝物"],
+        "cultivation_method": ["世界模型", "功法与术法"],
+        "rule": ["世界模型", "修炼境界与制度"],
+        "system": ["世界模型", "修炼境界与制度"],
+        "culture": ["世界模型", "文化与习俗"],
+        "concept": ["世界模型", "概念与设定"],
+        "custom": ["世界模型", "概念与设定"],
+    }
+    return labels.get(category, labels["concept"])
 
 
 def _is_world_entity_candidate(name: str, candidate: dict | None = None) -> bool:
@@ -3579,6 +3640,7 @@ async def node_write_to_project(state: ImportState) -> dict:
     world_settings = state.get("world_settings", {})
     timeline_branches = state.get("timeline_branches", [])
     source_language = state.get("source_language", "en")
+    import_run_id = str(state.get("import_run_id", "") or "")
     world_containers = list(state.get("world_containers", []))
     existing_container_keys = {
         str(container.get("importCategoryKey", "")).strip()
@@ -3696,6 +3758,7 @@ async def node_write_to_project(state: ImportState) -> dict:
                     *[f"Open question: {question}" for question in entry.get("open_questions", [])[:2]],
                 ],
                 "importConfidence": entry.get("confidence", 0.7),
+                "importRunId": import_run_id,
                 "importImportance": entry.get("importance", ""),
                 "importCardType": "draft",
                 "enrichmentRecommended": bool(entry.get("open_questions")),
@@ -3752,7 +3815,12 @@ async def node_write_to_project(state: ImportState) -> dict:
             "op_type": "create",
             "entity_type": "timeline_branch",
             "entity_id": branch_id,
-            "data": {**branch, "id": branch_id, "isDefault": bool(branch.get("isDefault", branch.get("mode") == "root"))},
+            "data": {
+                **branch,
+                "id": branch_id,
+                "isDefault": bool(branch.get("isDefault", branch.get("mode") == "root")),
+                "importRunId": import_run_id,
+            },
             "source_workflow": "W1_import",
             "confidence": 0.75,
             "auto_apply": False,
@@ -3837,7 +3905,7 @@ async def node_write_to_project(state: ImportState) -> dict:
                 "sharedBranchIds": entry.get("sharedBranchIds", []),
                 "importance": entry.get("importance", "minor"),
                 "importConfidence": entry.get("confidence", 0.7),
-                "importRunId": state.get("import_run_id", ""),
+                "importRunId": import_run_id,
                 "mergedEventIds": entry.get("mergedEventIds", []),
                 "layoutHints": entry.get("layoutHints", {}),
             },
@@ -3892,7 +3960,7 @@ async def node_write_to_project(state: ImportState) -> dict:
             "op_type": "create",
             "entity_type": "world_container",
             "entity_id": container_id,
-            "data": {**container, "id": container_id},
+            "data": {**container, "id": container_id, "importRunId": import_run_id},
             "source_workflow": "W1_import",
             "confidence": 0.75,
             "auto_apply": False,
@@ -3938,8 +4006,11 @@ async def node_write_to_project(state: ImportState) -> dict:
                 "category": resolved_category,
                 "type": resolved_category,
                 "containerId": container_id,
+                "categoryPath": _world_category_path(resolved_category, name),
+                "parentId": container_id,
                 "description": detail.get("description", ""),
                 "attributes": detail.get("attributes", []),
+                "importRunId": import_run_id,
             },
             "source_workflow": "W1_import",
             "confidence": 0.70,
@@ -3968,7 +4039,7 @@ async def node_write_to_project(state: ImportState) -> dict:
             "op_type": "create",
             "entity_type": "relationship",
             "entity_id": rel_id,
-            "data": {**relationship, "id": rel_id},
+            "data": {**relationship, "id": rel_id, "importRunId": import_run_id},
             "source_workflow": "W1_import",
             "confidence": float(relationship.get("importConfidence", 0.75)),
             "auto_apply": False,
@@ -3993,7 +4064,7 @@ async def node_write_to_project(state: ImportState) -> dict:
             "op_type": "create",
             "entity_type": "character_tag",
             "entity_id": tag_id,
-            "data": {**tag, "id": tag_id},
+            "data": {**tag, "id": tag_id, "importRunId": import_run_id},
             "source_workflow": "W1_import",
             "confidence": 0.75,
             "auto_apply": False,
@@ -4017,7 +4088,7 @@ async def node_write_to_project(state: ImportState) -> dict:
             "op_type": "update",
             "entity_type": "world_settings",
             "entity_id": "world_settings",
-            "data": world_settings,
+            "data": {**world_settings, "importRunId": import_run_id},
             "source_workflow": "W1_import",
             "confidence": 0.75,
             "auto_apply": False,
@@ -4084,6 +4155,7 @@ async def node_write_to_project(state: ImportState) -> dict:
                 "notes": f"Imported from: {state.get('source_file_path', '')}; chunks: {', '.join(map(str, mc.get('chunk_ids', [])))}",
                 "sceneIds": [],
                 "status": "draft",
+                "importRunId": import_run_id,
             },
             "source_workflow": "W1_import",
             "confidence": 0.90,
@@ -4121,6 +4193,7 @@ async def node_write_to_project(state: ImportState) -> dict:
                 "linkedWorldItemIds": [],
                 "status": "draft",
                 "notes": chapter_info["notes"],
+                "importRunId": import_run_id,
             },
             "source_workflow": "W1_import",
             "confidence": 0.90,
@@ -4519,6 +4592,8 @@ async def node_infer_world_settings(state: ImportState) -> dict:
         if not name:
             continue
         container_type = str(container.get("type", "notebook")).strip().lower() or "notebook"
+        if _is_world_model_module_contamination(name, container_type):
+            continue
         if container_type not in allowed_container_types:
             container_type = "notebook"
         import_key = str(container.get("importCategoryKey", "")).strip() or _world_container_key(
@@ -4533,6 +4608,7 @@ async def node_infer_world_settings(state: ImportState) -> dict:
             "sortOrder": index,
             "description": str(container.get("description", "")).strip(),
             "importCategoryKey": import_key,
+            "categoryPath": ["世界模型", name] if _infer_lang == "zh" else ["World Model", name],
         })
     for spec in default_container_specs:
         key = spec["importCategoryKey"]
@@ -4742,54 +4818,45 @@ async def node_process_chunks(state: ImportState) -> dict:
                         continue
 
                     prompt_chunk_content = str(prompt_window.get("text", ""))
+                    window_system_content = W1_WINDOW_SYSTEM_CONTEXT.format(
+                        chunk_id=chunk_id,
+                        total_chunks=total,
+                        entity_registry_summary=registry_summary,
+                        chunk_content=prompt_chunk_content,
+                    )
                     results = await asyncio.gather(
                         _invoke_json_prompt(
                             llm,
-                            W1_EXTRACT_CHARACTERS_DEEP,
-                            chunk_content=prompt_chunk_content,
-                            chunk_id=chunk_id,
-                            total_chunks=total,
-                            entity_registry_summary=registry_summary,
+                            W1_CHARS_DEEP_TASK,
+                            system_content=window_system_content,
                             source_language_label=_src_lang_label,
                             language_policy=_lang_policy,
                         ),
                         _invoke_json_prompt(
                             llm,
-                            W1_EXTRACT_EVENTS_DEEP,
-                            chunk_content=prompt_chunk_content,
-                            chunk_id=chunk_id,
-                            total_chunks=total,
-                            entity_registry_summary=registry_summary,
+                            W1_EVENTS_DEEP_TASK,
+                            system_content=window_system_content,
                             source_language_label=_src_lang_label,
                             language_policy=_lang_policy,
                         ),
                         _invoke_json_prompt(
                             llm,
-                            W1_EXTRACT_WORLD_DEEP,
-                            chunk_content=prompt_chunk_content,
-                            chunk_id=chunk_id,
-                            total_chunks=total,
-                            entity_registry_summary=registry_summary,
+                            W1_WORLD_DEEP_TASK,
+                            system_content=window_system_content,
                             source_language_label=_src_lang_label,
                             language_policy=_lang_policy,
                         ),
                         _invoke_json_prompt(
                             llm,
-                            W1_EXTRACT_RELATIONSHIPS_CHUNK,
-                            chunk_content=prompt_chunk_content,
-                            chunk_id=chunk_id,
-                            total_chunks=total,
-                            entity_registry_summary=registry_summary,
+                            W1_RELS_CHUNK_TASK,
+                            system_content=window_system_content,
                             source_language_label=_src_lang_label,
                             language_policy=_lang_policy,
                         ),
                         _invoke_json_prompt(
                             llm,
-                            W1_EXTRACT_SCENE_SUMMARIES,
-                            chunk_content=prompt_chunk_content,
-                            chunk_id=chunk_id,
-                            total_chunks=total,
-                            entity_registry_summary=registry_summary,
+                            W1_SCENES_TASK,
+                            system_content=window_system_content,
                             chapter_hint=prompt_window.get("chapter_range") or scene_hint,
                             source_language_label=_src_lang_label,
                             language_policy=_lang_policy,

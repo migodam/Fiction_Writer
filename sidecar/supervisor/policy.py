@@ -26,6 +26,11 @@ from sidecar.models.state import (
 )
 from sidecar.supervisor.planner import planner_proposal_to_import_plan, validate_planner_proposal
 from sidecar.supervisor.planner_llm import generate_planner_proposal_stub
+from sidecar.supervisor.prompt_policy import (
+    apply_prompt_policy_patch_to_plan,
+    choose_prompt_policy_patch,
+    prompt_policy_decision,
+)
 from sidecar.supervisor.tool_registry import build_tool_registry
 from sidecar.workflows.w1_import import (
     _chunk_progress,
@@ -184,6 +189,15 @@ def _ensure_orchestrator_plan(state: ImportSupervisorState) -> ImportSupervisorS
         prompt_profile=prompt_profile,
         import_mode=state.get("import_mode", "import_all"),
     )
+    policy_patch = choose_prompt_policy_patch(source_profile, state.get("quality_hints", {}))
+    if policy_patch.get("event_density_strategy"):
+        granularity_profile = {
+            **granularity_profile,
+            "event_density": policy_patch["event_density_strategy"],
+        }
+        if policy_patch["event_density_strategy"] == "sparse_turning_points":
+            granularity_profile["min_events_per_chapter"] = 0.4 if chapter_count >= 8 else 0.75
+            granularity_profile["acceptable_floor_fraction"] = 0.70
     target = plan_converge_target(spec, source_language, chapter_count, granularity_profile=granularity_profile)
     profile_config = dict(state.get("profile_config") or PROFILE_CONFIGS.get(
         prompt_profile, PROFILE_CONFIGS["balanced"]
@@ -195,6 +209,7 @@ def _ensure_orchestrator_plan(state: ImportSupervisorState) -> ImportSupervisorS
 
     proposal = state.get("planner_proposal") or context.get("planner_proposal")
     planner_mode = context.get("llm_planner_mode")
+    effective_policy_patch = policy_patch
     if proposal is None and planner_mode == "stub":
         proposal = generate_planner_proposal_stub({
             **state,
@@ -249,6 +264,12 @@ def _ensure_orchestrator_plan(state: ImportSupervisorState) -> ImportSupervisorS
                 prompt_profile=prompt_profile,
                 chapter_count=chapter_count,
             )
+            proposal_patch = proposal.get("prompt_policy_patch") if isinstance(proposal, dict) else None
+            if proposal_patch:
+                import_plan = apply_prompt_policy_patch_to_plan(import_plan, proposal_patch)  # type: ignore[assignment]
+                effective_policy_patch = proposal_patch
+            else:
+                effective_policy_patch = {}
             plan_is_valid, plan_errors = True, []
         except ValueError as exc:
             import_plan = {}  # type: ignore[assignment]
@@ -262,10 +283,16 @@ def _ensure_orchestrator_plan(state: ImportSupervisorState) -> ImportSupervisorS
             prompt_profile=prompt_profile,
             chapter_count=chapter_count,
         )
+        import_plan = apply_prompt_policy_patch_to_plan(import_plan, policy_patch)  # type: ignore[assignment]
         plan_is_valid, plan_errors = validate_import_plan(import_plan)
 
     if plan_is_valid:
         granularity_profile = dict(import_plan.get("granularity_profile") or granularity_profile)
+        applied_patch = (import_plan.get("prompt_policy") or {}).get("prompt_policy_patch") or effective_policy_patch
+        if isinstance(applied_patch, dict) and applied_patch.get("event_density_strategy") == "sparse_turning_points":
+            granularity_profile["event_density"] = "sparse_turning_points"
+            granularity_profile["min_events_per_chapter"] = 0.4 if chapter_count >= 8 else 0.75
+            granularity_profile["acceptable_floor_fraction"] = 0.70
         target = plan_converge_target(
             spec,
             source_language,
@@ -277,6 +304,11 @@ def _ensure_orchestrator_plan(state: ImportSupervisorState) -> ImportSupervisorS
             profile_config["chapters_per_window"] = int(window_strategy["chapters_per_window_max"])
 
     import_plan_validation = {"ok": plan_is_valid, "errors": plan_errors}
+    decision_patch = (
+        ((import_plan.get("prompt_policy") or {}).get("prompt_policy_patch") or effective_policy_patch)
+        if isinstance(import_plan, dict)
+        else effective_policy_patch
+    )
 
     result = {
         **state,
@@ -285,6 +317,7 @@ def _ensure_orchestrator_plan(state: ImportSupervisorState) -> ImportSupervisorS
         "import_granularity_profile": granularity_profile,
         "import_plan": import_plan,
         "import_plan_validation": import_plan_validation,
+        "prompt_policy_decision": prompt_policy_decision(source_profile, decision_patch),
         "source_profile": source_profile,
         "profile_config": profile_config,
         "use_supervisor": bool(state.get("use_supervisor") or spec.get("supervisor_enabled")),

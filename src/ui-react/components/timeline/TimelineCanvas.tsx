@@ -12,6 +12,7 @@ import {
   tFromOrderIndex,
   screenToCanvas,
 } from './bezierMath';
+import { placeTimelineLabels } from './timelineLayoutEngine';
 import { BranchEdge } from './BranchEdge';
 import { TimelineEventNode } from './TimelineEventNode';
 import { EventEditModal } from './EventEditModal';
@@ -108,6 +109,13 @@ function snapPointToGrid(point: Point): Point {
     x: snapValueToGrid(point.x),
     y: snapValueToGrid(point.y),
   };
+}
+
+function eventImportanceRadius(importance?: string): number {
+  if (importance === 'critical') return 13;
+  if (importance === 'high') return 10;
+  if (importance === 'medium') return 8;
+  return 6;
 }
 
 export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeChange }: TimelineCanvasProps) {
@@ -325,6 +333,25 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
     }
     return map;
   }, [events, branchCPMap, branchEventsMap]);
+
+  const eventLabelPlacements = useMemo(() => {
+    return placeTimelineLabels(
+      events
+        .map((event) => {
+          const position = eventPositions.get(event.id);
+          if (!position) return null;
+          return {
+            id: event.id,
+            title: event.title,
+            x: position.x,
+            y: position.y,
+            importance: event.importance,
+            nodeRadius: eventImportanceRadius(event.importance),
+          };
+        })
+        .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry)),
+    );
+  }, [events, eventPositions]);
 
   const eventCurveParams = useMemo(() => {
     const map = new Map<string, number>();
@@ -1315,6 +1342,7 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
                   position={pos}
                   isHovered={hoveredEventId === event.id}
                   dragMode={dragState?.eventId === event.id ? dragState.interaction : null}
+                  labelPlacement={eventLabelPlacements.get(event.id)}
                   onPointerDown={handleEventPointerDown}
                   onPointerUp={handleEventPointerUp}
                   onPointerMove={handleEventPointerMove}
