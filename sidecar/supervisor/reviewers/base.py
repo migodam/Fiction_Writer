@@ -95,7 +95,7 @@ class BaseReviewer(ABC):
                 "high" if has_high else ("medium" if "medium" in severities else "low")
             )
             if not has_high:
-                verdict = "warn"
+                verdict = "needs_orchestrator_rerun" if orch_reqs else "warn"
                 severity = max_severity
             elif orch_reqs:
                 verdict = "needs_orchestrator_rerun"
