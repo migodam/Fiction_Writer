@@ -9,9 +9,11 @@ from sidecar.supervisor.reviewers.schemas import (
     ZeroCostLedger,
 )
 from sidecar.supervisor.reviewers.base import BaseReviewer
+from sidecar.supervisor.reviewers.quality_reviewer import QualityReviewer
 
 __all__ = [
     "BaseReviewer",
+    "QualityReviewer",
     "ReviewReport",
     "ReviewFinding",
     "RepairAction",
