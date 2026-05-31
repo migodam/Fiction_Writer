@@ -165,3 +165,157 @@ class TestReviewerFindingsToPolicyPatch:
         ok, errors = validate_prompt_policy_patch({"rerun_scope": "full_pipeline"})
         assert not ok
         assert any("rerun_scope" in e for e in errors)
+
+
+# ---------------------------------------------------------------------------
+# Task 3: pipeline_tools.py — async Orchestrator tool contracts
+# ---------------------------------------------------------------------------
+
+import asyncio
+import pytest
+from unittest.mock import AsyncMock, patch as mock_patch
+
+
+def _base_state(**overrides) -> dict:
+    state = {
+        "project_path": "/tmp/pipeline_test",
+        "import_run_id": "pipeline_test_run",
+        "entity_registry": {
+            "characters": {},
+            "events": {},
+            "world": {},
+            "world_detailed": {},
+        },
+        "proposals": [],
+        "inbox_proposals": [],
+        "reviewer_reports": {},
+        "supervisor_log": [],
+        "prompt_windows": [{"id": "pwin_0", "chunk_ids": [0]}],
+        "window_metrics": {},
+        "source_language": "zh",
+        "converge_target": {},
+        "import_granularity_profile": {},
+    }
+    state.update(overrides)
+    return state
+
+
+class TestRunQualityReview:
+    def test_run_quality_review_returns_report_in_state(self):
+        from sidecar.supervisor.pipeline_tools import run_quality_review
+        state = _base_state()
+        result = asyncio.run(run_quality_review(state))
+        assert "reviewer_reports" in result
+        assert "quality" in result["reviewer_reports"]
+
+    def test_run_quality_review_report_has_required_keys(self):
+        from sidecar.supervisor.pipeline_tools import run_quality_review
+        state = _base_state()
+        result = asyncio.run(run_quality_review(state))
+        report = result["reviewer_reports"]["quality"]
+        for key in ("reviewer", "verdict", "severity", "findings", "local_repair_actions"):
+            assert key in report, f"Missing key: {key}"
+
+    def test_run_quality_review_zero_cost(self):
+        from sidecar.supervisor.pipeline_tools import run_quality_review
+        state = _base_state()
+        result = asyncio.run(run_quality_review(state))
+        report = result["reviewer_reports"]["quality"]
+        assert report["token_cost_ledger"]["live_model_calls"] is False
+
+
+class TestRunFactReview:
+    def test_run_fact_review_returns_report_in_state(self):
+        from sidecar.supervisor.pipeline_tools import run_fact_review
+        state = _base_state()
+        result = asyncio.run(run_fact_review(state))
+        assert "reviewer_reports" in result
+        assert "fact" in result["reviewer_reports"]
+
+    def test_run_fact_review_does_not_consume_chunks(self):
+        from sidecar.supervisor.pipeline_tools import run_fact_review
+        state = _base_state()
+        state["chunks"] = [{"content": "x" * 10000} for _ in range(50)]
+        result = asyncio.run(run_fact_review(state))
+        assert "fact" in result.get("reviewer_reports", {})
+
+
+class TestRunConsistencyReview:
+    def test_run_consistency_review_returns_report_in_state(self):
+        from sidecar.supervisor.pipeline_tools import run_consistency_review
+        state = _base_state()
+        result = asyncio.run(run_consistency_review(state))
+        assert "reviewer_reports" in result
+        assert "consistency" in result["reviewer_reports"]
+
+
+class TestRerunTargetedWindow:
+    def test_empty_window_ids_raises_value_error(self):
+        from sidecar.supervisor.pipeline_tools import rerun_targeted_window
+        state = _base_state()
+        with pytest.raises(ValueError, match="affected_window_ids"):
+            asyncio.run(rerun_targeted_window(state, [], "test reason"))
+
+    def test_non_empty_window_ids_calls_rerun_per_window(self):
+        from sidecar.supervisor.pipeline_tools import rerun_targeted_window
+        state = _base_state()
+        rerun_calls = []
+
+        async def mock_rerun(state, window_id, strategy="augment", missing_char_names=None, parameter_overrides=None):
+            rerun_calls.append(window_id)
+            return {"entity_registry": state.get("entity_registry", {}), "window_metrics": {}}
+
+        with mock_patch("sidecar.supervisor.pipeline_tools.rerun_window", mock_rerun):
+            asyncio.run(rerun_targeted_window(state, ["pwin_0", "pwin_1"], "character undercoverage"))
+
+        assert "pwin_0" in rerun_calls
+        assert "pwin_1" in rerun_calls
+
+
+class TestRepairImportArtifacts:
+    def test_merge_duplicate_marks_skip_create(self):
+        from sidecar.supervisor.pipeline_tools import repair_import_artifacts
+        state = _base_state()
+        state["entity_registry"]["characters"] = {
+            "char_a": {"canonical_id": "char_a", "canonical_name": "Alice", "skip_create": False},
+            "char_b": {"canonical_id": "char_b", "canonical_name": "Alice", "skip_create": False},
+        }
+        repair_actions = [{
+            "action_type": "merge_duplicate",
+            "target_entity_ids": ["char_a", "char_b"],
+            "description": "Merge duplicate Alice characters",
+            "deterministic": True,
+        }]
+        result = asyncio.run(repair_import_artifacts(state, repair_actions))
+        chars = result.get("entity_registry", {}).get("characters", {})
+        skip_count = sum(1 for c in chars.values() if c.get("skip_create"))
+        assert skip_count >= 1
+
+    def test_empty_repair_actions_returns_unchanged_registry(self):
+        from sidecar.supervisor.pipeline_tools import repair_import_artifacts
+        state = _base_state()
+        original_registry = dict(state["entity_registry"])
+        result = asyncio.run(repair_import_artifacts(state, []))
+        assert result.get("entity_registry") == original_registry
+
+
+class TestWriteProposalPackage:
+    def test_write_proposal_package_stores_in_pending_list(self):
+        from sidecar.supervisor.pipeline_tools import write_proposal_package
+        state = _base_state()
+        package = {
+            "package_id": "pkg_test_001",
+            "container_key": "organizations",
+            "items": [{"name": "七玄门", "category": "organization"}],
+        }
+        result = asyncio.run(write_proposal_package(state, package))
+        pending = result.get("pending_proposal_packages", [])
+        assert any(p.get("package_id") == "pkg_test_001" for p in pending)
+
+    def test_write_proposal_package_does_not_call_node_write_to_project(self):
+        from sidecar.supervisor.pipeline_tools import write_proposal_package
+        state = _base_state()
+        package = {"package_id": "pkg_readonly", "container_key": "locations", "items": []}
+        with mock_patch("sidecar.supervisor.pipeline_tools.node_write_to_project") as mock_write:
+            asyncio.run(write_proposal_package(state, package))
+            mock_write.assert_not_called()
