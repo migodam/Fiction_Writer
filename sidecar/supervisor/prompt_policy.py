@@ -23,6 +23,27 @@ _TOPOLOGY_VALUES: frozenset[str] = frozenset({"low", "medium", "high"})
 _WORLD_SCOPE_VALUES: frozenset[str] = frozenset({"minimal", "world_only", "full_lore"})
 _LABEL_GRANULARITY_VALUES: frozenset[str] = frozenset({"compact", "standard", "detailed"})
 
+_REVIEWER_MODE_VALUES: frozenset[str] = frozenset({"quality", "fact", "consistency"})
+_RERUN_SCOPE_VALUES: frozenset[str] = frozenset({"local_window", "entity_cluster", "timeline_branch", "world_category"})
+# organizer_strictness reuses _STRICTNESS_VALUES = frozenset({"low", "medium", "high"})
+
+_REVIEWER_MODE_DIRECTIVES: dict[str, tuple[str, str]] = {
+    "quality":      ("reviewer_mode", "Quality review mode: prioritize canonical event classification and world boundary enforcement."),
+    "fact":         ("reviewer_mode", "Fact review mode: require evidence refs for all proposed entities."),
+    "consistency":  ("reviewer_mode", "Consistency review mode: cross-check against prior import run summaries."),
+}
+_RERUN_SCOPE_DIRECTIVES: dict[str, tuple[str, str]] = {
+    "local_window":     ("rerun_scope", "Rerun scope: local window only — target the specific prompt window that failed."),
+    "entity_cluster":   ("rerun_scope", "Rerun scope: entity cluster — re-extract the affected character/event cluster."),
+    "timeline_branch":  ("rerun_scope", "Rerun scope: timeline branch — re-run extraction for the affected branch segment."),
+    "world_category":   ("rerun_scope", "Rerun scope: world category — re-extract world entities in the affected category."),
+}
+_ORGANIZER_STRICTNESS_DIRECTIVES: dict[str, tuple[str, str]] = {
+    "low":    ("organizer_strictness", "Organizer strictness is low: pass ambiguous world entries with warnings."),
+    "medium": ("organizer_strictness", "Organizer strictness is medium: exclude ambiguous person-name world entries."),
+    "high":   ("organizer_strictness", "Organizer strictness is high: exclude all boundary-ambiguous entries; route to correct module."),
+}
+
 _BOOL_DIRECTIVES: dict[tuple[str, bool], tuple[str, str]] = {
     ("emphasize_existing_timeline_topology", True): (
         "timeline_topology",
@@ -144,6 +165,15 @@ def normalize_prompt_policy_patch(patch: dict[str, Any] | None) -> dict[str, Any
     label_granularity = patch.get("timeline_label_granularity")
     if label_granularity in _LABEL_GRANULARITY_VALUES:
         normalized["timeline_label_granularity"] = label_granularity
+    reviewer_mode = patch.get("reviewer_mode")
+    if reviewer_mode in _REVIEWER_MODE_VALUES:
+        normalized["reviewer_mode"] = reviewer_mode
+    rerun_scope = patch.get("rerun_scope")
+    if rerun_scope in _RERUN_SCOPE_VALUES:
+        normalized["rerun_scope"] = rerun_scope
+    organizer_strictness = patch.get("organizer_strictness")
+    if organizer_strictness in _STRICTNESS_VALUES:
+        normalized["organizer_strictness"] = organizer_strictness
 
     return normalized
 
@@ -173,6 +203,18 @@ def prompt_policy_directives(patch: dict[str, Any] | None) -> dict[str, str]:
     label_granularity = str(normalized.get("timeline_label_granularity", "compact"))
     key, directive = _LABEL_DIRECTIVES[label_granularity]
     directives[key] = directive
+    reviewer_mode_val = str(normalized.get("reviewer_mode", ""))
+    if reviewer_mode_val in _REVIEWER_MODE_DIRECTIVES:
+        key, directive = _REVIEWER_MODE_DIRECTIVES[reviewer_mode_val]
+        directives[key] = directive
+    rerun_scope_val = str(normalized.get("rerun_scope", ""))
+    if rerun_scope_val in _RERUN_SCOPE_DIRECTIVES:
+        key, directive = _RERUN_SCOPE_DIRECTIVES[rerun_scope_val]
+        directives[key] = directive
+    organizer_strictness_val = str(normalized.get("organizer_strictness", ""))
+    if organizer_strictness_val in _ORGANIZER_STRICTNESS_DIRECTIVES:
+        key, directive = _ORGANIZER_STRICTNESS_DIRECTIVES[organizer_strictness_val]
+        directives[key] = directive
     return directives
 
 
