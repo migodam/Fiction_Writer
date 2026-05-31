@@ -49,6 +49,7 @@ import type {
   AppSettings,
 } from './models/project';
 import { buildBranchControlPoints, cubicBezierPoint, nearestTOnCurve, tFromOrderIndex } from './components/timeline/bezierMath';
+import { applyTimelineOperation } from './components/timeline/TimelineOperations';
 import { createStarterProject } from './mock/seedProject';
 import { projectService } from './services/projectService';
 import { appSettingsService, defaultAppSettings } from './services/appSettingsService';
@@ -1026,39 +1027,27 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     return branchId;
   },
   moveTimelineEvent: (eventId, targetBranchId, targetSlot) => set((state) => {
-    const moving = state.timelineEvents.find((entry) => entry.id === eventId);
-    if (!moving) return state;
-    const otherEvents = state.timelineEvents.filter((entry) => entry.id !== eventId);
-    const targetEvents = otherEvents
-      .filter((entry) => entry.branchId === targetBranchId)
-      .sort((a, b) => a.orderIndex - b.orderIndex);
-    const insertAt = Math.min(Math.max(targetSlot, 0), targetEvents.length);
-    const reorderedTarget = [...targetEvents.slice(0, insertAt), { ...moving, branchId: targetBranchId }, ...targetEvents.slice(insertAt)]
-      .map((entry, index) => ({ ...entry, orderIndex: index }));
-    const untouched = otherEvents
-      .filter((entry) => entry.branchId !== targetBranchId && entry.branchId !== moving.branchId)
-      .map((entry) => entry);
-    const sourceRemainder = otherEvents
-      .filter((entry) => entry.branchId === moving.branchId && moving.branchId !== targetBranchId)
-      .sort((a, b) => a.orderIndex - b.orderIndex)
-      .map((entry, index) => ({ ...entry, orderIndex: index }));
-    return withDirtyState(
-      propagateTimelineAnchorDependencies(
-        state.timelineBranches,
-        [...untouched, ...sourceRemainder, ...reorderedTarget],
-      ),
+    const { timelineBranches, timelineEvents, warnings } = applyTimelineOperation(
+      { timelineBranches: state.timelineBranches, timelineEvents: state.timelineEvents },
+      { type: 'move_event', eventId, branchId: targetBranchId, orderIndex: targetSlot },
     );
+    if (warnings.length > 0) console.warn('[Timeline] moveTimelineEvent:', warnings);
+    return withDirtyState(propagateTimelineAnchorDependencies(timelineBranches, timelineEvents));
   }),
-  setTimelineBranchGeometry: (branchId, geometry) => set((state) => withDirtyState({
-    timelineBranches: state.timelineBranches.map((entry) => entry.id === branchId ? {
-      ...entry,
-      geometry: {
-        laneOffset: geometry?.laneOffset ?? entry.geometry?.laneOffset ?? 0,
-        bend: geometry?.bend ?? entry.geometry?.bend ?? 0.25,
-        thickness: geometry?.thickness ?? entry.geometry?.thickness ?? 1,
-      },
-    } : entry),
-  })),
+  setTimelineBranchGeometry: (branchId, geometry) => set((state) => {
+    const existing = state.timelineBranches.find((b) => b.id === branchId);
+    const { timelineBranches, timelineEvents } = applyTimelineOperation(
+      { timelineBranches: state.timelineBranches, timelineEvents: state.timelineEvents },
+      { type: 'update_branch_geometry', branchId, geometry: {
+        laneOffset: geometry?.laneOffset ?? existing?.geometry?.laneOffset ?? 0,
+        bend: geometry?.bend ?? existing?.geometry?.bend ?? 0.25,
+        thickness: geometry?.thickness ?? existing?.geometry?.thickness ?? 1,
+      }},
+    );
+    return withDirtyState({ timelineBranches, timelineEvents });
+  }),
+  // NOTE: endAnchor, endMode, mergeTargetBranchId, mergeEventId are CANONICAL topology fields.
+  // They are written to disk via saveProject() and must not be in BRANCH_RUNTIME_FIELDS.
   setTimelineBranchAnchors: (branchId, startPos, endPos, anchors) => set((state) => {
     const previousBranch = state.timelineBranches.find((entry) => entry.id === branchId);
     if (!previousBranch) {

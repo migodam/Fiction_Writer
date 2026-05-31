@@ -1,4 +1,6 @@
 import type { TimelineBranch, TimelineEvent } from '../../models/project.js';
+import { BRANCH_RUNTIME_FIELDS, EVENT_RUNTIME_FIELDS } from './TimelineCanonicalAdapter';
+export { BRANCH_RUNTIME_FIELDS, EVENT_RUNTIME_FIELDS } from './TimelineCanonicalAdapter';
 
 const collectFields = <T extends object>(records: T[]) =>
   Array.from(
@@ -22,24 +24,6 @@ const findMissingEntityFields = <T extends object>(
     .filter((field) => !backendFields.has(field))
     .map((field) => `${prefix}.${field}`);
 };
-
-// Fields that are recomputed at runtime and intentionally diverge from disk state.
-// Comparing these always produces false positives in the Synchronize report.
-export const BRANCH_RUNTIME_FIELDS = new Set([
-  'anchorStartPos',
-  'anchorEndPos',
-  'endAnchor',
-  'endMode',
-  'mergeEventId',
-  'mergeTargetBranchId',
-]);
-
-export const EVENT_RUNTIME_FIELDS = new Set([
-  'position',
-  'sharedBranchIds',
-  'layoutLock',
-  'modalStateHints',
-]);
 
 export const collectTimelineSyncSchemaMissingFields = (
   timelineBranches: TimelineBranch[],
