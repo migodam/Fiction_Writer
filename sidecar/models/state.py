@@ -1157,6 +1157,7 @@ class ImportSupervisorState(TypedDict, total=False):
     tool_operating_spec: ToolOperatingSpec
     converge_target: ConvergeTarget
     judge_artifact: JudgeArtifact
+    reviewer_reports: List[dict]  # populated post-import by QualityReviewer / FactReviewer / ConsistencyReviewer
     thematic_rerun_requests: List[ThematicRerunRequest]
     current_tool: str
     current_window: str
