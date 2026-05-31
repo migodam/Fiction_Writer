@@ -10,10 +10,12 @@ from sidecar.supervisor.reviewers.schemas import (
 )
 from sidecar.supervisor.reviewers.base import BaseReviewer
 from sidecar.supervisor.reviewers.quality_reviewer import QualityReviewer
+from sidecar.supervisor.reviewers.fact_reviewer import FactReviewer
 
 __all__ = [
     "BaseReviewer",
     "QualityReviewer",
+    "FactReviewer",
     "ReviewReport",
     "ReviewFinding",
     "RepairAction",
