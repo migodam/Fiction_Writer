@@ -53,6 +53,10 @@ _PPP_ALLOWED_FIELDS: frozenset = frozenset({
     "topology_fidelity",
     "world_model_scope",
     "timeline_label_granularity",
+    # New W3 knobs
+    "reviewer_mode",
+    "rerun_scope",
+    "organizer_strictness",
 })
 _PPP_BOOL_FIELDS: frozenset = frozenset({
     "emphasize_existing_timeline_topology",
@@ -288,6 +292,16 @@ def validate_prompt_policy_patch(patch: dict) -> tuple[bool, list[str]]:
     if label is not None and label not in _PPP_LABEL_VALUES:
         errors.append(f"timeline_label_granularity: {label!r} not in {sorted(_PPP_LABEL_VALUES)}")
 
+    reviewer_mode = patch.get("reviewer_mode")
+    if reviewer_mode is not None and reviewer_mode not in frozenset({"quality", "fact", "consistency"}):
+        errors.append(f"reviewer_mode: {reviewer_mode!r} not in allowed values")
+    rerun_scope = patch.get("rerun_scope")
+    if rerun_scope is not None and rerun_scope not in frozenset({"local_window", "entity_cluster", "timeline_branch", "world_category"}):
+        errors.append(f"rerun_scope: {rerun_scope!r} not in allowed values")
+    organizer_strictness = patch.get("organizer_strictness")
+    if organizer_strictness is not None and organizer_strictness not in frozenset({"low", "medium", "high"}):
+        errors.append(f"organizer_strictness: {organizer_strictness!r} not in allowed values")
+
     return len(errors) == 0, errors
 
 
@@ -375,3 +389,60 @@ def planner_proposal_to_import_plan(
         raise ValueError(f"Converted ImportPlan failed validation: {errors}")
 
     return plan
+
+
+# ---------------------------------------------------------------------------
+# Reviewer → PromptPolicyPatch mapping
+# ---------------------------------------------------------------------------
+
+_FINDING_TO_PATCH: dict[str, dict] = {
+    "timeline_stream_of_consciousness": {
+        "event_density_strategy": "sparse_turning_points",
+        "prefer_canonical_events": True,
+    },
+    "event_density_too_high": {
+        "event_density_strategy": "sparse_turning_points",
+        "prefer_canonical_events": True,
+    },
+    "mainline_share_too_high": {
+        "topology_fidelity": "high",
+        "emphasize_existing_timeline_topology": True,
+    },
+    "world_module_pollution": {
+        "world_model_scope": "world_only",
+        "organizer_strictness": "high",
+        "world_boundary_strictness": "high",
+    },
+    "world_wrong_classification": {
+        "world_model_scope": "world_only",
+        "organizer_strictness": "high",
+    },
+    "world_contamination_high": {
+        "world_model_scope": "world_only",
+        "organizer_strictness": "high",
+        "world_boundary_strictness": "high",
+    },
+    "fact_mismatch_entity_cluster": {
+        "rerun_scope": "entity_cluster",
+    },
+    "duplicate_character_cross_import": {},
+}
+
+_SEVERITY_ALLOWS_RERUN = frozenset({"medium", "high"})
+
+
+def _reviewer_findings_to_policy_patch(report: dict) -> dict:
+    """Map ReviewReport findings to an allowlisted PromptPolicyPatch dict.
+
+    Only medium/high severity findings may set rerun_scope.
+    Low severity findings contribute to local repairs only.
+    """
+    patch: dict = {}
+    for finding in report.get("findings", []):
+        code = str(finding.get("check_name", ""))
+        severity = str(finding.get("severity", "low"))
+        code_patch = dict(_FINDING_TO_PATCH.get(code, {}))
+        if severity not in _SEVERITY_ALLOWS_RERUN:
+            code_patch.pop("rerun_scope", None)
+        patch.update(code_patch)
+    return patch
