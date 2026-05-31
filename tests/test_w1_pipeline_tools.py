@@ -319,3 +319,51 @@ class TestWriteProposalPackage:
         with mock_patch("sidecar.supervisor.pipeline_tools.node_write_to_project") as mock_write:
             asyncio.run(write_proposal_package(state, package))
             mock_write.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Task 4: tool_registry.py — pipeline tools registered
+# ---------------------------------------------------------------------------
+
+class TestToolRegistryPipelineTools:
+    def test_run_quality_review_registered(self):
+        from sidecar.supervisor.tool_registry import build_tool_registry
+        registry = build_tool_registry()
+        assert "run_quality_review" in registry
+        assert callable(registry["run_quality_review"])
+
+    def test_run_fact_review_registered(self):
+        from sidecar.supervisor.tool_registry import build_tool_registry
+        registry = build_tool_registry()
+        assert "run_fact_review" in registry
+        assert callable(registry["run_fact_review"])
+
+    def test_run_consistency_review_registered(self):
+        from sidecar.supervisor.tool_registry import build_tool_registry
+        registry = build_tool_registry()
+        assert "run_consistency_review" in registry
+        assert callable(registry["run_consistency_review"])
+
+    def test_rerun_targeted_window_registered(self):
+        from sidecar.supervisor.tool_registry import build_tool_registry
+        registry = build_tool_registry()
+        assert "rerun_targeted_window" in registry
+        assert callable(registry["rerun_targeted_window"])
+
+    def test_repair_import_artifacts_registered(self):
+        from sidecar.supervisor.tool_registry import build_tool_registry
+        registry = build_tool_registry()
+        assert "repair_import_artifacts" in registry
+        assert callable(registry["repair_import_artifacts"])
+
+    def test_write_proposal_package_registered(self):
+        from sidecar.supervisor.tool_registry import build_tool_registry
+        registry = build_tool_registry()
+        assert "write_proposal_package" in registry
+        assert callable(registry["write_proposal_package"])
+
+    def test_existing_tools_still_registered(self):
+        from sidecar.supervisor.tool_registry import build_tool_registry
+        registry = build_tool_registry()
+        for tool in ("segment_manifest", "extract_window", "rerun_window", "judge_import", "proposal_write"):
+            assert tool in registry, f"Existing tool {tool!r} must not be removed"
