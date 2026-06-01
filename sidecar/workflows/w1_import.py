@@ -2901,7 +2901,7 @@ _TIMELINE_SEMANTIC_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
         "护法接走韩立", "护法带走韩立", "王护法领走韩立",
     )),
     ("third_uncle_proposal", (
-        "三叔提议", "韩胖子提议", "三叔让韩立", "三叔建议韩立",
+        "三叔让韩立", "三叔建议韩立",
     )),
     ("admission_test", (
         "入门测试", "入门考验", "七玄门入门", "七玄门测试", "七玄门考核",
@@ -2936,7 +2936,7 @@ def _timeline_semantic_title_key(event: dict) -> str:
     title_key = _normal_key(event.get("title", ""))
     _raw_title = str(event.get("title", ""))
     _stripped_title = re.sub(
-        r"^(\u4e03\u7384\u95e8|\u58a8\u5927\u592b|\u4e09\u53d4|\u97e9\u5bb6|\u9752\u725b\u9547|\u843d\u6c34\u6cb3\u6751|\u9ec4\u67ab\u8c37|\u795e\u624b\u8c37)",
+        r"^(七玄门|墨大夫|三叔|韩家|青牛镇|落水河村|黄枫谷|神手谷)",
         "",
         _raw_title.strip(),
     )

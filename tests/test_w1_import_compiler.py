@@ -1840,7 +1840,6 @@ def test_wang_guard_title_variants_collapse_to_one_canonical_event(tmp_path):
                 "temporal_hint": "第五章",
                 "confidence": 0.85,
                 "chunk_id": 4,
-                "dedupeKey": "王护法::接走::韩立::ch5",
             },
             "ev_b": {
                 "title": "七玄门王护法接走韩立",
@@ -1855,7 +1854,6 @@ def test_wang_guard_title_variants_collapse_to_one_canonical_event(tmp_path):
                 "temporal_hint": "第五章",
                 "confidence": 0.83,
                 "chunk_id": 4,
-                "dedupeKey": "王护法::接走::韩立::ch5",
             },
         }},
         "timeline_branches": [],
