@@ -37,7 +37,17 @@ export type Locale = 'en' | 'zh-CN';
 export type ProposalStatus = 'pending' | 'accepted' | 'rejected' | 'archived';
 export type IssueStatus = 'open' | 'resolved' | 'ignored';
 export type TaskStatus = 'queued' | 'running' | 'awaiting_user_input' | 'completed' | 'failed' | 'canceled';
-export type ProposalSource = 'graph' | 'consistency' | 'agent' | 'import' | 'script' | 'video';
+export type ProposalSource =
+  | 'graph'
+  | 'consistency'
+  | 'agent'
+  | 'import'
+  | 'script'
+  | 'video'
+  | 'quality_reviewer'
+  | 'fact_reviewer'
+  | 'consistency_reviewer'
+  | 'organizer';
 export type ProposalKind =
   | 'entity_update'
   | 'import_review'
@@ -189,6 +199,10 @@ export interface TimelineEvent {
   layoutLock?: boolean;
   modalStateHints?: string[];
   position?: { x: number; y: number };
+  globalOrderIndex?: number;
+  chapterNumber?: number;
+  sourceChunkIds?: string[];
+  sourceOrder?: number;
 }
 
 export interface Relationship {
@@ -236,6 +250,8 @@ export interface WorldContainer {
   isDefault?: boolean;
   isCollapsed?: boolean;
   sortOrder?: number;
+  description?: string;
+  importCategoryKey?: string;
 }
 
 export interface WorldAttribute {
@@ -264,6 +280,9 @@ export interface WorldItem {
   mapMarkers: WorldMapMarker[];
   assetPath?: string | null;
   tagIds?: string[];
+  categoryPath?: string[];
+  parentId?: string | null;
+  importCategoryKey?: string;
 }
 
 export interface WorldSettings {
@@ -354,6 +373,35 @@ export interface Proposal {
   /** Set by resolveProposal when applyProposalOperations returns a blockedReason. Display-only; not canonical. */
   lastBlockReason?: string;
   lastBlockedAt?: string;
+}
+
+export interface DependencyEdge {
+  fromId: string;
+  toId: string;
+  reason: string;
+}
+
+export interface ReviewFinding {
+  findingId: string;
+  checkName: string;
+  description: string;
+  severity: 'low' | 'medium' | 'high';
+  entityRefs: string[];
+  evidenceRefs: string[];
+}
+
+export type PackageSource = 'w1_import' | 'quality_reviewer' | 'fact_reviewer' | 'consistency_reviewer' | 'organizer';
+
+export interface ProposalPackage {
+  id: string;
+  source: PackageSource;
+  title: string;
+  summary: string;
+  risk: 'low' | 'medium' | 'high';
+  proposals: Proposal[];
+  dependencyGraph: DependencyEdge[];
+  reviewerFindings?: ReviewFinding[];
+  blockedReason?: string;
 }
 
 export interface ConsistencyIssue {
