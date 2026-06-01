@@ -859,7 +859,7 @@ export const projectService = {
       characterTags: safeReadJson(runtime.fs, runtime.path.join(entitiesDir, 'character-tags.json'), []),
       candidates: safeReadJson(runtime.fs, runtime.path.join(entitiesDir, 'candidates.json'), []),
       timelineBranches: safeReadJson(runtime.fs, runtime.path.join(timelineDir, 'branches.json'), []),
-      timelineEvents: readJsonFilesSafe<NarrativeProject['timelineEvents'][number]>(runtime, timelineDir).filter((item) => item.id),
+      timelineEvents: readJsonFilesSafe<NarrativeProject['timelineEvents'][number]>(runtime, timelineDir).filter((item) => item.id && !Array.isArray(item)),
       relationships: safeReadJson(runtime.fs, runtime.path.join(entitiesDir, 'relationships.json'), []),
       chapters: readJsonFilesSafe<NarrativeProject['chapters'][number]>(runtime, chaptersDir),
       scenes: sceneMetas.map((meta) => ({
