@@ -74,6 +74,16 @@ def test_clear_session_resets_ledger():
     assert ledger["api_call_count"] == 0
 
 
+def test_gpt4o_mini_does_not_match_gpt4o_price():
+    """Longer key must win — gpt-4o-mini must not be priced as gpt-4o."""
+    sid = _fresh("gpt-mini-test")
+    ev.add_token_usage(sid, input_tokens=1_000_000, output_tokens=1_000_000)
+    ledger = ev.session_token_ledger(sid, model="gpt-4o-mini")
+    assert "cost_usd" in ledger
+    # gpt-4o-mini: 0.15 input + 0.60 output = 0.75 per 1M each
+    assert abs(ledger["cost_usd"] - 0.75) < 0.001, f"Expected ~0.75, got {ledger['cost_usd']}"
+
+
 def test_empty_session_id_is_noop():
     ev.add_token_usage("", input_tokens=100, output_tokens=50)
     ledger = ev.session_token_ledger("")

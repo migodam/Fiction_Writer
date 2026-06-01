@@ -114,7 +114,7 @@ def add_token_usage(session_id: str, input_tokens: int, output_tokens: int) -> N
 def _cost_for_model(model: str, input_tokens: int, output_tokens: int) -> tuple[float | None, str | None]:
     """Return (cost_usd, None) if model matches price table, else (None, reason)."""
     model_lower = (model or "").lower()
-    for key, prices in _DEFAULT_PRICE_TABLE.items():
+    for key, prices in sorted(_DEFAULT_PRICE_TABLE.items(), key=lambda kv: len(kv[0]), reverse=True):
         if key in model_lower:
             cost = (
                 input_tokens * prices["input_usd_per_1m"] / 1_000_000
