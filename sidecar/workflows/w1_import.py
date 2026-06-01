@@ -595,6 +595,66 @@ def _sort_manuscript_chapters(chapters: list[dict]) -> list[dict]:
     return sorted(chapters, key=_chapter_sort_key)
 
 
+_ZH_NUM_MAP: dict[str, int] = {
+    "零": 0, "一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
+    "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+    "百": 100, "千": 1000, "万": 10000,
+}
+
+
+def _parse_zh_number(s: str) -> int | None:
+    """Convert a Chinese number string (e.g. '二十三') to int. Returns None on failure."""
+    total = 0
+    current = 0
+    for ch in s:
+        val = _ZH_NUM_MAP.get(ch)
+        if val is None:
+            return None
+        if val >= 10:
+            if current == 0:
+                current = 1  # 十五 → implicit leading 1
+            total += current * val
+            current = 0
+        else:
+            current = val
+    return total + current
+
+
+def _detect_chapter_number(title: str) -> int | None:
+    """Parse chapter number from title string. Returns int or None."""
+    if not title:
+        return None
+    # Arabic numerals: 第123章, Chapter 7, 第7节
+    m = re.search(r"(?:第|Chapter\s+)(\d+)[章节回]?", title, re.IGNORECASE)
+    if m:
+        return int(m.group(1))
+    # Chinese numerals: 第一章, 第二十三章
+    m = re.search(r"第([零一二三四五六七八九十百千万]+)[章节回]", title)
+    if m:
+        return _parse_zh_number(m.group(1))
+    return None
+
+
+def _chapter_summary_fallback(text: str, source_language: str = "zh", max_chars: int = 300) -> str:
+    """Extract a short deterministic summary from raw chapter text (no LLM).
+
+    Chinese source: joins first and last distinct non-empty paragraphs (≤150 chars each).
+    Other: truncates first paragraph to max_chars.
+    """
+    text = re.sub(r"[ \t]+", " ", (text or "").strip())
+    if not text:
+        return ""
+    paragraphs = [p.strip() for p in re.split(r"\n{2,}|\n", text) if p.strip()]
+    if not paragraphs:
+        return text[:max_chars]
+    first = paragraphs[0][:150]
+    if source_language == "zh" and len(paragraphs) > 2:
+        last = paragraphs[-1][:100]
+        if last and last != first:
+            return (first + "……" + last)[:max_chars]
+    return first[:max_chars]
+
+
 def _detect_language(sample: str) -> str:
     """Return ISO 639-1 language code inferred from a short text sample."""
     if not sample:
@@ -702,6 +762,19 @@ _WORLD_CATEGORY_ALIASES: dict[str, str] = {
     "culture": "culture",
     "custom": "custom",
 }
+
+# Arc IDs the LLM might emit that are world entity categories, not semantic arc lanes.
+# If an event's arcId matches any of these, treat arcId as absent and fall through
+# to the semantic/theme-based lane inference in _timeline_lane_key.
+_WORLD_CATEGORY_BRANCH_BLOCKLIST: frozenset[str] = frozenset({
+    "item", "artifact", "location", "rule", "system", "concept",
+    "culture", "custom", "faction", "organization", "organisation",
+    "place", "object", "weapon", "treasure", "magic", "cultivation",
+    "lore", "clan", "guild", "sect",
+    # Chinese equivalents
+    "地名", "地点", "门派", "宗门", "帮派", "势力", "物品", "丹药",
+    "法器", "功法", "法术", "规则", "地图",
+})
 
 TIMELINE_EVENT_CLASSES: tuple[str, ...] = (
     "canonical_event",
@@ -2560,6 +2633,30 @@ async def node_build_manuscript(state: ImportState) -> dict:
     """
     import_mode = state.get("import_mode", "import_all")
     chunks = state.get("chunks", [])
+    source_language = state.get("source_language", "zh")
+    source_file_path = str(state.get("source_file_path", ""))
+    known_chars: set[str] = set((state.get("entity_registry") or {}).get("characters", {}).keys())
+    extraction_errors: list[str] = list(state.get("errors", []))
+
+    def _enrich_chapter(chapter: dict) -> dict:
+        content = chapter.get("manuscript_content", "")
+        title = chapter.get("title", "")
+        chunk_ids = chapter.get("chunk_ids", [])
+        chapter["summary"] = _chapter_summary_fallback(content, source_language)
+        detected = [c for c in known_chars if c in content]
+        if detected and source_language == "zh":
+            char_list = "、".join(detected[:3])
+            chapter["goal"] = f"梳理本章正文，核查{char_list}等人物出场及事件与设定引用。"
+        elif source_language == "zh":
+            chapter["goal"] = "梳理本章导入正文，核对人物、事件与设定引用。"
+        else:
+            chapter["goal"] = "Review imported chapter text and reconcile character, event, and world references."
+        notes_parts = [f"Imported from: {source_file_path}", f"Chunks: {', '.join(str(c) for c in chunk_ids)}"]
+        if extraction_errors:
+            notes_parts.append(f"Warnings: {'; '.join(extraction_errors[:3])}")
+        chapter["notes"] = "\n".join(notes_parts)
+        chapter["chapterNumber"] = _detect_chapter_number(title)
+        return chapter
 
     def _build_from_chunks(raw_chunks: list[dict]) -> list[dict]:
         chapter_map: dict[str, list[dict]] = {}
@@ -2580,13 +2677,13 @@ async def node_build_manuscript(state: ImportState) -> dict:
             content = "\n\n".join(
                 c.get("manuscript_content", c.get("raw_content", c.get("content", ""))) for c in chapter_chunks
             )
-            manuscript_chapters.append({
+            manuscript_chapters.append(_enrich_chapter({
                 "chapter_id": f"chap_{uuid.uuid4().hex[:8]}",
                 "title": hint,
                 "chunk_ids": [c["chunk_id"] for c in chapter_chunks],
                 "manuscript_content": content,
                 "orderIndex": len(manuscript_chapters),
-            })
+            }))
         return _sort_manuscript_chapters(manuscript_chapters)
 
     if import_mode == "import_content_only":
@@ -2621,13 +2718,13 @@ async def node_build_manuscript(state: ImportState) -> dict:
             e.get("manuscript_content") or chunk_map2.get(e.get("chunk_id"), {}).get("content", "")
             for e in chapter_extractions
         )
-        manuscript_chapters2.append({
+        manuscript_chapters2.append(_enrich_chapter({
             "chapter_id": f"chap_{uuid.uuid4().hex[:8]}",
             "title": hint,
             "chunk_ids": [e["chunk_id"] for e in chapter_extractions],
             "manuscript_content": content,
             "orderIndex": len(manuscript_chapters2),
-        })
+        }))
 
     if chunks and (
         not manuscript_chapters2
@@ -3117,6 +3214,9 @@ def _safe_branch_slug(value: str) -> str:
 def _timeline_lane_key(event: dict) -> tuple[str, str, str]:
     raw_arc_id = str(event.get("arcId", "")).strip()
     arc_id = _safe_branch_slug(raw_arc_id) if raw_arc_id else ""
+    # Never use world entity category names as branch arc IDs.
+    if arc_id in _WORLD_CATEGORY_BRANCH_BLOCKLIST or raw_arc_id in _WORLD_CATEGORY_BRANCH_BLOCKLIST:
+        arc_id = ""
     lane_hint = str(event.get("timelineLaneHint", "")).strip()
     fork_hint = str(event.get("forkMergeHint", "")).strip().lower()
     importance = float(event.get("importanceScore", 0) or 0)
@@ -3536,6 +3636,60 @@ async def node_architect_timeline(state: ImportState) -> dict:
         "timeline_branches": timeline_branches,
         "timeline_architecture": artifact,
         "progress": max(float(state.get("progress", 0.88)), 0.9),
+    }
+
+
+async def node_organize_project(state: ImportState) -> dict:
+    """Stage 5b: Route world candidates to correct modules; filter contamination."""
+    from sidecar.supervisor.organizer import OrganizerInput, organize_project_content
+
+    registry = dict(state.get("entity_registry") or {})
+    events_raw = registry.get("events", {})
+    events = list(events_raw.values()) if isinstance(events_raw, dict) else list(events_raw)
+
+    organizer_input = OrganizerInput(
+        characters=registry.get("characters", {}),
+        events=events,
+        relationships=list(state.get("relationships") or []),
+        world_candidates=registry.get("world_detailed", {}),
+        manuscript_notes=[],
+        timeline_architecture=dict(state.get("timeline_architecture") or {}),
+        project_digest=dict(state.get("project_digest") or {}),
+        source_language=str(state.get("source_language") or "zh"),
+    )
+
+    organizer_output = organize_project_content(organizer_input)
+
+    # Replace world_detailed with filtered items (removes module contamination)
+    registry["world_detailed"] = {
+        item["id"]: item
+        for item in organizer_output["world_items"]
+        if isinstance(item, dict) and "id" in item
+    }
+
+    project_path = state.get("project_path") or state.get("path")
+    import_run_id = state.get("import_run_id")
+    if project_path and import_run_id:
+        _write_import_artifact(
+            project_path,
+            import_run_id,
+            "organizer_output.json",
+            {
+                "world_items": organizer_output["world_items"],
+                "excluded_items": organizer_output["excluded_items"],
+                "warnings": organizer_output["warnings"],
+            },
+        )
+
+    log = list(state.get("supervisor_log") or [])
+    n_items = len(organizer_output["world_items"])
+    n_excl = len(organizer_output["excluded_items"])
+    log.append(f"organizer: {n_items} world items routed, {n_excl} excluded")
+
+    return {
+        "entity_registry": registry,
+        "organizer_output": dict(organizer_output),
+        "supervisor_log": log,
     }
 
 
@@ -5377,6 +5531,7 @@ def build_graph() -> Any:
     builder.add_node("build_evidence_cards", node_build_evidence_cards)
     builder.add_node("reconcile_entities", node_reconcile_entities)
     builder.add_node("architect_timeline", node_architect_timeline)
+    builder.add_node("organize_project", node_organize_project)
     builder.add_node("review_import", node_review_import)
     builder.add_node("write_to_project", node_write_to_project)
 
@@ -5423,7 +5578,8 @@ def build_graph() -> Any:
     builder.add_edge("infer_world_settings", "build_evidence_cards")
     builder.add_edge("build_evidence_cards", "reconcile_entities")
     builder.add_edge("reconcile_entities", "architect_timeline")
-    builder.add_edge("architect_timeline", "generate_import_todos")
+    builder.add_edge("architect_timeline", "organize_project")
+    builder.add_edge("organize_project", "generate_import_todos")
 
     builder.add_edge("generate_import_todos", "review_import")
     builder.add_edge("review_import", "write_to_project")

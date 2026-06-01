@@ -1576,3 +1576,152 @@ def test_import_observability_key_survives_proposal_write_merge():
     assert "import_observability" in existing_report
     assert existing_report["import_observability"]["characters_extracted"] == 5
     assert existing_report["import_observability"]["manuscript_written"] is True
+
+
+def test_world_category_arcid_does_not_create_item_branch(tmp_path):
+    """arcId='item' (world category) must never produce branch_arc_item.
+
+    Uses arcRole='background' (low importance) to avoid the protagonist/mainline
+    short-circuit so the arc_id path in _timeline_lane_key is actually exercised.
+    """
+    import asyncio
+    from sidecar.workflows import w1_import
+
+    events = {}
+    for i in range(10):
+        events[f"ev_{i}"] = {
+            "title": f"韩立修炼进阶 {i}",
+            "description": "韩立突破功法瓶颈，实力提升。",
+            "timelineClass": "canonical_event",
+            "eventClass": "canonical_event",
+            "arcId": "item",          # world category — should be ignored
+            "arcRole": "background",  # avoids protagonist/mainline short-circuit
+            "importanceScore": 50,    # below 65 threshold — also avoids short-circuit
+            "character_ids": ["char_han"],
+            "temporal_hint": f"第{i + 1}章",
+            "confidence": 0.85,
+            "chunk_id": i,
+        }
+    state = {
+        "project_path": str(tmp_path),
+        "import_run_id": "test_no_item_branch",
+        "entity_registry": {"events": events},
+        "timeline_branches": [],
+        "errors": [],
+    }
+    result = asyncio.run(w1_import.node_architect_timeline(state))
+    branch_ids = [b["id"] for b in result["timeline_branches"]]
+    assert not any("item" in bid for bid in branch_ids), (
+        f"branch_item was created from world category arcId: {branch_ids}"
+    )
+
+
+# ── Chapter enrichment helpers ────────────────────────────────────────────────
+
+def test_parse_zh_number():
+    assert w1_import._parse_zh_number("一") == 1
+    assert w1_import._parse_zh_number("十") == 10
+    assert w1_import._parse_zh_number("十五") == 15
+    assert w1_import._parse_zh_number("二十三") == 23
+    assert w1_import._parse_zh_number("一百") == 100
+    assert w1_import._parse_zh_number("三百二十一") == 321
+    assert w1_import._parse_zh_number("invalid") is None
+
+
+def test_detect_chapter_number():
+    assert w1_import._detect_chapter_number("第一章") == 1
+    assert w1_import._detect_chapter_number("第十二章") == 12
+    assert w1_import._detect_chapter_number("第1章") == 1
+    assert w1_import._detect_chapter_number("Chapter 7") == 7
+    assert w1_import._detect_chapter_number("第100章 韩立") == 100
+    assert w1_import._detect_chapter_number("前言") is None
+    assert w1_import._detect_chapter_number("") is None
+
+
+def test_chapter_summary_fallback():
+    # Single paragraph: returns it unchanged
+    result = w1_import._chapter_summary_fallback("韩立进入七绝堂。", "zh")
+    assert result == "韩立进入七绝堂。"
+
+    # Multi-paragraph Chinese: joins first and last with ellipsis
+    text = "韩立进入七绝堂，发现长春功残卷。\n\n他仔细阅读，发现功法需要专属法器。\n\n最终韩立决定拜师。"
+    result = w1_import._chapter_summary_fallback(text, "zh")
+    assert "韩立进入七绝堂" in result
+    assert "最终韩立决定拜师" in result
+    assert "……" in result
+
+    # Empty text returns empty string
+    assert w1_import._chapter_summary_fallback("", "zh") == ""
+
+    # English: no ellipsis join, just first paragraph
+    result_en = w1_import._chapter_summary_fallback("Han Li entered the sect.\n\nHe found a scroll.", "en")
+    assert "Han Li" in result_en
+
+
+def test_node_build_manuscript_enriches_chapters():
+    chunks = [
+        {
+            "chunk_id": 1,
+            "chapter_hint": "第一章",
+            "raw_content": "韩立出生在一个普通家庭。父母务农为生。\n\n他从小聪明好学，对修仙世界充满向往。",
+        },
+        {
+            "chunk_id": 2,
+            "chapter_hint": "第二章",
+            "raw_content": "韩立被带去七玄门测试。测试结果令人意外。\n\n王护法接走了韩立。",
+        },
+    ]
+    state: dict = {
+        "import_mode": "import_content_only",
+        "chunks": chunks,
+        "source_language": "zh",
+        "source_file_path": "/data/fanren.txt",
+        "entity_registry": {},
+        "errors": [],
+    }
+    result = asyncio.run(w1_import.node_build_manuscript(state))
+    chapters = result["manuscript_chapters"]
+    assert len(chapters) == 2
+    ch1 = next(c for c in chapters if c["title"] == "第一章")
+    assert ch1["summary"], "summary must not be empty"
+    assert "韩立" in ch1["summary"]
+    assert ch1["goal"], "goal must not be empty"
+    assert ch1["notes"], "notes must not be empty"
+    assert "/data/fanren.txt" in ch1["notes"]
+    assert ch1["chapterNumber"] == 1
+
+
+def test_node_build_manuscript_goal_includes_detected_characters():
+    chunks = [
+        {
+            "chunk_id": 1,
+            "chapter_hint": "第三章",
+            "raw_content": "韩立跟随墨大夫学习炼药。韩立每日苦练。",
+        }
+    ]
+    state: dict = {
+        "import_mode": "import_content_only",
+        "chunks": chunks,
+        "source_language": "zh",
+        "source_file_path": "/data/fanren.txt",
+        "entity_registry": {"characters": {"韩立": {"canonical_name": "韩立"}, "墨大夫": {"canonical_name": "墨大夫"}}},
+        "errors": [],
+    }
+    result = asyncio.run(w1_import.node_build_manuscript(state))
+    ch = result["manuscript_chapters"][0]
+    assert "韩立" in ch["goal"] or "墨大夫" in ch["goal"]
+
+
+def test_node_build_manuscript_notes_includes_warnings():
+    chunks = [{"chunk_id": 1, "chapter_hint": "第一章", "raw_content": "content"}]
+    state: dict = {
+        "import_mode": "import_content_only",
+        "chunks": chunks,
+        "source_language": "zh",
+        "source_file_path": "/data/test.txt",
+        "entity_registry": {},
+        "errors": ["chunk_2 extraction failed: timeout"],
+    }
+    result = asyncio.run(w1_import.node_build_manuscript(state))
+    ch = result["manuscript_chapters"][0]
+    assert "chunk_2 extraction failed" in ch["notes"]
