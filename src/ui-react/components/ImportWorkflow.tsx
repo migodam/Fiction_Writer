@@ -404,45 +404,6 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
                 <RuntimeField testId="w1-extraction-counts-relationships" label={t('import.obsRelationships', 'Relationships')} value={String(w1ExtractionCounts.relationships)} />
               </div>
             )}
-            {w1TokenLedger && (
-              <div
-                data-testid="w1-token-cost-card"
-                className="grid gap-2 rounded-xl border border-border bg-bg-elev-1 p-3 text-xs text-text-2 sm:grid-cols-4"
-              >
-                <RuntimeField
-                  testId="w1-token-cost-input"
-                  label={t('import.inputTokens', 'Input tokens')}
-                  value={
-                    w1TokenLedger.actual_input_tokens > 0
-                      ? formatTokens(w1TokenLedger.actual_input_tokens)
-                      : `${formatTokens(w1TokenLedger.estimated_input_tokens)} (est.)`
-                  }
-                />
-                <RuntimeField
-                  testId="w1-token-cost-output"
-                  label={t('import.outputTokens', 'Output tokens')}
-                  value={
-                    w1TokenLedger.actual_output_tokens > 0
-                      ? formatTokens(w1TokenLedger.actual_output_tokens)
-                      : undefined
-                  }
-                />
-                <RuntimeField
-                  testId="w1-token-cost-calls"
-                  label={t('import.apiCalls', 'API calls')}
-                  value={String(w1TokenLedger.api_call_count)}
-                />
-                <RuntimeField
-                  testId="w1-token-cost-estimated-cost"
-                  label={t('import.estimatedCost', 'Est. cost')}
-                  value={
-                    w1TokenLedger.cost_usd != null
-                      ? `$${w1TokenLedger.cost_usd.toFixed(4)}`
-                      : (w1TokenLedger.cost_unavailable_reason ?? t('import.costUnavailable', 'cost unavailable'))
-                  }
-                />
-              </div>
-            )}
             {isBudgetExhausted && (
               <div
                 data-testid="w1-budget-exhausted-banner"
@@ -531,6 +492,45 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
                 {t('import.cancel')}
               </button>
             </div>
+          </div>
+        )}
+        {w1TokenLedger && (
+          <div
+            data-testid="w1-token-cost-card"
+            className="mt-3 grid gap-2 rounded-xl border border-border bg-bg-elev-1 p-3 text-xs text-text-2 sm:grid-cols-4"
+          >
+            <RuntimeField
+              testId="w1-token-cost-input"
+              label={t('import.inputTokens', 'Input tokens')}
+              value={
+                w1TokenLedger.actual_input_tokens > 0
+                  ? formatTokens(w1TokenLedger.actual_input_tokens)
+                  : `${formatTokens(w1TokenLedger.estimated_input_tokens)} (est.)`
+              }
+            />
+            <RuntimeField
+              testId="w1-token-cost-output"
+              label={t('import.outputTokens', 'Output tokens')}
+              value={
+                w1TokenLedger.actual_output_tokens > 0
+                  ? formatTokens(w1TokenLedger.actual_output_tokens)
+                  : undefined
+              }
+            />
+            <RuntimeField
+              testId="w1-token-cost-calls"
+              label={t('import.apiCalls', 'API calls')}
+              value={String(w1TokenLedger.api_call_count)}
+            />
+            <RuntimeField
+              testId="w1-token-cost-estimated-cost"
+              label={t('import.estimatedCost', 'Est. cost')}
+              value={
+                w1TokenLedger.cost_usd != null
+                  ? `$${w1TokenLedger.cost_usd.toFixed(4)}`
+                  : w1TokenLedger.cost_unavailable_reason
+              }
+            />
           </div>
         )}
         <ImportConsole visible={consoleOpen && ['running', 'paused', 'done', 'error'].includes(w1Status)} />
