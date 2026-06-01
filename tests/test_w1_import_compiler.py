@@ -1615,3 +1615,106 @@ def test_world_category_arcid_does_not_create_item_branch(tmp_path):
         f"branch_item was created from world category arcId: {branch_ids}"
     )
 
+
+def test_source_order_fields_present_on_canonical_events(tmp_path):
+    """node_architect_timeline must add sourceOrder, chapterNumber, sourceChunkIds to each event."""
+    import asyncio
+    from sidecar.workflows import w1_import
+
+    state = {
+        "project_path": str(tmp_path),
+        "import_run_id": "test_source_fields",
+        "entity_registry": {"events": {
+            "ev_a": {
+                "title": "韩立离家",
+                "description": "韩立离开村庄。",
+                "timelineClass": "canonical_event",
+                "eventClass": "canonical_event",
+                "arcId": "protagonist_origin",
+                "arcRole": "protagonist",
+                "importanceScore": 82,
+                "chapterRange": {"start": "第一章", "end": "第一章"},
+                "temporal_hint": "第一章",
+                "character_ids": ["char_han"],
+                "confidence": 0.88,
+                "chunk_id": 0,
+            },
+        }},
+        "timeline_branches": [],
+        "errors": [],
+    }
+    result = asyncio.run(w1_import.node_architect_timeline(state))
+    events = list(result["entity_registry"]["events"].values())
+    assert len(events) == 1
+    ev = events[0]
+    assert "sourceOrder" in ev, "sourceOrder field missing"
+    assert "chapterNumber" in ev, "chapterNumber field missing"
+    assert "sourceChunkIds" in ev, "sourceChunkIds field missing"
+    assert ev["sourceChunkIds"] == [0]
+    assert ev["chapterNumber"] == 1
+
+
+def test_global_order_index_follows_source_chapter_order(tmp_path):
+    """Events from later chapters must have higher globalOrderIndex than earlier chapters."""
+    import asyncio
+    from sidecar.workflows import w1_import
+
+    state = {
+        "project_path": str(tmp_path),
+        "import_run_id": "test_global_order",
+        "entity_registry": {"events": {
+            "ev_ch3": {
+                "title": "韩立突破",
+                "description": "韩立功法突破。",
+                "timelineClass": "canonical_event",
+                "eventClass": "canonical_event",
+                "arcId": "cultivation_progress",
+                "arcRole": "power_progression",
+                "importanceScore": 80,
+                "chapterRange": {"start": "第三章", "end": "第三章"},
+                "temporal_hint": "第三章",
+                "character_ids": ["char_han"],
+                "confidence": 0.88,
+                "chunk_id": 2,
+            },
+            "ev_ch1": {
+                "title": "韩立入学",
+                "description": "韩立进入七玄门。",
+                "timelineClass": "canonical_event",
+                "eventClass": "canonical_event",
+                "arcId": "sect_entry",
+                "arcRole": "protagonist",
+                "importanceScore": 85,
+                "chapterRange": {"start": "第一章", "end": "第一章"},
+                "temporal_hint": "第一章",
+                "character_ids": ["char_han"],
+                "confidence": 0.90,
+                "chunk_id": 0,
+            },
+            "ev_ch2": {
+                "title": "墨大夫收徒",
+                "description": "墨大夫收韩立为徒。",
+                "timelineClass": "canonical_event",
+                "eventClass": "canonical_event",
+                "arcId": "mentor_control",
+                "arcRole": "antagonist",
+                "importanceScore": 82,
+                "chapterRange": {"start": "第二章", "end": "第二章"},
+                "temporal_hint": "第二章",
+                "character_ids": ["char_han", "char_mo"],
+                "confidence": 0.87,
+                "chunk_id": 1,
+            },
+        }},
+        "timeline_branches": [],
+        "errors": [],
+    }
+    result = asyncio.run(w1_import.node_architect_timeline(state))
+    events = list(result["entity_registry"]["events"].values())
+    assert len(events) == 3
+    ordered = sorted(events, key=lambda e: e["globalOrderIndex"])
+    chunk_order = [ev["chunk_id"] for ev in ordered]
+    assert chunk_order == [0, 1, 2], (
+        f"globalOrderIndex does not follow source chapter order. Got chunk order: {chunk_order}"
+    )
+

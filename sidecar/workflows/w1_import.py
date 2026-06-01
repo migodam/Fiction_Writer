@@ -35,6 +35,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from sidecar.models.state import ImportState, ManuscriptChapter
 from sidecar.shared import s2_memory_writer, s3_chunk_manager
 from sidecar.utils.lock import acquire_lock, release_lock, WorkflowBusyError
+from sidecar.workflows.w1_run_events import add_token_usage
 from sidecar.prompts.w1_prompts import (
     W1_EXTRACT_CHARACTERS,
     W1_EXTRACT_CHARACTERS_DEEP,
@@ -293,7 +294,7 @@ def _extract_llm_usage(response: Any) -> tuple[int, int] | None:
     return None
 
 
-async def _repair_json_response(llm: ChatOpenAI, raw: str, parse_error: Exception) -> dict:
+async def _repair_json_response(llm: ChatOpenAI, raw: str, parse_error: Exception, session_id: str = "") -> dict:
     """Ask the configured model to repair malformed JSON without changing semantics."""
     repair_prompt = f"""
 Repair the following malformed JSON into a single valid JSON object.
@@ -312,6 +313,9 @@ Malformed JSON:
 """
     async with _API_SEMAPHORE:
         response = await llm.ainvoke([HumanMessage(content=repair_prompt)])
+    _usage = _extract_llm_usage(response)
+    if _usage and session_id:
+        add_token_usage(session_id, _usage[0], _usage[1])
     repaired = response.content if isinstance(response.content, str) else str(response.content)
     return _parse_json_response(repaired)
 
@@ -350,14 +354,13 @@ async def _invoke_json_prompt(
                 response = await llm.ainvoke(messages)
                 _usage = _extract_llm_usage(response)
                 if _usage and session_id:
-                    from sidecar.workflows.w1_run_events import add_token_usage
                     add_token_usage(session_id, _usage[0], _usage[1])
             raw = response.content if isinstance(response.content, str) else str(response.content)
             try:
                 return _parse_json_response(raw)
             except Exception as parse_exc:
                 if _is_truncated_json_error(parse_exc) or isinstance(parse_exc, (JSONDecodeError, JsonPromptParseError, ValueError)):
-                    return await _repair_json_response(llm, raw, parse_exc)
+                    return await _repair_json_response(llm, raw, parse_exc, session_id=session_id)
                 raise
         except Exception as exc:
             err_str = str(exc).lower()
@@ -2379,6 +2382,7 @@ async def _legacy_node_process_chunks(state: ImportState) -> dict:
     completed_ids: set[int] = {e.get("chunk_id", -1) for e in extractions}
     total = len(chunks)
 
+    _session_id = str(state.get("session_id", "") or state.get("context", {}).get("session_id", "") or "")
     llm = _get_llm(state)
 
     for chunk in chunks:
@@ -2397,6 +2401,9 @@ async def _legacy_node_process_chunks(state: ImportState) -> dict:
                 chunk_content=chunk_content[:8000],
             )
             char_response = await llm.ainvoke([HumanMessage(content=char_prompt)])
+            _usage = _extract_llm_usage(char_response)
+            if _usage and _session_id:
+                add_token_usage(_session_id, _usage[0], _usage[1])
             char_data = _parse_json_response(char_response.content)
 
             # Process existing character updates
@@ -2465,6 +2472,9 @@ async def _legacy_node_process_chunks(state: ImportState) -> dict:
                 chunk_content=chunk_content[:8000],
             )
             event_response = await llm.ainvoke([HumanMessage(content=event_prompt)])
+            _usage = _extract_llm_usage(event_response)
+            if _usage and _session_id:
+                add_token_usage(_session_id, _usage[0], _usage[1])
             event_data = _parse_json_response(event_response.content)
 
             events: list[dict] = []
@@ -3408,6 +3418,20 @@ async def node_architect_timeline(state: ImportState) -> dict:
             scene_beats = [item for item in scene_beats if item.get("event_id") not in promoted_ids]
             background_references = [item for item in background_references if item.get("event_id") not in promoted_ids]
 
+    # Assign source-faithful metadata before branch bucketing.
+    _sorted_by_source = sorted(
+        prelim_events.items(),
+        key=lambda kv: kv[1].get("_sequence", (0, 0, "")),
+    )
+    for _source_order, (_eid, _ev) in enumerate(_sorted_by_source):
+        _chapter_start = (
+            (_ev.get("chapterRange") or {}).get("start")
+            or _ev.get("temporal_hint", "")
+        )
+        _ev["sourceOrder"] = _source_order
+        _ev["chapterNumber"] = _chapter_number_from_title(str(_chapter_start)) or 0
+        _ev["sourceChunkIds"] = [int(_ev.get("chunk_id", 0) or 0)]
+
     lane_counts: dict[tuple[str, str, str], int] = {}
     for event in prelim_events.values():
         lane_key = _timeline_lane_key(event)
@@ -3510,14 +3534,22 @@ async def node_architect_timeline(state: ImportState) -> dict:
             cleaned = {k: v for k, v in event.items() if not k.startswith("_")}
             cleaned["branchId"] = branch_id
             cleaned["orderIndex"] = visible_index
-            cleaned["globalOrderIndex"] = global_order_index
+            cleaned["globalOrderIndex"] = -1  # placeholder; reassigned below by source order
             cleaned["sharedBranchIds"] = [root_branch_id] if branch_id != root_branch_id else []
             cleaned["layoutHints"] = {"density": len(branch_events), "branchEventBudget": branch_event_budget}
             canonical_events[event_id] = cleaned
             visible_index += 1
-            global_order_index += 1
         branch_defs[branch_id]["rankStart"] = 0
         branch_defs[branch_id]["rankEnd"] = max(visible_index - 1, 0)
+
+    # Reassign globalOrderIndex in source-faithful order.
+    _existing_count = len(snapshot.get("timeline_events", []))
+    _all_canonical_sorted = sorted(
+        canonical_events.values(),
+        key=lambda ev: ev.get("sourceOrder", 0),
+    )
+    for _gi, _ev in enumerate(_all_canonical_sorted):
+        _ev["globalOrderIndex"] = _existing_count + _gi
 
     for branch_id, branch in branch_defs.items():
         if branch_id == root_branch_id:
