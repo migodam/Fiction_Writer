@@ -1,13 +1,16 @@
 import type {
   CreateProjectInput,
+  DependencyEdge,
   EntityKind,
   ExportArtifact,
   ExportProjectInput,
   Locale,
   NarrativeProject,
+  PackageSource,
   ProjectTemplate,
   Proposal,
   ProposalOperation,
+  ProposalPackage,
   StorageMode,
 } from '../models/project';
 import { PROJECT_SCHEMA_VERSION } from '../models/project';
@@ -115,6 +118,32 @@ const mergeDiskInboxForSave = (
 const safeReadText = (fs: typeof import('fs'), filePath: string, fallback = '') => {
   return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : fallback;
 };
+
+const WORLD_CATEGORY_PATH_MAP: Record<string, string[]> = {
+  location:           ['世界模型', '地理位置'],
+  organization:       ['世界模型', '门派组织'],
+  faction:            ['世界模型', '门派组织'],
+  item:               ['世界模型', '物品与法器'],
+  artifact:           ['世界模型', '物品与法器'],
+  cultivation_method: ['世界模型', '功法与术法'],
+  rule:               ['世界模型', '修炼境界与制度'],
+  system:             ['世界模型', '修炼境界与制度'],
+  concept:            ['世界模型', '概念与设定'],
+  culture:            ['世界模型', '文化与习俗'],
+  custom:             ['世界模型', '概念与设定'],
+};
+
+function normalizeWorldItem(item: NarrativeProject['worldItems'][number]): NarrativeProject['worldItems'][number] {
+  if (item.categoryPath && item.categoryPath.length > 0) return item;
+  const category = (item as unknown as Record<string, unknown>).category as string | undefined;
+  const root = (category && WORLD_CATEGORY_PATH_MAP[category]) ?? WORLD_CATEGORY_PATH_MAP['concept'];
+  return {
+    ...item,
+    categoryPath: [...root, item.name],
+    parentId: item.parentId ?? null,
+    importCategoryKey: item.importCategoryKey ?? category ?? '',
+  };
+}
 
 const readJsonFilesSafe = <T = Record<string, unknown>>(runtime: NodeRuntime, directory: string): T[] => {
   if (!runtime.fs.existsSync(directory)) {
@@ -245,6 +274,26 @@ const normalizeUiState = (raw: unknown, fallbackProject: NarrativeProject): Narr
   };
 };
 
+const CJK_DIGITS: Record<string, number> = {
+  '〇': 0, '零': 0, '一': 1, '二': 2, '三': 3, '四': 4, '五': 5,
+  '六': 6, '七': 7, '八': 8, '九': 9, '十': 10, '百': 100, '千': 1000,
+};
+
+const parseChapterNumber = (title: string): number => {
+  const arabic = title.match(/\d+/);
+  if (arabic) return parseInt(arabic[0], 10);
+  const cjk = title.match(/[〇零一二三四五六七八九十百千]+/);
+  if (!cjk) return 9999;
+  const chars = cjk[0].split('');
+  let result = 0; let current = 0;
+  for (const ch of chars) {
+    const val = CJK_DIGITS[ch] ?? 0;
+    if (val >= 10) { result += (current || 1) * val; current = 0; }
+    else { current = val; }
+  }
+  return result + current;
+};
+
 const isBlankStarterChapter = (chapter: NarrativeProject['chapters'][number], scenes: NarrativeProject['scenes']) =>
   chapter.id === 'chap_1'
   && /^chapter 1$/i.test(chapter.title || '')
@@ -301,7 +350,7 @@ const cleanupImportedWritingArtifacts = (project: NarrativeProject): NarrativePr
   const removedSceneIds = new Set([...starterSceneIds, ...duplicateSceneIds]);
   const chapters = project.chapters
     .filter((chapter) => !starterChapterIds.has(chapter.id))
-    .sort((a, b) => a.orderIndex - b.orderIndex || a.title.localeCompare(b.title))
+    .sort((a, b) => a.orderIndex - b.orderIndex || parseChapterNumber(a.title) - parseChapterNumber(b.title) || a.title.localeCompare(b.title))
     .map((chapter, index) => ({
       ...chapter,
       orderIndex: index,
@@ -605,7 +654,7 @@ const serializeProjectToFolder = (
       },
       timelineEvent: {
         required: ['id', 'title', 'summary', 'branchId', 'orderIndex', 'locationIds', 'participantCharacterIds', 'linkedSceneIds', 'linkedWorldItemIds', 'tags'],
-        optional: ['time', 'sharedBranchIds', 'importance', 'colorToken', 'layoutLock', 'modalStateHints', 'position'],
+        optional: ['time', 'sharedBranchIds', 'importance', 'colorToken', 'layoutLock', 'modalStateHints', 'position', 'globalOrderIndex', 'chapterNumber', 'sourceChunkIds', 'sourceOrder'],
       },
     },
   });
@@ -820,7 +869,9 @@ export const projectService = {
       worldContainers: safeReadJson(runtime.fs, runtime.path.join(worldDir, 'containers.json'), []),
       worldSettings: safeReadJson(runtime.fs, runtime.path.join(worldDir, 'settings.json'), folderFallback.worldSettings),
       worldMaps: safeReadJson(runtime.fs, runtime.path.join(worldDir, 'maps.json'), folderFallback.worldMaps),
-      worldItems: readJsonFilesSafe<NarrativeProject['worldItems'][number]>(runtime, worldDir).filter((item) => item.id),
+      worldItems: readJsonFilesSafe<NarrativeProject['worldItems'][number]>(runtime, worldDir)
+        .filter((item) => item.id)
+        .map(normalizeWorldItem),
       graphBoards: readJsonFilesSafe<NarrativeProject['graphBoards'][number]>(runtime, graphDir),
       scripts: scriptMetas.map((meta) => ({
         ...meta,
@@ -1206,6 +1257,140 @@ export const getProposalImportPackageKey = (proposal: Proposal): string | null =
   return `import:${String(explicitPackageId || operationImportRunId || sourceWorkflow || 'unscoped')}`;
 };
 
+const REVIEWER_SOURCES = new Set<string>(['quality_reviewer', 'fact_reviewer', 'consistency_reviewer', 'organizer']);
+
+const getProposalReviewerPackageKey = (proposal: Proposal): string | null => {
+  if (!REVIEWER_SOURCES.has(proposal.source)) return null;
+  const runId =
+    rawProposalValue(proposal, 'reviewerRunId') ||
+    rawProposalValue(proposal, 'reviewer_run_id') ||
+    proposal.originTaskRunId ||
+    'unscoped';
+  return `reviewer:${proposal.source}:${String(runId)}`;
+};
+
+export const getProposalPackageKey = (proposal: Proposal): string | null =>
+  getProposalImportPackageKey(proposal) ?? getProposalReviewerPackageKey(proposal);
+
+const ID_FIELDS: Record<string, string> = {
+  branchId: 'branch',
+  chapterId: 'chapter',
+  povCharacterId: 'character',
+  containerId: 'container',
+  sourceId: 'source entity',
+  targetId: 'target entity',
+};
+const ID_LIST_FIELDS: Record<string, string> = {
+  participantCharacterIds: 'participant',
+  linkedCharacterIds: 'character',
+  linkedEventIds: 'event',
+  linkedSceneIds: 'scene',
+  linkedWorldItemIds: 'world item',
+  locationIds: 'location',
+  sceneIds: 'scene',
+  tagIds: 'tag',
+};
+
+const extractIdRefs = (fields: Record<string, unknown>): Array<{ id: string; label: string }> => {
+  const refs: Array<{ id: string; label: string }> = [];
+  Object.entries(ID_FIELDS).forEach(([key, label]) => {
+    const val = fields[key];
+    if (typeof val === 'string' && val) refs.push({ id: val, label });
+  });
+  Object.entries(ID_LIST_FIELDS).forEach(([key, label]) => {
+    const vals = fields[key];
+    if (Array.isArray(vals)) {
+      vals.forEach((v) => typeof v === 'string' && v && refs.push({ id: v, label }));
+    }
+  });
+  return refs;
+};
+
+export const buildDependencyGraph = (proposals: Proposal[]): DependencyEdge[] => {
+  const createdBy = new Map<string, string>();
+  proposals.forEach((proposal) => {
+    const ops = getProposalOperations(proposal);
+    ops.forEach((op) => {
+      if (op.op === 'create' && op.entityId) createdBy.set(String(op.entityId), proposal.id);
+    });
+    // Fall back to targetEntityId for proposals with no explicit create op
+    if (proposal.targetEntityId && !ops.length) {
+      createdBy.set(proposal.targetEntityId, proposal.id);
+    }
+  });
+
+  const edges: DependencyEdge[] = [];
+  const seen = new Set<string>();
+  proposals.forEach((proposal) => {
+    getProposalOperations(proposal).forEach((op) => {
+      if (!op.fields) return;
+      extractIdRefs(op.fields as Record<string, unknown>).forEach(({ id, label }) => {
+        const creator = createdBy.get(id);
+        if (creator && creator !== proposal.id) {
+          const edgeKey = `${creator}|${proposal.id}`;
+          if (!seen.has(edgeKey)) {
+            seen.add(edgeKey);
+            edges.push({ fromId: creator, toId: proposal.id, reason: `${label} referenced` });
+          }
+        }
+      });
+    });
+  });
+  return edges;
+};
+
+export const derivePackageRisk = (proposals: Proposal[]): 'low' | 'medium' | 'high' => {
+  if (proposals.some((p) => p.lastBlockReason)) return 'high';
+  if (proposals.some((p) => p.confidence !== undefined && p.confidence < 0.7)) return 'medium';
+  return 'low';
+};
+
+const PACKAGE_SOURCE_LABELS: Record<PackageSource, string> = {
+  w1_import: 'Import package',
+  quality_reviewer: 'Quality reviewer repair',
+  fact_reviewer: 'Fact reviewer repair',
+  consistency_reviewer: 'Consistency reviewer repair',
+  organizer: 'Organizer proposal',
+};
+
+const packageKeyToSource = (key: string): PackageSource => {
+  if (key.startsWith('import:')) return 'w1_import';
+  const m = key.match(/^reviewer:([^:]+):/);
+  if (m && REVIEWER_SOURCES.has(m[1])) return m[1] as PackageSource;
+  return 'w1_import';
+};
+
+export const buildProposalPackages = (proposals: Proposal[]): ProposalPackage[] => {
+  const groups = new Map<string, Proposal[]>();
+  proposals.forEach((proposal) => {
+    const key = getProposalPackageKey(proposal);
+    if (!key) return;
+    groups.set(key, [...(groups.get(key) || []), proposal]);
+  });
+
+  return [...groups.entries()]
+    .filter(([key, group]) => {
+      if (group.length > 1) return true;
+      // Single-proposal reviewer/organizer packages are valid user-facing units
+      return REVIEWER_SOURCES.has(packageKeyToSource(key));
+    })
+    .map(([key, group]) => {
+      const source = packageKeyToSource(key);
+      const testId = key.replace(/[^a-zA-Z0-9_-]+/g, '-');
+      const entityTypes = Array.from(new Set(group.map((p) => p.targetEntityType))).join(', ');
+      return {
+        id: testId,
+        source,
+        title: PACKAGE_SOURCE_LABELS[source],
+        summary: `${group.length} proposals · ${entityTypes}`,
+        risk: derivePackageRisk(group),
+        proposals: group,
+        dependencyGraph: buildDependencyGraph(group),
+        blockedReason: group.find((p) => p.lastBlockReason)?.lastBlockReason,
+      };
+    });
+};
+
 const isFullImportPackageSelection = (
   project: NarrativeProject,
   targets: Proposal[],
@@ -1213,7 +1398,7 @@ const isFullImportPackageSelection = (
 ) => {
   const selectedIds = new Set(targets.map((proposal) => proposal.id));
   const pendingPackageIds = project.proposals
-    .filter((proposal) => (proposal.status === 'pending' || !proposal.status) && getProposalImportPackageKey(proposal) === packageKey)
+    .filter((proposal) => (proposal.status === 'pending' || !proposal.status) && getProposalPackageKey(proposal) === packageKey)
     .map((proposal) => proposal.id);
   return pendingPackageIds.length > 1 && pendingPackageIds.every((id) => selectedIds.has(id));
 };
@@ -1221,7 +1406,7 @@ const isFullImportPackageSelection = (
 const groupFullImportPackageSelections = (project: NarrativeProject, targets: Proposal[]) => {
   const groups = new Map<string, Proposal[]>();
   targets.forEach((proposal) => {
-    const packageKey = getProposalImportPackageKey(proposal);
+    const packageKey = getProposalPackageKey(proposal);
     if (!packageKey) return;
     groups.set(packageKey, [...(groups.get(packageKey) || []), proposal]);
   });
