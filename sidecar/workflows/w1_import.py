@@ -731,10 +731,10 @@ _WORLD_CATEGORY_BRANCH_BLOCKLIST: frozenset[str] = frozenset({
     "item", "artifact", "location", "rule", "system", "concept",
     "culture", "custom", "faction", "organization", "organisation",
     "place", "object", "weapon", "treasure", "magic", "cultivation",
-    "lore", "clan", "guild", "sect",
+    "lore", "clan", "guild", "sect", "map",
     # Chinese equivalents
     "地名", "地点", "门派", "宗门", "帮派", "势力", "物品", "丹药",
-    "法器", "功法", "法术", "规则", "地图",
+    "法器", "功法", "法术", "术法", "法诀", "规则", "地图",
 })
 
 TIMELINE_EVENT_CLASSES: tuple[str, ...] = (
@@ -1957,6 +1957,7 @@ async def _run_cross_validation_for_window(
     digest: dict,
     prompt_outputs: dict,
     cross_validation: dict | None,
+    session_id: str = "",
 ) -> dict:
     import_run_id = state.get("import_run_id") or state.get("import_run_manifest", {}).get("import_run_id") or "import"
     prompt_template = W1_CROSS_VALIDATE_IMPORT + """
@@ -1987,6 +1988,7 @@ SCENE_CANDIDATES_JSON:
     raw_artifact = await _invoke_json_prompt(
         llm,
         prompt_template,
+        session_id=session_id,
         project_digest_json=_fit_text_to_token_budget(str(digest.get("content", "")), _DIGEST_RESERVE_TOKENS),
         previous_validation_summary_json=_fit_text_to_token_budget(_previous_validation_summary(rendered_state), _VALIDATION_RESERVE_TOKENS),
         prompt_window_manifest_json=_json_for_prompt(_prompt_window_manifest_entry(window), 2_000),
@@ -3151,7 +3153,8 @@ def _safe_branch_slug(value: str) -> str:
 def _timeline_lane_key(event: dict) -> tuple[str, str, str]:
     raw_arc_id = str(event.get("arcId", "")).strip()
     arc_id = _safe_branch_slug(raw_arc_id) if raw_arc_id else ""
-    # Never use world entity category names as branch arc IDs.
+    # arc_id catches lowercased English terms; raw_arc_id catches CJK strings
+    # that _safe_branch_slug doesn't transform.
     if arc_id in _WORLD_CATEGORY_BRANCH_BLOCKLIST or raw_arc_id in _WORLD_CATEGORY_BRANCH_BLOCKLIST:
         arc_id = ""
     lane_hint = str(event.get("timelineLaneHint", "")).strip()
@@ -4843,6 +4846,7 @@ async def node_process_chunks(state: ImportState) -> dict:
                                 digest=digest,
                                 prompt_outputs=window_cached_outputs,
                                 cross_validation=cross_validation,
+                                session_id=_session_id,
                             )
                             cross_validation = _merge_cross_validation_artifacts(
                                 cross_validation,
@@ -4937,6 +4941,7 @@ async def node_process_chunks(state: ImportState) -> dict:
                                 digest=digest,
                                 prompt_outputs=prompt_outputs_for_window,
                                 cross_validation=cross_validation,
+                                session_id=_session_id,
                             )
                             cross_validation = _merge_cross_validation_artifacts(
                                 cross_validation,

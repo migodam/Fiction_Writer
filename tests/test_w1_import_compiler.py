@@ -168,7 +168,7 @@ def test_process_chunks_runs_packed_window_once_and_marks_all_covered_chunks(tmp
             return {"chapter_hint": "", "scenes": []}
         return {}
 
-    async def fake_cross_validation(_llm, state, *, window, digest, prompt_outputs, cross_validation):
+    async def fake_cross_validation(_llm, state, *, window, digest, prompt_outputs, cross_validation, session_id=""):
         return {
             "import_run_id": state["import_run_id"],
             "duplicate_events": [{"event_ids": ["old", "new"], "reason": "same beat"}],
