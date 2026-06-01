@@ -79,6 +79,12 @@ const RuntimeField: React.FC<{ testId: string; label: string; value: React.React
   );
 };
 
+const formatTokens = (n: number): string => {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+};
+
 export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
   const w1Status = useProjectStore((s) => s.w1Status);
   const w1Progress = useProjectStore((s) => s.w1Progress);
@@ -97,6 +103,7 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
   const w1IdleSeconds = useProjectStore((s) => s.w1IdleSeconds);
   const w1ElapsedSeconds = useProjectStore((s) => s.w1ElapsedSeconds);
   const w1ActiveApiCalls = useProjectStore((s) => s.w1ActiveApiCalls);
+  const w1TokenLedger = useProjectStore((s) => s.w1TokenLedger);
   const w1CancelRequested = useProjectStore((s) => s.w1CancelRequested);
   const w1ConnectionWarning = useProjectStore((s) => s.w1ConnectionWarning);
   const proposals = useProjectStore((s) => s.proposals);
@@ -395,6 +402,53 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
                 <RuntimeField testId="w1-extraction-counts-events" label={t('import.obsEvents', 'Events')} value={String(w1ExtractionCounts.events)} />
                 <RuntimeField testId="w1-extraction-counts-world" label={t('import.obsWorld', 'World items')} value={String(w1ExtractionCounts.world_items)} />
                 <RuntimeField testId="w1-extraction-counts-relationships" label={t('import.obsRelationships', 'Relationships')} value={String(w1ExtractionCounts.relationships)} />
+              </div>
+            )}
+            {w1TokenLedger && (
+              <div
+                data-testid="w1-token-cost-card"
+                className="grid gap-2 rounded-xl border border-border bg-bg-elev-1 p-3 text-xs text-text-2 sm:grid-cols-4"
+              >
+                <RuntimeField
+                  testId="w1-token-cost-input"
+                  label={t('import.inputTokens', 'Input tokens')}
+                  value={
+                    w1TokenLedger.actual_input_tokens > 0
+                      ? formatTokens(w1TokenLedger.actual_input_tokens)
+                      : `${formatTokens(w1TokenLedger.estimated_input_tokens)} (est.)`
+                  }
+                />
+                <RuntimeField
+                  testId="w1-token-cost-output"
+                  label={t('import.outputTokens', 'Output tokens')}
+                  value={
+                    w1TokenLedger.actual_output_tokens > 0
+                      ? formatTokens(w1TokenLedger.actual_output_tokens)
+                      : undefined
+                  }
+                />
+                <RuntimeField
+                  testId="w1-token-cost-calls"
+                  label={t('import.apiCalls', 'API calls')}
+                  value={String(w1TokenLedger.api_call_count)}
+                />
+                <RuntimeField
+                  testId="w1-token-cost-estimated-cost"
+                  label={t('import.estimatedCost', 'Est. cost')}
+                  value={
+                    w1TokenLedger.cost_usd != null
+                      ? `$${w1TokenLedger.cost_usd.toFixed(4)}`
+                      : (w1TokenLedger.cost_unavailable_reason ?? t('import.costUnavailable', 'cost unavailable'))
+                  }
+                />
+              </div>
+            )}
+            {isBudgetExhausted && (
+              <div
+                data-testid="w1-budget-exhausted-banner"
+                className="rounded-xl border border-red/40 bg-red/10 p-3 text-xs font-semibold text-red"
+              >
+                {t('import.budgetExhausted', '402 / Budget exhausted — import stopped. Check your provider balance.')}
               </div>
             )}
             <div

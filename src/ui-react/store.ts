@@ -339,6 +339,7 @@ interface ProjectState {
   w1IdleSeconds: number;
   w1ElapsedSeconds: number;
   w1ActiveApiCalls: number;
+  w1TokenLedger: import('./services/electronApi').W1TokenLedger | null;
   w1CancelRequested: boolean;
   w1ConnectionWarning: string | null;
   w1Paused: boolean;
@@ -1523,6 +1524,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   w1IdleSeconds: 0,
   w1ElapsedSeconds: 0,
   w1ActiveApiCalls: 0,
+  w1TokenLedger: null,
   w1CancelRequested: false,
   w1ConnectionWarning: null,
   w1Paused: false,
@@ -1609,6 +1611,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       w1IdleSeconds: 0,
       w1ElapsedSeconds: 0,
       w1ActiveApiCalls: 0,
+      w1TokenLedger: null,
       w1CancelRequested: false,
       w1ConnectionWarning: null,
     });
@@ -1684,6 +1687,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           w1IdleSeconds: s.idle_seconds ?? 0,
           w1ElapsedSeconds: s.elapsed_seconds ?? 0,
           w1ActiveApiCalls: s.active_api_calls ?? 0,
+          w1TokenLedger: s.token_ledger ?? null,
           w1CancelRequested: Boolean(s.cancel_requested),
           w1ConnectionWarning: null,
           w1RuntimeStatus: {
@@ -1771,6 +1775,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     w1IdleSeconds: 0,
     w1ElapsedSeconds: 0,
     w1ActiveApiCalls: 0,
+    w1TokenLedger: null,
     w1CancelRequested: false,
     w1ConnectionWarning: null,
     w1Paused: false,

@@ -125,6 +125,18 @@ export interface W1StatusResult {
   idle_seconds?: number;
   cancel_requested?: boolean;
   token_budget_exhausted?: boolean;
+  token_ledger?: W1TokenLedger;
+}
+
+export interface W1TokenLedger {
+  actual_input_tokens: number;
+  actual_output_tokens: number;
+  actual_total_tokens: number;
+  api_call_count: number;
+  estimated_input_tokens: number;
+  cost_usd?: number;
+  cost_unavailable_reason?: string;
+  model?: string;
 }
 
 export interface W1ExtractionCounts {
