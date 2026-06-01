@@ -5,6 +5,11 @@ import { useProjectStore, useUIStore } from '../store';
 import { cn } from '../utils';
 import { useI18n } from '../i18n';
 
+const CONTAMINATION_CONTAINER_NAMES = new Set([
+  '人物关系图', '人物关系', '关系图', '关系网络',
+  '事件时间线', '时间线', '时间轴',
+]);
+
 export const WorldWorkspace = () => {
   const navigate = useNavigate();
   const { sidebarSection, openContextMenu, setLastActionStatus } = useUIStore();
@@ -35,6 +40,20 @@ export const WorldWorkspace = () => {
   const activeItem = worldItems.find((item) => item.id === activeItemId) || null;
   const activeMap = worldMaps.find((map) => map.id === activeMapId) || worldMaps[0] || null;
   const containerItems = useMemo(() => worldItems.filter((item) => item.containerId === activeContainer?.id), [worldItems, activeContainer]);
+  const groupedItems = useMemo(() => {
+    const groups = new Map<string, typeof containerItems>();
+    const ungrouped: typeof containerItems = [];
+    for (const item of containerItems) {
+      if (item.categoryPath && item.categoryPath.length >= 2) {
+        const groupKey = item.categoryPath[1];
+        if (!groups.has(groupKey)) groups.set(groupKey, []);
+        groups.get(groupKey)!.push(item);
+      } else {
+        ungrouped.push(item);
+      }
+    }
+    return { groups, ungrouped };
+  }, [containerItems]);
   const activeMapMarkers = useMemo(() => {
     if (!activeMap) return [];
     return worldItems.flatMap((item) => item.mapMarkers).filter((marker) => activeMap.markerIds.includes(marker.id));
@@ -138,10 +157,13 @@ export const WorldWorkspace = () => {
           </div>
         </div>
         <div className="h-full overflow-y-auto custom-scrollbar p-2" data-testid="world-container-list">
-          {worldContainers.map((container) => (
+          {worldContainers
+            .filter((container) => !CONTAMINATION_CONTAINER_NAMES.has(container.name.trim()))
+            .map((container) => (
             <button
               key={container.id}
               type="button"
+              data-testid={`world-container-${container.id}`}
               className={cn('mb-2 w-full rounded-2xl border px-4 py-4 text-left', activeContainerId === container.id ? 'border-brand bg-selected' : 'border-border bg-card')}
               onClick={() => setActiveContainerId(container.id)}
               onContextMenu={(e) => {
@@ -215,12 +237,57 @@ export const WorldWorkspace = () => {
           </div>
         </div>
         <div className="h-full overflow-y-auto custom-scrollbar" data-testid="world-item-list">
-          {containerItems.map((item) => (
-            <button key={item.id} type="button" className={cn('w-full border-b border-divider px-4 py-4 text-left transition-colors', activeItemId === item.id ? 'bg-selected' : 'hover:bg-hover')} onClick={() => setActiveItemId(item.id)} onContextMenu={(e) => { e.preventDefault(); openContextMenu({ x: e.clientX, y: e.clientY, items: [{ id: 'delete', label: t('common.delete'), action: () => { deleteWorldItem(item.id); if (activeItemId === item.id) setActiveItemId(null); setLastActionStatus(t('world.itemDeleted', 'World item deleted')); }, destructive: true }] }); }}>
-              <div className="text-sm font-black text-text">{item.name}</div>
-              <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-text-3">{item.description}</div>
-            </button>
-          ))}
+          {groupedItems.groups.size > 0 ? (
+            <>
+              {Array.from(groupedItems.groups.entries()).map(([groupName, items]) => (
+                <div key={groupName} data-testid={`world-category-group-${groupName}`}>
+                  <div className="sticky top-0 z-10 px-4 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-brand-2 bg-bg-elev-1 border-b border-divider">
+                    {groupName}
+                  </div>
+                  {items.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      data-testid={`world-item-${item.id}`}
+                      className={cn('w-full border-b border-divider px-4 py-4 text-left transition-colors', activeItemId === item.id ? 'bg-selected' : 'hover:bg-hover')}
+                      onClick={() => setActiveItemId(item.id)}
+                      onContextMenu={(e) => { e.preventDefault(); openContextMenu({ x: e.clientX, y: e.clientY, items: [{ id: 'delete', label: t('common.delete'), action: () => { deleteWorldItem(item.id); if (activeItemId === item.id) setActiveItemId(null); setLastActionStatus(t('world.itemDeleted', 'World item deleted')); }, destructive: true }] }); }}
+                    >
+                      <div className="text-sm font-black text-text">{item.name}</div>
+                      <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-text-3">{item.description}</div>
+                    </button>
+                  ))}
+                </div>
+              ))}
+              {groupedItems.ungrouped.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  data-testid={`world-item-${item.id}`}
+                  className={cn('w-full border-b border-divider px-4 py-4 text-left transition-colors', activeItemId === item.id ? 'bg-selected' : 'hover:bg-hover')}
+                  onClick={() => setActiveItemId(item.id)}
+                  onContextMenu={(e) => { e.preventDefault(); openContextMenu({ x: e.clientX, y: e.clientY, items: [{ id: 'delete', label: t('common.delete'), action: () => { deleteWorldItem(item.id); if (activeItemId === item.id) setActiveItemId(null); setLastActionStatus(t('world.itemDeleted', 'World item deleted')); }, destructive: true }] }); }}
+                >
+                  <div className="text-sm font-black text-text">{item.name}</div>
+                  <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-text-3">{item.description}</div>
+                </button>
+              ))}
+            </>
+          ) : (
+            containerItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                data-testid={`world-item-${item.id}`}
+                className={cn('w-full border-b border-divider px-4 py-4 text-left transition-colors', activeItemId === item.id ? 'bg-selected' : 'hover:bg-hover')}
+                onClick={() => setActiveItemId(item.id)}
+                onContextMenu={(e) => { e.preventDefault(); openContextMenu({ x: e.clientX, y: e.clientY, items: [{ id: 'delete', label: t('common.delete'), action: () => { deleteWorldItem(item.id); if (activeItemId === item.id) setActiveItemId(null); setLastActionStatus(t('world.itemDeleted', 'World item deleted')); }, destructive: true }] }); }}
+              >
+                <div className="text-sm font-black text-text">{item.name}</div>
+                <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-text-3">{item.description}</div>
+              </button>
+            ))
+          )}
         </div>
       </aside>
 
