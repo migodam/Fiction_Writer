@@ -2512,6 +2512,9 @@ async def _legacy_node_process_chunks(state: ImportState) -> dict:
                 chunk_content=chunk_content[:8000],
             )
             world_response = await llm.ainvoke([HumanMessage(content=world_prompt)])
+            _usage = _extract_llm_usage(world_response)
+            if _usage and _session_id:
+                add_token_usage(_session_id, _usage[0], _usage[1])
             world_data = _parse_json_response(world_response.content)
 
             world_mentions: list[str] = []
