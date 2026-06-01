@@ -277,6 +277,22 @@ def _is_truncated_json_error(exc: Exception) -> bool:
     )
 
 
+def _extract_llm_usage(response: Any) -> tuple[int, int] | None:
+    """Extract (input_tokens, output_tokens) from a LangChain AIMessage.
+
+    Tries usage_metadata first (LangChain ≥0.2), then response_metadata.token_usage
+    (OpenAI-compatible fallback). Returns None if neither is present.
+    """
+    if hasattr(response, "usage_metadata") and response.usage_metadata:
+        um = response.usage_metadata
+        return int(um.get("input_tokens", 0) or 0), int(um.get("output_tokens", 0) or 0)
+    if hasattr(response, "response_metadata") and response.response_metadata:
+        tu = response.response_metadata.get("token_usage") or {}
+        if tu.get("prompt_tokens") or tu.get("completion_tokens"):
+            return int(tu.get("prompt_tokens", 0) or 0), int(tu.get("completion_tokens", 0) or 0)
+    return None
+
+
 async def _repair_json_response(llm: ChatOpenAI, raw: str, parse_error: Exception) -> dict:
     """Ask the configured model to repair malformed JSON without changing semantics."""
     repair_prompt = f"""
@@ -304,6 +320,7 @@ async def _invoke_json_prompt(
     llm: ChatOpenAI,
     prompt_template: str,
     *,
+    session_id: str = "",
     system_content: str | None = None,
     **kwargs: Any,
 ) -> dict:
@@ -331,6 +348,10 @@ async def _invoke_json_prompt(
         try:
             async with _API_SEMAPHORE:
                 response = await llm.ainvoke(messages)
+                _usage = _extract_llm_usage(response)
+                if _usage and session_id:
+                    from sidecar.workflows.w1_run_events import add_token_usage
+                    add_token_usage(session_id, _usage[0], _usage[1])
             raw = response.content if isinstance(response.content, str) else str(response.content)
             try:
                 return _parse_json_response(raw)
@@ -4393,6 +4414,7 @@ async def node_synthesize_relationships(state: ImportState) -> dict:
             })
         return fallback
 
+    _session_id = str(state.get("session_id", "") or state.get("context", {}).get("session_id", "") or "")
     registry_payload = {
         "characters": [
             {
@@ -4408,6 +4430,7 @@ async def node_synthesize_relationships(state: ImportState) -> dict:
         result = await _invoke_json_prompt(
             llm,
             W1_SYNTHESIZE_RELATIONSHIPS,
+            session_id=_session_id,
             entity_registry_json=json.dumps(registry_payload, ensure_ascii=False, indent=2),
             relationship_candidates_json=json.dumps(raw_relationships, ensure_ascii=False, indent=2),
         )
@@ -4497,10 +4520,12 @@ async def node_classify_character_tags(state: ImportState) -> dict:
         registry["characters"][cid]["tag_ids"] = []
 
     llm = _get_llm(state)
+    _session_id = str(state.get("session_id", "") or state.get("context", {}).get("session_id", "") or "")
     try:
         result = await _invoke_json_prompt(
             llm,
             W1_CLASSIFY_CHARACTER_TAGS,
+            session_id=_session_id,
             characters_json=json.dumps(characters_payload, ensure_ascii=False, indent=2),
         )
     except Exception as e:
@@ -4577,10 +4602,12 @@ async def node_infer_world_settings(state: ImportState) -> dict:
     _lang_label = "Chinese (Simplified)" if _infer_lang == "zh" else "English"
 
     llm = _get_llm(state)
+    _session_id = str(state.get("session_id", "") or state.get("context", {}).get("session_id", "") or "")
     try:
         result = await _invoke_json_prompt(
             llm,
             W1_INFER_WORLD_SETTINGS,
+            session_id=_session_id,
             text_sample=text_sample,
             source_language_label=_lang_label,
         )
@@ -4713,6 +4740,7 @@ async def node_process_chunks(state: ImportState) -> dict:
     completed = len(completed_ids)
 
     llm = _get_llm(state)
+    _session_id = str(state.get("session_id", "") or state.get("context", {}).get("session_id", "") or "")
     chunk_index_by_id = {chunk.get("chunk_id", i): i for i, chunk in enumerate(chunks)}
     windows_by_chunk: dict[int, list[dict]] = {}
     for window in state.get("prompt_windows", []):
@@ -4844,6 +4872,7 @@ async def node_process_chunks(state: ImportState) -> dict:
                         _invoke_json_prompt(
                             llm,
                             W1_CHARS_DEEP_TASK,
+                            session_id=_session_id,
                             system_content=window_system_content,
                             source_language_label=_src_lang_label,
                             language_policy=_lang_policy,
@@ -4851,6 +4880,7 @@ async def node_process_chunks(state: ImportState) -> dict:
                         _invoke_json_prompt(
                             llm,
                             W1_EVENTS_DEEP_TASK,
+                            session_id=_session_id,
                             system_content=window_system_content,
                             source_language_label=_src_lang_label,
                             language_policy=_lang_policy,
@@ -4858,6 +4888,7 @@ async def node_process_chunks(state: ImportState) -> dict:
                         _invoke_json_prompt(
                             llm,
                             W1_WORLD_DEEP_TASK,
+                            session_id=_session_id,
                             system_content=window_system_content,
                             source_language_label=_src_lang_label,
                             language_policy=_lang_policy,
@@ -4865,6 +4896,7 @@ async def node_process_chunks(state: ImportState) -> dict:
                         _invoke_json_prompt(
                             llm,
                             W1_RELS_CHUNK_TASK,
+                            session_id=_session_id,
                             system_content=window_system_content,
                             source_language_label=_src_lang_label,
                             language_policy=_lang_policy,
@@ -4872,6 +4904,7 @@ async def node_process_chunks(state: ImportState) -> dict:
                         _invoke_json_prompt(
                             llm,
                             W1_SCENES_TASK,
+                            session_id=_session_id,
                             system_content=window_system_content,
                             chapter_hint=prompt_window.get("chapter_range") or scene_hint,
                             source_language_label=_src_lang_label,
