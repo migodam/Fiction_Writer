@@ -450,3 +450,11 @@ w0-plan-step-<index>     (planned workflow step card)
 ==================================================
 END
 ==================================================
+
+-- Token/Cost UX (Worker F) --
+w1-token-cost-card            ImportWorkflow  Token/Cost card container (visible when token_ledger present in store)
+w1-token-cost-input           ImportWorkflow  Input tokens field: actual tokens or estimated + (est.) label when actual=0
+w1-token-cost-output          ImportWorkflow  Output tokens field: actual output tokens only; hidden when actual=0
+w1-token-cost-calls           ImportWorkflow  API call count field from token_ledger.api_call_count
+w1-token-cost-estimated-cost  ImportWorkflow  Estimated cost ($X.XXXX) or cost_unavailable_reason; hidden when neither present
+w1-budget-exhausted-banner    ImportWorkflow  Red 402/budget-exhausted banner; visible only during running/paused with budget error
