@@ -1817,3 +1817,53 @@ def test_global_order_index_cross_branch_follows_source_order(tmp_path):
         f"Cross-branch globalOrderIndex does not follow source order. Got chunk order: {chunk_order}"
     )
 
+
+def test_wang_guard_title_variants_collapse_to_one_canonical_event(tmp_path):
+    """Title variants '王护法接走韩立' and '七玄门王护法接走韩立' must merge to one event."""
+    import asyncio
+    from sidecar.workflows import w1_import
+
+    state = {
+        "project_path": str(tmp_path),
+        "import_run_id": "test_wang_dedup",
+        "entity_registry": {"events": {
+            "ev_a": {
+                "title": "王护法接走韩立",
+                "description": "王护法奉命将韩立带走。",
+                "timelineClass": "canonical_event",
+                "eventClass": "canonical_event",
+                "arcId": "sect_entry",
+                "arcRole": "protagonist",
+                "importanceScore": 78,
+                "character_ids": ["char_wang", "char_han"],
+                "chapterRange": {"start": "第五章", "end": "第五章"},
+                "temporal_hint": "第五章",
+                "confidence": 0.85,
+                "chunk_id": 4,
+                "dedupeKey": "王护法::接走::韩立::ch5",
+            },
+            "ev_b": {
+                "title": "七玄门王护法接走韩立",
+                "description": "七玄门的王护法将韩立带至门内。",
+                "timelineClass": "canonical_event",
+                "eventClass": "canonical_event",
+                "arcId": "sect_entry",
+                "arcRole": "protagonist",
+                "importanceScore": 76,
+                "character_ids": ["char_wang", "char_han"],
+                "chapterRange": {"start": "第五章", "end": "第五章"},
+                "temporal_hint": "第五章",
+                "confidence": 0.83,
+                "chunk_id": 4,
+                "dedupeKey": "王护法::接走::韩立::ch5",
+            },
+        }},
+        "timeline_branches": [],
+        "errors": [],
+    }
+    result = asyncio.run(w1_import.node_architect_timeline(state))
+    final_events = result["entity_registry"]["events"]
+    assert len(final_events) == 1, (
+        f"Expected 1 merged event, got {len(final_events)}: {list(final_events.keys())}"
+    )
+

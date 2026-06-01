@@ -2896,6 +2896,16 @@ _TIMELINE_SEMANTIC_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
     ("cultivation_breakthrough", ("突破", "练成", "功法大成", "修为提升", "cultivation breakthrough")),
     ("mentor_threat", ("墨大夫威胁", "师父威胁", "mentor threat", "doctor mo threatens")),
     ("faction_conflict", ("冲突", "伏击", "争斗", "敌袭", "ambush", "conflict")),
+    ("wang_guard_takes_han_li", (
+        "王护法接走韩立", "七玄门王护法接走韩立", "王护法带走韩立",
+        "护法接走韩立", "护法带走韩立", "王护法领走韩立",
+    )),
+    ("third_uncle_proposal", (
+        "三叔提议", "韩胖子提议", "三叔让韩立", "三叔建议韩立",
+    )),
+    ("admission_test", (
+        "入门测试", "入门考验", "七玄门入门", "七玄门测试", "七玄门考核",
+    )),
 ]
 
 
@@ -2924,7 +2934,13 @@ def _timeline_semantic_title_key(event: dict) -> str:
         if any(pattern.lower() in text for pattern in patterns):
             return semantic_key
     title_key = _normal_key(event.get("title", ""))
-    tokens = re.findall(r"[\u4e00-\u9fff]{2,}|[a-z0-9]+", str(event.get("title", "")).lower())
+    _raw_title = str(event.get("title", ""))
+    _stripped_title = re.sub(
+        r"^(\u4e03\u7384\u95e8|\u58a8\u5927\u592b|\u4e09\u53d4|\u97e9\u5bb6|\u9752\u725b\u9547|\u843d\u6c34\u6cb3\u6751|\u9ec4\u67ab\u8c37|\u795e\u624b\u8c37)",
+        "",
+        _raw_title.strip(),
+    )
+    tokens = re.findall(r"[\u4e00-\u9fff]{2,}|[a-z0-9]+", (_stripped_title or _raw_title).lower())
     if not tokens:
         return title_key[:48]
     # Keep the title signal compact enough for near-duplicate variants to meet.
