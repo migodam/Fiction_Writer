@@ -1865,3 +1865,140 @@ def test_wang_guard_title_variants_collapse_to_one_canonical_event(tmp_path):
         f"Expected 1 merged event, got {len(final_events)}: {list(final_events.keys())}"
     )
 
+
+def test_branch_without_merge_event_has_endmode_open(tmp_path):
+    """A side branch with no merge-hinted event must have endMode='open'."""
+    import asyncio
+    from sidecar.workflows import w1_import
+
+    events = {}
+    for i in range(3):
+        events[f"side_{i}"] = {
+            "title": f"墨大夫威胁 {i}",
+            "description": "墨大夫对韩立施压。",
+            "timelineClass": "canonical_event",
+            "eventClass": "canonical_event",
+            "arcId": "mentor_control",
+            "arcRole": "antagonist",
+            "importanceScore": 75,
+            "character_ids": ["char_han", "char_mo"],
+            "temporal_hint": f"第{i + 1}章",
+            "confidence": 0.85,
+            "chunk_id": i,
+            "forkMergeHint": "root",
+        }
+    events["main_ev"] = {
+        "title": "韩立进入七玄门",
+        "description": "韩立正式成为七玄门弟子。",
+        "timelineClass": "canonical_event",
+        "eventClass": "canonical_event",
+        "arcId": "sect_entry",
+        "arcRole": "protagonist",
+        "importanceScore": 88,
+        "character_ids": ["char_han"],
+        "temporal_hint": "第一章",
+        "confidence": 0.91,
+        "chunk_id": 0,
+        "forkMergeHint": "root",
+    }
+    state = {
+        "project_path": str(tmp_path),
+        "import_run_id": "test_open_branch",
+        "entity_registry": {"events": events},
+        "timeline_branches": [],
+        "errors": [],
+    }
+    result = asyncio.run(w1_import.node_architect_timeline(state))
+    branches = {b["id"]: b for b in result["timeline_branches"]}
+    mentor_branch = next(
+        (b for bid, b in branches.items() if "mentor" in bid or "antagonist" in bid),
+        None,
+    )
+    assert mentor_branch is not None, f"No mentor/antagonist branch found: {list(branches.keys())}"
+    assert mentor_branch.get("endMode") == "open", (
+        f"Expected endMode='open' but got '{mentor_branch.get('endMode')}'"
+    )
+
+
+def test_branch_with_merge_hint_event_has_endmode_merge(tmp_path):
+    """A branch whose final event has forkMergeHint='merge' must set endMode='merge'."""
+    import asyncio
+    from sidecar.workflows import w1_import
+
+    events = {
+        "main_ev": {
+            "title": "韩立进入七玄门",
+            "description": "韩立成为七玄门弟子。",
+            "timelineClass": "canonical_event",
+            "eventClass": "canonical_event",
+            "arcId": "sect_entry",
+            "arcRole": "protagonist",
+            "importanceScore": 88,
+            "character_ids": ["char_han"],
+            "temporal_hint": "第一章",
+            "confidence": 0.91,
+            "chunk_id": 0,
+            "forkMergeHint": "root",
+        },
+        "mentor_start": {
+            "title": "墨大夫收韩立为徒",
+            "description": "墨大夫将韩立纳为弟子。",
+            "timelineClass": "canonical_event",
+            "eventClass": "canonical_event",
+            "arcId": "mentor_control",
+            "arcRole": "antagonist",
+            "importanceScore": 76,
+            "character_ids": ["char_han", "char_mo"],
+            "temporal_hint": "第二章",
+            "confidence": 0.86,
+            "chunk_id": 1,
+            "forkMergeHint": "root",
+        },
+        "mentor_mid": {
+            "title": "墨大夫施压韩立",
+            "description": "墨大夫对韩立继续施加威胁。",
+            "timelineClass": "canonical_event",
+            "eventClass": "canonical_event",
+            "arcId": "mentor_control",
+            "arcRole": "antagonist",
+            "importanceScore": 74,
+            "character_ids": ["char_han", "char_mo"],
+            "temporal_hint": "第二章末",
+            "confidence": 0.84,
+            "chunk_id": 1,
+            "forkMergeHint": "root",
+        },
+        "mentor_merge": {
+            "title": "韩立脱离墨大夫控制",
+            "description": "韩立终于摆脱墨大夫的威胁，重归主线。",
+            "timelineClass": "canonical_event",
+            "eventClass": "canonical_event",
+            "arcId": "mentor_control",
+            "arcRole": "antagonist",
+            "importanceScore": 82,
+            "character_ids": ["char_han", "char_mo"],
+            "temporal_hint": "第三章",
+            "confidence": 0.88,
+            "chunk_id": 2,
+            "forkMergeHint": "merge",
+        },
+    }
+    state = {
+        "project_path": str(tmp_path),
+        "import_run_id": "test_merge_branch",
+        "entity_registry": {"events": events},
+        "timeline_branches": [],
+        "errors": [],
+    }
+    result = asyncio.run(w1_import.node_architect_timeline(state))
+    branches = {b["id"]: b for b in result["timeline_branches"]}
+    mentor_branch = next(
+        (b for bid, b in branches.items() if "mentor" in bid or "antagonist" in bid),
+        None,
+    )
+    assert mentor_branch is not None, f"No mentor/antagonist branch: {list(branches.keys())}"
+    assert mentor_branch.get("endMode") == "merge", (
+        f"Expected endMode='merge' but got '{mentor_branch.get('endMode')}'"
+    )
+    assert mentor_branch.get("mergeEventId") is not None, "mergeEventId should be set"
+
