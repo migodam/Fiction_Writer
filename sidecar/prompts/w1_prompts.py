@@ -726,6 +726,14 @@ recreate it as a fresh canonical event in this window.
 ## ARC CONSISTENCY
 Before assigning arcId to any event, scan the existing_event_digest and timeline_branch_digest in the packed window for arcIds already in use. Reuse an existing arcId when this event belongs to the same narrative lane — the label must be identical (exact string match). Introduce a new snake_case arcId only when no existing lane fits. Target 4–8 arcIds across the whole novel, not one per chapter.
 
+## ARC ID CONSTRAINT
+arcId MUST be a semantic narrative lane name (protagonist_origin, sect_entry, mentor_control, …).
+NEVER use world entity categories as arcId — the following values are FORBIDDEN:
+item, artifact, location, rule, system, concept, culture, custom, faction, organization,
+organisation, place, object, weapon, treasure, magic, cultivation, lore, clan, guild, sect.
+If you find yourself about to write one of these as arcId, pick the nearest semantic arc from
+the existing digest or use "main_arc" as fallback.
+
 ## DENSITY & CONFIDENCE
 Cap: ≤3 canonical_event per chapter, ≤12 per window. Confidence ≥ 0.75 only.
 Before writing JSON: rank candidates by importanceScore, trim to cap, downgrade excess to scene_beat.
@@ -763,6 +771,9 @@ Enum examples are valid choices — substitute the correct value, do not copy th
       "temporal_hint": "[REQUIRED] <chapter or arc anchor>",
       "chunk_position": "middle",
       "stakes": "[REQUIRED] <why this matters>",
+      "why_timeline_worthy": "[REQUIRED] <one phrase: what specific irreversible state change justifies this as canonical>",
+      "state_change": "[REQUIRED] <before → after, e.g. '韩立 status: outsider → inner disciple'>",
+      "causal_predecessors": ["<title of event that made this possible>"],
       "mergeCandidateTitles": [],
       "confidence": 0.85
     }}
