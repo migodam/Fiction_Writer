@@ -240,6 +240,7 @@ class W1StatusResponse(BaseModel):
     idle_seconds: int = 0
     cancel_requested: bool = False
     token_budget_exhausted: bool = False
+    token_ledger: dict = {}
 
 
 class W1ConsoleResponse(BaseModel):
@@ -680,7 +681,7 @@ async def w1_rewind(body: W1RewindRequest) -> dict:
 @router.get("/workflow/w1/status", response_model=W1StatusResponse)
 async def w1_status(session_id: str = "") -> W1StatusResponse:
     """Return current W1 Import workflow status."""
-    from sidecar.workflows.w1_run_events import session_status
+    from sidecar.workflows.w1_run_events import session_status, session_token_ledger
 
     import re as _re
     session = _w1_sessions.get(session_id, {})
@@ -698,6 +699,13 @@ async def w1_status(session_id: str = "") -> W1StatusResponse:
         "world_items": sum(int(m.get("world_count_extracted", 0) or 0) for m in window_metrics.values() if isinstance(m, dict)),
         "relationships": sum(int(m.get("relationship_count_extracted", 0) or 0) for m in window_metrics.values() if isinstance(m, dict)),
     }
+    estimated_input_tokens = sum(
+        int(m.get("estimated_input_tokens", 0) or 0)
+        for m in window_metrics.values()
+        if isinstance(m, dict)
+    )
+    model = (session.get("config") or {}).get("context", {}).get("model", "") or ""
+    ledger = session_token_ledger(session_id, model=model, estimated_input_tokens=estimated_input_tokens)
     return W1StatusResponse(
         status=session.get("status", "idle"),
         progress=session.get("progress", 0.0),
@@ -724,6 +732,7 @@ async def w1_status(session_id: str = "") -> W1StatusResponse:
         idle_seconds=int(activity.get("idle_seconds", 0) or 0),
         cancel_requested=bool(activity.get("cancel_requested", False)),
         token_budget_exhausted=token_budget_exhausted,
+        token_ledger=ledger,
     )
 
 
