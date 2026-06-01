@@ -1,11 +1,11 @@
 import React, { useRef, useMemo, useState } from 'react';
-import { CheckCircle2, FileUp, Inbox, RefreshCw, ShieldAlert, Sparkles, UploadCloud, XCircle } from 'lucide-react';
+import { CheckCircle2, ChevronDown, ChevronRight, FileUp, Inbox, RefreshCw, ShieldAlert, Sparkles, UploadCloud, XCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { ImportWorkflow } from './ImportWorkflow';
 import { useProjectStore, useUIStore } from '../store';
 import { useI18n } from '../i18n';
-import type { Chapter, ImportJob, Proposal, Scene, TodoItem, TodoPriority, TodoStatus } from '../models/project';
-import { getProposalImportPackageKey } from '../services/projectService';
+import type { Chapter, ImportJob, Proposal, ProposalPackage, Scene, TodoItem, TodoPriority, TodoStatus } from '../models/project';
+import { buildProposalPackages } from '../services/projectService';
 
 export const WorkbenchWorkspace = () => {
   const { sidebarSection, setLastActionStatus } = useUIStore();
@@ -52,26 +52,21 @@ export const WorkbenchWorkspace = () => {
     runs: taskRuns.filter((run) => ['queued', 'running', 'awaiting_user_input'].includes(run.status)).length,
     prompts: promptTemplates.length,
   };
-  const importProposalPackages = useMemo(() => {
-    const groups = new Map<string, Proposal[]>();
-    proposals
-      .filter((proposal) => proposal.status === 'pending' || !proposal.status)
-      .forEach((proposal) => {
-        const packageKey = getProposalImportPackageKey(proposal);
-        if (!packageKey) return;
-        groups.set(packageKey, [...(groups.get(packageKey) || []), proposal]);
-      });
-
-    return [...groups.entries()]
-      .filter(([, packageProposals]) => packageProposals.length > 1)
-      .map(([packageKey, packageProposals]) => ({
-        key: packageKey,
-        testId: packageKey.replace(/[^a-zA-Z0-9_-]+/g, '-'),
-        proposals: packageProposals,
-        blockedReason: packageProposals.find((proposal) => proposal.lastBlockReason)?.lastBlockReason || null,
-        entityTypes: Array.from(new Set(packageProposals.map((proposal) => proposal.targetEntityType))).join(', '),
-      }));
-  }, [proposals]);
+  const proposalPackages = useMemo(
+    () => buildProposalPackages(proposals.filter((p) => p.status === 'pending' || !p.status)),
+    [proposals],
+  );
+  const packagedProposalIds = useMemo(
+    () => new Set(proposalPackages.flatMap((pkg) => pkg.proposals.map((p) => p.id))),
+    [proposalPackages],
+  );
+  const [expandedPackageIds, setExpandedPackageIds] = useState<Set<string>>(new Set());
+  const togglePackage = (id: string) =>
+    setExpandedPackageIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) { next.delete(id); } else { next.add(id); }
+      return next;
+    });
 
   const confirmImport = () => {
     if (!importState.previewChapters.length) return;
@@ -191,47 +186,17 @@ export const WorkbenchWorkspace = () => {
 
         {sidebarSection === 'inbox' && (
           <div className="space-y-4" data-testid="workbench-inbox-list">
-            {importProposalPackages.length > 0 && (
+            {proposalPackages.length > 0 && (
               <div className="space-y-3" data-testid="import-proposal-packages">
-                {importProposalPackages.map((proposalPackage) => (
-                  <div
-                    key={proposalPackage.key}
-                    data-testid={`import-package-${proposalPackage.testId}`}
-                    className="rounded-2xl border border-brand/30 bg-brand/5 p-5 shadow-1"
-                  >
-                    <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                      <div>
-                        <div className="text-[10px] font-black uppercase tracking-[0.22em] text-brand-2">
-                          {t('workbench.importPackage', 'Import package')}
-                        </div>
-                        <h2 className="mt-2 text-lg font-black text-text">
-                          {t('workbench.packageAcceptTitle', 'Accept as one transaction')}
-                        </h2>
-                        <p className="mt-2 text-sm leading-relaxed text-text-2">
-                          {proposalPackage.proposals.length} {t('workbench.packageProposalCount', 'proposals')} · {proposalPackage.entityTypes}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        data-testid={`accept-import-package-${proposalPackage.testId}`}
-                        title={proposalPackage.blockedReason ? `${t('workbench.retryBlockedPackage', 'Retry blocked package')}: ${proposalPackage.blockedReason}` : undefined}
-                        className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-green px-5 py-2 text-[11px] font-black uppercase tracking-widest text-text-invert"
-                        onClick={() => resolveProposals(proposalPackage.proposals.map((proposal) => proposal.id), 'accepted')}
-                      >
-                        <CheckCircle2 size={14} />
-                        {t('workbench.acceptPackage', 'Accept Package')}
-                      </button>
-                    </div>
-                    {proposalPackage.blockedReason && (
-                      <div
-                        data-testid={`import-package-blocked-reason-${proposalPackage.testId}`}
-                        className="mt-4 rounded-lg border border-amber/40 bg-amber/10 px-3 py-2 text-xs leading-relaxed text-amber"
-                      >
-                        <span className="font-black uppercase tracking-widest">{t('workbench.blocked', 'Blocked')}: </span>
-                        {proposalPackage.blockedReason}
-                      </div>
-                    )}
-                  </div>
+                {proposalPackages.map((pkg) => (
+                  <PackageCard
+                    key={pkg.id}
+                    pkg={pkg}
+                    expanded={expandedPackageIds.has(pkg.id)}
+                    onToggle={() => togglePackage(pkg.id)}
+                    onAccept={() => resolveProposals(pkg.proposals.map((p) => p.id), 'accepted')}
+                    t={t}
+                  />
                 ))}
               </div>
             )}
@@ -248,7 +213,7 @@ export const WorkbenchWorkspace = () => {
                 </button>
               </div>
             )}
-            {proposals.map((proposal) => (
+            {proposals.filter((p) => !packagedProposalIds.has(p.id)).map((proposal) => (
               <div key={proposal.id} className="rounded-2xl border border-border bg-card p-6 shadow-1" data-testid={`proposal-card-${proposal.id}`}>
                 <div className="mb-4 flex items-start justify-between gap-4">
                   <div>
@@ -933,3 +898,134 @@ const SummaryCard = ({ label, value }: { label: string; value: string }) => (
     <div className="mt-2 text-2xl font-black text-text">{value}</div>
   </div>
 );
+
+const RISK_STYLES: Record<'low' | 'medium' | 'high', string> = {
+  low: 'border-green/30 bg-green/10 text-green',
+  medium: 'border-amber/30 bg-amber/10 text-amber',
+  high: 'border-red/30 bg-red/10 text-red',
+};
+
+const getProposalDisplayName = (p: Proposal): string => {
+  // Prefer entity name from proposedOperations/operations fields over generic proposal title
+  const raw = p as unknown as Record<string, unknown>;
+  const ops = ((raw.proposedOperations || raw.operations) ?? []) as Array<Record<string, unknown>>;
+  for (const op of ops) {
+    const fields = (op.fields || op) as Record<string, unknown>;
+    if (typeof fields.name === 'string' && fields.name) return fields.name;
+    if (typeof fields.title === 'string' && fields.title) return fields.title;
+    if (typeof fields.label === 'string' && fields.label) return fields.label;
+  }
+  if (p.preview) return p.preview;
+  return p.title;
+};
+
+const PackageCard = ({
+  pkg,
+  expanded,
+  onToggle,
+  onAccept,
+  t,
+}: {
+  pkg: ProposalPackage;
+  expanded: boolean;
+  onToggle: () => void;
+  onAccept: () => void;
+  t: (key: string, fallback?: string) => string;
+}) => {
+  const isBlocked = Boolean(pkg.blockedReason);
+  const depCount = pkg.dependencyGraph.length;
+  const entityTypes = Array.from(new Set(pkg.proposals.map((p) => p.targetEntityType))).join(', ');
+
+  return (
+    <div
+      data-testid={`import-package-${pkg.id}`}
+      className="rounded-2xl border border-brand/30 bg-brand/5 p-5 shadow-1"
+    >
+      {/* Header row */}
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span
+              data-testid={`proposal-package-source-${pkg.id}`}
+              data-source={pkg.source}
+              className="text-[10px] font-black uppercase tracking-[0.22em] text-brand-2"
+            >
+              {pkg.title}
+            </span>
+            <span
+              data-testid={`proposal-package-risk-${pkg.id}`}
+              className={`rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-widest ${RISK_STYLES[pkg.risk]}`}
+            >
+              {pkg.risk}
+            </span>
+          </div>
+          <p
+            data-testid={`proposal-package-dep-summary-${pkg.id}`}
+            className="mt-1.5 text-sm leading-relaxed text-text-2"
+          >
+            {pkg.proposals.length} {t('workbench.packageProposalCount', 'proposals')} · {entityTypes}
+            {depCount > 0 && ` · ${depCount} ${t('workbench.packageDeps', 'dependencies')}`}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            data-testid={`proposal-package-expand-${pkg.id}`}
+            className="inline-flex items-center gap-1 rounded-lg border border-border px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-text-2"
+            onClick={onToggle}
+            aria-expanded={expanded}
+          >
+            {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            {expanded ? t('workbench.collapse', 'Collapse') : t('workbench.expand', 'Expand')}
+          </button>
+          {isBlocked ? (
+            <button
+              type="button"
+              data-testid={`retry-blocked-package-${pkg.id}`}
+              className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-amber px-5 py-2 text-[11px] font-black uppercase tracking-widest text-text-invert"
+              onClick={onAccept}
+            >
+              <RefreshCw size={14} />
+              {t('workbench.retryBlockedPackage', 'Retry')}
+            </button>
+          ) : (
+            <button
+              type="button"
+              data-testid={`accept-import-package-${pkg.id}`}
+              className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-green px-5 py-2 text-[11px] font-black uppercase tracking-widest text-text-invert"
+              onClick={onAccept}
+            >
+              <CheckCircle2 size={14} />
+              {t('workbench.acceptPackage', 'Accept Package')}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Blocked reason */}
+      {isBlocked && (
+        <div
+          data-testid={`import-package-blocked-reason-${pkg.id}`}
+          className="mt-4 rounded-lg border border-amber/40 bg-amber/10 px-3 py-2 text-xs leading-relaxed text-amber"
+        >
+          <span className="font-black uppercase tracking-widest">{t('workbench.blocked', 'Blocked')}: </span>
+          {pkg.blockedReason}
+        </div>
+      )}
+
+      {/* Expanded proposal list */}
+      {expanded && (
+        <ul className="mt-4 space-y-1.5 border-t border-border/40 pt-4">
+          {pkg.proposals.map((p) => (
+            <li key={p.id} className="flex items-center gap-2 text-sm text-text-2">
+              <span className="shrink-0 rounded border border-border bg-bg-elev-1 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-widest text-text-3">
+                {p.targetEntityType}
+              </span>
+              <span className="truncate">{getProposalDisplayName(p)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+};

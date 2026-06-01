@@ -54,13 +54,17 @@ class BaseReviewer(ABC):
         target_ids: List[str],
         description: str,
         deterministic: bool = True,
+        proposed_operations: List[dict] | None = None,
     ) -> RepairAction:
-        return RepairAction(
+        action: RepairAction = RepairAction(
             action_type=action_type,
             target_entity_ids=target_ids,
             description=description,
             deterministic=deterministic,
         )
+        if proposed_operations is not None:
+            action["proposed_operations"] = proposed_operations
+        return action
 
     def _orch_req(
         self,

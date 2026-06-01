@@ -298,6 +298,26 @@ w1-accept-safe-all-btn
 w1-review-open-console-btn
 w1-close-btn
 
+-- Inbox proposal packages (W1 import + reviewer repair) --
+workbench-inbox-list
+import-proposal-packages
+import-package-{testId}              (outer card; testId = packageKey sanitized)
+accept-import-package-{testId}       (accept button when not blocked)
+retry-blocked-package-{testId}       (retry button when package is blocked)
+import-package-blocked-reason-{testId} (blocked reason banner)
+proposal-package-source-{testId}     (source reviewer badge label)
+proposal-package-risk-{testId}       (risk badge: low / medium / high)
+proposal-package-expand-{testId}     (expand/collapse toggle)
+proposal-package-dep-summary-{testId} (dependency count summary line)
+
+-- Inbox individual proposals (non-packaged) --
+proposal-card-{proposalId}
+proposal-accept-{proposalId}
+proposal-reject-{proposalId}
+proposal-blocked-reason-{proposalId}
+
+accept-all-proposals-btn
+
 ==================================================
 12 PUBLISH
 ==================================================

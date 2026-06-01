@@ -13,11 +13,16 @@ class ReviewFinding(TypedDict):
     evidence_refs: List[str]
 
 
-class RepairAction(TypedDict):
+class _RepairActionRequired(TypedDict):
     action_type: str
     target_entity_ids: List[str]
     description: str
     deterministic: bool
+
+
+class RepairAction(_RepairActionRequired, total=False):
+    # Frontend-executable operations; absent means advisory-only (not written to inbox).
+    proposed_operations: List[dict]
 
 
 class OrchestratorRequest(TypedDict):

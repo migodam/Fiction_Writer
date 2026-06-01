@@ -11,6 +11,7 @@ W1 import now uses a Hybrid Compiler spine for long novel imports. The runtime s
 3. Scout Evidence: convert packed-window extraction output into non-canonical evidence cards. Evidence cards preserve source provenance and must not be treated as final project entities.
 4. Rolling Cross-Validation Review: after each packed window, compare character, event, relationship, and scene outputs against the previous validation summary to flag duplicate characters/events, missing major characters, suspicious groups, contradictory aliases, and event merge recommendations for the next window.
 5. Entity Reconciliation: compare imported candidates with existing project characters, tags, and relationships before creating proposals.
+5b. Content Organizer: route world candidates to correct module containers, exclude module-contaminated and person/role-only entries, attach `categoryPath`/`parentId` hierarchy, detect merge candidates, and group surviving world items into `ProposalPackage`s by container key. Deterministic — no LLM calls.
 6. Timeline Architect: deduplicate imported event candidates, classify dense/duplicate beats, infer semantic branches, assign branch-local `orderIndex`, and fill frontend-required timeline fields.
 7. Proposal Review: write `review_report.json` with warnings, duplicate merges, failed chunks, safe batch-accept ids, low-confidence items, model/profile metadata, artifact paths, and proposal counts.
 8. Proposal Write: only reviewed candidates become Workbench proposals.
@@ -59,6 +60,61 @@ W1 normalizes world entries with a deterministic World Ontology before proposal 
 For Chinese source text, W1 preserves Chinese user-facing labels/descriptions and applies rule-based fallback mapping before trusting model categories: `门派`/`宗门`/`帮派` map to `organization`; `势力`/`阵营`/`联盟` map to `faction`; `功法`/`法术`/`术法`/`法诀` map to `cultivation_method`; `修炼体系` maps to `system`; `规则`/`法则` map to `rule`; `丹药`/`物品` map to `item`; `法器`/`宝物` map to `artifact`; `地名`/`地点` and place-like suffixes such as `堂`/`峰`/`谷`/`院` map to `location` unless explicit faction/organization context overrides them. Named organizations such as `七玄门` must be migrated out of character candidates into `world_detailed` and routed to organization/faction containers, not character proposals; person-like world entries must be skipped from world-item proposals.
 
 The World organizer stage must exclude module-owned content from World Model proposals. Relationship graphs, event timelines, single scene beats, and person/role-only entries remain owned by Relationship, Timeline, Manuscript, or Character modules. W1 import world containers use localized semantic containers such as `地理位置`, `门派组织`, `功法与术法`, `修炼境界与制度`, and `文化与习俗`; empty English starter containers are removed during package acceptance. World proposals may include compatibility fields `categoryPath` and `parentId` for hierarchy display until a full tree model is introduced.
+
+## Stage 5b: Content Organizer
+
+`sidecar/supervisor/organizer.py` — called after Entity Reconciliation, before Timeline Architect.
+
+### Input
+`OrganizerInput` (TypedDict): `characters`, `events`, `relationships`, `world_candidates`, `manuscript_notes`, `timeline_architecture`, `project_digest`, `source_language`.
+
+### Output
+`OrganizerOutput` (TypedDict): `world_containers`, `world_items`, `excluded_items`, `merge_candidates`, `proposal_packages`, `warnings`.
+
+### Classification Pipeline (priority order, first match wins)
+
+| Priority | Check | Action | Reason code |
+|----------|-------|--------|-------------|
+| 1 | Name in `_CONTAMINATION_NAMES` or matches contamination pattern | `ExcludedItem` | `module_contamination` |
+| 2 | Name is a known character name OR candidate role is character/person | `ExcludedItem` | `person_name` |
+| 3 | Name in `_IDENTITY_RANK_NAMES` (记名弟子/内门弟子/外门弟子/etc.) | `ExcludedItem` | `identity_rank` |
+| 4 | Rank title AND raw category is `cultivation_method` | `ExcludedItem` | `role_rank` |
+| 5 | Pass — normalize category, build `categoryPath`, emit `WorldItemProposal` | — | — |
+
+### Module Ownership Rules
+- **Relationship module** owns: 人物关系图, 关系网络, relationship graph strings.
+- **Timeline module** owns: 事件时间线, timeline strings.
+- **Character module** owns: person names that exist in `entity_registry["characters"]`.
+- **Manuscript module** owns: identity/institutional ranks (记名弟子, 护法, 堂主, etc.).
+- **World Model** owns: named locations, organizations, factions, items, artifacts, cultivation methods, rules, systems, concepts, culture.
+
+### Ambiguity Handling
+Names ending in `堂` or `院` with no explicit organization context default to `location` and emit a `warnings` entry. The Lead integration step or a future LLM disambiguation pass may override.
+
+### ProposalPackage Grouping
+Surviving world items are grouped by `container_key` into `ProposalPackage` entries. Empty containers are not emitted. Package IDs are `org_{container_key}_{random_hex8}`.
+
+### Integration Call-site (applied by Lead)
+```python
+# AFTER node_reconcile_entities, BEFORE node_architect_timeline
+from sidecar.supervisor.organizer import organize_project_content, OrganizerInput
+
+_org_input: OrganizerInput = {
+    "characters": state.get("entity_registry", {}).get("characters", {}),
+    "events": list(state.get("entity_registry", {}).get("events", {}).values()),
+    "relationships": state.get("relationships", []),
+    "world_candidates": state.get("entity_registry", {}).get("world_detailed", {}),
+    "manuscript_notes": [],
+    "timeline_architecture": state.get("timeline_architecture", {}),
+    "project_digest": state.get("project_structure_digest", {}),
+    "source_language": state.get("source_language", "zh"),
+}
+_org_out = organize_project_content(_org_input)
+state["entity_registry"]["world_detailed"] = {
+    item["name"]: item for item in _org_out["world_items"]
+}
+# Persist artifact: _save_artifact(artifact_dir, "organizer_output.json", _org_out)
+```
 
 ## Inbox Package Acceptance
 W1 import proposals are grouped by `importRunId` into package-level Workbench cards. Accepting a package applies all same-run chapter, scene, branch, event, character, relationship, world-container, and world-item proposals as one transaction. The transaction pre-registers same-package IDs as valid references, applies operations by dependency priority, and rolls back the whole package if any blocking edge remains.

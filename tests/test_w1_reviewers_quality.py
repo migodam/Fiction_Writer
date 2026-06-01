@@ -132,6 +132,60 @@ class TestQualityReviewer(unittest.TestCase):
         self.assertIsNone(ledger["model_used"])
         self.assertEqual(ledger["estimated_api_calls"], 0)
 
+    def test_quality_catches_character_repeated_phrase(self):
+        # Summary contains a phrase that appears twice.
+        repeated = "十三岁锦衣少年"
+        proposals = [_make_char_proposal(
+            "char_wuyan",
+            "五言",
+            summary=f"出生于武林世家，{repeated}，自幼习武，{repeated}，成为一代宗师。",
+        )]
+        state = _make_state(proposals=proposals)
+        report = self.reviewer.review(state)
+        check_names = [f["check_name"] for f in report["findings"]]
+        self.assertIn("character_repeated_phrase", check_names)
+        # Repair must carry a frontend-executable op:update.
+        repair = next(
+            (r for r in report["local_repair_actions"] if r["action_type"] == "clean_repeated_phrase"),
+            None,
+        )
+        self.assertIsNotNone(repair, "Expected a clean_repeated_phrase repair action")
+        ops = repair.get("proposed_operations", [])
+        self.assertTrue(ops, "Repair must have proposed_operations")
+        self.assertEqual(ops[0]["op"], "update")
+        self.assertEqual(ops[0]["entityType"], "character")
+        self.assertEqual(ops[0]["entityId"], "char_wuyan")
+        cleaned = ops[0]["fields"].get("summary", "")
+        self.assertNotEqual(cleaned, "", "Cleaned summary must not be empty")
+        self.assertLess(cleaned.count(repeated), 2, "Repeated phrase must appear fewer times after cleaning")
+
+    def test_quality_duplicate_name_repair_has_executable_ops(self):
+        proposals = [
+            _make_char_proposal("char_han_1", "韩铸"),
+            _make_char_proposal("char_han_2", "韩铸"),
+            _make_char_proposal("char_han_3", "韩铸"),
+        ]
+        state = _make_state(proposals=proposals)
+        report = self.reviewer.review(state)
+        check_names = [f["check_name"] for f in report["findings"]]
+        self.assertIn("character_duplicate_name", check_names)
+        repair = next(
+            (r for r in report["local_repair_actions"] if r["action_type"] == "merge_duplicate"),
+            None,
+        )
+        self.assertIsNotNone(repair, "Expected a merge_duplicate repair action")
+        ops = repair.get("proposed_operations", [])
+        self.assertTrue(ops, "Duplicate repair must have proposed_operations")
+        # All ops should be deletes targeting the non-primary IDs.
+        for op in ops:
+            self.assertEqual(op["op"], "delete")
+            self.assertEqual(op["entityType"], "character")
+        # Primary (char_han_1) must NOT appear in delete targets.
+        delete_ids = {op["entityId"] for op in ops}
+        self.assertNotIn("char_han_1", delete_ids)
+        self.assertIn("char_han_2", delete_ids)
+        self.assertIn("char_han_3", delete_ids)
+
 
 if __name__ == "__main__":
     unittest.main()

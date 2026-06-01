@@ -367,3 +367,45 @@ class TestToolRegistryPipelineTools:
         registry = build_tool_registry()
         for tool in ("segment_manifest", "extract_window", "rerun_window", "judge_import", "proposal_write"):
             assert tool in registry, f"Existing tool {tool!r} must not be removed"
+
+
+class TestQaReviewReviewerWiring:
+    """Verify qa_review() calls the three deterministic reviewers and returns reviewer_reports."""
+
+    def test_qa_review_returns_all_three_reviewer_reports(self):
+        from sidecar.supervisor.tools import qa_review
+        state = _base_state()
+        result = asyncio.run(qa_review(state))
+        assert "reviewer_reports" in result
+        for key in ("quality", "fact", "consistency"):
+            assert key in result["reviewer_reports"], f"reviewer_reports missing '{key}'"
+            report = result["reviewer_reports"][key]
+            assert report.get("token_cost_ledger", {}).get("live_model_calls") is False
+
+    def test_qa_review_reports_are_zero_cost(self):
+        from sidecar.supervisor.tools import qa_review
+        state = _base_state()
+        result = asyncio.run(qa_review(state))
+        for key, report in result["reviewer_reports"].items():
+            ledger = report.get("token_cost_ledger", {})
+            assert ledger.get("live_model_calls") is False, f"{key} reviewer made live API calls"
+            assert ledger.get("full50_run") is False, f"{key} reviewer triggered full50"
+
+    def test_qa_review_repair_proposals_have_package_metadata(self):
+        from sidecar.supervisor.tools import qa_review
+        # State with a world item that triggers world contamination repair action
+        state = _base_state(entity_registry={
+            "characters": {},
+            "events": {},
+            "world": {},
+            "world_detailed": {
+                "fake_person": {"id": "fake_person", "name": "韩立", "category": "person", "confidence": 0.9},
+            },
+        })
+        result = asyncio.run(qa_review(state))
+        proposals = result.get("reviewer_repair_proposals", [])
+        for proposal in proposals:
+            assert "source" in proposal, "repair proposal missing 'source'"
+            assert proposal["source"].endswith("_reviewer"), f"unexpected source: {proposal['source']}"
+            assert "originTaskRunId" in proposal, "repair proposal missing 'originTaskRunId'"
+            assert "reviewerRunId" in proposal.get("data", {}), "repair proposal missing 'data.reviewerRunId'"

@@ -1,6 +1,7 @@
 """Deterministic quality checks for W1 import proposals and artifacts."""
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from typing import List, Literal
 
@@ -56,6 +57,7 @@ class QualityReviewer(BaseReviewer):
         self._check_world_wrong_classification(world_ops, findings, repairs)
         self._check_world_module_pollution(char_ops, world_ops, findings)
         self._check_character_duplicate_name(char_ops, findings, repairs)
+        self._check_character_repeated_phrases(char_ops, findings, repairs)
         self._check_character_missing_major(state, findings, orch_reqs)
         self._check_character_thin_card(char_ops, findings)
         self._check_relationship_no_evidence(rel_ops, findings)
@@ -181,6 +183,8 @@ class QualityReviewer(BaseReviewer):
                 groups[n].append(op.get("entityId", "?"))
         for name, ids in groups.items():
             if len(ids) > 1:
+                primary_id = ids[0]
+                dup_ids = ids[1:]
                 findings.append(self._finding(
                     "character_duplicate_name",
                     f"{len(ids)} character proposals share name '{name}'",
@@ -191,7 +195,52 @@ class QualityReviewer(BaseReviewer):
                 repairs.append(self._repair(
                     "merge_duplicate",
                     ids,
-                    f"Merge {len(ids)} duplicate character proposals for '{name}'",
+                    f"Delete {len(dup_ids)} duplicate character proposal(s) for '{name}'; keep primary '{primary_id}'",
+                    deterministic=False,  # delete may be blocked if dup is referenced by relationships
+                    proposed_operations=[
+                        {"op": "delete", "entityType": "character", "entityId": dup_id}
+                        for dup_id in dup_ids
+                    ],
+                ))
+
+    def _check_character_repeated_phrases(
+        self, char_ops: list, findings: list, repairs: list
+    ) -> None:
+        for op in char_ops:
+            fields = op.get("fields") or {}
+            entity_id = op.get("entityId", "?")
+            char_name = fields.get("name", entity_id)
+            cleaned_fields: dict = {}
+            for field in ("summary", "background"):
+                text = fields.get(field, "") or ""
+                if len(text) < 10:
+                    continue
+                # Detect any 5–15 char phrase that appears more than once.
+                m = re.search(r"(.{5,15}).*\1", text, re.DOTALL)
+                if not m:
+                    continue
+                phrase = m.group(1)
+                # Keep first occurrence; remove all subsequent occurrences.
+                first_end = text.index(phrase) + len(phrase)
+                cleaned = (text[:first_end] + text[first_end:].replace(phrase, "")).strip()
+                if cleaned != text:
+                    cleaned_fields[field] = cleaned
+            if cleaned_fields:
+                findings.append(self._finding(
+                    "character_repeated_phrase",
+                    f"Character '{char_name}' has repeated phrase(s) in {', '.join(cleaned_fields)}",
+                    "medium",
+                    entity_refs=[entity_id],
+                    entity_id=entity_id,
+                ))
+                repairs.append(self._repair(
+                    "clean_repeated_phrase",
+                    [entity_id],
+                    f"Remove duplicate phrase(s) from character '{char_name}' fields: {', '.join(cleaned_fields)}",
+                    deterministic=True,
+                    proposed_operations=[
+                        {"op": "update", "entityType": "character", "entityId": entity_id, "fields": cleaned_fields}
+                    ],
                 ))
 
     def _check_character_missing_major(

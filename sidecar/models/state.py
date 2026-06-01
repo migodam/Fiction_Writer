@@ -65,11 +65,20 @@ class ChunkLogEntry(TypedDict):
     timestamp: str      # ISO-8601
 
 
-class ManuscriptChapter(TypedDict):
+class _ManuscriptChapterRequired(TypedDict):
     chapter_id: str
     title: str
     chunk_ids: List[int]
     manuscript_content: str
+
+
+class ManuscriptChapter(_ManuscriptChapterRequired, total=False):
+    """Optional enrichment fields populated by node_build_manuscript."""
+    summary: str
+    goal: str
+    notes: str
+    chapterNumber: Optional[int]
+    orderIndex: int
 
 
 class ImportCheckpoint(TypedDict):
@@ -1157,7 +1166,9 @@ class ImportSupervisorState(TypedDict, total=False):
     tool_operating_spec: ToolOperatingSpec
     converge_target: ConvergeTarget
     judge_artifact: JudgeArtifact
-    reviewer_reports: List[dict]  # populated post-import by QualityReviewer / FactReviewer / ConsistencyReviewer
+    reviewer_reports: Dict[str, Any]  # {quality: ReviewReport, fact: ReviewReport, consistency: ReviewReport}
+    reviewer_repair_proposals: List[dict]  # repair proposals emitted by reviewers for inbox
+    organizer_output: Dict[str, Any]   # OrganizerOutput from Stage 5b
     thematic_rerun_requests: List[ThematicRerunRequest]
     current_tool: str
     current_window: str

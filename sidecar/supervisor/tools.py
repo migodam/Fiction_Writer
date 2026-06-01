@@ -1142,6 +1142,50 @@ async def architect_timeline(state: ImportSupervisorState) -> dict:
     return {**result, "supervisor_log": log, "current_stage": "architect_timeline"}
 
 
+# ── Reviewer helpers ─────────────────────────────────────────────────────────────
+
+def _collect_repair_proposals(reviewer_reports: dict, import_run_id: str) -> list[dict]:
+    """Convert local_repair_actions from reviewer reports to Proposal-format dicts.
+
+    Only actions that carry `proposed_operations` produce inbox proposals.
+    Advisory-only actions (no `proposed_operations`) are skipped — they appear
+    solely in the reviewer report written to the sidecar log.
+    """
+    import uuid as _uuid
+    from datetime import datetime, timezone
+    proposals = []
+    for reviewer_kind, report in reviewer_reports.items():
+        source = f"{reviewer_kind}_reviewer"
+        run_id = f"{import_run_id}_{reviewer_kind}_review" if import_run_id else f"{reviewer_kind}_{_uuid.uuid4().hex[:8]}"
+        for action in (report.get("local_repair_actions") or []):
+            ops = action.get("proposed_operations") or []
+            if not ops:
+                continue  # advisory-only; not written to inbox
+            primary_id = (action.get("target_entity_ids") or ["unk"])[0]
+            entity_type = ops[0].get("entityType", "character")
+            title = action.get("action_type", "repair").replace("_", " ").title()
+            description = action.get("description", "")
+            advisory = not action.get("deterministic", True)
+            proposal: dict = {
+                "id": f"repair_{primary_id}_{_uuid.uuid4().hex[:8]}",
+                "title": title,
+                "source": source,
+                "originTaskRunId": run_id,
+                "description": description,
+                "preview": description[:200],
+                "targetEntityType": entity_type,
+                "targetEntityId": primary_id,
+                "status": "pending",
+                "createdAt": datetime.now(timezone.utc).isoformat(),
+                "reviewPolicy": "manual_workbench",
+                "proposedOperations": ops,
+                "dependsOn": [],
+                "data": {"reviewerRunId": run_id, "advisory": advisory},
+            }
+            proposals.append(proposal)
+    return proposals
+
+
 # ── Tool: qa_review ─────────────────────────────────────────────────────────────
 
 async def qa_review(state: ImportSupervisorState) -> dict:
@@ -1160,15 +1204,48 @@ async def qa_review(state: ImportSupervisorState) -> dict:
         gate_failures.append({"gate": "world_person_boundary", "value": flags["org_chars_in_registry"], "threshold": 0, "windows": []})
 
     report = result.get("import_review_report", {})
-    proposal_counts = report.get("proposal_counts", {})
 
     log = list(state.get("supervisor_log", []))
     log.append(f"qa_review: status={report.get('status', '?')}, gate_failures={len(gate_failures)}, flags={flags}")
+
+    # Run deterministic reviewers (zero-cost, no live API)
+    from sidecar.supervisor.reviewers.quality_reviewer import QualityReviewer
+    from sidecar.supervisor.reviewers.fact_reviewer import FactReviewer
+    from sidecar.supervisor.reviewers.consistency_reviewer import ConsistencyReviewer
+
+    quality_report = QualityReviewer().review(merged)
+    fact_report = FactReviewer().review(merged)
+    consistency_report = ConsistencyReviewer().review(merged)
+
+    reviewer_reports = {
+        "quality": quality_report,
+        "fact": fact_report,
+        "consistency": consistency_report,
+    }
+    log.append(
+        f"reviewers: quality={quality_report.get('verdict')}, "
+        f"fact={fact_report.get('verdict')}, consistency={consistency_report.get('verdict')}"
+    )
+
+    import_run_id = str(state.get("import_run_id") or "")
+    repair_proposals = _collect_repair_proposals(reviewer_reports, import_run_id)
+
+    # Push repair proposals to inbox if project context is available
+    project_path = state.get("project_path")
+    if project_path and repair_proposals:
+        from sidecar.shared import s4_proposal_queue
+        for proposal in repair_proposals:
+            try:
+                await s4_proposal_queue.push_to_inbox(proposal, str(project_path))
+            except Exception:
+                pass  # Non-blocking: repair proposals are advisory, never hard-fail import
 
     return {
         **result,
         "gate_failures": gate_failures,
         "supervisor_log": log,
+        "reviewer_reports": reviewer_reports,
+        "reviewer_repair_proposals": repair_proposals,
         "current_stage": "qa_review",
     }
 
