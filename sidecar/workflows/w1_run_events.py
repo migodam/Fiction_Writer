@@ -29,6 +29,10 @@ _DEFAULT_PRICE_TABLE: dict[str, dict[str, float]] = {
     "claude-3-7":       {"input_usd_per_1m": 3.00,  "output_usd_per_1m": 15.00},
 }
 
+_SORTED_PRICE_TABLE: list[tuple[str, dict[str, float]]] = sorted(
+    _DEFAULT_PRICE_TABLE.items(), key=lambda kv: len(kv[0]), reverse=True
+)
+
 _SECRET_KEYS = {"api_key", "apikey", "authorization", "token", "password", "secret"}
 
 
@@ -114,7 +118,7 @@ def add_token_usage(session_id: str, input_tokens: int, output_tokens: int) -> N
 def _cost_for_model(model: str, input_tokens: int, output_tokens: int) -> tuple[float | None, str | None]:
     """Return (cost_usd, None) if model matches price table, else (None, reason)."""
     model_lower = (model or "").lower()
-    for key, prices in sorted(_DEFAULT_PRICE_TABLE.items(), key=lambda kv: len(kv[0]), reverse=True):
+    for key, prices in _SORTED_PRICE_TABLE:
         if key in model_lower:
             cost = (
                 input_tokens * prices["input_usd_per_1m"] / 1_000_000
@@ -140,6 +144,14 @@ def session_token_ledger(session_id: str, model: str = "", estimated_input_token
         ledger["cost_usd"] = cost_usd
     else:
         ledger["cost_unavailable_reason"] = cost_reason or "cost unavailable"
+        if session_id:
+            append_event(session_id, {
+                "level": "info",
+                "phase": "token_ledger",
+                "tool": "cost_estimate",
+                "status": "heartbeat",
+                "message": ledger["cost_unavailable_reason"],
+            })
     return ledger
 
 
