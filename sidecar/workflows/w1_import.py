@@ -3512,7 +3512,6 @@ async def node_architect_timeline(state: ImportState) -> dict:
         branch_id = _select_branch(event)
         branch_buckets.setdefault(branch_id, []).append((event_id, event))
 
-    global_order_index = len(snapshot.get("timeline_events", []))
     for branch_id, branch_events in branch_buckets.items():
         branch_events.sort(key=lambda item: item[1].get("_sequence", (0, 0, "")))
         if len(branch_events) > branch_event_budget:

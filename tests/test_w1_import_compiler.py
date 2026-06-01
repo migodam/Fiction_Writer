@@ -1718,3 +1718,102 @@ def test_global_order_index_follows_source_chapter_order(tmp_path):
         f"globalOrderIndex does not follow source chapter order. Got chunk order: {chunk_order}"
     )
 
+
+def test_global_order_index_cross_branch_follows_source_order(tmp_path):
+    """globalOrderIndex must follow source chapter order even when events are on different branches."""
+    import asyncio
+    from sidecar.workflows import w1_import
+
+    state = {
+        "project_path": str(tmp_path),
+        "import_run_id": "test_cross_branch_order",
+        "entity_registry": {"events": {
+            "ev_training_ch5": {
+                "title": "韩立突破五层",
+                "description": "韩立达到新的修炼高度。",
+                "timelineClass": "canonical_event",
+                "eventClass": "canonical_event",
+                "arcId": "cultivation_progress",
+                "arcRole": "power_progression",
+                "importanceScore": 81,
+                "chapterRange": {"start": "第五章", "end": "第五章"},
+                "temporal_hint": "第五章",
+                "character_ids": ["char_han"],
+                "confidence": 0.88,
+                "chunk_id": 4,
+            },
+            "ev_training_ch4": {
+                "title": "韩立突破四层",
+                "description": "韩立再次突破修炼境界。",
+                "timelineClass": "canonical_event",
+                "eventClass": "canonical_event",
+                "arcId": "cultivation_progress",
+                "arcRole": "power_progression",
+                "importanceScore": 82,
+                "chapterRange": {"start": "第四章", "end": "第四章"},
+                "temporal_hint": "第四章",
+                "character_ids": ["char_han"],
+                "confidence": 0.89,
+                "chunk_id": 3,
+            },
+            "ev_main_ch3": {
+                "title": "韩立突破三层",
+                "description": "韩立突破修炼瓶颈到达三层。",
+                "timelineClass": "canonical_event",
+                "eventClass": "canonical_event",
+                "arcId": "cultivation_progress",
+                "arcRole": "power_progression",
+                "importanceScore": 85,
+                "chapterRange": {"start": "第三章", "end": "第三章"},
+                "temporal_hint": "第三章",
+                "character_ids": ["char_han"],
+                "confidence": 0.90,
+                "chunk_id": 2,
+            },
+            "ev_conflict_ch1": {
+                "title": "敌人伏击背叛韩立",
+                "description": "敌人设下伏击，背叛了韩立。",
+                "timelineClass": "canonical_event",
+                "eventClass": "canonical_event",
+                "arcId": "faction_conflict",
+                "arcRole": "antagonist",
+                "importanceScore": 80,
+                "chapterRange": {"start": "第一章", "end": "第一章"},
+                "temporal_hint": "第一章",
+                "character_ids": ["char_han"],
+                "confidence": 0.87,
+                "chunk_id": 0,
+            },
+            "ev_main_ch2": {
+                "title": "韩立加入七玄门",
+                "description": "韩立正式成为七玄门弟子。",
+                "timelineClass": "canonical_event",
+                "eventClass": "canonical_event",
+                "arcId": "sect_entry",
+                "arcRole": "protagonist",
+                "importanceScore": 88,
+                "chapterRange": {"start": "第二章", "end": "第二章"},
+                "temporal_hint": "第二章",
+                "character_ids": ["char_han"],
+                "confidence": 0.91,
+                "chunk_id": 1,
+            },
+        }},
+        "timeline_branches": [],
+        "errors": [],
+    }
+    result = asyncio.run(w1_import.node_architect_timeline(state))
+    events = list(result["entity_registry"]["events"].values())
+    assert len(events) == 5
+
+    # Confirm events landed on at least 2 different branches
+    branch_ids = {ev["branchId"] for ev in events}
+    assert len(branch_ids) >= 2, f"Expected multi-branch, got: {branch_ids}"
+
+    # globalOrderIndex must follow chunk_id (source chapter) order regardless of branch
+    ordered = sorted(events, key=lambda e: e["globalOrderIndex"])
+    chunk_order = [ev["chunk_id"] for ev in ordered]
+    assert chunk_order == [0, 1, 2, 3, 4], (
+        f"Cross-branch globalOrderIndex does not follow source order. Got chunk order: {chunk_order}"
+    )
+
