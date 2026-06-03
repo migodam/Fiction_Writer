@@ -773,13 +773,21 @@ const serializeProjectToFolder = (
           'endMode',
           'mergeTargetBranchId',
           'geometry',
-          'anchorStartPos',
-          'anchorEndPos',
+          // anchorStartPos, anchorEndPos removed — runtime-only, always stripped by toCanonical()
         ],
       },
       timelineEvent: {
         required: ['id', 'title', 'summary', 'branchId', 'orderIndex', 'locationIds', 'participantCharacterIds', 'linkedSceneIds', 'linkedWorldItemIds', 'tags'],
-        optional: ['time', 'sharedBranchIds', 'importance', 'colorToken', 'layoutLock', 'modalStateHints', 'position', 'globalOrderIndex', 'chapterNumber', 'sourceChunkIds', 'sourceOrder'],
+        optional: [
+          'time',
+          'importance',
+          'colorToken',
+          'globalOrderIndex',
+          'chapterNumber',
+          'sourceChunkIds',
+          'sourceOrder',
+          // position, sharedBranchIds, layoutLock, modalStateHints removed — runtime-only
+        ],
       },
     },
   });

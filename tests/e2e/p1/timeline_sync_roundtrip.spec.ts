@@ -266,6 +266,61 @@ test('dense event labels have no visible overlap', async ({ page }) => {
 });
 
 // Test 8: events with hidden labels must show tooltip on hover via hitarea
+test('sync analysis: no false-positive warnings about runtime-only fields', async ({ page }) => {
+  const warnings: string[] = [];
+  page.on('console', (msg) => {
+    if (msg.type() === 'warn') warnings.push(msg.text());
+  });
+
+  await page.goto('/');
+  await expect(page.locator('[data-testid="timeline-canvas"]')).toBeVisible({ timeout: 10000 });
+
+  // Set up a fork/merge topology so anchorStartPos/anchorEndPos are computed at runtime
+  await page.evaluate(() => {
+    (window as any).__narrativeStore.setState({
+      timelineBranches: [
+        { id: 'branch_main', name: '主线', mode: 'root', sortOrder: 0, endMode: 'open' },
+        { id: 'branch_fork', name: '分支线', mode: 'forked', sortOrder: 1,
+          parentBranchId: 'branch_main', forkEventId: 'ev_a', endMode: 'open',
+          anchorStartPos: { x: 400, y: 200 },
+          anchorEndPos:   { x: 800, y: 200 },
+        },
+      ],
+      timelineEvents: [
+        { id: 'ev_a', title: '事件A', summary: '...', branchId: 'branch_main',
+          orderIndex: 0, importance: 'high',
+          locationIds: [], participantCharacterIds: [], linkedSceneIds: [], linkedWorldItemIds: [], tags: [],
+          position: { x: 400, y: 200 },
+        },
+        { id: 'ev_b', title: '事件B', summary: '...', branchId: 'branch_fork',
+          orderIndex: 0, importance: 'medium',
+          locationIds: [], participantCharacterIds: [], linkedSceneIds: [], linkedWorldItemIds: [], tags: [],
+        },
+      ],
+    });
+  });
+
+  await page.waitForTimeout(300);
+
+  // Find and click Synchronize button
+  const syncBtn = page.locator('[data-testid="timeline-synchronize-btn"]').or(
+    page.locator('button', { hasText: /synchronize/i })
+  );
+  if (await syncBtn.count() > 0) {
+    warnings.length = 0;
+    await syncBtn.first().click();
+    await page.waitForTimeout(500);
+    const badWarnings = warnings.filter((w) =>
+      w.includes('anchorStartPos') || w.includes('anchorEndPos') ||
+      (w.includes('[Timeline]') && (
+        w.includes('position') || w.includes('sharedBranchIds') ||
+        w.includes('layoutLock') || w.includes('modalStateHints')
+      ))
+    );
+    expect(badWarnings).toHaveLength(0);
+  }
+});
+
 test('events with hidden labels show tooltip on hover', async ({ page }) => {
   await page.goto('/');
   await page.evaluate(() => {
