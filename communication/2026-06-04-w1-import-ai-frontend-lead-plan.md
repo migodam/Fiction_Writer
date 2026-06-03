@@ -4,7 +4,7 @@
 **Branch:** `codex/w1-orchestrated-import-quality`  
 **Author:** Lead Claude (Plan Mode)  
 **REPAIR_BASELINE_HASH:** `b4c4c7b`  
-**DISPATCH_HASH:** `a586883`
+**DISPATCH_HASH:** `e67b747` (final HEAD after all Lead artifacts committed)
 
 ---
 
