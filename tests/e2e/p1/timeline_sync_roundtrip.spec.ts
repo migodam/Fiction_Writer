@@ -306,19 +306,19 @@ test('sync analysis: no false-positive warnings about runtime-only fields', asyn
   const syncBtn = page.locator('[data-testid="timeline-synchronize-btn"]').or(
     page.locator('button', { hasText: /synchronize/i })
   );
-  if (await syncBtn.count() > 0) {
-    warnings.length = 0;
-    await syncBtn.first().click();
-    await page.waitForTimeout(500);
-    const badWarnings = warnings.filter((w) =>
-      w.includes('anchorStartPos') || w.includes('anchorEndPos') ||
-      (w.includes('[Timeline]') && (
-        w.includes('position') || w.includes('sharedBranchIds') ||
-        w.includes('layoutLock') || w.includes('modalStateHints')
-      ))
-    );
-    expect(badWarnings).toHaveLength(0);
-  }
+  // Hard-assert the button exists — if absent, the test fails loudly rather than vacuously passing
+  await expect(syncBtn.first()).toBeVisible({ timeout: 5000 });
+  warnings.length = 0;
+  await syncBtn.first().click();
+  await page.waitForTimeout(500);
+  const badWarnings = warnings.filter((w) =>
+    w.includes('anchorStartPos') || w.includes('anchorEndPos') ||
+    (w.includes('[Timeline]') && (
+      w.includes('position') || w.includes('sharedBranchIds') ||
+      w.includes('layoutLock') || w.includes('modalStateHints')
+    ))
+  );
+  expect(badWarnings).toHaveLength(0);
 });
 
 test('events with hidden labels show tooltip on hover', async ({ page }) => {
