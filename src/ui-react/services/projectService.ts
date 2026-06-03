@@ -145,6 +145,131 @@ function normalizeWorldItem(item: NarrativeProject['worldItems'][number]): Narra
   };
 }
 
+const parseChapterOrdinal = (title: unknown): number | null => {
+  const text = String(title || '').trim();
+  const arabic = text.match(/(?:chapter|ch\.?|第)?\s*(\d+)\s*(?:章|回|节)?/i);
+  if (arabic) return Number(arabic[1]);
+  const digits: Record<string, number> = { 零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+  const match = text.match(/第\s*([零〇一二两三四五六七八九十百千\d]+)\s*[章节回]/);
+  if (!match) return null;
+  const raw = match[1];
+  if (/^\d+$/.test(raw)) return Number(raw);
+  let total = 0;
+  let current = 0;
+  const units: Record<string, number> = { 十: 10, 百: 100, 千: 1000 };
+  for (const char of raw) {
+    if (digits[char] != null) {
+      current = digits[char];
+      continue;
+    }
+    if (units[char]) {
+      total += (current || 1) * units[char];
+      current = 0;
+      continue;
+    }
+    return null;
+  }
+  return total + current || null;
+};
+
+const chapterDedupeKey = (chapter: NarrativeProject['chapters'][number]) => {
+  const ordinal = parseChapterOrdinal(chapter.title);
+  return ordinal != null ? `ordinal:${ordinal}` : `title:${normalizeIdentityKey(chapter.title)}`;
+};
+
+const isBlankStarterChapterForNormalize = (
+  chapter: NarrativeProject['chapters'][number],
+  scenes: NarrativeProject['scenes'],
+) => {
+  const sceneIds = chapter.sceneIds || [];
+  const chapterScenes = scenes.filter((scene) => sceneIds.includes(scene.id) || scene.chapterId === chapter.id);
+  return chapter.id === 'chap_1'
+    && /^chapter 1$/i.test(chapter.title || '')
+    && chapterScenes.length <= 1
+    && chapterScenes.every((scene) => scene.id === 'scene_1' && !(scene.content || '').trim());
+};
+
+const normalizeWritingCollections = (
+  chapters: NarrativeProject['chapters'],
+  scenes: NarrativeProject['scenes'],
+): Pick<NarrativeProject, 'chapters' | 'scenes'> => {
+  const importedChapters = chapters.filter((chapter) => !isBlankStarterChapterForNormalize(chapter, scenes));
+  const sourceChapters = importedChapters.length ? importedChapters : chapters;
+  const chapterIdMap = new Map<string, string>();
+  const byKey = new Map<string, NarrativeProject['chapters'][number]>();
+
+  [...sourceChapters]
+    .sort((a, b) => (a.orderIndex ?? 9999) - (b.orderIndex ?? 9999) || String(a.title).localeCompare(String(b.title)))
+    .forEach((chapter) => {
+      const key = chapterDedupeKey(chapter);
+      const existing = byKey.get(key);
+      if (!existing) {
+        byKey.set(key, { ...chapter, sceneIds: [...(chapter.sceneIds || [])] });
+        chapterIdMap.set(chapter.id, chapter.id);
+        return;
+      }
+      chapterIdMap.set(chapter.id, existing.id);
+      existing.sceneIds = uniqueStrings([existing.sceneIds, chapter.sceneIds]);
+      existing.summary = existing.summary || chapter.summary;
+      existing.goal = existing.goal || chapter.goal;
+      existing.notes = existing.notes || chapter.notes;
+    });
+
+  const normalizedChapters = Array.from(byKey.values()).map((chapter, index) => ({
+    ...chapter,
+    orderIndex: index,
+  }));
+  const validChapterIds = new Set(normalizedChapters.map((chapter) => chapter.id));
+  const sceneByKey = new Map<string, NarrativeProject['scenes'][number]>();
+  scenes
+    .filter((scene) => !(scene.id === 'scene_1' && !validChapterIds.has(scene.chapterId) && !(scene.content || '').trim()))
+    .forEach((scene) => {
+      const chapterId = chapterIdMap.get(scene.chapterId) || scene.chapterId;
+      if (!validChapterIds.has(chapterId)) return;
+      const contentKey = normalizeIdentityKey((scene.content || '').slice(0, 240));
+      const key = `${chapterId}:${normalizeIdentityKey(scene.title)}:${contentKey}`;
+      if (sceneByKey.has(key)) return;
+      sceneByKey.set(key, { ...scene, chapterId });
+    });
+  const normalizedScenes = Array.from(sceneByKey.values()).map((scene, index) => ({
+    ...scene,
+    orderIndex: scene.orderIndex ?? index,
+  }));
+  const sceneIdsByChapter = normalizedScenes.reduce<Record<string, string[]>>((acc, scene) => {
+    acc[scene.chapterId] = [...(acc[scene.chapterId] || []), scene.id];
+    return acc;
+  }, {});
+  return {
+    chapters: normalizedChapters.map((chapter) => ({
+      ...chapter,
+      sceneIds: uniqueStrings([chapter.sceneIds, sceneIdsByChapter[chapter.id]]),
+    })),
+    scenes: normalizedScenes,
+  };
+};
+
+const normalizeTimelineCollections = (
+  branches: NarrativeProject['timelineBranches'],
+  events: NarrativeProject['timelineEvents'],
+): Pick<NarrativeProject, 'timelineBranches' | 'timelineEvents'> => {
+  const eventBranchIds = new Set(events.map((event) => event.branchId).filter(Boolean));
+  const genericBranchNames = new Set(['main branch', 'main timeline', '主时间线']);
+  const isGenericEmptyBranch = (branch: NarrativeProject['timelineBranches'][number]) =>
+    eventBranchIds.size > 0
+    && !eventBranchIds.has(branch.id)
+    && genericBranchNames.has(String(branch.name || '').trim().toLowerCase());
+  const sourceBranches = branches.filter((branch) => !isGenericEmptyBranch(branch));
+  const branchIds = new Set(sourceBranches.map((branch) => branch.id));
+  const fallbackBranchId = sourceBranches[0]?.id || '';
+  return {
+    timelineBranches: sourceBranches,
+    timelineEvents: events.map((event) => ({
+      ...event,
+      branchId: branchIds.has(event.branchId) ? event.branchId : fallbackBranchId,
+    })),
+  };
+};
+
 const readJsonFilesSafe = <T = Record<string, unknown>>(runtime: NodeRuntime, directory: string): T[] => {
   if (!runtime.fs.existsSync(directory)) {
     return [] as T[];
@@ -913,7 +1038,14 @@ export const projectService = {
     };
 
     localStorage.setItem(LAST_PATH_KEY, resolvedPath);
-    const migrated = migrateProject(project, resolvedPath, 'nodefs', project.metadata.locale);
+    const migratedBase = migrateProject(project, resolvedPath, 'nodefs', project.metadata.locale);
+    const writingCollections = normalizeWritingCollections(migratedBase.chapters, migratedBase.scenes);
+    const timelineCollections = normalizeTimelineCollections(migratedBase.timelineBranches, migratedBase.timelineEvents);
+    const migrated = {
+      ...migratedBase,
+      ...writingCollections,
+      ...timelineCollections,
+    };
     serializeProjectToFolder(migrated, runtime, resolvedPath);
     return hydrateProjectMetadata(migrated, resolvedPath, 'nodefs', migrated.metadata.locale);
   },
@@ -1683,35 +1815,35 @@ const pruneDanglingProposalReferences = (project: NarrativeProject): NarrativePr
     ...project,
     chapters: project.chapters.map((chapter) => ({
       ...chapter,
-      sceneIds: chapter.sceneIds.filter((id) => refs.scenes.has(id)),
+      sceneIds: (chapter.sceneIds || []).filter((id) => refs.scenes.has(id)),
     })),
     scenes: project.scenes.map((scene) => ({
       ...scene,
       chapterId: refs.chapters.has(scene.chapterId) ? scene.chapterId : firstChapterId,
-      linkedCharacterIds: scene.linkedCharacterIds.filter((id) => refs.characters.has(id)),
-      linkedEventIds: scene.linkedEventIds.filter((id) => refs.events.has(id)),
-      linkedWorldItemIds: scene.linkedWorldItemIds.filter((id) => refs.worldItems.has(id)),
+      linkedCharacterIds: (scene.linkedCharacterIds || []).filter((id) => refs.characters.has(id)),
+      linkedEventIds: (scene.linkedEventIds || []).filter((id) => refs.events.has(id)),
+      linkedWorldItemIds: (scene.linkedWorldItemIds || []).filter((id) => refs.worldItems.has(id)),
     })),
     characters: project.characters.map((character) => ({
       ...character,
-      tagIds: character.tagIds.filter((id) => refs.tags.has(id)),
-      linkedSceneIds: character.linkedSceneIds.filter((id) => refs.scenes.has(id)),
-      linkedEventIds: character.linkedEventIds.filter((id) => refs.events.has(id)),
-      linkedWorldItemIds: character.linkedWorldItemIds.filter((id) => refs.worldItems.has(id)),
+      tagIds: (character.tagIds || []).filter((id) => refs.tags.has(id)),
+      linkedSceneIds: (character.linkedSceneIds || []).filter((id) => refs.scenes.has(id)),
+      linkedEventIds: (character.linkedEventIds || []).filter((id) => refs.events.has(id)),
+      linkedWorldItemIds: (character.linkedWorldItemIds || []).filter((id) => refs.worldItems.has(id)),
     })),
     timelineEvents: project.timelineEvents.map((event) => ({
       ...event,
       branchId: refs.branches.has(event.branchId) ? event.branchId : firstBranchId,
-      participantCharacterIds: event.participantCharacterIds.filter((id) => refs.characters.has(id)),
-      linkedSceneIds: event.linkedSceneIds.filter((id) => refs.scenes.has(id)),
-      linkedWorldItemIds: event.linkedWorldItemIds.filter((id) => refs.worldItems.has(id)),
-      locationIds: event.locationIds.filter((id) => refs.worldItems.has(id)),
+      participantCharacterIds: (event.participantCharacterIds || []).filter((id) => refs.characters.has(id)),
+      linkedSceneIds: (event.linkedSceneIds || []).filter((id) => refs.scenes.has(id)),
+      linkedWorldItemIds: (event.linkedWorldItemIds || []).filter((id) => refs.worldItems.has(id)),
+      locationIds: (event.locationIds || []).filter((id) => refs.worldItems.has(id)),
     })),
     worldItems: project.worldItems.map((item) => ({
       ...item,
-      linkedCharacterIds: item.linkedCharacterIds.filter((id) => refs.characters.has(id)),
-      linkedEventIds: item.linkedEventIds.filter((id) => refs.events.has(id)),
-      linkedSceneIds: item.linkedSceneIds.filter((id) => refs.scenes.has(id)),
+      linkedCharacterIds: (item.linkedCharacterIds || []).filter((id) => refs.characters.has(id)),
+      linkedEventIds: (item.linkedEventIds || []).filter((id) => refs.events.has(id)),
+      linkedSceneIds: (item.linkedSceneIds || []).filter((id) => refs.scenes.has(id)),
     })),
     relationships: project.relationships.filter((rel) => refs.characters.has(rel.sourceId) && refs.characters.has(rel.targetId)),
   };

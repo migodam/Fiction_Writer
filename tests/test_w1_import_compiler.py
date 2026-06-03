@@ -266,6 +266,52 @@ def test_build_manuscript_supervisor_falls_back_to_chunks_without_extractions(tm
     assert [chapter["manuscript_content"] for chapter in chapters] == ["第一章原文", "第二章原文", "第三章原文"]
 
 
+def test_build_manuscript_enriches_and_dedupes_duplicate_chapter_numbers(tmp_path):
+    state = {
+        "project_path": str(tmp_path),
+        "source_file_path": str(tmp_path / "fanren.txt"),
+        "source_language": "zh",
+        "import_mode": "import_all",
+        "chunks": [
+            {"chunk_id": 10, "chapter_hint": "第十章"},
+            {"chunk_id": 9, "chapter_hint": "第十章"},
+        ],
+        "chunk_extractions": [
+            {"chunk_id": 10, "manuscript_content": "第十章 韩立进入神手谷。"},
+            {"chunk_id": 9, "manuscript_content": "第十章 墨大夫传授口诀。"},
+        ],
+    }
+
+    result = asyncio.run(w1_import.node_build_manuscript(state))
+    chapters = result["manuscript_chapters"]
+
+    assert len(chapters) == 1
+    assert chapters[0]["title"] == "第十章"
+    assert chapters[0]["chunk_ids"] == [9, 10]
+    assert "韩立进入神手谷" in chapters[0]["manuscript_content"]
+    assert "墨大夫传授口诀" in chapters[0]["manuscript_content"]
+    assert chapters[0]["summary"]
+    assert chapters[0]["goal"]
+    assert "Chunks: 9, 10" in chapters[0]["notes"]
+
+
+def test_compact_character_card_removes_repeated_age_fragments():
+    card = {
+        "summary": "韩立23岁被墨大夫收为弟子；韩立23岁在神手谷修炼；韩立23岁初显谨慎性格",
+        "background": "",
+        "role_in_story": "",
+        "physical_description": "",
+        "speech_style": "",
+        "arc_notes": "",
+        "personality_traits": [],
+        "open_questions": [],
+    }
+
+    compacted = w1_import._compact_character_card(card)
+
+    assert compacted["summary"].count("23岁") == 1
+
+
 def test_world_entity_candidates_are_routed_out_of_character_registry():
     registry = {
         "characters": {
@@ -1552,6 +1598,18 @@ def test_node_review_import_observability_manuscript_not_written(tmp_path):
     assert obs["manuscript_chapters_count"] == 0
 
 
+def test_node_review_import_runs_all_zero_cost_reviewers(tmp_path):
+    state = _make_review_state(tmp_path)
+    result = asyncio.run(w1_import.node_review_import(state))
+    report = result["import_review_report"]
+
+    assert set(report["reviewer_reports"]) == {"quality", "fact", "consistency"}
+    for reviewer_report in report["reviewer_reports"].values():
+        ledger = reviewer_report["token_cost_ledger"]
+        assert ledger["live_model_calls"] is False
+        assert ledger["full50_run"] is False
+
+
 def test_import_observability_key_survives_proposal_write_merge():
     """proposal_write updates proposal_counts/safe_accept_ids/blocked_ids but must NOT
     remove import_observability from the review_report dict."""
@@ -2001,4 +2059,3 @@ def test_branch_with_merge_hint_event_has_endmode_merge(tmp_path):
         f"Expected endMode='merge' but got '{mentor_branch.get('endMode')}'"
     )
     assert mentor_branch.get("mergeEventId") is not None, "mergeEventId should be set"
-

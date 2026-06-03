@@ -5,6 +5,7 @@ All tests are synchronous, zero-mock, zero-LLM.
 Each test builds a minimal OrganizerInput inline and asserts on OrganizerOutput.
 """
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -13,6 +14,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from sidecar.supervisor.organizer import organize_project_content, OrganizerInput
+import sidecar.workflows.w1_import as w1_import
 
 
 # ---------------------------------------------------------------------------
@@ -315,3 +317,46 @@ def test_location_category_path_content():
     assert item["categoryPath"] == ["世界模型", "地理位置", "神手谷"], (
         f"Expected location path, got {item['categoryPath']}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Test 14 — node_organize_project filters exclusions and enriches survivors
+# ---------------------------------------------------------------------------
+
+
+def test_node_organize_project_filters_and_enriches():
+    state = {
+        "source_language": "zh",
+        "relationships": [],
+        "timeline_architecture": {},
+        "entity_registry": {
+            "characters": {},
+            "events": {},
+            "world": {
+                "事件时间线": "concept",
+                "神手谷": "location",
+            },
+            "world_detailed": {
+                "事件时间线": {"category": "concept", "description": "Meta timeline entry"},
+                "神手谷": {"category": "location", "description": "A mountain valley"},
+            },
+        },
+    }
+    result = asyncio.run(w1_import.node_organize_project(state))
+    registry = result["entity_registry"]
+
+    # Both structures must exclude the contamination item
+    assert "事件时间线" not in registry["world_detailed"], \
+        "Contamination item must be absent from world_detailed"
+    assert "事件时间线" not in registry["world"], \
+        "Contamination item must be absent from world"
+
+    # Valid world item must survive in both structures
+    assert "神手谷" in registry["world_detailed"], "Valid item must survive in world_detailed"
+    assert "神手谷" in registry["world"], "Valid item must survive in world"
+
+    # Organizer categoryPath must be stored in world_detailed
+    item = registry["world_detailed"]["神手谷"]
+    assert "categoryPath" in item, "Organizer must enrich surviving items with categoryPath"
+    assert item["categoryPath"] == ["世界模型", "地理位置", "神手谷"], \
+        f"Expected organizer path with name appended, got {item['categoryPath']}"

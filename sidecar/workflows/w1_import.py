@@ -33,6 +33,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from sidecar.models.state import ImportState, ManuscriptChapter
+from sidecar.supervisor.organizer import organize_project_content, OrganizerInput
 from sidecar.shared import s2_memory_writer, s3_chunk_manager
 from sidecar.utils.lock import acquire_lock, release_lock, WorkflowBusyError
 from sidecar.workflows.w1_run_events import add_token_usage
@@ -419,6 +420,38 @@ def _merge_text_field(existing: str, incoming: Any) -> str:
     return f"{existing.rstrip()}\n{cleaned}"
 
 
+def _dedupe_text_segments(text: str) -> str:
+    """Collapse repeated semicolon/newline facts in compact import cards."""
+    if not isinstance(text, str):
+        return ""
+    parts = [
+        part.strip(" \t\r\n。.;；")
+        for part in re.split(r"[；;\n]+", text)
+        if part.strip(" \t\r\n。.;；")
+    ]
+    if not parts:
+        return ""
+    kept: list[str] = []
+    seen_keys: set[str] = set()
+    seen_age_keys: set[str] = set()
+    for part in parts:
+        key = _normal_key(part)
+        if not key or key in seen_keys:
+            continue
+        age_match = re.search(r"(\d+\s*岁|[零〇一二两三四五六七八九十百千]+岁)", part)
+        if age_match:
+            age_key = age_match.group(1).replace(" ", "")
+            if age_key in seen_age_keys:
+                # Multiple "十岁/十三岁..." fragments are usually the same basic bio fact.
+                continue
+            seen_age_keys.add(age_key)
+        if any(difflib.SequenceMatcher(None, key[:80], _normal_key(prev)[:80]).ratio() > 0.82 for prev in kept):
+            continue
+        seen_keys.add(key)
+        kept.append(part)
+    return "；".join(kept)
+
+
 _CHARACTER_CARD_TEXT_LIMITS: dict[str, int] = {
     "summary": 180,
     "background": 160,
@@ -442,7 +475,7 @@ def _compact_text_value(value: Any, limit: int) -> str:
             cleaned_lines.append(cleaned)
     if not cleaned_lines:
         return ""
-    text = "；".join(cleaned_lines)
+    text = _dedupe_text_segments("；".join(cleaned_lines))
     if len(text) <= limit:
         return text
     return text[: max(limit - 1, 0)].rstrip("；,，.。 ") + "…"
@@ -616,7 +649,81 @@ def _chapter_number_from_title(title: str) -> int | None:
 
 def _sort_manuscript_chapters(chapters: list[dict]) -> list[dict]:
     """Keep imported chapters in source order even after async/cache/resume paths."""
-    return sorted(chapters, key=_chapter_sort_key)
+    ordered = sorted(chapters, key=_chapter_sort_key)
+    for idx, chapter in enumerate(ordered):
+        chapter["orderIndex"] = idx
+    return ordered
+
+
+def _chapter_summary_fallback(title: str, content: str, limit: int = 180) -> str:
+    """Cheap writer-facing synopsis fallback; never leaves chapter cards blank."""
+    cleaned = re.sub(r"\s+", " ", str(content or "")).strip()
+    if not cleaned:
+        return f"{title}：导入正文为空，需人工核对原文。"
+    paragraphs = [p.strip() for p in re.split(r"\n{2,}|(?<=[。！？!?])\s+", str(content)) if p.strip()]
+    if paragraphs:
+        summary = paragraphs[0]
+        if len(paragraphs) > 1 and len(summary) < limit * 0.6:
+            summary = f"{summary}……{paragraphs[-1]}"
+    else:
+        summary = cleaned
+    summary = re.sub(r"\s+", " ", summary).strip()
+    if len(summary) > limit:
+        summary = summary[: max(limit - 1, 0)].rstrip("，,。.;； ") + "…"
+    return summary
+
+
+def _chapter_goal_fallback(language: str = "zh") -> str:
+    return _localized_text(language, "梳理本章导入正文，核对人物、事件与设定引用。", "Review imported chapter prose and verify character, event, and world references.")
+
+
+def _chapter_notes_fallback(source_file: Any, chunk_ids: list[Any]) -> str:
+    chunks = ", ".join(str(cid) for cid in chunk_ids)
+    source = str(source_file or "").strip()
+    parts = []
+    if source:
+        parts.append(f"Imported from: {source}")
+    if chunks:
+        parts.append(f"Chunks: {chunks}")
+    return "\n".join(parts)
+
+
+def _enrich_manuscript_chapter(chapter: dict, state: ImportState | dict, content: str) -> dict:
+    title = str(chapter.get("title") or "Chapter").strip()
+    chunk_ids = list(chapter.get("chunk_ids") or [])
+    chapter_number = _chapter_number_from_title(title)
+    enriched = {
+        **chapter,
+        "summary": chapter.get("summary") or _chapter_summary_fallback(title, content),
+        "goal": chapter.get("goal") or _chapter_goal_fallback(str(state.get("source_language", "zh"))),
+        "notes": chapter.get("notes") or _chapter_notes_fallback(state.get("source_file_path"), chunk_ids),
+    }
+    if chapter_number is not None:
+        enriched["chapterNumber"] = chapter_number
+    return enriched
+
+
+def _dedupe_manuscript_chapters(chapters: list[dict]) -> list[dict]:
+    """Merge accidental duplicate chapter records by parsed chapter number/title."""
+    merged: dict[str, dict] = {}
+    order: list[str] = []
+    for chapter in chapters:
+        title = str(chapter.get("title") or "").strip()
+        number = _chapter_number_from_title(title)
+        key = f"num:{number}" if number is not None else f"title:{_normal_key(title)}"
+        if key not in merged:
+            merged[key] = dict(chapter)
+            order.append(key)
+            continue
+        current = merged[key]
+        current["chunk_ids"] = list(dict.fromkeys([*current.get("chunk_ids", []), *chapter.get("chunk_ids", [])]))
+        current["manuscript_content"] = "\n\n".join(
+            part for part in [current.get("manuscript_content", ""), chapter.get("manuscript_content", "")]
+            if str(part).strip()
+        )
+        for field in ("summary", "goal", "notes"):
+            current[field] = _merge_text_field(str(current.get(field, "")), chapter.get(field, ""))
+    return [merged[key] for key in order]
 
 
 def _detect_language(sample: str) -> str:
@@ -2629,14 +2736,15 @@ async def node_build_manuscript(state: ImportState) -> dict:
             content = "\n\n".join(
                 c.get("manuscript_content", c.get("raw_content", c.get("content", ""))) for c in chapter_chunks
             )
-            manuscript_chapters.append({
+            chapter = {
                 "chapter_id": f"chap_{uuid.uuid4().hex[:8]}",
                 "title": hint,
                 "chunk_ids": [c["chunk_id"] for c in chapter_chunks],
                 "manuscript_content": content,
                 "orderIndex": len(manuscript_chapters),
-            })
-        return _sort_manuscript_chapters(manuscript_chapters)
+            }
+            manuscript_chapters.append(_enrich_manuscript_chapter(chapter, state, content))
+        return _sort_manuscript_chapters(_dedupe_manuscript_chapters(manuscript_chapters))
 
     if import_mode == "import_content_only":
         # Fast path: group raw chunks by chapter_hint
@@ -2670,13 +2778,14 @@ async def node_build_manuscript(state: ImportState) -> dict:
             e.get("manuscript_content") or chunk_map2.get(e.get("chunk_id"), {}).get("content", "")
             for e in chapter_extractions
         )
-        manuscript_chapters2.append({
+        chapter = {
             "chapter_id": f"chap_{uuid.uuid4().hex[:8]}",
             "title": hint,
             "chunk_ids": [e["chunk_id"] for e in chapter_extractions],
             "manuscript_content": content,
             "orderIndex": len(manuscript_chapters2),
-        })
+        }
+        manuscript_chapters2.append(_enrich_manuscript_chapter(chapter, state, content))
 
     if chunks and (
         not manuscript_chapters2
@@ -2686,7 +2795,7 @@ async def node_build_manuscript(state: ImportState) -> dict:
         # content (supervisor path where chunk_extractions have no manuscript_content and
         # chunk_map2 lookup also fails). Fall back to raw chunks.
         return {"manuscript_chapters": _build_from_chunks(chunks), "progress": 0.88}
-    return {"manuscript_chapters": _sort_manuscript_chapters(manuscript_chapters2), "progress": 0.88}
+    return {"manuscript_chapters": _sort_manuscript_chapters(_dedupe_manuscript_chapters(manuscript_chapters2)), "progress": 0.88}
 
 
 async def node_generate_import_todos(state: ImportState) -> dict:
@@ -3629,6 +3738,130 @@ async def node_architect_timeline(state: ImportState) -> dict:
     }
 
 
+async def node_organize_project(state: ImportState) -> dict:
+    """Deterministic world-item routing: filter module-contamination, enrich categoryPath/parentId.
+
+    Updates both entity_registry["world_detailed"] (full detail dicts) and
+    entity_registry["world"] (name→category index) so that proposal_write
+    never sees excluded names in either structure.
+    """
+    registry = dict(state.get("entity_registry", {}))
+    world_candidates: dict = {k: dict(v) for k, v in registry.get("world_detailed", {}).items()}
+
+    if not world_candidates:
+        return {}
+
+    organizer_input = OrganizerInput(
+        characters=registry.get("characters", {}),
+        events=list(registry.get("events", {}).values()),
+        relationships=state.get("relationships", []),
+        world_candidates=world_candidates,
+        manuscript_notes=[],
+        timeline_architecture=dict(state.get("timeline_architecture") or {}),
+        project_digest={},
+        source_language=state.get("source_language", "en"),
+    )
+
+    result = organize_project_content(organizer_input)
+    if state.get("import_run_id"):
+        _write_import_artifact(state["project_path"], state["import_run_id"], "organizer_output.json", result)
+
+    excluded_names: set[str] = {item["name"] for item in result.get("excluded_items", [])}
+    enrichments: dict[str, dict] = {item["name"]: item for item in result.get("world_items", [])}
+
+    updated_world_detailed: dict = {}
+    for name, detail in world_candidates.items():
+        if name in excluded_names:
+            continue
+        if name in enrichments:
+            enriched = enrichments[name]
+            detail = {
+                **detail,
+                "categoryPath": enriched.get("categoryPath", []),
+                "parentId": enriched.get("parentId"),
+                "container_key": enriched.get("container_key", ""),
+            }
+        updated_world_detailed[name] = detail
+
+    # Mirror the exclusion filter onto the flat world index so proposal_write
+    # does not iterate excluded names from entity_registry["world"].
+    updated_world: dict = {}
+    for name, cat in registry.get("world", {}).items():
+        if name in excluded_names:
+            continue
+        enriched = enrichments.get(name)
+        updated_world[name] = enriched.get("category") if enriched else cat
+
+    updated_registry = {**registry, "world_detailed": updated_world_detailed, "world": updated_world}
+    return {"entity_registry": updated_registry}
+
+
+def _reviewer_proposals_from_state(state: ImportState | dict) -> list[dict]:
+    """Build a compact Proposal-like view so direct W1 graph reviews run reviewers too."""
+    registry = state.get("entity_registry", {}) or {}
+    operations: list[dict] = []
+
+    for cid, character in (registry.get("characters", {}) or {}).items():
+        if not isinstance(character, dict) or character.get("skip_create"):
+            continue
+        operations.append({
+            "op": "create",
+            "entityType": "character",
+            "entityId": cid,
+            "fields": {
+                "name": character.get("canonical_name") or character.get("name") or "",
+                "summary": character.get("summary") or "；".join(character.get("notes", [])[:3]),
+                "background": character.get("background", ""),
+                "aliases": character.get("aliases", []),
+                "importance": character.get("importance", ""),
+            },
+        })
+
+    for eid, event in (registry.get("events", {}) or {}).items():
+        if not isinstance(event, dict):
+            continue
+        operations.append({
+            "op": "create",
+            "entityType": "timeline_event",
+            "entityId": eid,
+            "fields": {
+                **event,
+                "title": event.get("title", ""),
+                "branchId": event.get("branchId") or event.get("branch_id") or "",
+                "timelineClass": event.get("timelineClass") or event.get("eventClass") or "canonical_event",
+            },
+        })
+
+    for name, detail in (registry.get("world_detailed", {}) or {}).items():
+        if not isinstance(detail, dict):
+            continue
+        operations.append({
+            "op": "create",
+            "entityType": "world",
+            "entityId": detail.get("id") or name,
+            "fields": {
+                "name": detail.get("name") or name,
+                "category": detail.get("category", ""),
+                "description": detail.get("description", ""),
+                "categoryPath": detail.get("categoryPath", []),
+                "parentId": detail.get("parentId"),
+            },
+        })
+
+    for idx, relationship in enumerate(state.get("relationships", []) or []):
+        if not isinstance(relationship, dict):
+            continue
+        rid = relationship.get("id") or relationship.get("relationship_id") or f"relationship_{idx}"
+        operations.append({
+            "op": "create",
+            "entityType": "relationship",
+            "entityId": rid,
+            "fields": relationship,
+        })
+
+    return [{"id": f"{state.get('import_run_id', 'w1')}_review_batch", "operations": operations}]
+
+
 async def node_review_import(state: ImportState) -> dict:
     """Validate compiler outputs before proposal writes."""
     registry = state.get("entity_registry", {})
@@ -3666,6 +3899,31 @@ async def node_review_import(state: ImportState) -> dict:
         "topology_warning_count": len(timeline.get("warnings", [])),
     }
 
+    reviewer_reports: dict[str, dict] = {}
+    try:
+        from sidecar.supervisor.reviewers.quality_reviewer import QualityReviewer
+        from sidecar.supervisor.reviewers.fact_reviewer import FactReviewer
+        from sidecar.supervisor.reviewers.consistency_reviewer import ConsistencyReviewer
+
+        reviewer_state = {
+            **state,
+            "proposals": _reviewer_proposals_from_state(state),
+            "inbox_proposals": _reviewer_proposals_from_state(state),
+        }
+        reviewer_reports = {
+            "quality": QualityReviewer().review(reviewer_state),
+            "fact": FactReviewer().review(reviewer_state),
+            "consistency": ConsistencyReviewer().review(reviewer_state),
+        }
+        for reviewer_name, reviewer_report in reviewer_reports.items():
+            for finding in reviewer_report.get("findings", [])[:6]:
+                finding_id = finding.get("finding_id") or finding.get("id") or "finding"
+                severity = finding.get("severity", "unknown")
+                message = finding.get("description") or finding.get("message", "")
+                warnings.append(f"{reviewer_name}_reviewer:{severity}:{finding_id}: {message}")
+    except Exception as exc:
+        warnings.append(f"reviewers_unavailable: {exc}")
+
     report = {
         "import_run_id": state.get("import_run_id", ""),
         "status": "fail" if errors else "warning" if warnings or low_confidence_items else "pass",
@@ -3696,6 +3954,7 @@ async def node_review_import(state: ImportState) -> dict:
         },
         "duplicate_merges": timeline.get("discarded_duplicates", []) + reducer.get("duplicate_candidates", []),
         "low_confidence_items": low_confidence_items,
+        "reviewer_reports": reviewer_reports,
     }
     if state.get("import_run_id"):
         _write_import_artifact(state["project_path"], state["import_run_id"], "review_report.json", report)
@@ -3877,6 +4136,26 @@ async def node_write_to_project(state: ImportState) -> dict:
 
     # Determine default branch for event assignment, creating one when the
     # compiler did not infer any timeline branches.
+    event_branch_refs = {
+        str(event.get("branchId") or event.get("branch_id") or "").strip()
+        for event in registry.get("events", {}).values()
+        if str(event.get("branchId") or event.get("branch_id") or "").strip()
+    }
+    if timeline_branches:
+        filtered_branches: list[dict] = []
+        seen_branch_ids: set[str] = set()
+        for branch in timeline_branches:
+            branch_id = str(branch.get("id") or branch.get("branchId") or "").strip()
+            if not branch_id or branch_id in seen_branch_ids:
+                continue
+            has_events = branch_id in event_branch_refs
+            is_root = branch.get("mode") == "root" or branch.get("isDefault")
+            if has_events or (is_root and not event_branch_refs):
+                filtered_branches.append(branch)
+                seen_branch_ids.add(branch_id)
+        if filtered_branches:
+            timeline_branches = filtered_branches
+
     default_branch_id = next(
         (b["id"] for b in timeline_branches if b.get("mode") == "root"),
         None,
@@ -4096,8 +4375,8 @@ async def node_write_to_project(state: ImportState) -> dict:
                 "category": resolved_category,
                 "type": resolved_category,
                 "containerId": container_id,
-                "categoryPath": _world_category_path(resolved_category, name),
-                "parentId": container_id,
+                "categoryPath": detail.get("categoryPath") or _world_category_path(resolved_category, name),
+                "parentId": detail.get("parentId") or container_id,
                 "description": detail.get("description", ""),
                 "attributes": detail.get("attributes", []),
                 "importRunId": import_run_id,
@@ -5481,6 +5760,7 @@ def build_graph() -> Any:
     builder.add_node("build_evidence_cards", node_build_evidence_cards)
     builder.add_node("reconcile_entities", node_reconcile_entities)
     builder.add_node("architect_timeline", node_architect_timeline)
+    builder.add_node("organize_world_items", node_organize_project)
     builder.add_node("review_import", node_review_import)
     builder.add_node("write_to_project", node_write_to_project)
 
@@ -5527,7 +5807,8 @@ def build_graph() -> Any:
     builder.add_edge("infer_world_settings", "build_evidence_cards")
     builder.add_edge("build_evidence_cards", "reconcile_entities")
     builder.add_edge("reconcile_entities", "architect_timeline")
-    builder.add_edge("architect_timeline", "generate_import_todos")
+    builder.add_edge("architect_timeline", "organize_world_items")
+    builder.add_edge("organize_world_items", "generate_import_todos")
 
     builder.add_edge("generate_import_todos", "review_import")
     builder.add_edge("review_import", "write_to_project")

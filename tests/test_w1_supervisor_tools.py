@@ -808,13 +808,15 @@ class TestMinorRepairShortLatinStrip(unittest.TestCase):
 # ── Tool registry ─────────────────────────────────────────────────────────────
 
 class TestToolRegistry(unittest.TestCase):
-    def test_build_tool_registry_returns_all_ten_tools(self):
+    def test_build_tool_registry_returns_all_seventeen_tools(self):
         registry = build_tool_registry()
         expected = {
             "segment_manifest", "extract_window", "cross_validate_window",
             "rerun_window", "reduce_entities", "reduce_world_entities",
             "architect_timeline", "qa_review", "judge_import", "minor_repair",
             "proposal_write",
+            "run_quality_review", "run_fact_review", "run_consistency_review",
+            "rerun_targeted_window", "repair_import_artifacts", "write_proposal_package",
         }
         self.assertEqual(set(registry.keys()), expected)
         for name, fn in registry.items():
