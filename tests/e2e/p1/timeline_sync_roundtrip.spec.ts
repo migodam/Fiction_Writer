@@ -265,12 +265,13 @@ test('dense event labels have no visible overlap', async ({ page }) => {
   }
 });
 
-// Test 8: events with hidden labels must show tooltip on hover via hitarea
+// Test 8: sync analysis — no false-positive warnings for runtime-only fields after Synchronize click
 test('sync analysis: no false-positive warnings about runtime-only fields', async ({ page }) => {
-  const warnings: string[] = [];
-  page.on('console', (msg) => {
-    if (msg.type() === 'warn') warnings.push(msg.text());
-  });
+  const allWarnings: string[] = [];
+  const consoleHandler = (msg: import('@playwright/test').ConsoleMessage) => {
+    if (msg.type() === 'warn') allWarnings.push(msg.text());
+  };
+  page.on('console', consoleHandler);
 
   await page.goto('/');
   await expect(page.locator('[data-testid="timeline-canvas"]')).toBeVisible({ timeout: 10000 });
@@ -308,10 +309,12 @@ test('sync analysis: no false-positive warnings about runtime-only fields', asyn
   );
   // Hard-assert the button exists — if absent, the test fails loudly rather than vacuously passing
   await expect(syncBtn.first()).toBeVisible({ timeout: 5000 });
-  warnings.length = 0;
+  // Snapshot index to isolate only post-click warnings (avoids unsafe length=0 reset)
+  const preClickLen = allWarnings.length;
   await syncBtn.first().click();
   await page.waitForTimeout(500);
-  const badWarnings = warnings.filter((w) =>
+  const postClickWarnings = allWarnings.slice(preClickLen);
+  const badWarnings = postClickWarnings.filter((w) =>
     w.includes('anchorStartPos') || w.includes('anchorEndPos') ||
     (w.includes('[Timeline]') && (
       w.includes('position') || w.includes('sharedBranchIds') ||
@@ -319,6 +322,7 @@ test('sync analysis: no false-positive warnings about runtime-only fields', asyn
     ))
   );
   expect(badWarnings).toHaveLength(0);
+  page.off('console', consoleHandler);
 });
 
 test('events with hidden labels show tooltip on hover', async ({ page }) => {
