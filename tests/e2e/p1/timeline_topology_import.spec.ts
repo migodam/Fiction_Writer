@@ -383,6 +383,7 @@ test.describe('Timeline topology: proposal acceptance path', () => {
     await page.evaluate((ids) => {
       (window as any).__narrativeStore.getState().resolveProposals(ids, 'accepted');
     }, allIds);
+    // Allow resolveProposals side-effects (React state flush + async persistence) to settle
     await page.waitForTimeout(300);
 
     // Verify 4 branches were created
@@ -479,9 +480,10 @@ test.describe('Timeline topology: proposal acceptance path', () => {
     await page.reload();
     await goToTimeline(page);
 
-    // Wait for store to repopulate
+    // Wait for store to repopulate with this test's injected data specifically
     await page.waitForFunction(
-      () => (window as any).__narrativeStore.getState().timelineBranches.length > 0,
+      () => (window as any).__narrativeStore.getState().timelineBranches
+        .some((b: any) => b.id === 'branch_w3_user_plan' || b.id === 'branch_w3_seed_root'),
       { timeout: 10000 },
     );
 
