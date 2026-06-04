@@ -8,6 +8,8 @@ import { useI18n } from '../i18n';
 import { CharacterRelationshipFlow } from './graph';
 import { AIPortraitModal } from './ai/AIPortraitModal';
 import { electronApi } from '../services/electronApi';
+import { TagTreePanel } from './TagTreePanel';
+import type { CharacterTag } from '../models/project';
 
 export const CharactersWorkspace = () => {
   const navigate = useNavigate();
@@ -33,12 +35,18 @@ export const CharactersWorkspace = () => {
     characterPartitions,
     addCharacterPartition,
     deleteCharacterPartition,
+    graphImportanceFilter,
+    characterGroupCollapsed,
+    graphSidebarLinkageEnabled,
+    setGraphImportanceFilter,
+    setCharacterGroupCollapsed,
+    toggleCharacterGroupCollapsed,
+    setGraphSidebarLinkageEnabled,
   } = useProjectStore();
   const { t } = useI18n();
   const { openContextMenu, setLastActionStatus } = useUIStore();
   const [search, setSearch] = useState('');
   const [showMinor, setShowMinor] = useState(false);
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [showNewPartition, setShowNewPartition] = useState(false);
   const [newPartitionName, setNewPartitionName] = useState('');
   const [dragCharacterId, setDragCharacterId] = useState<string | null>(null);
@@ -95,6 +103,20 @@ export const CharactersWorkspace = () => {
     }
     setDragCharacterId(null);
   }, [characters, updateCharacter, setLastActionStatus]);
+
+  const handleGroupToggle = useCallback(
+    (groupName: string) => {
+      toggleCharacterGroupCollapsed(groupName);
+      if (graphSidebarLinkageEnabled) {
+        const next = { ...characterGroupCollapsed, [groupName]: !characterGroupCollapsed[groupName] };
+        const hidden = Object.entries(next)
+          .filter(([, isCollapsed]) => isCollapsed)
+          .map(([g]) => g);
+        setGraphImportanceFilter(hidden);
+      }
+    },
+    [characterGroupCollapsed, graphSidebarLinkageEnabled, toggleCharacterGroupCollapsed, setGraphImportanceFilter],
+  );
 
   return (
     <div className="flex h-full overflow-hidden bg-bg">
@@ -197,8 +219,9 @@ export const CharactersWorkspace = () => {
                 >
                   <button
                     type="button"
+                    data-testid={`character-group-header-${group.group}`}
                     className="flex w-full items-center justify-between px-4 py-3 text-left"
-                    onClick={() => setCollapsed((current) => ({ ...current, [group.group]: !current[group.group] }))}
+                    onClick={() => handleGroupToggle(group.group)}
                     onContextMenu={(e) => {
                       e.preventDefault();
                       openContextMenu({
@@ -220,7 +243,7 @@ export const CharactersWorkspace = () => {
                     </span>
                     <span className="rounded-full border border-border bg-bg px-2 py-0.5 text-[10px] font-black text-text-3">{group.items.length}</span>
                   </button>
-                  {!collapsed[group.group] && group.items.map((character) => (
+                  {!characterGroupCollapsed[group.group] && group.items.map((character) => (
                     <button
                       key={character.id}
                       type="button"
@@ -665,7 +688,17 @@ const CharacterDetail = ({ character, tab }: any) => {
 };
 
 const RelationshipGraphPanel: React.FC = () => {
-  const { characters, addRelationship } = useProjectStore();
+  const {
+    characters,
+    characterPartitions,
+    addRelationship,
+    graphImportanceFilter,
+    characterGroupCollapsed,
+    graphSidebarLinkageEnabled,
+    setGraphImportanceFilter,
+    setCharacterGroupCollapsed,
+    setGraphSidebarLinkageEnabled,
+  } = useProjectStore();
   const { setLastActionStatus } = useUIStore();
   const { t } = useI18n();
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -710,6 +743,68 @@ const RelationshipGraphPanel: React.FC = () => {
           {t('characters.createRelationshipLabel')}
         </button>
       </div>
+      <div className="flex flex-wrap items-center gap-2 border-b border-border bg-bg px-6 py-2">
+        <button
+          type="button"
+          data-testid="graph-importance-filter-all"
+          onClick={() => {
+            setGraphImportanceFilter([]);
+            setCharacterGroupCollapsed({});
+          }}
+          className={cn(
+            'rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-widest transition-colors',
+            graphImportanceFilter.length === 0
+              ? 'border-brand bg-brand text-white'
+              : 'border-border text-text-3 hover:border-brand hover:text-brand',
+          )}
+        >
+          {t('characters.filterAll', 'All')}
+        </button>
+        {characterPartitions.map((imp) => {
+          const isHidden = graphImportanceFilter.includes(imp);
+          return (
+            <button
+              key={imp}
+              type="button"
+              data-testid={`graph-importance-filter-${imp}`}
+              onClick={() => {
+                const newFilter = isHidden
+                  ? graphImportanceFilter.filter((f) => f !== imp)
+                  : [...graphImportanceFilter, imp];
+                setGraphImportanceFilter(newFilter);
+                if (graphSidebarLinkageEnabled) {
+                  const nextCollapsed: Record<string, boolean> = {};
+                  newFilter.forEach((g) => { nextCollapsed[g] = true; });
+                  setCharacterGroupCollapsed(nextCollapsed);
+                }
+              }}
+              className={cn(
+                'rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-widest transition-colors',
+                isHidden
+                  ? 'border-border bg-bg text-text-3 opacity-40'
+                  : 'border-border text-text-3 hover:border-brand hover:text-brand',
+              )}
+            >
+              {imp}
+            </button>
+          );
+        })}
+        <button
+          type="button"
+          data-testid="graph-sidebar-linkage-toggle"
+          onClick={() => setGraphSidebarLinkageEnabled(!graphSidebarLinkageEnabled)}
+          className={cn(
+            'ml-auto rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-widest transition-colors',
+            graphSidebarLinkageEnabled
+              ? 'border-brand bg-brand/10 text-brand'
+              : 'border-border text-text-3',
+          )}
+        >
+          {graphSidebarLinkageEnabled
+            ? t('characters.linkageOn', 'Linked')
+            : t('characters.linkageOff', 'Unlinked')}
+        </button>
+      </div>
       {showCreateForm && (
         <div className="flex items-center gap-3 border-b border-border bg-brand/5 px-6 py-3">
           <select value={sourceId} onChange={(e) => setSourceId(e.target.value)} className="rounded-xl border border-border bg-bg px-3 py-2 text-sm outline-none">
@@ -743,7 +838,14 @@ const RelationshipGraphPanel: React.FC = () => {
 };
 
 const TagsPanel = () => {
-  const { characters, characterTags, addCharacterTag, toggleCharacterTagMembership } = useProjectStore();
+  const {
+    characters,
+    characterTags,
+    addCharacterTag,
+    toggleCharacterTagMembership,
+    moveCharacterTag,
+    toggleCharacterTagCollapsed,
+  } = useProjectStore();
   const { t } = useI18n();
   const [draft, setDraft] = useState({ name: '', color: '#f59e0b' });
   const [selectedTagId, setSelectedTagId] = useState<string | null>(null);
@@ -760,8 +862,49 @@ const TagsPanel = () => {
       .slice(0, 20);
   }, [characters, tagSearch]);
 
+  const renderTagNode = (tagEntry: CharacterTag) => {
+    const isSelected = selectedTagId === tagEntry.id;
+    return (
+      <div className="rounded-2xl border border-border bg-card p-4 shadow-1">
+        <button
+          type="button"
+          className="flex w-full items-center gap-3 text-left"
+          onClick={() => setSelectedTagId(isSelected ? null : tagEntry.id)}
+        >
+          <div className="h-3 w-3 flex-shrink-0 rounded-full" style={{ background: tagEntry.color }} />
+          <div className="text-sm font-black text-text">{tagEntry.name}</div>
+          <span className="ml-auto rounded-full border border-border bg-bg px-2 py-0.5 text-[10px] font-black text-text-3">
+            ({tagEntry.characterIds.length})
+          </span>
+        </button>
+        {isSelected && (
+          <div className="mt-3">
+            <input
+              type="text"
+              data-testid="tag-character-search-input"
+              value={tagSearch}
+              onChange={(event) => setTagSearch(event.target.value)}
+              placeholder={t('tags.searchCharacters')}
+              className="mb-3 w-full rounded-xl border border-border bg-bg px-3 py-2 text-sm outline-none"
+            />
+            <div className="flex flex-wrap gap-2">
+              {filteredCharacters.map((character) => {
+                const active = tagEntry.characterIds.includes(character.id);
+                return (
+                  <button key={character.id} type="button" className={cn('rounded-full border px-3 py-2 text-xs font-bold transition-colors', active ? 'border-brand bg-brand/15 text-brand-2' : 'border-border text-text-2 hover:border-brand')} onClick={() => toggleCharacterTagMembership(tagEntry.id, character.id)}>
+                    {character.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
-    <div className="mx-auto max-w-6xl">
+    <div className="mx-auto max-w-3xl">
       <div className="mb-8">
         <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('characters.tagSystem')}</div>
         <div className="mt-2 text-3xl font-black text-text">{t('characters.characterTags')}</div>
@@ -771,55 +914,30 @@ const TagsPanel = () => {
         <input value={draft.color} onChange={(event) => setDraft((current) => ({ ...current, color: event.target.value }))} className="h-12 rounded-xl border border-border bg-bg px-4 py-3 outline-none" />
         <button type="button" className="rounded-xl bg-brand px-5 py-3 text-sm font-black text-white" onClick={() => {
           if (!draft.name.trim()) return;
-          addCharacterTag({ id: `tag_${Date.now()}`, name: draft.name.trim(), color: draft.color, description: '', characterIds: [] });
+          addCharacterTag({
+            id: `tag_${Date.now()}`,
+            name: draft.name.trim(),
+            color: draft.color,
+            description: '',
+            characterIds: [],
+            parentTagId: null,
+            sortOrder: characterTags.length,
+          });
           setDraft({ name: '', color: '#f59e0b' });
         }}>
           <Plus size={14} className="mr-2 inline" />
           {t('characters.createTagBtn')}
         </button>
       </div>
-      <div className="grid gap-5 lg:grid-cols-2">
-        {characterTags.map((tagEntry) => {
-          const isSelected = selectedTagId === tagEntry.id;
-          return (
-            <div key={tagEntry.id} className="rounded-3xl border border-border bg-card p-6 shadow-1">
-              <button
-                type="button"
-                className="mb-4 flex w-full items-center gap-3 text-left"
-                onClick={() => setSelectedTagId(isSelected ? null : tagEntry.id)}
-              >
-                <div className="h-3 w-3 flex-shrink-0 rounded-full" style={{ background: tagEntry.color }} />
-                <div className="text-lg font-black text-text">{tagEntry.name}</div>
-                <span className="ml-auto rounded-full border border-border bg-bg px-2 py-0.5 text-[10px] font-black text-text-3">
-                  ({tagEntry.characterIds.length})
-                </span>
-              </button>
-              {isSelected && (
-                <div>
-                  <input
-                    type="text"
-                    data-testid="tag-character-search-input"
-                    value={tagSearch}
-                    onChange={(event) => setTagSearch(event.target.value)}
-                    placeholder={t('tags.searchCharacters')}
-                    className="mb-3 w-full rounded-xl border border-border bg-bg px-3 py-2 text-sm outline-none"
-                  />
-                  <div className="flex flex-wrap gap-2">
-                    {filteredCharacters.map((character) => {
-                      const active = tagEntry.characterIds.includes(character.id);
-                      return (
-                        <button key={character.id} type="button" className={cn('rounded-full border px-3 py-2 text-xs font-bold transition-colors', active ? 'border-brand bg-brand/15 text-brand-2' : 'border-border text-text-2 hover:border-brand')} onClick={() => toggleCharacterTagMembership(tagEntry.id, character.id)}>
-                          {character.name}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+      <TagTreePanel
+        nodes={characterTags}
+        renderNodeContent={(node) => renderTagNode(node as CharacterTag)}
+        onMove={(dragId, newParentId, insertBeforeSiblingId) =>
+          moveCharacterTag(dragId, newParentId, insertBeforeSiblingId)
+        }
+        onToggleCollapse={toggleCharacterTagCollapsed}
+        testIdPrefix="character-tag"
+      />
     </div>
   );
 };
