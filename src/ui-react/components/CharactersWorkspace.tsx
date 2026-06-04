@@ -107,16 +107,17 @@ export const CharactersWorkspace = () => {
   const handleGroupToggle = useCallback(
     (groupName: string) => {
       toggleCharacterGroupCollapsed(groupName);
-      if (graphSidebarLinkageEnabled) {
-        const next = { ...characterGroupCollapsed, [groupName]: !characterGroupCollapsed[groupName] };
-        const hidden = Object.entries(next)
-          .filter(([, isCollapsed]) => isCollapsed)
-          .map(([g]) => g);
-        setGraphImportanceFilter(hidden);
-      }
     },
-    [characterGroupCollapsed, graphSidebarLinkageEnabled, toggleCharacterGroupCollapsed, setGraphImportanceFilter],
+    [toggleCharacterGroupCollapsed],
   );
+
+  useEffect(() => {
+    if (!graphSidebarLinkageEnabled) return;
+    const hidden = Object.entries(characterGroupCollapsed)
+      .filter(([, isCollapsed]) => isCollapsed)
+      .map(([g]) => g);
+    setGraphImportanceFilter(hidden);
+  }, [characterGroupCollapsed, graphSidebarLinkageEnabled, setGraphImportanceFilter]);
 
   return (
     <div className="flex h-full overflow-hidden bg-bg">
@@ -749,7 +750,9 @@ const RelationshipGraphPanel: React.FC = () => {
           data-testid="graph-importance-filter-all"
           onClick={() => {
             setGraphImportanceFilter([]);
-            setCharacterGroupCollapsed({});
+            if (graphSidebarLinkageEnabled) {
+              setCharacterGroupCollapsed({});
+            }
           }}
           className={cn(
             'rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-widest transition-colors',
