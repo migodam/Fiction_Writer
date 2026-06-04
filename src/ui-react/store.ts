@@ -1137,7 +1137,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         },
       );
     }),
-  }))); },
+  })); },
   addTimelineBranch: (branch) => { get().captureUndoSnapshot('Add branch'); set((state) => withDirtyState({ timelineBranches: [...state.timelineBranches, branch] })); },
   updateTimelineBranch: (branch) => { get().captureUndoSnapshot('Edit branch'); set((state) => withDirtyState({ timelineBranches: state.timelineBranches.map((entry) => entry.id === branch.id ? branch : entry) })); },
   deleteTimelineBranch: (branchId) => { get().captureUndoSnapshot('Delete branch'); set((state) => {
