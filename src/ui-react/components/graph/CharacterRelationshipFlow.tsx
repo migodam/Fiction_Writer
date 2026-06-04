@@ -241,11 +241,8 @@ export const CharacterRelationshipFlow: React.FC = () => {
     [relationships, visibleCharIds],
   );
 
-  const initialNodes = useMemo(() => buildNodes(visibleChars), [visibleChars]);
-  const initialEdges = useMemo(() => buildEdges(visibleRelationships), [visibleRelationships]);
-
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  const [nodes, setNodes, onNodesChange] = useNodesState(buildNodes(visibleChars));
+  const [edges, setEdges, onEdgesChange] = useEdgesState(buildEdges(visibleRelationships));
 
   // Update nodes when visible characters change
   React.useEffect(() => {
