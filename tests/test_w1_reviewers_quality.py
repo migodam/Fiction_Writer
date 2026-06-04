@@ -186,6 +186,107 @@ class TestQualityReviewer(unittest.TestCase):
         self.assertIn("char_han_2", delete_ids)
         self.assertIn("char_han_3", delete_ids)
 
+    def test_quality_catches_age_phrase_23sui(self):
+        proposals = [_make_char_proposal(
+            "char_hanli", "韩立",
+            summary="韩立今年23岁，进入七玄门修炼。数月后，韩立23岁时已能凝聚灵气。",
+        )]
+        state = _make_state(proposals=proposals)
+        report = self.reviewer.review(state)
+        check_names = [f["check_name"] for f in report["findings"]]
+        self.assertIn("character_repeated_age_phrase", check_names)
+        repair = next(
+            (r for r in report["local_repair_actions"] if r["action_type"] == "clean_age_phrase_duplicate"),
+            None,
+        )
+        self.assertIsNotNone(repair, "Expected clean_age_phrase_duplicate repair")
+        ops = repair.get("proposed_operations", [])
+        self.assertTrue(ops, "Repair must have proposed_operations")
+        cleaned = ops[0]["fields"].get("summary", "")
+        self.assertEqual(cleaned.count("23岁"), 1, "After repair, 23岁 must appear exactly once")
+
+    def test_quality_catches_age_phrase_shisui(self):
+        proposals = [_make_char_proposal(
+            "char_wuyan", "五言",
+            summary="五言十岁入门，苦练武艺。又五年后，五言仍是十岁孩童面貌。",
+        )]
+        state = _make_state(proposals=proposals)
+        report = self.reviewer.review(state)
+        check_names = [f["check_name"] for f in report["findings"]]
+        self.assertIn("character_repeated_age_phrase", check_names)
+
+    def test_quality_catches_duplicate_chapters_by_title(self):
+        chapters = [
+            {"chapter_id": "ch_1a", "title": "第九章", "chapterNumber": 9, "chunk_ids": [1], "manuscript_content": "a"},
+            {"chapter_id": "ch_1b", "title": "第九章", "chapterNumber": 9, "chunk_ids": [2], "manuscript_content": "b"},
+            {"chapter_id": "ch_1c", "title": "第九章", "chapterNumber": 9, "chunk_ids": [3], "manuscript_content": "c"},
+        ]
+        state = _make_state(manuscript_chapters=chapters)
+        report = self.reviewer.review(state)
+        check_names = [f["check_name"] for f in report["findings"]]
+        self.assertIn("duplicate_manuscript_chapter", check_names)
+        repair = next(
+            (r for r in report["local_repair_actions"] if r["action_type"] == "dedupe_chapters"),
+            None,
+        )
+        self.assertIsNotNone(repair, "Expected dedupe_chapters repair")
+        ops = repair.get("proposed_operations", [])
+        self.assertTrue(ops, "dedupe_chapters must have proposed_operations")
+        delete_ids = {op["entityId"] for op in ops}
+        self.assertNotIn("ch_1a", delete_ids)
+        self.assertIn("ch_1b", delete_ids)
+        self.assertIn("ch_1c", delete_ids)
+
+    def test_quality_catches_duplicate_chapters_no_chapter_number(self):
+        chapters = [
+            {"chapter_id": "ch_a", "title": "第十章", "chapterNumber": None, "chunk_ids": [1], "manuscript_content": "x"},
+            {"chapter_id": "ch_b", "title": "第十章", "chapterNumber": None, "chunk_ids": [2], "manuscript_content": "y"},
+        ]
+        state = _make_state(manuscript_chapters=chapters)
+        report = self.reviewer.review(state)
+        check_names = [f["check_name"] for f in report["findings"]]
+        self.assertIn("duplicate_manuscript_chapter", check_names)
+
+    def test_quality_local_repair_output_structure(self):
+        """Repair actions are advisory only — reviewer must not mutate state."""
+        import copy
+        proposals = [_make_char_proposal(
+            "char_dup", "韩立",
+            summary="韩立23岁进门，苦练多年。韩立23岁时已是外门弟子。",
+        )]
+        state_before = _make_state(proposals=proposals)
+        state_snapshot = copy.deepcopy(state_before)
+        report = self.reviewer.review(state_before)
+        self.assertEqual(state_before.get("proposals"), state_snapshot.get("proposals"))
+        self.assertIn("manifest_revision_diffs", report)
+        self.assertIsInstance(report["manifest_revision_diffs"], list)
+        for action in report["local_repair_actions"]:
+            self.assertIn("action_type", action)
+            self.assertIn("target_entity_ids", action)
+            self.assertIn("description", action)
+            self.assertIn("deterministic", action)
+
+    def test_import_test13_regression_quality(self):
+        """Regression: synthetic import_test13 state — all quality symptoms caught."""
+        proposals = [
+            _make_char_proposal("char_hanli", "韩立",
+                summary="韩立自幼聪明，十岁便能背诵百家诗文。...一眨眼已过数年，韩立十岁的记忆历历在目。"),
+            _make_char_proposal("char_wuyan", "舞岩",
+                summary="舞岩23岁参加七玄门测试，天赋异禀。三年后，舞岩23岁的那一幕仍常被提起。"),
+        ]
+        chapters = (
+            [{"chapter_id": f"ch9_{i}", "title": "第九章", "chapterNumber": 9,
+              "chunk_ids": [i], "manuscript_content": "..."} for i in range(3)]
+            + [{"chapter_id": f"ch10_{i}", "title": "第十章", "chapterNumber": 10,
+                "chunk_ids": [i + 3], "manuscript_content": "..."} for i in range(2)]
+        )
+        state = _make_state(proposals=proposals, manuscript_chapters=chapters)
+        report = self.reviewer.review(state)
+        check_names = [f["check_name"] for f in report["findings"]]
+        self.assertIn("character_repeated_age_phrase", check_names)
+        self.assertIn("duplicate_manuscript_chapter", check_names)
+        self.assertIn(report["verdict"], ("needs_repair", "needs_orchestrator_rerun"))
+
 
 if __name__ == "__main__":
     unittest.main()

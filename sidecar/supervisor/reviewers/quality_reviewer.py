@@ -14,6 +14,9 @@ from sidecar.supervisor.reviewers.schemas import (
 )
 
 
+_AGE_PHRASE_RE = re.compile(r"(\d{1,3}岁|[零一二三四五六七八九十百]+岁)")
+
+
 def _ops(proposals: list, entity_type: str) -> list[dict]:
     type_set = (
         {"world", "world_entity", "organization", "faction", "location"}
@@ -58,10 +61,12 @@ class QualityReviewer(BaseReviewer):
         self._check_world_module_pollution(char_ops, world_ops, findings)
         self._check_character_duplicate_name(char_ops, findings, repairs)
         self._check_character_repeated_phrases(char_ops, findings, repairs)
+        self._check_character_age_phrase_repeated(char_ops, findings, repairs)
         self._check_character_missing_major(state, findings, orch_reqs)
         self._check_character_thin_card(char_ops, findings)
         self._check_relationship_no_evidence(rel_ops, findings)
         self._check_manuscript_empty(state, findings)
+        self._check_duplicate_manuscript_chapters(state, findings, repairs)
 
         return self._build_report(findings, repairs, orch_reqs)
 
@@ -243,6 +248,52 @@ class QualityReviewer(BaseReviewer):
                     ],
                 ))
 
+    def _check_character_age_phrase_repeated(
+        self, char_ops: list, findings: list, repairs: list
+    ) -> None:
+        """Detect short age phrases (e.g. '23岁', '十岁') that appear more than once in a field."""
+        for op in char_ops:
+            fields = op.get("fields") or {}
+            entity_id = op.get("entityId", "?")
+            char_name = fields.get("name", entity_id)
+            cleaned_fields: dict = {}
+            for field_name in ("summary", "background"):
+                text = fields.get(field_name, "") or ""
+                if not text:
+                    continue
+                age_phrases = _AGE_PHRASE_RE.findall(text)
+                seen: dict[str, int] = {}
+                for phrase in age_phrases:
+                    seen[phrase] = seen.get(phrase, 0) + 1
+                repeated = {phrase for phrase, count in seen.items() if count > 1}
+                if not repeated:
+                    continue
+                cleaned = text
+                for phrase in sorted(repeated):
+                    first_end = cleaned.index(phrase) + len(phrase)
+                    cleaned = cleaned[:first_end] + cleaned[first_end:].replace(phrase, "")
+                cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+                if cleaned != text:
+                    cleaned_fields[field_name] = cleaned
+            if cleaned_fields:
+                findings.append(self._finding(
+                    "character_repeated_age_phrase",
+                    f"Character '{char_name}' has repeated age phrase(s) in {', '.join(cleaned_fields)}",
+                    "medium",
+                    entity_refs=[entity_id],
+                    entity_id=entity_id,
+                ))
+                repairs.append(self._repair(
+                    "clean_age_phrase_duplicate",
+                    [entity_id],
+                    f"Remove duplicate age phrase(s) from '{char_name}'. "
+                    "ADVISORY: repair appears in report only; apply via proposal acceptance.",
+                    deterministic=True,
+                    proposed_operations=[
+                        {"op": "update", "entityType": "character", "entityId": entity_id, "fields": cleaned_fields}
+                    ],
+                ))
+
     def _check_character_missing_major(
         self, state: dict, findings: list, orch_reqs: list
     ) -> None:
@@ -309,3 +360,55 @@ class QualityReviewer(BaseReviewer):
                 "medium",
                 entity_id="manuscript",
             ))
+
+    def _check_duplicate_manuscript_chapters(
+        self, state: dict, findings: list, repairs: list
+    ) -> None:
+        """Detect duplicate chapters by title (primary) or chapter number (fallback)."""
+        chapters = state.get("manuscript_chapters") or []
+        if not chapters or not isinstance(chapters, list):
+            return
+        by_title: dict[str, list[str]] = defaultdict(list)
+        by_number: dict[int, list[str]] = defaultdict(list)
+        for ch in chapters:
+            if not isinstance(ch, dict):
+                continue
+            title = str(ch.get("title") or "").strip()
+            ch_id = str(ch.get("chapter_id") or title or "?")
+            if title:
+                by_title[title.lower()].append(ch_id)
+            num = ch.get("chapterNumber")
+            if isinstance(num, int):
+                by_number[num].append(ch_id)
+        reported_ids: set[str] = set()
+        for title, ids in by_title.items():
+            if len(ids) > 1:
+                reported_ids.update(ids)
+                findings.append(self._finding(
+                    "duplicate_manuscript_chapter",
+                    f"Chapter '{title}' appears {len(ids)} times",
+                    "high",
+                    entity_refs=ids,
+                    entity_id=f"dup_title_{title[:20]}",
+                ))
+                repairs.append(self._repair(
+                    "dedupe_chapters",
+                    ids,
+                    f"Keep first '{title}'; delete {len(ids)-1} duplicate(s). "
+                    "ADVISORY: apply via proposal acceptance only.",
+                    deterministic=True,
+                    proposed_operations=[
+                        {"op": "delete", "entityType": "manuscript_chapter", "entityId": dup_id}
+                        for dup_id in ids[1:]
+                    ],
+                ))
+        for num, ids in by_number.items():
+            uncovered = [i for i in ids if i not in reported_ids]
+            if len(uncovered) > 1:
+                findings.append(self._finding(
+                    "duplicate_manuscript_chapter_number",
+                    f"Chapter number {num} assigned to {len(uncovered)} chapters (no title overlap)",
+                    "high",
+                    entity_refs=uncovered,
+                    entity_id=f"dup_num_{num}",
+                ))

@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 from typing import List, Literal
 
 from sidecar.supervisor.reviewers.schemas import (
+    ManifestRevisionDiff,
     OrchestratorRequest,
     RepairAction,
     ReviewFinding,
@@ -88,6 +89,7 @@ class BaseReviewer(ABC):
         repairs: List[RepairAction],
         orch_reqs: List[OrchestratorRequest],
         windows: int = 0,
+        manifest_revision_diffs: List[ManifestRevisionDiff] | None = None,
     ) -> ReviewReport:
         if not findings:
             verdict: Literal["pass", "warn", "needs_repair", "needs_orchestrator_rerun"] = "pass"
@@ -116,4 +118,5 @@ class BaseReviewer(ABC):
             local_repair_actions=repairs,
             orchestrator_requests=orch_reqs,
             token_cost_ledger=self._zero_ledger(windows),
+            manifest_revision_diffs=manifest_revision_diffs or [],
         )

@@ -4,7 +4,10 @@ from __future__ import annotations
 from typing import List, Literal
 
 from sidecar.supervisor.reviewers.base import BaseReviewer
+import uuid
+
 from sidecar.supervisor.reviewers.schemas import (
+    ManifestRevisionDiff,
     OrchestratorRequest,
     RepairAction,
     ReviewFinding,
@@ -36,7 +39,8 @@ class ConsistencyReviewer(BaseReviewer):
         self._check_world_item_conflict(digest, registry, findings, repairs)
         self._check_relationship_redundant(digest, registry, findings, repairs)
 
-        return self._build_report(findings, repairs, orch_reqs)
+        diffs = self._produce_manifest_revision_diffs(digest, registry)
+        return self._build_report(findings, repairs, orch_reqs, manifest_revision_diffs=diffs)
 
     def _check_character_duplicates(
         self, digest: dict, registry: dict, findings: list, repairs: list
@@ -165,3 +169,41 @@ class ConsistencyReviewer(BaseReviewer):
                     [str(rel_id)],
                     f"Skip or merge duplicate relationship {src}→{tgt}",
                 ))
+
+    def _produce_manifest_revision_diffs(
+        self, digest: dict, registry: dict
+    ) -> list[ManifestRevisionDiff]:
+        """Emit protect-diffs when a key character field changes vs. existing project.
+
+        Advisory output only — does not mutate state or proposals.
+        """
+        existing_chars = digest.get("characters") or {}
+        new_chars = registry.get("characters") or {}
+        diffs: list[ManifestRevisionDiff] = []
+        for char_id, char_data in new_chars.items():
+            if not isinstance(char_data, dict):
+                continue
+            new_name = _normalize(str(char_data.get("name") or char_id))
+            existing_entry = next(
+                (v for v in existing_chars.values()
+                 if isinstance(v, dict) and _normalize(v.get("name", "")) == new_name),
+                None,
+            )
+            if not existing_entry:
+                continue
+            for field in ("summary", "background", "role"):
+                old_val = str(existing_entry.get(field) or "").strip()
+                new_val = str(char_data.get(field) or "").strip()
+                if not old_val or not new_val or old_val == new_val:
+                    continue
+                diffs.append(ManifestRevisionDiff(
+                    revision_id=f"mrd_{uuid.uuid4().hex[:8]}",
+                    entity_type="character",
+                    entity_id=char_id,
+                    field=field,
+                    old_value=old_val[:200],
+                    new_value=new_val[:200],
+                    action="protect",
+                    reason=f"Existing project '{field}' differs from new import; protecting earlier fact.",
+                ))
+        return diffs

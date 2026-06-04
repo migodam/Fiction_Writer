@@ -33,6 +33,17 @@ class OrchestratorRequest(TypedDict):
     priority: Literal["low", "medium", "high"]
 
 
+class ManifestRevisionDiff(TypedDict):
+    revision_id: str
+    entity_type: str              # "character" | "chapter" | "world_item"
+    entity_id: str
+    field: str                    # which field changed
+    old_value: str                # what was in the existing project
+    new_value: str                # what the new import proposes
+    action: Literal["protect", "update", "merge"]
+    reason: str
+
+
 class ZeroCostLedger(TypedDict):
     live_model_calls: bool
     full50_run: bool
@@ -49,3 +60,4 @@ class ReviewReport(TypedDict):
     local_repair_actions: List[RepairAction]
     orchestrator_requests: List[OrchestratorRequest]
     token_cost_ledger: ZeroCostLedger
+    manifest_revision_diffs: List[ManifestRevisionDiff]

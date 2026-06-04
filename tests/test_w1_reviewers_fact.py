@@ -107,6 +107,47 @@ class TestFactReviewer(unittest.TestCase):
         check_names = [f["check_name"] for f in report["findings"]]
         self.assertIn("evidence_missing", check_names)
 
+    def test_fact_reviewer_never_reads_chunks_directly(self):
+        """FactReviewer must not consume chunks array from state — snippet-only RAG."""
+        state = {
+            "evidence_cards": [],
+            "proposals": [],
+            "chunks": [{"chunk_id": 1, "raw_content": "entire novel chapter 1..."}],
+        }
+        report = self.reviewer.review(state)
+        self.assertIsNotNone(report)
+        self.assertEqual(report["findings"], [])
+
+    def test_fact_reviewer_only_reports_obvious_mismatch(self):
+        """Near-match must not trigger; clear topic mismatch must trigger."""
+        # Near-match: overlapping tokens → Jaccard should be above threshold
+        card_match = _make_evidence_card(
+            "char_close",
+            "brave warrior who fights",
+            snippet="brave warrior battles enemies in mountains",
+        )
+        proposal_match = _make_char_proposal(
+            "char_close", "Close",
+            summary="brave warrior who fights",
+            source_segment_id="seg_1",
+        )
+        state = _make_state_with_cards([card_match], [proposal_match])
+        report = self.reviewer.review(state)
+        mismatch = [f for f in report["findings"] if f["check_name"] == "evidence_entity_mismatch"]
+        self.assertEqual(mismatch, [], "Near-match must NOT trigger evidence_entity_mismatch")
+
+        # Clear mismatch: completely different topics → must flag
+        card_bad = _make_evidence_card(
+            "char_bad",
+            "fierce swordsman from the north",
+            snippet="planted tomatoes and watered the garden",
+        )
+        proposal_bad = _make_char_proposal("char_bad", "Bad", summary="fierce swordsman from the north")
+        state2 = _make_state_with_cards([card_bad], [proposal_bad])
+        report2 = self.reviewer.review(state2)
+        mismatch2 = [f for f in report2["findings"] if f["check_name"] == "evidence_entity_mismatch"]
+        self.assertTrue(len(mismatch2) > 0, "Clear mismatch must be reported")
+
 
 if __name__ == "__main__":
     unittest.main()

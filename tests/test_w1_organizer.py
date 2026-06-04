@@ -360,3 +360,58 @@ def test_node_organize_project_filters_and_enriches():
     assert "categoryPath" in item, "Organizer must enrich surviving items with categoryPath"
     assert item["categoryPath"] == ["世界模型", "地理位置", "神手谷"], \
         f"Expected organizer path with name appended, got {item['categoryPath']}"
+
+
+# ---------------------------------------------------------------------------
+# Test 15 — Full acceptance matrix: exclusions + correct routings + ambiguous 堂 suffix
+# ---------------------------------------------------------------------------
+
+
+def test_organizer_full_acceptance_matrix():
+    """Verifies the complete routing acceptance matrix from the W2 task spec."""
+    inp = _make_input(
+        characters={"char_1": {"name": "韩立"}, "char_2": {"name": "王护法"}},
+        world_candidates={
+            # Must be excluded (identity/role ranks)
+            "记名弟子": _world_candidate(category="cultivation_method"),
+            "内门弟子": _world_candidate(category="cultivation_method"),
+            "外门弟子": _world_candidate(category="rule"),
+            # Must be excluded (person names)
+            "韩立": _world_candidate(category="concept"),
+            "王护法": _world_candidate(category="concept"),
+            # Must survive with correct routing
+            "长春功": _world_candidate(category="cultivation_method"),
+            "七玄门": _world_candidate(category="organization"),
+            "神手谷": _world_candidate(category="location"),
+            # Ambiguous 堂 suffix: must survive as location or organization (not excluded)
+            "七玄堂": _world_candidate(category="location"),
+            "供奉堂": _world_candidate(category="organization"),
+        },
+    )
+    out = organize_project_content(inp)
+
+    excluded_names = {e["name"] for e in out["excluded_items"]}
+    assert "记名弟子" in excluded_names, "记名弟子 must be excluded"
+    assert "内门弟子" in excluded_names, "内门弟子 must be excluded"
+    assert "外门弟子" in excluded_names, "外门弟子 must be excluded"
+    assert "韩立" in excluded_names, "Person name 韩立 must be excluded"
+    assert "王护法" in excluded_names, "Person name 王护法 must be excluded"
+
+    surviving = {item["name"]: item for item in out["world_items"]}
+    assert "长春功" in surviving, "长春功 must survive"
+    assert surviving["长春功"]["container_key"] == "cultivation_methods", \
+        f"长春功 must route to cultivation_methods, got {surviving['长春功']['container_key']}"
+    assert "七玄门" in surviving, "七玄门 must survive"
+    assert surviving["七玄门"]["container_key"] == "organizations", \
+        f"七玄门 must route to organizations, got {surviving['七玄门']['container_key']}"
+    assert "神手谷" in surviving, "神手谷 must survive"
+    assert surviving["神手谷"]["container_key"] == "locations", \
+        f"神手谷 must route to locations, got {surviving['神手谷']['container_key']}"
+
+    # Ambiguous 堂 suffix: must survive (not be excluded) as location or organization
+    assert "七玄堂" in surviving, "七玄堂 must survive as location/organization — not excluded"
+    assert surviving["七玄堂"]["container_key"] in ("locations", "organizations"), \
+        f"七玄堂 container_key must be locations or organizations, got {surviving['七玄堂']['container_key']}"
+    assert "供奉堂" in surviving, "供奉堂 must survive as location/organization — not excluded"
+    assert surviving["供奉堂"]["container_key"] in ("locations", "organizations"), \
+        f"供奉堂 container_key must be locations or organizations, got {surviving['供奉堂']['container_key']}"
