@@ -45,6 +45,7 @@ import type {
   WorldMapDocument,
   WorldSettings,
   WorldContainer,
+  WorldCategoryNode,
   WorldItem,
   AppSettings,
 } from './models/project';
@@ -159,8 +160,14 @@ interface ProjectState {
   characters: Character[];
   characterTags: CharacterTag[];
   characterPartitions: string[];
+  graphImportanceFilter: string[];           // importance values hidden from graph; [] = show all
+  characterGroupCollapsed: Record<string, boolean>;  // sidebar group collapse state
+  graphSidebarLinkageEnabled: boolean;       // sidebar collapse drives graph filter when true
   addCharacterPartition: (name: string) => void;
   deleteCharacterPartition: (name: string) => void;
+  setGraphImportanceFilter: (filter: string[]) => void;
+  setCharacterGroupCollapsed: (collapsed: Record<string, boolean>) => void;
+  setGraphSidebarLinkageEnabled: (enabled: boolean) => void;
   candidates: Candidate[];
   timelineEvents: TimelineEvent[];
   timelineBranches: TimelineBranch[];
@@ -212,6 +219,13 @@ interface ProjectState {
   updateCharacterTag: (tag: CharacterTag) => void;
   deleteCharacterTag: (tagId: string) => void;
   toggleCharacterTagMembership: (tagId: string, characterId: string) => void;
+  moveCharacterTag: (tagId: string, newParentId: string | null, insertBeforeSiblingId?: string | null) => void;
+  toggleCharacterTagCollapsed: (tagId: string) => void;
+  addWorldCategory: (node: WorldCategoryNode) => void;
+  updateWorldCategory: (node: WorldCategoryNode) => void;
+  deleteWorldCategory: (nodeId: string) => void;
+  moveWorldCategory: (nodeId: string, newParentId: string | null, insertBeforeSiblingId?: string | null) => void;
+  toggleWorldCategoryCollapsed: (nodeId: string) => void;
   confirmCandidate: (candidateId: string) => string | null;
   rejectCandidate: (candidateId: string) => void;
   addTimelineEvent: (event: TimelineEvent) => void;
@@ -594,6 +608,9 @@ const deriveState = (project: NarrativeProject) => {
     characters: hydratedProject.characters,
     characterTags: hydratedProject.characterTags,
     characterPartitions: hydratedProject.characterPartitions ?? ['core', 'major', 'supporting', 'minor', 'ungrouped'],
+    graphImportanceFilter: [],
+    characterGroupCollapsed: {},
+    graphSidebarLinkageEnabled: true,
     candidates: hydratedProject.candidates,
     timelineEvents: hydratedProject.timelineEvents,
     timelineBranches: hydratedProject.timelineBranches,
@@ -605,6 +622,7 @@ const deriveState = (project: NarrativeProject) => {
     worldItems: hydratedProject.worldItems,
     worldSettings: hydratedProject.worldSettings,
     worldMaps: hydratedProject.worldMaps,
+    worldCategories: hydratedProject.worldCategories ?? [],
     graphBoards: hydratedProject.graphBoards,
     activeGraphBoardId:
       hydratedProject.uiState.view.activeGraphBoardId ||
@@ -664,6 +682,7 @@ const cloneProject = (state: ProjectState, locale?: Locale): NarrativeProject =>
   worldItems: state.worldItems,
   worldSettings: state.worldSettings,
   worldMaps: state.worldMaps,
+  worldCategories: state.worldCategories,
   graphBoards: state.graphBoards,
   betaPersonas: state.betaPersonas,
   betaRuns: state.betaRuns,
@@ -924,9 +943,69 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       characters,
     });
   }),
+  setGraphImportanceFilter: (filter) => set({ graphImportanceFilter: filter }),
+  setCharacterGroupCollapsed: (collapsed) => set({ characterGroupCollapsed: collapsed }),
+  setGraphSidebarLinkageEnabled: (enabled) => set({ graphSidebarLinkageEnabled: enabled }),
   toggleCharacterTagMembership: (tagId, characterId) => set((state) => withDirtyState({
     characterTags: state.characterTags.map((tag) => tag.id !== tagId ? tag : { ...tag, characterIds: tag.characterIds.includes(characterId) ? tag.characterIds.filter((id) => id !== characterId) : [...tag.characterIds, characterId] }),
     characters: state.characters.map((character) => character.id !== characterId ? character : { ...character, tagIds: character.tagIds.includes(tagId) ? character.tagIds.filter((id) => id !== tagId) : [...character.tagIds, tagId] }),
+  })),
+  moveCharacterTag: (tagId, newParentId, insertBeforeSiblingId) => set((state) => {
+    const isDescendantOfTag = (candidateId: string | null, ancestorId: string, tags: CharacterTag[]): boolean => {
+      if (!candidateId) return false;
+      if (candidateId === ancestorId) return true;
+      const parent = tags.find((t) => t.id === candidateId)?.parentTagId;
+      return isDescendantOfTag(parent ?? null, ancestorId, tags);
+    };
+    if (newParentId && isDescendantOfTag(newParentId, tagId, state.characterTags)) {
+      console.warn(`moveCharacterTag: cycle detected — cannot move ${tagId} under ${newParentId}`);
+      return state;
+    }
+    const siblings = state.characterTags
+      .filter((t) => t.id !== tagId && (t.parentTagId ?? null) === newParentId)
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+    const insertIdx = insertBeforeSiblingId ? siblings.findIndex((t) => t.id === insertBeforeSiblingId) : siblings.length;
+    const finalIdx = insertIdx < 0 ? siblings.length : insertIdx;
+    const updatedTags = state.characterTags.map((tag) => {
+      if (tag.id === tagId) return { ...tag, parentTagId: newParentId, sortOrder: finalIdx };
+      const sibIdx = siblings.findIndex((s) => s.id === tag.id);
+      if (sibIdx >= 0) return { ...tag, sortOrder: sibIdx < finalIdx ? sibIdx : sibIdx + 1 };
+      return tag;
+    });
+    return withDirtyState({ characterTags: updatedTags });
+  }),
+  toggleCharacterTagCollapsed: (tagId) => set((state) => withDirtyState({
+    characterTags: state.characterTags.map((tag) => tag.id !== tagId ? tag : { ...tag, collapsed: !tag.collapsed }),
+  })),
+  addWorldCategory: (node) => { set((state) => withDirtyState({ worldCategories: [...state.worldCategories, node] })); },
+  updateWorldCategory: (node) => { set((state) => withDirtyState({ worldCategories: state.worldCategories.map((n) => n.id === node.id ? node : n) })); },
+  deleteWorldCategory: (nodeId) => { set((state) => withDirtyState({ worldCategories: state.worldCategories.filter((n) => n.id !== nodeId) })); },
+  moveWorldCategory: (nodeId, newParentId, insertBeforeSiblingId) => set((state) => {
+    const isDescendantOfNode = (candidateId: string | null, ancestorId: string, nodes: WorldCategoryNode[]): boolean => {
+      if (!candidateId) return false;
+      if (candidateId === ancestorId) return true;
+      const parent = nodes.find((n) => n.id === candidateId)?.parentId;
+      return isDescendantOfNode(parent ?? null, ancestorId, nodes);
+    };
+    if (newParentId && isDescendantOfNode(newParentId, nodeId, state.worldCategories)) {
+      console.warn(`moveWorldCategory: cycle detected — cannot move ${nodeId} under ${newParentId}`);
+      return state;
+    }
+    const siblings = state.worldCategories
+      .filter((n) => n.id !== nodeId && n.parentId === newParentId)
+      .sort((a, b) => a.sortOrder - b.sortOrder);
+    const insertIdx = insertBeforeSiblingId ? siblings.findIndex((n) => n.id === insertBeforeSiblingId) : siblings.length;
+    const finalIdx = insertIdx < 0 ? siblings.length : insertIdx;
+    const updatedNodes = state.worldCategories.map((node) => {
+      if (node.id === nodeId) return { ...node, parentId: newParentId, sortOrder: finalIdx };
+      const sibIdx = siblings.findIndex((s) => s.id === node.id);
+      if (sibIdx >= 0) return { ...node, sortOrder: sibIdx < finalIdx ? sibIdx : sibIdx + 1 };
+      return node;
+    });
+    return withDirtyState({ worldCategories: updatedNodes });
+  }),
+  toggleWorldCategoryCollapsed: (nodeId) => set((state) => withDirtyState({
+    worldCategories: state.worldCategories.map((n) => n.id !== nodeId ? n : { ...n, collapsed: !n.collapsed }),
   })),
   confirmCandidate: (candidateId) => {
     let confirmedId: string | null = null;
