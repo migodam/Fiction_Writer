@@ -54,7 +54,7 @@ test.describe('W6 sidebar/graph linkage', () => {
 
     // "All" chip is no longer the active selection
     // (its active style uses bg-brand; now graphImportanceFilter is non-empty)
-    await expect(allChip).not.toHaveClass(/bg-brand\b/);
+    await expect(allChip).toHaveClass(/border-border/);
 
     // If a sidebar group header exists for "core" it should become collapsed
     // (no character cards visible beneath it). In zero-character state the
@@ -103,8 +103,9 @@ test.describe('W6 sidebar/graph linkage', () => {
       await coreGroupHeader.click();
       await expect(coreChip).not.toHaveClass(/opacity-40/, { timeout: 5000 });
     } else {
-      // No characters present — verify round-trip via "All" chip instead,
-      // which exercises the same setGraphImportanceFilter([]) code path.
+      // No characters loaded: fall back to verifying the All chip restores filter state.
+      // Note: the group-header→useEffect→filter propagation path is only exercised
+      // when characters are present in the dev server.
       await allChip.click();
       await expect(coreChip).not.toHaveClass(/opacity-40/, { timeout: 5000 });
       // "All" chip should be active again
