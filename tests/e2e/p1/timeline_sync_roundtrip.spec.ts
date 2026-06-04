@@ -274,6 +274,7 @@ test('sync analysis: no false-positive warnings about runtime-only fields', asyn
   page.on('console', consoleHandler);
 
   await page.goto('/');
+  await page.getByTestId('activity-btn-timeline').click();
   await expect(page.locator('[data-testid="timeline-canvas"]')).toBeVisible({ timeout: 10000 });
 
   // Set up a fork/merge topology so anchorStartPos/anchorEndPos are computed at runtime
@@ -355,6 +356,7 @@ test('events with hidden labels show tooltip on hover', async ({ page }) => {
 
 test('Layer A: moveTimelineEvent via store → save → reload → canonical branchId and orderIndex preserved', async ({ page }) => {
   await page.goto('/');
+  await page.getByTestId('activity-btn-timeline').click();
   await expect(page.locator('[data-testid="timeline-canvas"]')).toBeVisible({ timeout: 10000 });
 
   // Append test branches/events using functional form (consistent with injectFixture pattern)
@@ -407,8 +409,10 @@ test('Layer A: moveTimelineEvent via store → save → reload → canonical bra
     { timeout: 10000 },
   );
 
-  // Reload and wait for the store to repopulate with the saved data
+  // Reload and navigate back to timeline; wait for store to repopulate
   await page.reload();
+  await page.waitForLoadState('domcontentloaded');
+  await page.getByTestId('activity-btn-timeline').click();
   await expect(page.locator('[data-testid="timeline-canvas"]')).toBeVisible({ timeout: 10000 });
   await page.waitForFunction(
     () => (window as any).__narrativeStore.getState().timelineEvents
@@ -427,6 +431,7 @@ test('Layer A: moveTimelineEvent via store → save → reload → canonical bra
 
 test('Layer B: UI pointer-drag to branch curve — snap mechanism fires or drag completes without error', async ({ page }) => {
   await page.goto('/');
+  await page.getByTestId('activity-btn-timeline').click();
   await expect(page.locator('[data-testid="timeline-canvas"]')).toBeVisible({ timeout: 10000 });
 
   // Capture page errors from the very start — covers store injection, layout, and drag phases
@@ -503,6 +508,8 @@ test('Layer B: UI pointer-drag to branch curve — snap mechanism fires or drag 
       { timeout: 10000 },
     );
     await page.reload();
+    await page.waitForLoadState('domcontentloaded');
+    await page.getByTestId('activity-btn-timeline').click();
     await expect(page.locator('[data-testid="timeline-canvas"]')).toBeVisible({ timeout: 10000 });
     // Wait for store to repopulate with saved project data
     await page.waitForFunction(
