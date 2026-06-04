@@ -429,6 +429,10 @@ test('Layer B: UI pointer-drag to branch curve — snap mechanism fires or drag 
   await page.goto('/');
   await expect(page.locator('[data-testid="timeline-canvas"]')).toBeVisible({ timeout: 10000 });
 
+  // Capture page errors from the very start — covers store injection, layout, and drag phases
+  const pageErrors: Error[] = [];
+  page.on('pageerror', (e) => pageErrors.push(e));
+
   // Inject a two-branch topology (append to existing state to avoid replacing other slices)
   await page.evaluate(() => {
     (window as any).__narrativeStore.setState((s: any) => ({
@@ -464,9 +468,6 @@ test('Layer B: UI pointer-drag to branch curve — snap mechanism fires or drag 
   const srcCy = srcBox.y + srcBox.height / 2;
   const tgtCx = anchorBox.x + anchorBox.width / 2;
   const tgtCy = anchorBox.y + anchorBox.height / 2;
-
-  const pageErrors: Error[] = [];
-  page.on('pageerror', (e) => pageErrors.push(e));
 
   // Long-press to enter drag mode (canvas requires 500ms hold)
   await page.mouse.move(srcCx, srcCy);
