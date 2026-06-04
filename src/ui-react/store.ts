@@ -167,6 +167,7 @@ interface ProjectState {
   deleteCharacterPartition: (name: string) => void;
   setGraphImportanceFilter: (filter: string[]) => void;
   setCharacterGroupCollapsed: (collapsed: Record<string, boolean>) => void;
+  toggleCharacterGroupCollapsed: (group: string) => void;
   setGraphSidebarLinkageEnabled: (enabled: boolean) => void;
   candidates: Candidate[];
   timelineEvents: TimelineEvent[];
@@ -179,6 +180,7 @@ interface ProjectState {
   worldItems: WorldItem[];
   worldSettings: WorldSettings;
   worldMaps: WorldMapDocument[];
+  worldCategories: WorldCategoryNode[];
   graphBoards: GraphBoard[];
   activeGraphBoardId: string | null;
   betaPersonas: BetaPersona[];
@@ -429,6 +431,35 @@ interface ProjectState {
   grantPermission: (projectRoot: string, stepId: string) => Promise<void>;
   denyPermission: (projectRoot: string, stepId: string, reason: string) => Promise<void>;
   resetOrchestrator: () => void;
+  // Undo/Redo
+  undoStack: UndoEntry[];
+  redoStack: UndoEntry[];
+  captureUndoSnapshot: (label: string) => void;
+  undoAction: () => Promise<void>;
+  redoAction: () => Promise<void>;
+}
+
+const MAX_UNDO_DEPTH = 20;
+
+type ProjectDataSnapshot = Pick<ProjectState,
+  | 'characters' | 'characterTags' | 'characterPartitions' | 'candidates'
+  | 'timelineEvents' | 'timelineBranches' | 'relationships'
+  | 'chapters' | 'scenes' | 'currentSceneContent'
+  | 'worldContainers' | 'worldItems' | 'worldSettings' | 'worldMaps'
+  | 'graphBoards' | 'activeGraphBoardId'
+  | 'betaPersonas' | 'betaRuns'
+  | 'simulationEngines' | 'simulationLabs' | 'simulationReviewers' | 'simulationRuns'
+  | 'proposals' | 'proposalHistory' | 'issues' | 'exports' | 'archivedIds'
+  | 'todos' | 'manuscriptNodes'
+  | 'importJobs' | 'promptTemplates' | 'ragDocuments' | 'ragChunks'
+  | 'scripts' | 'storyboards' | 'videoPackages' | 'taskRequests' | 'taskRuns'
+  | 'taskArtifacts' | 'taskRunLogs'
+>;
+
+interface UndoEntry {
+  id: string;
+  label: string;
+  snapshot: ProjectDataSnapshot;
 }
 
 const now = () => new Date().toISOString();
@@ -851,10 +882,76 @@ export const useUIStore = create<UIState>((set) => ({
   },
 }));
 
+const extractSnapshot = (state: ProjectState): ProjectDataSnapshot => ({
+  characters: state.characters, characterTags: state.characterTags,
+  characterPartitions: state.characterPartitions, candidates: state.candidates,
+  timelineEvents: state.timelineEvents, timelineBranches: state.timelineBranches,
+  relationships: state.relationships, chapters: state.chapters, scenes: state.scenes,
+  currentSceneContent: state.currentSceneContent,
+  worldContainers: state.worldContainers, worldItems: state.worldItems,
+  worldSettings: state.worldSettings, worldMaps: state.worldMaps,
+  graphBoards: state.graphBoards, activeGraphBoardId: state.activeGraphBoardId,
+  betaPersonas: state.betaPersonas, betaRuns: state.betaRuns,
+  simulationEngines: state.simulationEngines, simulationLabs: state.simulationLabs,
+  simulationReviewers: state.simulationReviewers, simulationRuns: state.simulationRuns,
+  proposals: state.proposals, proposalHistory: state.proposalHistory,
+  issues: state.issues, exports: state.exports, archivedIds: state.archivedIds,
+  todos: state.todos, manuscriptNodes: state.manuscriptNodes,
+  importJobs: state.importJobs, promptTemplates: state.promptTemplates,
+  ragDocuments: state.ragDocuments, ragChunks: state.ragChunks,
+  scripts: state.scripts, storyboards: state.storyboards, videoPackages: state.videoPackages,
+  taskRequests: state.taskRequests, taskRuns: state.taskRuns,
+  taskArtifacts: state.taskArtifacts, taskRunLogs: state.taskRunLogs,
+});
+
 export const useProjectStore = create<ProjectState>((set, get) => ({
   ...deriveState(defaultProject),
   saveStatus: 'Idle',
   selectedEntity: { type: null, id: null },
+  undoStack: [],
+  redoStack: [],
+  captureUndoSnapshot: (label) => {
+    const snapshot = extractSnapshot(get());
+    const entry: UndoEntry = { id: crypto.randomUUID(), label, snapshot };
+    set((s) => ({
+      undoStack: [entry, ...s.undoStack].slice(0, MAX_UNDO_DEPTH),
+      redoStack: [],
+    }));
+  },
+  undoAction: async () => {
+    const state = get();
+    if (state.undoStack.length === 0) return;
+    const [entry, ...restUndo] = state.undoStack;
+    const redoEntry: UndoEntry = {
+      id: crypto.randomUUID(),
+      label: entry.label,
+      snapshot: extractSnapshot(state),
+    };
+    set({
+      ...entry.snapshot,
+      undoStack: restUndo,
+      redoStack: [redoEntry, ...state.redoStack].slice(0, MAX_UNDO_DEPTH),
+      saveStatus: 'Unsaved changes' as SaveStatus,
+    });
+    await get().saveProject();
+  },
+  redoAction: async () => {
+    const state = get();
+    if (state.redoStack.length === 0) return;
+    const [entry, ...restRedo] = state.redoStack;
+    const undoEntry: UndoEntry = {
+      id: crypto.randomUUID(),
+      label: entry.label,
+      snapshot: extractSnapshot(state),
+    };
+    set({
+      ...entry.snapshot,
+      redoStack: restRedo,
+      undoStack: [undoEntry, ...state.undoStack].slice(0, MAX_UNDO_DEPTH),
+      saveStatus: 'Unsaved changes' as SaveStatus,
+    });
+    await get().saveProject();
+  },
   setSelectedEntity: (type, id) => set((state) => ({
     selectedEntity: { type, id },
     unreadUpdates: id ? { ...state.unreadUpdates, entities: { ...state.unreadUpdates.entities, [id]: false } } : state.unreadUpdates,
@@ -864,7 +961,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({ saveStatus: 'Saving' });
     const project = projectService.createProject({ name: input?.name || 'Starter Demo Project', rootPath: input?.rootPath, template: input?.template || 'starter-demo', locale: input?.locale || uiLocale });
     useUIStore.getState().hydrateFromProjectUiState(project.uiState);
-    set({ ...deriveState(project), selectedEntity: { type: null, id: null }, saveStatus: 'Saved' });
+    set({ ...deriveState(project), selectedEntity: { type: null, id: null }, saveStatus: 'Saved', undoStack: [], redoStack: [] });
     useUIStore.getState().setLocale(project.metadata.locale);
     setTimeout(() => get().saveStatus === 'Saved' && set({ saveStatus: 'Idle' }), 1200);
   },
@@ -877,7 +974,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({ saveStatus: 'Saving' });
     const project = projectService.openProject(rootPath);
     useUIStore.getState().hydrateFromProjectUiState(project.uiState);
-    set({ ...deriveState(project), selectedEntity: { type: null, id: null }, saveStatus: 'Saved' });
+    set({ ...deriveState(project), selectedEntity: { type: null, id: null }, saveStatus: 'Saved', undoStack: [], redoStack: [] });
     useUIStore.getState().setLocale(project.metadata.locale);
     if (rootPath) get().loadMetadata(rootPath);
     // Open/migrate SQLite DB (fire-and-forget; JSON store still drives memory)
@@ -891,7 +988,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({ ...deriveState(savedProject), saveStatus: 'Saved' });
     setTimeout(() => get().saveStatus === 'Saved' && set({ saveStatus: 'Idle' }), 1200);
   },
-  loadProject: (project) => { useUIStore.getState().hydrateFromProjectUiState(project.uiState); set({ ...deriveState(project), selectedEntity: { type: null, id: null }, saveStatus: 'Idle' }); },
+  loadProject: (project) => { useUIStore.getState().hydrateFromProjectUiState(project.uiState); set({ ...deriveState(project), selectedEntity: { type: null, id: null }, saveStatus: 'Idle', undoStack: [], redoStack: [] }); },
   setProjectLocale: (locale) => set((state) => ({ currentProject: cloneProject(state, locale), saveStatus: 'Unsaved changes' })),
   syncProjectUiState: () => set((state) => ({ currentProject: cloneProject(state, useUIStore.getState().locale), saveStatus: state.saveStatus === 'Idle' ? 'Unsaved changes' : state.saveStatus })),
   addCharacter: (character) => {
@@ -945,6 +1042,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   }),
   setGraphImportanceFilter: (filter) => set({ graphImportanceFilter: filter }),
   setCharacterGroupCollapsed: (collapsed) => set({ characterGroupCollapsed: collapsed }),
+  toggleCharacterGroupCollapsed: (group) => set((s) => ({
+    characterGroupCollapsed: { ...s.characterGroupCollapsed, [group]: !s.characterGroupCollapsed[group] },
+  })),
   setGraphSidebarLinkageEnabled: (enabled) => set({ graphSidebarLinkageEnabled: enabled }),
   toggleCharacterTagMembership: (tagId, characterId) => set((state) => withDirtyState({
     characterTags: state.characterTags.map((tag) => tag.id !== tagId ? tag : { ...tag, characterIds: tag.characterIds.includes(characterId) ? tag.characterIds.filter((id) => id !== characterId) : [...tag.characterIds, characterId] }),
