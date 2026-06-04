@@ -111,6 +111,21 @@ const CommandPalette = () => {
         event.preventDefault();
         toggleCommandPalette();
       }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+        const active = document.activeElement;
+        const isTextField =
+          active instanceof HTMLInputElement ||
+          active instanceof HTMLTextAreaElement ||
+          (active instanceof HTMLElement && active.isContentEditable);
+        if (!isTextField) {
+          event.preventDefault();
+          if (event.shiftKey) {
+            useProjectStore.getState().redoAction();
+          } else {
+            useProjectStore.getState().undoAction();
+          }
+        }
+      }
       if (event.key === 'Escape') {
         toggleCommandPalette(false);
       }
@@ -173,18 +188,21 @@ const ToolbarButton = ({
   title,
   onClick,
   testId,
+  disabled,
 }: {
   icon: React.ReactNode;
   title: string;
   onClick?: () => void;
   testId?: string;
+  disabled?: boolean;
 }) => (
   <button
     type="button"
-    className="rounded p-1.5 text-text-2 transition-colors hover:bg-hover hover:text-text"
+    className="rounded p-1.5 text-text-2 transition-colors hover:bg-hover hover:text-text disabled:opacity-40 disabled:cursor-not-allowed"
     title={title}
     onClick={onClick}
     data-testid={testId}
+    disabled={disabled}
   >
     {icon}
   </button>
@@ -198,7 +216,9 @@ const TopToolbar = ({
   onOpenProject: () => void;
 }) => {
   const { toggleCommandPalette, toggleAgentDock, toggleSidebar, toggleSettings, isSidebarCollapsed } = useUIStore();
-  const { saveProject, saveStatus, projectName } = useProjectStore();
+  const { saveProject, saveStatus, projectName, undoStack, redoStack } = useProjectStore(
+    (s) => ({ saveProject: s.saveProject, saveStatus: s.saveStatus, projectName: s.projectName, undoStack: s.undoStack, redoStack: s.redoStack }),
+  );
   const { t } = useI18n();
 
   return (
@@ -222,8 +242,18 @@ const TopToolbar = ({
             testId="toolbar-save"
           />
           <div className="mx-1 h-4 w-px bg-border"></div>
-          <ToolbarButton icon={<Undo size={14} />} title={t('toolbar.undo')} />
-          <ToolbarButton icon={<Redo size={14} />} title={t('toolbar.redo')} />
+          <ToolbarButton
+            icon={<Undo size={14} />}
+            title={t('toolbar.undo')}
+            onClick={() => useProjectStore.getState().undoAction()}
+            disabled={undoStack.length === 0}
+          />
+          <ToolbarButton
+            icon={<Redo size={14} />}
+            title={t('toolbar.redo')}
+            onClick={() => useProjectStore.getState().redoAction()}
+            disabled={redoStack.length === 0}
+          />
           <div className="mx-1 h-4 w-px bg-border"></div>
           <ToolbarButton icon={<Activity size={14} />} title={t('toolbar.runSimulation')} />
           <ToolbarButton icon={<CheckCircle size={14} />} title={t('toolbar.checkConsistency')} />
