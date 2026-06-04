@@ -985,23 +985,27 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   saveProject: async () => {
     set({ saveStatus: 'Saving' });
     const savedProject = projectService.saveProject(cloneProject(get(), useUIStore.getState().locale));
-    set({ ...deriveState(savedProject), saveStatus: 'Saved' });
+    const { graphImportanceFilter, characterGroupCollapsed, graphSidebarLinkageEnabled } = get();
+    set({ ...deriveState(savedProject), graphImportanceFilter, characterGroupCollapsed, graphSidebarLinkageEnabled, saveStatus: 'Saved' });
     setTimeout(() => get().saveStatus === 'Saved' && set({ saveStatus: 'Idle' }), 1200);
   },
   loadProject: (project) => { useUIStore.getState().hydrateFromProjectUiState(project.uiState); set({ ...deriveState(project), selectedEntity: { type: null, id: null }, saveStatus: 'Idle', undoStack: [], redoStack: [] }); },
   setProjectLocale: (locale) => set((state) => ({ currentProject: cloneProject(state, locale), saveStatus: 'Unsaved changes' })),
   syncProjectUiState: () => set((state) => ({ currentProject: cloneProject(state, useUIStore.getState().locale), saveStatus: state.saveStatus === 'Idle' ? 'Unsaved changes' : state.saveStatus })),
   addCharacter: (character) => {
+    get().captureUndoSnapshot('Add character');
     set((state) => withDirtyState({ characters: [...state.characters, character] }));
     const { projectRoot } = get();
     if (projectRoot) electronApi.dbUpsert(projectRoot, 'characters', character.id, character).catch(() => {});
   },
   updateCharacter: (character) => {
+    get().captureUndoSnapshot('Edit character');
     set((state) => withDirtyState({ characters: state.characters.map((entry) => entry.id === character.id ? character : entry) }));
     const { projectRoot } = get();
     if (projectRoot) electronApi.dbUpsert(projectRoot, 'characters', character.id, character).catch(() => {});
   },
   deleteCharacter: (id) => {
+    get().captureUndoSnapshot('Delete character');
     set((state) => withDirtyState({
       characters: state.characters
         .filter((entry) => entry.id !== id)
@@ -1022,16 +1026,11 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       electronApi.dbDelete(projectRoot, 'characters', id).catch(() => {});
     }
   },
-  addCharacterTag: (tag) => set((state) => withDirtyState({ characterTags: [...state.characterTags, tag] })),
-  updateCharacterTag: (tag) => set((state) => withDirtyState({ characterTags: state.characterTags.map((entry) => entry.id === tag.id ? tag : entry) })),
-  deleteCharacterTag: (tagId) => set((state) => withDirtyState({
-    characterTags: state.characterTags.filter((tag) => tag.id !== tagId),
-    characters: state.characters.map((character) => ({ ...character, tagIds: character.tagIds.filter((id) => id !== tagId) })),
-  })),
-  addCharacterPartition: (name) => set((state) => withDirtyState({
-    characterPartitions: [...state.characterPartitions, name],
-  })),
-  deleteCharacterPartition: (name) => set((state) => {
+  addCharacterTag: (tag) => { get().captureUndoSnapshot('Add tag'); set((state) => withDirtyState({ characterTags: [...state.characterTags, tag] })); },
+  updateCharacterTag: (tag) => { get().captureUndoSnapshot('Edit tag'); set((state) => withDirtyState({ characterTags: state.characterTags.map((entry) => entry.id === tag.id ? tag : entry) })); },
+  deleteCharacterTag: (tagId) => { get().captureUndoSnapshot('Delete tag'); set((state) => withDirtyState({ characterTags: state.characterTags.filter((tag) => tag.id !== tagId), characters: state.characters.map((character) => ({ ...character, tagIds: character.tagIds.filter((id) => id !== tagId) })) })); },
+  addCharacterPartition: (name) => { get().captureUndoSnapshot('Add character group'); set((state) => withDirtyState({ characterPartitions: [...state.characterPartitions, name] })); },
+  deleteCharacterPartition: (name) => { get().captureUndoSnapshot('Delete character group'); set((state) => {
     const characters = state.characters.map(c =>
       c.importance === name ? { ...c, importance: 'ungrouped' as const } : c
     );
@@ -1039,17 +1038,17 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       characterPartitions: state.characterPartitions.filter(p => p !== name),
       characters,
     });
-  }),
+  }); },
   setGraphImportanceFilter: (filter) => set({ graphImportanceFilter: filter }),
   setCharacterGroupCollapsed: (collapsed) => set({ characterGroupCollapsed: collapsed }),
   toggleCharacterGroupCollapsed: (group) => set((s) => ({
     characterGroupCollapsed: { ...s.characterGroupCollapsed, [group]: !s.characterGroupCollapsed[group] },
   })),
   setGraphSidebarLinkageEnabled: (enabled) => set({ graphSidebarLinkageEnabled: enabled }),
-  toggleCharacterTagMembership: (tagId, characterId) => set((state) => withDirtyState({
+  toggleCharacterTagMembership: (tagId, characterId) => { get().captureUndoSnapshot('Toggle tag'); set((state) => withDirtyState({
     characterTags: state.characterTags.map((tag) => tag.id !== tagId ? tag : { ...tag, characterIds: tag.characterIds.includes(characterId) ? tag.characterIds.filter((id) => id !== characterId) : [...tag.characterIds, characterId] }),
     characters: state.characters.map((character) => character.id !== characterId ? character : { ...character, tagIds: character.tagIds.includes(tagId) ? character.tagIds.filter((id) => id !== tagId) : [...character.tagIds, tagId] }),
-  })),
+  })); },
   moveCharacterTag: (tagId, newParentId, insertBeforeSiblingId) => set((state) => {
     const isDescendantOfTag = (candidateId: string | null, ancestorId: string, tags: CharacterTag[]): boolean => {
       if (!candidateId) return false;
@@ -1108,6 +1107,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     worldCategories: state.worldCategories.map((n) => n.id !== nodeId ? n : { ...n, collapsed: !n.collapsed }),
   })),
   confirmCandidate: (candidateId) => {
+    get().captureUndoSnapshot('Confirm candidate');
     let confirmedId: string | null = null;
     set((state) => {
       const candidate = state.candidates.find((entry) => entry.id === candidateId);
@@ -1118,10 +1118,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     });
     return confirmedId;
   },
-  rejectCandidate: (candidateId) => set((state) => withDirtyState({ candidates: state.candidates.filter((entry) => entry.id !== candidateId) })),
-  addTimelineEvent: (event) => set((state) => withDirtyState({ timelineEvents: [...state.timelineEvents, event] })),
-  updateTimelineEvent: (event) => set((state) => withDirtyState({ timelineEvents: state.timelineEvents.map((entry) => entry.id === event.id ? event : entry) })),
-  deleteTimelineEvent: (id) => set((state) => withDirtyState({
+  rejectCandidate: (candidateId) => { get().captureUndoSnapshot('Reject candidate'); set((state) => withDirtyState({ candidates: state.candidates.filter((entry) => entry.id !== candidateId) })); },
+  addTimelineEvent: (event) => { get().captureUndoSnapshot('Add event'); set((state) => withDirtyState({ timelineEvents: [...state.timelineEvents, event] })); },
+  updateTimelineEvent: (event) => { get().captureUndoSnapshot('Edit event'); set((state) => withDirtyState({ timelineEvents: state.timelineEvents.map((entry) => entry.id === event.id ? event : entry) })); },
+  deleteTimelineEvent: (id) => { get().captureUndoSnapshot('Delete event'); set((state) => withDirtyState({
     timelineEvents: state.timelineEvents.filter((entry) => entry.id !== id),
     timelineBranches: state.timelineBranches.map((branch) => {
       const endAnchor = resolveEndAnchor(branch);
@@ -1137,10 +1137,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         },
       );
     }),
-  })),
-  addTimelineBranch: (branch) => set((state) => withDirtyState({ timelineBranches: [...state.timelineBranches, branch] })),
-  updateTimelineBranch: (branch) => set((state) => withDirtyState({ timelineBranches: state.timelineBranches.map((entry) => entry.id === branch.id ? branch : entry) })),
-  deleteTimelineBranch: (branchId) => set((state) => {
+  }))); },
+  addTimelineBranch: (branch) => { get().captureUndoSnapshot('Add branch'); set((state) => withDirtyState({ timelineBranches: [...state.timelineBranches, branch] })); },
+  updateTimelineBranch: (branch) => { get().captureUndoSnapshot('Edit branch'); set((state) => withDirtyState({ timelineBranches: state.timelineBranches.map((entry) => entry.id === branch.id ? branch : entry) })); },
+  deleteTimelineBranch: (branchId) => { get().captureUndoSnapshot('Delete branch'); set((state) => {
     const branchEventCount = state.timelineEvents.filter((entry) => entry.branchId === branchId).length;
     // Safer than orphaning: `TimelineEvent.branchId` is currently required across the model, canvas,
     // and persistence layer, so we block deletion until the timeline is empty instead of silently
@@ -1173,8 +1173,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           sharedBranchIds: (entry.sharedBranchIds || []).filter((sharedBranchId) => sharedBranchId !== branchId),
         })),
     });
-  }),
+  }); },
   createTimelineBranch: (mode, anchor) => {
+    get().captureUndoSnapshot('Create branch');
     const state = get();
     const parentBranchId = mode === 'forked' ? anchor?.branchId || state.timelineBranches[0]?.id || null : null;
     const branchId = `branch_${Date.now()}`;
@@ -1206,15 +1207,15 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set((current) => withDirtyState({ timelineBranches: [...current.timelineBranches, branch] }));
     return branchId;
   },
-  moveTimelineEvent: (eventId, targetBranchId, targetSlot) => set((state) => {
+  moveTimelineEvent: (eventId, targetBranchId, targetSlot) => { get().captureUndoSnapshot('Move event'); set((state) => {
     const { timelineBranches, timelineEvents, warnings } = applyTimelineOperation(
       { timelineBranches: state.timelineBranches, timelineEvents: state.timelineEvents },
       { type: 'move_event', eventId, branchId: targetBranchId, orderIndex: targetSlot },
     );
     if (warnings.length > 0) console.warn('[Timeline] moveTimelineEvent:', warnings);
     return withDirtyState(propagateTimelineAnchorDependencies(timelineBranches, timelineEvents));
-  }),
-  setTimelineBranchGeometry: (branchId, geometry) => set((state) => {
+  }); },
+  setTimelineBranchGeometry: (branchId, geometry) => { get().captureUndoSnapshot('Adjust branch'); set((state) => {
     const existing = state.timelineBranches.find((b) => b.id === branchId);
     const { timelineBranches, timelineEvents } = applyTimelineOperation(
       { timelineBranches: state.timelineBranches, timelineEvents: state.timelineEvents },
@@ -1225,10 +1226,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       }},
     );
     return withDirtyState({ timelineBranches, timelineEvents });
-  }),
+  }); },
   // NOTE: endAnchor, endMode, mergeTargetBranchId, mergeEventId are CANONICAL topology fields.
   // They are written to disk via saveProject() and must not be in BRANCH_RUNTIME_FIELDS.
-  setTimelineBranchAnchors: (branchId, startPos, endPos, anchors) => set((state) => {
+  setTimelineBranchAnchors: (branchId, startPos, endPos, anchors) => { get().captureUndoSnapshot('Anchor branch'); set((state) => {
     const previousBranch = state.timelineBranches.find((entry) => entry.id === branchId);
     if (!previousBranch) {
       return state;
@@ -1246,33 +1247,33 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const nextEvents = remapBranchEventPositions(state.timelineEvents, branchId, previousBranch, nextBranch);
 
     return withDirtyState(propagateTimelineAnchorDependencies(nextBranches, nextEvents));
-  }),
+  }); },
   updateTimelineEventPosition: (eventId, position) => set((state) => withDirtyState(
     propagateTimelineAnchorDependencies(
       state.timelineBranches,
       state.timelineEvents.map((entry) => (entry.id === eventId ? { ...entry, position } : entry)),
     ),
   )),
-  addRelationship: (relationship) => set((state) => withDirtyState({
+  addRelationship: (relationship) => { get().captureUndoSnapshot('Add relationship'); set((state) => withDirtyState({
     relationships: [...state.relationships, relationship],
     characters: state.characters.map((character) => character.id === relationship.sourceId || character.id === relationship.targetId ? { ...character, relationshipIds: Array.from(new Set([...(character.relationshipIds || []), relationship.id])) } : character),
-  })),
-  updateRelationship: (relationship) => set((state) => withDirtyState({ relationships: state.relationships.map((entry) => entry.id === relationship.id ? relationship : entry) })),
-  deleteRelationship: (id) => set((state) => withDirtyState({
-    relationships: state.relationships.filter((entry) => entry.id !== id),
-    characters: state.characters.map((character) => ({ ...character, relationshipIds: (character.relationshipIds || []).filter((entry) => entry !== id) })),
-  })),
+  })); },
+  updateRelationship: (relationship) => { get().captureUndoSnapshot('Edit relationship'); set((state) => withDirtyState({ relationships: state.relationships.map((entry) => entry.id === relationship.id ? relationship : entry) })); },
+  deleteRelationship: (id) => { get().captureUndoSnapshot('Delete relationship'); set((state) => withDirtyState({ relationships: state.relationships.filter((entry) => entry.id !== id), characters: state.characters.map((character) => ({ ...character, relationshipIds: (character.relationshipIds || []).filter((entry) => entry !== id) })) })); },
   addChapter: (chapter) => {
+    get().captureUndoSnapshot('Add chapter');
     set((state) => withDirtyState({ chapters: [...state.chapters, chapter] }));
     const { projectRoot } = get();
     if (projectRoot) electronApi.dbUpsert(projectRoot, 'chapters', chapter.id, chapter).catch(() => {});
   },
   updateChapter: (chapter) => {
+    get().captureUndoSnapshot('Edit chapter');
     set((state) => withDirtyState({ chapters: state.chapters.map((entry) => entry.id === chapter.id ? chapter : entry) }));
     const { projectRoot } = get();
     if (projectRoot) electronApi.dbUpsert(projectRoot, 'chapters', chapter.id, chapter).catch(() => {});
   },
   deleteChapter: (id) => {
+    get().captureUndoSnapshot('Delete chapter');
     set((state) => withDirtyState({ chapters: state.chapters.filter((entry) => entry.id !== id) }));
     const { projectRoot } = get();
     if (projectRoot) {
@@ -1280,16 +1281,19 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
   addScene: (scene) => {
+    get().captureUndoSnapshot('Add scene');
     set((state) => withDirtyState({ scenes: [...state.scenes, scene] }));
     const { projectRoot } = get();
     if (projectRoot) electronApi.dbUpsert(projectRoot, 'scenes', scene.id, scene).catch(() => {});
   },
   updateScene: (scene) => {
+    get().captureUndoSnapshot('Edit scene');
     set((state) => withDirtyState({ scenes: state.scenes.map((entry) => entry.id === scene.id ? scene : entry), currentSceneContent: scene.content }));
     const { projectRoot } = get();
     if (projectRoot) electronApi.dbUpsert(projectRoot, 'scenes', scene.id, scene).catch(() => {});
   },
   deleteScene: (id) => {
+    get().captureUndoSnapshot('Delete scene');
     set((state) => withDirtyState({
       scenes: state.scenes.filter((entry) => entry.id !== id),
       chapters: state.chapters.map((ch) => ({ ...ch, sceneIds: ch.sceneIds.filter((sid) => sid !== id) })),
@@ -1303,32 +1307,30 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   addScript: (script) => set((state) => withDirtyState({ scripts: [...state.scripts, script] })),
   addStoryboard: (storyboard) => set((state) => withDirtyState({ storyboards: [...state.storyboards, storyboard] })),
   updateStoryboard: (storyboard) => set((state) => withDirtyState({ storyboards: state.storyboards.map((entry) => entry.id === storyboard.id ? storyboard : entry) })),
-  addWorldContainer: (container) => set((state) => withDirtyState({ worldContainers: [...state.worldContainers, container] })),
-  updateWorldContainer: (container) => set((state) => withDirtyState({ worldContainers: state.worldContainers.map((entry) => entry.id === container.id ? container : entry) })),
-  deleteWorldContainer: (id) => set((state) => withDirtyState({ worldContainers: state.worldContainers.filter((entry) => entry.id !== id), worldItems: state.worldItems.filter((entry) => entry.containerId !== id) })),
-  addWorldItem: (item) => set((state) => withDirtyState({ worldItems: [...state.worldItems, item] })),
-  updateWorldItem: (item) => set((state) => withDirtyState({ worldItems: state.worldItems.map((entry) => entry.id === item.id ? item : entry) })),
-  deleteWorldItem: (id) => set((state) => withDirtyState({ worldItems: state.worldItems.filter((entry) => entry.id !== id) })),
-  updateWorldSettings: (worldSettings) => set(() => withDirtyState({ worldSettings })),
+  addWorldContainer: (container) => { get().captureUndoSnapshot('Add container'); set((state) => withDirtyState({ worldContainers: [...state.worldContainers, container] })); },
+  updateWorldContainer: (container) => { get().captureUndoSnapshot('Edit container'); set((state) => withDirtyState({ worldContainers: state.worldContainers.map((entry) => entry.id === container.id ? container : entry) })); },
+  deleteWorldContainer: (id) => { get().captureUndoSnapshot('Delete container'); set((state) => withDirtyState({ worldContainers: state.worldContainers.filter((entry) => entry.id !== id), worldItems: state.worldItems.filter((entry) => entry.containerId !== id) })); },
+  addWorldItem: (item) => { get().captureUndoSnapshot('Add world item'); set((state) => withDirtyState({ worldItems: [...state.worldItems, item] })); },
+  updateWorldItem: (item) => { get().captureUndoSnapshot('Edit world item'); set((state) => withDirtyState({ worldItems: state.worldItems.map((entry) => entry.id === item.id ? item : entry) })); },
+  deleteWorldItem: (id) => { get().captureUndoSnapshot('Delete world item'); set((state) => withDirtyState({ worldItems: state.worldItems.filter((entry) => entry.id !== id) })); },
+  updateWorldSettings: (worldSettings) => { get().captureUndoSnapshot('Edit world settings'); set(() => withDirtyState({ worldSettings })); },
   createWorldMap: (map) => set((state) => withDirtyState({ worldMaps: [...state.worldMaps, map] })),
   updateWorldMap: (map) => set((state) => withDirtyState({ worldMaps: state.worldMaps.map((entry) => entry.id === map.id ? map : entry) })),
-  addGraphBoard: (board) => set((state) => withDirtyState({ graphBoards: [...state.graphBoards, board], activeGraphBoardId: board.id })),
-  updateGraphBoard: (board) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((entry) => entry.id === board.id ? board : entry) })),
-  deleteGraphBoard: (boardId) => set((state) => {
-    const nextBoards = state.graphBoards.filter((entry) => entry.id !== boardId);
-    return withDirtyState({ graphBoards: nextBoards, activeGraphBoardId: nextBoards[0]?.id || null });
-  }),
+  addGraphBoard: (board) => { get().captureUndoSnapshot('Add board'); set((state) => withDirtyState({ graphBoards: [...state.graphBoards, board], activeGraphBoardId: board.id })); },
+  updateGraphBoard: (board) => { get().captureUndoSnapshot('Edit board'); set((state) => withDirtyState({ graphBoards: state.graphBoards.map((entry) => entry.id === board.id ? board : entry) })); },
+  deleteGraphBoard: (boardId) => { get().captureUndoSnapshot('Delete board'); set((state) => { const nextBoards = state.graphBoards.filter((entry) => entry.id !== boardId); return withDirtyState({ graphBoards: nextBoards, activeGraphBoardId: nextBoards[0]?.id || null }); }); },
   setActiveGraphBoard: (boardId) => set((state) => withDirtyState({ activeGraphBoardId: boardId, currentProject: state.currentProject ? { ...cloneProject(state), uiState: { ...cloneProject(state).uiState, view: { ...cloneProject(state).uiState.view, activeGraphBoardId: boardId } } } : state.currentProject })),
-  addGraphNode: (boardId, node) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, nodes: [...board.nodes, node], selectedNodeIds: [node.id] } : board) })),
-  updateGraphNode: (boardId, node) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, nodes: board.nodes.map((entry) => entry.id === node.id ? node : entry) } : board) })),
-  addGraphEdge: (boardId, edge) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, edges: [...board.edges, edge] } : board) })),
-  deleteGraphNode: (boardId, nodeId) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, nodes: board.nodes.filter((n) => n.id !== nodeId), edges: board.edges.filter((e) => e.sourceId !== nodeId && e.targetId !== nodeId), selectedNodeIds: board.selectedNodeIds.filter((id) => id !== nodeId) } : board) })),
-  deleteGraphEdge: (boardId, edgeId) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, edges: board.edges.filter((e) => e.id !== edgeId) } : board) })),
-  updateGraphEdge: (boardId, edge) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, edges: board.edges.map((e) => e.id === edge.id ? { ...e, ...edge } : e) } : board) })),
+  addGraphNode: (boardId, node) => { get().captureUndoSnapshot('Add node'); set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, nodes: [...board.nodes, node], selectedNodeIds: [node.id] } : board) })); },
+  updateGraphNode: (boardId, node) => { get().captureUndoSnapshot('Edit node'); set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, nodes: board.nodes.map((entry) => entry.id === node.id ? node : entry) } : board) })); },
+  addGraphEdge: (boardId, edge) => { get().captureUndoSnapshot('Add edge'); set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, edges: [...board.edges, edge] } : board) })); },
+  deleteGraphNode: (boardId, nodeId) => { get().captureUndoSnapshot('Delete node'); set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, nodes: board.nodes.filter((n) => n.id !== nodeId), edges: board.edges.filter((e) => e.sourceId !== nodeId && e.targetId !== nodeId), selectedNodeIds: board.selectedNodeIds.filter((id) => id !== nodeId) } : board) })); },
+  deleteGraphEdge: (boardId, edgeId) => { get().captureUndoSnapshot('Delete edge'); set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, edges: board.edges.filter((e) => e.id !== edgeId) } : board) })); },
+  updateGraphEdge: (boardId, edge) => { get().captureUndoSnapshot('Edit edge'); set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, edges: board.edges.map((e) => e.id === edge.id ? { ...e, ...edge } : e) } : board) })); },
   setGraphBoardView: (boardId, view) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, view } : board) })),
-  resolveProposal: (proposalId, status) => set((state) => withDirtyState(projectService.resolveProposal(cloneProject(state, useUIStore.getState().locale), proposalId, status))),
-  resolveProposals: (proposalIds, status) => set((state) => withDirtyState(projectService.resolveProposals(cloneProject(state, useUIStore.getState().locale), proposalIds, status))),
+  resolveProposal: (proposalId, status) => { get().captureUndoSnapshot('Resolve proposal'); set((state) => withDirtyState(projectService.resolveProposal(cloneProject(state, useUIStore.getState().locale), proposalId, status))); },
+  resolveProposals: (proposalIds, status) => { get().captureUndoSnapshot('Resolve proposals'); set((state) => withDirtyState(projectService.resolveProposals(cloneProject(state, useUIStore.getState().locale), proposalIds, status))); },
   resolveAllProposals: (status) => {
+    get().captureUndoSnapshot('Resolve all proposals');
     const pending = get().proposals.filter((p) => p.status === 'pending' || !p.status);
     if (!pending.length) return;
     set((state) => withDirtyState(projectService.resolveProposals(
@@ -1515,20 +1517,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set((state) => withDirtyState({ todos: state.todos.filter((t) => t.id !== id) })),
   manuscriptNodes: [],
   addManuscriptNode: (node) => {
+    get().captureUndoSnapshot('Add node');
     const id = crypto.randomUUID();
     const newNode: ManuscriptNode = { ...node, id };
     set((state) => withDirtyState({ manuscriptNodes: [...state.manuscriptNodes, newNode] }));
     return newNode;
   },
-  updateManuscriptNode: (id, updates) =>
-    set((state) =>
-      withDirtyState({
-        manuscriptNodes: state.manuscriptNodes.map((n) => (n.id === id ? { ...n, ...updates } : n)),
-      })
-    ),
-  deleteManuscriptNode: (id) =>
-    set((state) =>
-      withDirtyState({
+  updateManuscriptNode: (id, updates) => { get().captureUndoSnapshot('Edit node'); set((state) => withDirtyState({ manuscriptNodes: state.manuscriptNodes.map((n) => (n.id === id ? { ...n, ...updates } : n)) })); },
+  deleteManuscriptNode: (id) => { get().captureUndoSnapshot('Delete node'); set((state) => withDirtyState({
         manuscriptNodes: (() => {
           // Collect all ids to delete (node + all descendants)
           const toDelete = new Set<string>();
@@ -1542,9 +1538,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           }
           return state.manuscriptNodes.filter(n => !toDelete.has(n.id));
         })(),
-      })
-    ),
+      })); },
   moveManuscriptNode: (id, newParentId, newOrderIndex) => {
+    get().captureUndoSnapshot('Move node');
     // Guard: newParentId must not be a descendant of id
     if (newParentId !== null) {
       const isDescendant = (ancestorId: string, targetId: string, nodes: ManuscriptNode[]): boolean => {
