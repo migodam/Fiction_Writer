@@ -460,16 +460,16 @@ w1-token-cost-estimated-cost  ImportWorkflow  Estimated cost ($X.XXXX) or cost_u
 w1-budget-exhausted-banner    ImportWorkflow  Red 402/budget-exhausted banner; visible only during running/paused with budget error
 
 -- Hierarchical Tags and World Categories (Worker W5) --
-tag-tree-panel-<prefix>              TagTreePanel   Root container of the tag/category tree (prefix=character-tag or world-category)
-tag-tree-node-<prefix>-<id>          TagTreePanel   Individual tag/category tree row; prefix identifies which tree
-tag-tree-node-<prefix>-<id>-expand   TagTreePanel   Collapse/expand chevron; hidden when node has no children
-tag-tree-node-<prefix>-<id>-drag-handle  TagTreePanel  Drag handle icon; shown on hover
-tag-tree-drop-before-<prefix>-<id>   TagTreePanel   6px thin drop zone above a row (drop before sibling)
-tag-tree-drop-inside-<prefix>-<id>   TagTreePanel   Full-row drop zone (drop inside, becomes child)
-world-category-tree                  WorldWorkspace  Container of the world category TagTreePanel (within collapsible section)
-world-category-tree-toggle           WorldWorkspace  Button to expand/collapse the category tree panel
-world-category-node-<id>             WorldWorkspace  Clickable category filter button inside the tree
-add-world-category-btn               WorldWorkspace  "Add Category" button to create a new root-level world category
+tag-tree-panel-<prefix>                  TagTreePanel   Root container; prefix = character-tag | world-category
+tag-tree-row-<prefix>-<id>               TagTreePanel   Outer div for the full row (drag container); renamed from -node- to avoid collision with renderNodeContent buttons
+tag-tree-row-<prefix>-<id>-expand        TagTreePanel   Collapse/expand chevron; visibility:hidden when node has no children
+tag-tree-row-<prefix>-<id>-drag-handle   TagTreePanel   Drag handle icon; opacity-0 until hover
+tag-tree-drop-before-<prefix>-<id>       TagTreePanel   6px thin drop zone above a row (drop before sibling)
+tag-tree-drop-inside-<prefix>-<id>       TagTreePanel   Full-row drop zone (drop inside, becomes child)
+world-category-tree                      WorldWorkspace  Container of the world category TagTreePanel (collapsible section)
+world-category-tree-toggle               WorldWorkspace  Button to expand/collapse the category tree panel
+world-category-node-<id>                 WorldWorkspace  Clickable filter button inside each category row (from renderNodeContent; distinct from tag-tree-row-*)
+add-world-category-btn                   WorldWorkspace  "Add Category" button to create a new root-level world category
 
 -- Sidebar/Graph Linkage (Worker W6) --
 character-group-header-{group}       CharactersWorkspace      Group folder collapse/expand button; {group} = importance partition name (e.g. core, major)

@@ -4,6 +4,8 @@ import { ExternalLink, Globe, Map as MapIcon, Plus, Trash2 } from 'lucide-react'
 import { useProjectStore, useUIStore } from '../store';
 import { cn } from '../utils';
 import { useI18n } from '../i18n';
+import { TagTreePanel } from './TagTreePanel';
+import type { WorldCategoryNode } from '../models/project';
 
 const CONTAMINATION_CONTAINER_NAMES = new Set([
   '人物关系图', '人物关系', '关系图', '关系网络',
@@ -19,6 +21,7 @@ export const WorldWorkspace = () => {
     worldItems,
     worldSettings,
     worldMaps,
+    worldCategories,
     timelineEvents,
     scenes,
     addWorldContainer,
@@ -30,20 +33,31 @@ export const WorldWorkspace = () => {
     updateWorldMap,
     updateWorldContainer,
     deleteWorldContainer,
+    addWorldCategory,
+    moveWorldCategory,
+    toggleWorldCategoryCollapsed,
   } = useProjectStore();
   const [activeContainerId, setActiveContainerId] = useState(worldContainers[0]?.id || null);
   const [activeItemId, setActiveItemId] = useState(worldItems[0]?.id || null);
   const [activeMapId, setActiveMapId] = useState(worldMaps[0]?.id || null);
   const [renamingContainerId, setRenamingContainerId] = useState<string | null>(null);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
+  const [showCategoryTree, setShowCategoryTree] = useState(true);
 
   const activeContainer = worldContainers.find((container) => container.id === activeContainerId) || worldContainers[0] || null;
   const activeItem = worldItems.find((item) => item.id === activeItemId) || null;
   const activeMap = worldMaps.find((map) => map.id === activeMapId) || worldMaps[0] || null;
   const containerItems = useMemo(() => worldItems.filter((item) => item.containerId === activeContainer?.id), [worldItems, activeContainer]);
   const groupedItems = useMemo(() => {
+    const base = selectedCategoryId
+      ? (() => {
+          const cat = worldCategories.find((c) => c.id === selectedCategoryId);
+          return containerItems.filter((item) => cat && item.categoryPath?.includes(cat.name));
+        })()
+      : containerItems;
     const groups = new Map<string, typeof containerItems>();
     const ungrouped: typeof containerItems = [];
-    for (const item of containerItems) {
+    for (const item of base) {
       if (item.categoryPath && item.categoryPath.length >= 2) {
         const groupKey = item.categoryPath[1];
         if (!groups.has(groupKey)) groups.set(groupKey, []);
@@ -53,7 +67,7 @@ export const WorldWorkspace = () => {
       }
     }
     return { groups, ungrouped };
-  }, [containerItems]);
+  }, [containerItems, selectedCategoryId, worldCategories]);
   const activeMapMarkers = useMemo(() => {
     if (!activeMap) return [];
     return worldItems.flatMap((item) => item.mapMarkers).filter((marker) => activeMap.markerIds.includes(marker.id));
@@ -236,6 +250,54 @@ export const WorldWorkspace = () => {
             </button>
           </div>
         </div>
+        {worldCategories.length > 0 && (
+          <div className="border-b border-border">
+            <button
+              type="button"
+              data-testid="world-category-tree-toggle"
+              className="flex w-full items-center justify-between px-4 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-brand-2 hover:bg-hover"
+              onClick={() => setShowCategoryTree((v) => !v)}
+            >
+              <span>{t('world.categories', 'Categories')}</span>
+              <Plus size={12} className={showCategoryTree ? 'rotate-45 transition-transform' : 'transition-transform'} />
+            </button>
+            {showCategoryTree && (
+              <div className="px-2 pb-2" data-testid="world-category-tree">
+                <TagTreePanel<WorldCategoryNode>
+                  nodes={worldCategories}
+                  renderNodeContent={(node) => (
+                    <button
+                      type="button"
+                      data-testid={`world-category-node-${node.id}`}
+                      className={cn('w-full rounded-xl px-3 py-1.5 text-left text-xs font-bold transition-colors', selectedCategoryId === node.id ? 'bg-brand/15 text-brand-2' : 'text-text-2 hover:bg-hover')}
+                      onClick={() => setSelectedCategoryId(selectedCategoryId === node.id ? null : node.id)}
+                    >
+                      {node.name}
+                      <span className="ml-1 text-text-3">
+                        ({containerItems.filter((i) => i.categoryPath?.includes(node.name)).length})
+                      </span>
+                    </button>
+                  )}
+                  onMove={(dragId, newParentId, insertBeforeSiblingId) => moveWorldCategory(dragId, newParentId, insertBeforeSiblingId)}
+                  onToggleCollapse={toggleWorldCategoryCollapsed}
+                  testIdPrefix="world-category"
+                />
+                <button
+                  type="button"
+                  data-testid="add-world-category-btn"
+                  className="mt-2 flex w-full items-center gap-1 rounded-xl border border-dashed border-border px-3 py-1.5 text-xs text-text-3 hover:border-brand hover:text-brand"
+                  onClick={() => {
+                    const id = `wcat_${Date.now()}`;
+                    addWorldCategory({ id, name: t('world.newCategory', 'New Category'), parentId: null, sortOrder: worldCategories.length, scope: 'world' });
+                  }}
+                >
+                  <Plus size={10} />
+                  {t('world.addCategory', 'Add Category')}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
         <div className="h-full overflow-y-auto custom-scrollbar" data-testid="world-item-list">
           {groupedItems.groups.size > 0 ? (
             <>

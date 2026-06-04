@@ -1,4 +1,4 @@
-export const PROJECT_SCHEMA_VERSION = 4;
+export const PROJECT_SCHEMA_VERSION = 5;
 
 export type EntityKind =
   | 'character'
@@ -142,6 +142,18 @@ export interface CharacterTag {
   color: string;
   description: string;
   characterIds: string[];
+  parentTagId?: string | null;
+  sortOrder?: number;
+  collapsed?: boolean;
+}
+
+export interface WorldCategoryNode {
+  id: string;
+  name: string;
+  parentId: string | null;
+  sortOrder: number;
+  scope: 'world';
+  collapsed?: boolean;
 }
 
 export interface Candidate {
@@ -952,6 +964,7 @@ export interface NarrativeProject {
   scenes: Scene[];
   worldContainers: WorldContainer[];
   worldItems: WorldItem[];
+  worldCategories?: WorldCategoryNode[];
   worldSettings: WorldSettings;
   worldMaps: WorldMapDocument[];
   graphBoards: GraphBoard[];

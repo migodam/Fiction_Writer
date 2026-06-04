@@ -12,6 +12,7 @@ import type {
   ProposalOperation,
   ProposalPackage,
   StorageMode,
+  WorldCategoryNode,
 } from '../models/project';
 import { PROJECT_SCHEMA_VERSION } from '../models/project';
 import { createBlankProject, createStarterProject } from '../mock/seedProject';
@@ -132,6 +133,29 @@ const WORLD_CATEGORY_PATH_MAP: Record<string, string[]> = {
   culture:            ['世界模型', '文化与习俗'],
   custom:             ['世界模型', '概念与设定'],
 };
+
+function buildDefaultWorldCategories(worldItems: NarrativeProject['worldItems']): WorldCategoryNode[] {
+  const root: WorldCategoryNode = { id: 'wcat_root', name: '世界模型', parentId: null, sortOrder: 0, scope: 'world' };
+  const subcategoryNames = new Set<string>();
+  for (const item of worldItems) {
+    const sub = item.categoryPath?.[1];
+    if (sub) subcategoryNames.add(sub);
+  }
+  // Fall back to WORLD_CATEGORY_PATH_MAP values if no items present.
+  if (subcategoryNames.size === 0) {
+    for (const path of Object.values(WORLD_CATEGORY_PATH_MAP)) {
+      if (path[1]) subcategoryNames.add(path[1]);
+    }
+  }
+  const leaves: WorldCategoryNode[] = Array.from(subcategoryNames).map((name, idx) => ({
+    id: `wcat_${name.replace(/\s+/g, '_')}`,
+    name,
+    parentId: root.id,
+    sortOrder: idx + 1,
+    scope: 'world' as const,
+  }));
+  return [root, ...leaves];
+}
 
 function normalizeWorldItem(item: NarrativeProject['worldItems'][number]): NarrativeProject['worldItems'][number] {
   if (item.categoryPath && item.categoryPath.length > 0) return item;
@@ -528,7 +552,11 @@ const migrateProject = (
       relationshipIds: character.relationshipIds || [],
       povInsights: character.povInsights || null,
     })),
-    characterTags: rawProject.characterTags || fallbackProject.characterTags,
+    characterTags: (rawProject.characterTags || fallbackProject.characterTags).map((tag, idx) => ({
+      ...tag,
+      parentTagId: tag.parentTagId !== undefined ? tag.parentTagId : null,
+      sortOrder: tag.sortOrder !== undefined ? tag.sortOrder : idx,
+    })),
     candidates: rawProject.candidates || fallbackProject.candidates,
     timelineBranches: normalizeBranches(rawProject.timelineBranches || fallbackProject.timelineBranches),
     timelineEvents: (rawProject.timelineEvents || fallbackProject.timelineEvents).map((event, index) => ({
@@ -554,6 +582,9 @@ const migrateProject = (
     worldItems: rawProject.worldItems || fallbackProject.worldItems,
     worldSettings: rawProject.worldSettings || fallbackProject.worldSettings,
     worldMaps: rawProject.worldMaps || fallbackProject.worldMaps,
+    worldCategories: rawProject.worldCategories?.length
+      ? rawProject.worldCategories
+      : buildDefaultWorldCategories(rawProject.worldItems || fallbackProject.worldItems),
     graphBoards: normalizeGraphBoards(rawProject.graphBoards || fallbackProject.graphBoards),
     betaPersonas: rawProject.betaPersonas || fallbackProject.betaPersonas,
     betaRuns: rawProject.betaRuns || fallbackProject.betaRuns,
@@ -720,6 +751,7 @@ const serializeProjectToFolder = (
   writeJson(fs, path.join(worldDir, 'containers.json'), project.worldContainers);
   writeJson(fs, path.join(worldDir, 'settings.json'), project.worldSettings);
   writeJson(fs, path.join(worldDir, 'maps.json'), project.worldMaps);
+  writeJson(fs, path.join(worldDir, 'categories.json'), project.worldCategories ?? []);
   project.worldItems.forEach((item) => {
     writeJson(fs, path.join(worldDir, `${item.id}.json`), item);
   });
@@ -1002,6 +1034,7 @@ export const projectService = {
       worldContainers: safeReadJson(runtime.fs, runtime.path.join(worldDir, 'containers.json'), []),
       worldSettings: safeReadJson(runtime.fs, runtime.path.join(worldDir, 'settings.json'), folderFallback.worldSettings),
       worldMaps: safeReadJson(runtime.fs, runtime.path.join(worldDir, 'maps.json'), folderFallback.worldMaps),
+      worldCategories: safeReadJson(runtime.fs, runtime.path.join(worldDir, 'categories.json'), []),
       worldItems: readJsonFilesSafe<NarrativeProject['worldItems'][number]>(runtime, worldDir)
         .filter((item) => item.id)
         .map(normalizeWorldItem),
