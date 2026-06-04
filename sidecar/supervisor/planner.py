@@ -430,6 +430,47 @@ _FINDING_TO_PATCH: dict[str, dict] = {
 
 _SEVERITY_ALLOWS_RERUN = frozenset({"medium", "high"})
 
+# ---------------------------------------------------------------------------
+# ManifestRevision validation
+# ---------------------------------------------------------------------------
+
+_MANIFEST_REVISION_TYPES: frozenset = frozenset({"promote", "demote", "merge", "reclassify"})
+_MANIFEST_REVISION_ACTIONS: frozenset = frozenset({
+    "demote_to_scene_beat",
+    "promote_to_canonical",
+    "merge_with_predecessor",
+    "reclassify_to_background",
+})
+_MANIFEST_REVISION_KNOWN_FIELDS: frozenset = frozenset({
+    "revision_type", "window_id", "dedupeKey", "action", "reason", "revised_by",
+})
+
+
+def validate_manifest_revision(revision: dict) -> tuple[bool, list[str]]:
+    """Validate a ManifestRevision dict against the W1 safety contract.
+
+    Only allowlisted revision_type and action values are accepted.
+    Unknown fields are rejected. dedupeKey must be non-empty.
+    Returns (True, []) for valid revisions, (False, [errors]) otherwise.
+    """
+    errors: list[str] = []
+    unknown = set(revision) - _MANIFEST_REVISION_KNOWN_FIELDS
+    if unknown:
+        errors.append(f"unknown fields: {sorted(unknown)}")
+    rt = revision.get("revision_type")
+    if rt not in _MANIFEST_REVISION_TYPES:
+        errors.append(
+            f"revision_type: {rt!r} not in {sorted(_MANIFEST_REVISION_TYPES)}"
+        )
+    action = revision.get("action")
+    if action not in _MANIFEST_REVISION_ACTIONS:
+        errors.append(
+            f"action: {action!r} not in {sorted(_MANIFEST_REVISION_ACTIONS)}"
+        )
+    if not revision.get("dedupeKey"):
+        errors.append("dedupeKey: must be non-empty")
+    return len(errors) == 0, errors
+
 
 def _reviewer_findings_to_policy_patch(report: dict) -> dict:
     """Map ReviewReport findings to an allowlisted PromptPolicyPatch dict.

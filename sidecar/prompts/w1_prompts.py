@@ -276,10 +276,12 @@ Every event MUST include the most specific time reference available: chapter num
 ## CANONICAL VS SCENE-BEAT DECISION
 Every candidate MUST explicitly choose:
 - eventClass/timelineClass = canonical_event when the beat changes world state, relationship state, power status, faction alignment, major knowledge, survival stakes, or arc direction.
-- eventClass/timelineClass = scene_beat when it is travel, training repetition, conversation texture, atmosphere, minor tactical movement, repeated explanation, or a sub-beat inside a larger canonical event.
+- eventClass/timelineClass = scene_beat when it is travel, training repetition, conversation texture, atmosphere, minor tactical movement, repeated explanation, or a sub-beat inside a larger canonical event. Scene beats belong in manuscript notes, NOT in the timeline.
 - eventClass/timelineClass = background_reference when it is past lore, explanation, or remembered context that should not become a timeline proposal.
 
 Decision test — ask for every candidate: "What specific, irreversible state is DIFFERENT after this beat? Name it in one phrase (e.g. '韩立 breaks to 三层', 'sect alliance sealed', 'antagonist identity exposed')." If you cannot name a concrete change to world state, relationship, power level, survival, or arc direction — it is scene_beat, not canonical_event.
+
+Logistics exclusion: travel, supply-gathering, camp setup, arrivals/departures, and routine training sessions are scene_beat unless they DIRECTLY cause an irreversible state change shown in the same window.
 
 Only canonical_event candidates are expected to survive as timeline proposals. scene_beat candidates may be used
 for merge recommendations or scene summaries. Do not promote every action to a canonical event.
@@ -685,10 +687,12 @@ Every event MUST include the most specific time reference available: chapter num
 ## CANONICAL VS SCENE-BEAT DECISION
 Every candidate MUST explicitly choose:
 - eventClass/timelineClass = canonical_event when the beat changes world state, relationship state, power status, faction alignment, major knowledge, survival stakes, or arc direction.
-- eventClass/timelineClass = scene_beat when it is travel, training repetition, conversation texture, atmosphere, minor tactical movement, repeated explanation, or a sub-beat inside a larger canonical event.
+- eventClass/timelineClass = scene_beat when it is travel, training repetition, conversation texture, atmosphere, minor tactical movement, repeated explanation, or a sub-beat inside a larger canonical event. Scene beats belong in manuscript notes, NOT in the timeline.
 - eventClass/timelineClass = background_reference when it is past lore, explanation, or remembered context that should not become a timeline proposal.
 
 Decision test — ask for every candidate: "What specific, irreversible state is DIFFERENT after this beat? Name it in one phrase (e.g. '韩立 breaks to 三层', 'sect alliance sealed', 'antagonist identity exposed')." If you cannot name a concrete change to world state, relationship, power level, survival, or arc direction — it is scene_beat, not canonical_event.
+
+Logistics exclusion: travel, supply-gathering, camp setup, arrivals/departures, and routine training sessions are scene_beat unless they DIRECTLY cause an irreversible state change shown in the same window.
 
 Only canonical_event candidates are expected to survive as timeline proposals. scene_beat candidates may be used
 for merge recommendations or scene summaries. Do not promote every action to a canonical event.
@@ -1211,10 +1215,12 @@ Every event MUST include the most specific time reference available: chapter num
 ## CANONICAL VS SCENE-BEAT DECISION
 Every candidate MUST explicitly choose:
 - eventClass/timelineClass = canonical_event when the beat changes world state, relationship state, power status, faction alignment, major knowledge, survival stakes, or arc direction.
-- eventClass/timelineClass = scene_beat when it is travel, training repetition, conversation texture, atmosphere, minor tactical movement, repeated explanation, or a sub-beat inside a larger canonical event.
+- eventClass/timelineClass = scene_beat when it is travel, training repetition, conversation texture, atmosphere, minor tactical movement, repeated explanation, or a sub-beat inside a larger canonical event. Scene beats belong in manuscript notes, NOT in the timeline.
 - eventClass/timelineClass = background_reference when it is past lore, explanation, or remembered context that should not become a timeline proposal.
 
 Decision test — ask for every candidate: "What specific, irreversible state is DIFFERENT after this beat? Name it in one phrase (e.g. '韩立 breaks to 三层', 'sect alliance sealed', 'antagonist identity exposed')." If you cannot name a concrete change to world state, relationship, power level, survival, or arc direction — it is scene_beat, not canonical_event.
+
+Logistics exclusion: travel, supply-gathering, camp setup, arrivals/departures, and routine training sessions are scene_beat unless they DIRECTLY cause an irreversible state change shown in the same window.
 
 Only canonical_event candidates are expected to survive as timeline proposals. scene_beat candidates may be used
 for merge recommendations or scene summaries. Do not promote every action to a canonical event.
@@ -1286,6 +1292,8 @@ Enum examples are valid choices — substitute the correct value, do not copy th
       "temporal_hint": "[REQUIRED] <chapter or arc anchor>",
       "chunk_position": "middle",
       "stakes": "[REQUIRED] <why this matters>",
+      "state_change": "[REQUIRED for canonical_event] one phrase naming the concrete, irreversible state after this event (e.g. '韩立 reaches 三层', 'sect alliance sealed'). Empty string for scene_beat.",
+      "why_timeline_worthy": "[REQUIRED for canonical_event] one sentence: why this belongs in the timeline and not only in manuscript notes. Empty string for scene_beat.",
       "mergeCandidateTitles": [],
       "confidence": 0.85
     }}
@@ -1295,6 +1303,33 @@ Enum examples are valid choices — substitute the correct value, do not copy th
 Typical: 2–5 canonical_event per packed window at chapter-level density. Return {{"events": []}} only if zero state changes.
 """
 
+_EVENT_POLICY_SPARSE: str = """
+## EXTRACTION POLICY
+event_density=sparse_turning_points — IRREVERSIBLE TURNING POINTS ONLY
+
+A canonical event MUST meet ALL THREE of the following criteria:
+  1. The world state, power status, relationship balance, faction alignment, or protagonist arc is permanently different AFTER this event.
+  2. You can name the concrete state change in one phrase (e.g. '韩立 breaks to Foundation Establishment', 'sect alliance sealed', 'elder revealed as spy').
+  3. The change cannot be undone by a later chapter without a further state-change event.
+
+EXCLUDE — these must NEVER be classified canonical_event:
+  • Travel, arrival, departure, or supply-gathering with no immediate state consequence
+  • Sparring or training sessions that do not end in a breakthrough or death
+  • Dialogue that is atmospheric or expository without changing power balance or alliance
+  • Any candidate where you CANNOT name the state change — these are scene_beat
+  • Logistics sequences: buying supplies, scouting routes, camp setup, rest
+
+Canonical events belong in the timeline. Scene beats belong in manuscript notes and should not be promoted merely to satisfy a count.
+
+Hard caps (strictly enforced):
+  • ≤4 canonical_event entries per window total — quality over quantity
+  • confidence ≥ 0.90 — skip anything that does not clearly meet all three criteria above
+  • state_change is REQUIRED and must be non-empty for every canonical_event entry
+  • why_timeline_worthy is REQUIRED and must be non-empty for every canonical_event entry
+  • Scene beats and background references are still welcome but must be correctly classified
+"""
+
+W1_EXTRACT_EVENTS_DEEP_SPARSE: str = _EVENT_V2_PRE + _EVENT_POLICY_SPARSE + _EVENT_V2_POST
 W1_EXTRACT_EVENTS_DEEP_ARC: str = _EVENT_V2_PRE + _EVENT_POLICY_ARC + _EVENT_V2_POST
 W1_EXTRACT_EVENTS_DEEP_CHAPTER: str = _EVENT_V2_PRE + _EVENT_POLICY_CHAPTER + _EVENT_V2_POST
 W1_EXTRACT_EVENTS_DEEP_DENSE: str = _EVENT_V2_PRE + _EVENT_POLICY_DENSE + _EVENT_V2_POST

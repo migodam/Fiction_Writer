@@ -291,11 +291,81 @@ def choose_prompt_policy_patch(source_profile: dict[str, Any] | None, quality_hi
     }
 
 
-def prompt_policy_decision(source_profile: dict[str, Any] | None, patch: dict[str, Any]) -> dict[str, Any]:
-    """Artifact payload explaining Orchestrator prompt policy choices."""
+def prompt_policy_decision(
+    source_profile: dict[str, Any] | None,
+    patch: dict[str, Any],
+    *,
+    topology_signals: dict[str, Any] | None = None,
+    reviewer_feedback: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Artifact payload explaining Orchestrator prompt policy choices.
+
+    Args:
+        source_profile: source metadata from analyze_source_profile().
+        patch: the PromptPolicyPatch dict chosen by choose_prompt_policy_patch().
+        topology_signals: optional timeline_architecture dict for topology context.
+        reviewer_feedback: optional gate_failures list from QA/judge stage.
+    """
     normalized = normalize_prompt_policy_patch(patch)
+    density = str(normalized.get("event_density_strategy", "chapter_level"))
+
+    profile = source_profile if isinstance(source_profile, dict) else {}
+    chapter_count = int(profile.get("chapter_count") or 1)
+    source_type = str(profile.get("estimated_source_type") or "unknown")
+    source_lang = str(profile.get("source_language") or "")
+    avg_chars = float(profile.get("avg_chars_per_chapter") or 0)
+
+    _density_reasons: dict[str, str] = {
+        "sparse_turning_points": (
+            f"CJK webnovel ({source_type}, {chapter_count} chapters, avg {avg_chars:.0f} chars/ch) — "
+            "using sparse turning-point density to avoid流水账 scene-beat inflation."
+        ),
+        "arc_level": (
+            f"Long source ({chapter_count} chapters) — arc-level density keeps only "
+            "phase transitions, breakthroughs, deaths, betrayals, and faction-level shifts."
+        ),
+        "scene_level": (
+            f"Short/dense source ({chapter_count} chapters, avg {avg_chars:.0f} chars/ch) — "
+            "scene-level density captures fine narrative transitions."
+        ),
+        "chapter_level": (
+            f"Standard novel ({chapter_count} chapters) — chapter-level density selects "
+            "a few causally important events per chapter."
+        ),
+    }
+    reason_for_density = _density_reasons.get(density, f"Density {density!r} for {chapter_count} chapters.")
+
+    topo = topology_signals if isinstance(topology_signals, dict) else {}
+    existing_topology_signals = {
+        "branch_count": len(topo.get("branches") or []),
+        "canonical_event_count": len(topo.get("canonical_events") or []),
+        "scene_beat_count": len(topo.get("scene_beats") or []),
+        "density_policy": str(topo.get("density_policy") or ""),
+    }
+
+    reviewer_feedback_used = [
+        {
+            "finding": str(f.get("check_name", "") or f.get("gate", "")),
+            "severity": str(f.get("severity", "")),
+        }
+        for f in (reviewer_feedback or [])
+        if f.get("check_name") or f.get("gate")
+    ]
+
     return {
-        "decision_version": "w1-prompt-policy-decision-v1",
+        "decision_version": "w1-prompt-policy-decision-v2",
+        "chosen_density": density,
+        "reason_for_density": reason_for_density,
+        "source_profile_signals": {
+            "chapter_count": chapter_count,
+            "estimated_source_type": source_type,
+            "source_language": source_lang,
+            "avg_chars_per_chapter": avg_chars,
+            "dialogue_density_hint": str(profile.get("dialogue_density_hint") or ""),
+            "named_entity_density_hint": str(profile.get("named_entity_density_hint") or ""),
+        },
+        "existing_timeline_topology_signals": existing_topology_signals,
+        "reviewer_feedback_used": reviewer_feedback_used,
         "source_profile": source_profile or {},
         "prompt_policy_patch": normalized,
         "directive_keys": sorted(prompt_policy_directives(normalized)),

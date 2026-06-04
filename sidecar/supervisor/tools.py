@@ -84,6 +84,7 @@ from sidecar.prompts.w1_prompts import (
     W1_EXTRACT_EVENTS_DEEP_ARC,
     W1_EXTRACT_EVENTS_DEEP_CHAPTER,
     W1_EXTRACT_EVENTS_DEEP_DENSE,
+    W1_EXTRACT_EVENTS_DEEP_SPARSE,
     W1_EXTRACT_RELATIONSHIPS_CHUNK,
     W1_EXTRACT_RELATIONSHIPS_CORE,
     W1_EXTRACT_RELATIONSHIPS_DENSE,
@@ -427,7 +428,7 @@ _CHAR_PROMPT_BY_GRANULARITY: dict[str, str] = {
     "all":        W1_EXTRACT_CHARACTERS_DEEP_FINE,
 }
 _EVENT_PROMPT_BY_DENSITY: dict[str, str] = {
-    "sparse_turning_points": W1_EXTRACT_EVENTS_DEEP_ARC,
+    "sparse_turning_points": W1_EXTRACT_EVENTS_DEEP_SPARSE,
     "arc_level":     W1_EXTRACT_EVENTS_DEEP_ARC,
     "chapter_level": W1_EXTRACT_EVENTS_DEEP_CHAPTER,
     "scene_level":   W1_EXTRACT_EVENTS_DEEP_DENSE,
@@ -476,6 +477,7 @@ def _selected_extraction_prompt_manifest(state: ImportSupervisorState) -> dict[s
         id(W1_EXTRACT_CHARACTERS_DEEP_BALANCED): "W1_EXTRACT_CHARACTERS_DEEP_BALANCED",
         id(W1_EXTRACT_CHARACTERS_DEEP_FINE): "W1_EXTRACT_CHARACTERS_DEEP_FINE",
         id(W1_EXTRACT_EVENTS_DEEP): "W1_EXTRACT_EVENTS_DEEP",
+        id(W1_EXTRACT_EVENTS_DEEP_SPARSE): "W1_EXTRACT_EVENTS_DEEP_SPARSE",
         id(W1_EXTRACT_EVENTS_DEEP_ARC): "W1_EXTRACT_EVENTS_DEEP_ARC",
         id(W1_EXTRACT_EVENTS_DEEP_CHAPTER): "W1_EXTRACT_EVENTS_DEEP_CHAPTER",
         id(W1_EXTRACT_EVENTS_DEEP_DENSE): "W1_EXTRACT_EVENTS_DEEP_DENSE",
@@ -1520,9 +1522,20 @@ async def proposal_write(state: ImportSupervisorState) -> dict:
                 state.get("import_plan_validation", {}),
             )
         if state.get("prompt_policy_decision"):
+            # Enrich the artifact with late-stage topology and reviewer signals
+            # now that timeline_architecture and gate_failures are available.
+            from sidecar.supervisor.prompt_policy import prompt_policy_decision as _ppd
+            _ppd_base = state["prompt_policy_decision"]
+            _ppd_patch = (_ppd_base.get("prompt_policy_patch") or {})
+            _ppd_enriched = _ppd(
+                state.get("source_profile"),
+                _ppd_patch,
+                topology_signals=state.get("timeline_architecture"),
+                reviewer_feedback=state.get("gate_failures"),
+            )
             _write_import_artifact(
                 project_path, import_run_id, "prompt_policy_decision.json",
-                state.get("prompt_policy_decision", {}),
+                _ppd_enriched,
             )
         if state.get("planner_proposal"):
             _write_import_artifact(
