@@ -458,3 +458,21 @@ w1-token-cost-output          ImportWorkflow  Output tokens field: actual output
 w1-token-cost-calls           ImportWorkflow  API call count field from token_ledger.api_call_count
 w1-token-cost-estimated-cost  ImportWorkflow  Estimated cost ($X.XXXX) or cost_unavailable_reason; hidden when neither present
 w1-budget-exhausted-banner    ImportWorkflow  Red 402/budget-exhausted banner; visible only during running/paused with budget error
+
+-- Hierarchical Tags and World Categories (Worker W5) --
+tag-tree-panel-<prefix>              TagTreePanel   Root container of the tag/category tree (prefix=character-tag or world-category)
+tag-tree-node-<prefix>-<id>          TagTreePanel   Individual tag/category tree row; prefix identifies which tree
+tag-tree-node-<prefix>-<id>-expand   TagTreePanel   Collapse/expand chevron; hidden when node has no children
+tag-tree-node-<prefix>-<id>-drag-handle  TagTreePanel  Drag handle icon; shown on hover
+tag-tree-drop-before-<prefix>-<id>   TagTreePanel   6px thin drop zone above a row (drop before sibling)
+tag-tree-drop-inside-<prefix>-<id>   TagTreePanel   Full-row drop zone (drop inside, becomes child)
+world-category-tree                  WorldWorkspace  Container of the world category TagTreePanel (within collapsible section)
+world-category-tree-toggle           WorldWorkspace  Button to expand/collapse the category tree panel
+world-category-node-<id>             WorldWorkspace  Clickable category filter button inside the tree
+add-world-category-btn               WorldWorkspace  "Add Category" button to create a new root-level world category
+
+-- Sidebar/Graph Linkage (Worker W6) --
+character-group-header-{group}       CharactersWorkspace      Group folder collapse/expand button; {group} = importance partition name (e.g. core, major)
+graph-importance-filter-all          RelationshipGraphPanel   "All" chip — clears graphImportanceFilter and (if linkage on) expands all sidebar groups
+graph-importance-filter-{imp}        RelationshipGraphPanel   Per-importance filter chip; dimmed (opacity-40) when that group is hidden from graph
+graph-sidebar-linkage-toggle         RelationshipGraphPanel   Linkage toggle; text="Linked" when on (sidebar collapse drives graph filter)
