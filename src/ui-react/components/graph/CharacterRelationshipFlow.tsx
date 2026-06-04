@@ -221,25 +221,40 @@ const EdgeEditPanel: React.FC<{
 };
 
 export const CharacterRelationshipFlow: React.FC = () => {
-  const { characters, relationships, setSelectedEntity, addRelationship, updateRelationship, deleteRelationship } = useProjectStore();
+  const { characters, relationships, graphImportanceFilter, setSelectedEntity, addRelationship, updateRelationship, deleteRelationship } = useProjectStore();
   const { openContextMenu } = useUIStore();
   const { t } = useI18n();
   const [editingEdgeId, setEditingEdgeId] = useState<string | null>(null);
 
-  const initialNodes = useMemo(() => buildNodes(characters), [characters]);
-  const initialEdges = useMemo(() => buildEdges(relationships), [relationships]);
+  const visibleChars = useMemo(
+    () =>
+      graphImportanceFilter.length === 0
+        ? characters
+        : characters.filter((c) => !graphImportanceFilter.includes(c.importance || 'ungrouped')),
+    [characters, graphImportanceFilter],
+  );
+
+  const visibleCharIds = useMemo(() => new Set(visibleChars.map((c) => c.id)), [visibleChars]);
+
+  const visibleRelationships = useMemo(
+    () => relationships.filter((r) => visibleCharIds.has(r.sourceId) && visibleCharIds.has(r.targetId)),
+    [relationships, visibleCharIds],
+  );
+
+  const initialNodes = useMemo(() => buildNodes(visibleChars), [visibleChars]);
+  const initialEdges = useMemo(() => buildEdges(visibleRelationships), [visibleRelationships]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
-  // Update nodes when characters change
+  // Update nodes when visible characters change
   React.useEffect(() => {
-    setNodes(buildNodes(characters));
-  }, [characters, setNodes]);
+    setNodes(buildNodes(visibleChars));
+  }, [visibleChars, setNodes]);
 
   React.useEffect(() => {
-    setEdges(buildEdges(relationships));
-  }, [relationships, setEdges]);
+    setEdges(buildEdges(visibleRelationships));
+  }, [visibleRelationships, setEdges]);
 
   const editingRelationship = editingEdgeId
     ? relationships.find((r) => r.id === editingEdgeId) ?? null
