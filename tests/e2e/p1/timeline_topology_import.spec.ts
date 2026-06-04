@@ -97,16 +97,20 @@ async function getAllNodePositions(page: import('@playwright/test').Page) {
 
 async function getVisibleLabelBoxes(page: import('@playwright/test').Page) {
   return page.evaluate(() =>
-    Array.from(document.querySelectorAll<SVGTextElement>('[data-testid^="timeline-event-label-"]')).map((label) => {
-      const rect = label.getBoundingClientRect();
-      return {
-        id: label.getAttribute('data-testid') || '',
-        left: rect.left,
-        right: rect.right,
-        top: rect.top,
-        bottom: rect.bottom,
-      };
-    }),
+    Array.from(document.querySelectorAll<SVGTextElement>('[data-testid^="timeline-event-label-"]'))
+      .map((label) => {
+        const rect = label.getBoundingClientRect();
+        return {
+          id: label.getAttribute('data-testid') || '',
+          left: rect.left,
+          right: rect.right,
+          top: rect.top,
+          bottom: rect.bottom,
+          width: rect.width,
+          height: rect.height,
+        };
+      })
+      .filter((r) => r.width > 0 && r.height > 0),
   );
 }
 
@@ -197,8 +201,11 @@ test.describe('Timeline topology: dense imported events', () => {
   });
 
   test('dense event labels do not overlap and hidden labels still expose tooltip', async ({ page }) => {
+    // Wait for the label layout engine to finish placing labels after injection
+    await page.waitForTimeout(500);
     const labelBoxes = await getVisibleLabelBoxes(page);
-    expect(labelBoxes.length).toBeGreaterThan(0);
+    // With 42 injected events the layout engine must place at least 20 visible labels
+    expect(labelBoxes.length).toBeGreaterThan(20);
 
     for (let i = 0; i < labelBoxes.length; i++) {
       for (let j = i + 1; j < labelBoxes.length; j++) {
