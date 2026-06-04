@@ -749,9 +749,10 @@ const RelationshipGraphPanel: React.FC = () => {
           type="button"
           data-testid="graph-importance-filter-all"
           onClick={() => {
-            setGraphImportanceFilter([]);
             if (graphSidebarLinkageEnabled) {
               setCharacterGroupCollapsed({});
+            } else {
+              setGraphImportanceFilter([]);
             }
           }}
           className={cn(
@@ -774,11 +775,13 @@ const RelationshipGraphPanel: React.FC = () => {
                 const newFilter = isHidden
                   ? graphImportanceFilter.filter((f) => f !== imp)
                   : [...graphImportanceFilter, imp];
-                setGraphImportanceFilter(newFilter);
                 if (graphSidebarLinkageEnabled) {
+                  // Let useEffect derive graphImportanceFilter from collapse state
                   const nextCollapsed: Record<string, boolean> = {};
                   newFilter.forEach((g) => { nextCollapsed[g] = true; });
                   setCharacterGroupCollapsed(nextCollapsed);
+                } else {
+                  setGraphImportanceFilter(newFilter);
                 }
               }}
               className={cn(
