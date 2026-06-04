@@ -201,8 +201,8 @@ test.describe('Timeline topology: dense imported events', () => {
   });
 
   test('dense event labels do not overlap and hidden labels still expose tooltip', async ({ page }) => {
-    // Wait for the label layout engine to finish placing labels after injection
-    await page.waitForTimeout(500);
+    // Wait for at least one label to be visible before reading all bounding boxes
+    await expect(page.locator('[data-testid^="timeline-event-label-"]').first()).toBeVisible({ timeout: 5000 });
     const labelBoxes = await getVisibleLabelBoxes(page);
     // With 42 injected events the layout engine must place at least 20 visible labels
     expect(labelBoxes.length).toBeGreaterThan(20);
