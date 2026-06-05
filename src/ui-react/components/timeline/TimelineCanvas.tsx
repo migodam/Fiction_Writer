@@ -133,6 +133,9 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
     deleteTimelineBranch,
     setTimelineBranchAnchors,
     setTimelineBranchGeometry,
+    beginUndoTransaction,
+    commitUndoTransaction,
+    cancelUndoTransaction,
   } = useProjectStore();
   const { setLastActionStatus } = useUIStore();
   const { t } = useI18n();
@@ -575,9 +578,11 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
         setSelectedEntity('timeline_branch', branchId);
       }
       setMode('branch-drag');
+      const txLabel = (handle === 'start' || handle === 'end') ? 'Anchor branch' : 'Adjust branch';
+      beginUndoTransaction(txLabel);
       return true;
     },
-    [branches, branchCPMap, branchLaneOffsets, setSelectedEntity],
+    [beginUndoTransaction, branches, branchCPMap, branchLaneOffsets, setSelectedEntity],
   );
 
   const findAttachedEndpoint = useCallback(
@@ -832,6 +837,7 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
     };
 
     const onUp = () => {
+      commitUndoTransaction();
       // Propagate shared anchor positions to ALL attached branches
       if (branchDragState) {
         const anchorEventId = branchDragState.handle === 'start'
@@ -849,13 +855,34 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
       setMode('idle');
     };
 
+    const onCancel = () => {
+      cancelUndoTransaction();
+      branchDragStateRef.current = null;
+      setBranchDragState(null);
+      setMode('idle');
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        cancelUndoTransaction();
+        branchDragStateRef.current = null;
+        setBranchDragState(null);
+        setMode('idle');
+      }
+    };
+
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onCancel);
+    window.addEventListener('keydown', onKeyDown);
     return () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+      window.removeEventListener('keydown', onKeyDown);
+      cancelUndoTransaction();
     };
-  }, [mode, branchDragState, branches, branchCPMap, zoom, panX, panY, setTimelineBranchAnchors, setTimelineBranchGeometry, findNearestSnapTarget, events, updateTimelineEventPosition]);
+  }, [mode, branchDragState, branches, branchCPMap, zoom, panX, panY, setTimelineBranchAnchors, setTimelineBranchGeometry, findNearestSnapTarget, events, updateTimelineEventPosition, commitUndoTransaction, cancelUndoTransaction]);
 
   // Branch handle pointer-down
   const handleBranchHandlePointerDown = useCallback(

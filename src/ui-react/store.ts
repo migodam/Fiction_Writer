@@ -76,6 +76,9 @@ export const defaultW1CustomProfileConfig: W1CustomProfileConfig = {
   language_policy: 'normalize_to_source',
   input_window_budget: 32000,
   output_token_budget: 4000,
+  extract_relationships: true,
+  extract_world: true,
+  extract_timeline: true,
 };
 
 const buildW1OrchestratorOverrides = (config: W1CustomProfileConfig, enabled = true): W1OrchestratorOverrides => ({
@@ -265,6 +268,7 @@ interface ProjectState {
   addWorldItem: (item: WorldItem) => void;
   updateWorldItem: (item: WorldItem) => void;
   deleteWorldItem: (id: string) => void;
+  moveWorldItemToCategory: (itemId: string, newCategory: string, newContainerId: string, newCategoryPath: string[]) => void;
   updateWorldSettings: (settings: WorldSettings) => void;
   createWorldMap: (map: WorldMapDocument) => void;
   updateWorldMap: (map: WorldMapDocument) => void;
@@ -437,6 +441,10 @@ interface ProjectState {
   captureUndoSnapshot: (label: string) => void;
   undoAction: () => Promise<void>;
   redoAction: () => Promise<void>;
+  pendingUndoTransaction: { label: string; snapshot: ProjectDataSnapshot } | null;
+  beginUndoTransaction: (label: string) => void;
+  commitUndoTransaction: () => void;
+  cancelUndoTransaction: () => void;
 }
 
 const MAX_UNDO_DEPTH = 20;
@@ -910,6 +918,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   selectedEntity: { type: null, id: null },
   undoStack: [],
   redoStack: [],
+  pendingUndoTransaction: null,
   captureUndoSnapshot: (label) => {
     const snapshot = extractSnapshot(get());
     const entry: UndoEntry = { id: crypto.randomUUID(), label, snapshot };
@@ -952,6 +961,40 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     });
     await get().saveProject();
   },
+  beginUndoTransaction: (label) => {
+    if (get().pendingUndoTransaction) {
+      console.warn('[undo] beginUndoTransaction called while transaction already pending; ignoring');
+      return;
+    }
+    const snapshot = extractSnapshot(get());
+    set({ pendingUndoTransaction: { label, snapshot } });
+  },
+  commitUndoTransaction: () => {
+    const { pendingUndoTransaction, undoStack } = get();
+    if (!pendingUndoTransaction) return;
+    const current = extractSnapshot(get());
+    const prev = pendingUndoTransaction.snapshot;
+    const changed =
+      current.timelineBranches !== prev.timelineBranches ||
+      current.timelineEvents !== prev.timelineEvents;
+    if (!changed) {
+      set({ pendingUndoTransaction: null });
+      return;
+    }
+    const entry: UndoEntry = {
+      id: crypto.randomUUID(),
+      label: pendingUndoTransaction.label,
+      snapshot: pendingUndoTransaction.snapshot,
+    };
+    set({
+      undoStack: [entry, ...undoStack].slice(0, MAX_UNDO_DEPTH),
+      redoStack: [],
+      pendingUndoTransaction: null,
+    });
+  },
+  cancelUndoTransaction: () => {
+    set({ pendingUndoTransaction: null });
+  },
   setSelectedEntity: (type, id) => set((state) => ({
     selectedEntity: { type, id },
     unreadUpdates: id ? { ...state.unreadUpdates, entities: { ...state.unreadUpdates.entities, [id]: false } } : state.unreadUpdates,
@@ -961,7 +1004,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({ saveStatus: 'Saving' });
     const project = projectService.createProject({ name: input?.name || 'Starter Demo Project', rootPath: input?.rootPath, template: input?.template || 'starter-demo', locale: input?.locale || uiLocale });
     useUIStore.getState().hydrateFromProjectUiState(project.uiState);
-    set({ ...deriveState(project), selectedEntity: { type: null, id: null }, saveStatus: 'Saved', undoStack: [], redoStack: [] });
+    set({ ...deriveState(project), selectedEntity: { type: null, id: null }, saveStatus: 'Saved', undoStack: [], redoStack: [], pendingUndoTransaction: null });
     useUIStore.getState().setLocale(project.metadata.locale);
     setTimeout(() => get().saveStatus === 'Saved' && set({ saveStatus: 'Idle' }), 1200);
   },
@@ -974,7 +1017,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({ saveStatus: 'Saving' });
     const project = projectService.openProject(rootPath);
     useUIStore.getState().hydrateFromProjectUiState(project.uiState);
-    set({ ...deriveState(project), selectedEntity: { type: null, id: null }, saveStatus: 'Saved', undoStack: [], redoStack: [] });
+    set({ ...deriveState(project), selectedEntity: { type: null, id: null }, saveStatus: 'Saved', undoStack: [], redoStack: [], pendingUndoTransaction: null });
     useUIStore.getState().setLocale(project.metadata.locale);
     if (rootPath) get().loadMetadata(rootPath);
     // Open/migrate SQLite DB (fire-and-forget; JSON store still drives memory)
@@ -989,7 +1032,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({ ...deriveState(savedProject), graphImportanceFilter, characterGroupCollapsed, graphSidebarLinkageEnabled, saveStatus: 'Saved' });
     setTimeout(() => get().saveStatus === 'Saved' && set({ saveStatus: 'Idle' }), 1200);
   },
-  loadProject: (project) => { useUIStore.getState().hydrateFromProjectUiState(project.uiState); set({ ...deriveState(project), selectedEntity: { type: null, id: null }, saveStatus: 'Idle', undoStack: [], redoStack: [] }); },
+  loadProject: (project) => { useUIStore.getState().hydrateFromProjectUiState(project.uiState); set({ ...deriveState(project), selectedEntity: { type: null, id: null }, saveStatus: 'Idle', undoStack: [], redoStack: [], pendingUndoTransaction: null }); },
   setProjectLocale: (locale) => set((state) => ({ currentProject: cloneProject(state, locale), saveStatus: 'Unsaved changes' })),
   syncProjectUiState: () => set((state) => ({ currentProject: cloneProject(state, useUIStore.getState().locale), saveStatus: state.saveStatus === 'Idle' ? 'Unsaved changes' : state.saveStatus })),
   addCharacter: (character) => {
@@ -1215,7 +1258,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     if (warnings.length > 0) console.warn('[Timeline] moveTimelineEvent:', warnings);
     return withDirtyState(propagateTimelineAnchorDependencies(timelineBranches, timelineEvents));
   }); },
-  setTimelineBranchGeometry: (branchId, geometry) => { get().captureUndoSnapshot('Adjust branch'); set((state) => {
+  setTimelineBranchGeometry: (branchId, geometry) => { if (!get().pendingUndoTransaction) get().captureUndoSnapshot('Adjust branch'); set((state) => {
     const existing = state.timelineBranches.find((b) => b.id === branchId);
     const { timelineBranches, timelineEvents } = applyTimelineOperation(
       { timelineBranches: state.timelineBranches, timelineEvents: state.timelineEvents },
@@ -1229,7 +1272,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   }); },
   // NOTE: endAnchor, endMode, mergeTargetBranchId, mergeEventId are CANONICAL topology fields.
   // They are written to disk via saveProject() and must not be in BRANCH_RUNTIME_FIELDS.
-  setTimelineBranchAnchors: (branchId, startPos, endPos, anchors) => { get().captureUndoSnapshot('Anchor branch'); set((state) => {
+  setTimelineBranchAnchors: (branchId, startPos, endPos, anchors) => { if (!get().pendingUndoTransaction) get().captureUndoSnapshot('Anchor branch'); set((state) => {
     const previousBranch = state.timelineBranches.find((entry) => entry.id === branchId);
     if (!previousBranch) {
       return state;
@@ -1313,6 +1356,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   addWorldItem: (item) => { get().captureUndoSnapshot('Add world item'); set((state) => withDirtyState({ worldItems: [...state.worldItems, item] })); },
   updateWorldItem: (item) => { get().captureUndoSnapshot('Edit world item'); set((state) => withDirtyState({ worldItems: state.worldItems.map((entry) => entry.id === item.id ? item : entry) })); },
   deleteWorldItem: (id) => { get().captureUndoSnapshot('Delete world item'); set((state) => withDirtyState({ worldItems: state.worldItems.filter((entry) => entry.id !== id) })); },
+  moveWorldItemToCategory: (itemId, newCategory, newContainerId, newCategoryPath) => { get().captureUndoSnapshot('Move world item'); set((state) => withDirtyState({ worldItems: state.worldItems.map((item) => item.id === itemId ? { ...item, containerId: newContainerId, category: newCategory, categoryPath: newCategoryPath, parentId: null } : item) })); },
   updateWorldSettings: (worldSettings) => { get().captureUndoSnapshot('Edit world settings'); set(() => withDirtyState({ worldSettings })); },
   createWorldMap: (map) => set((state) => withDirtyState({ worldMaps: [...state.worldMaps, map] })),
   updateWorldMap: (map) => set((state) => withDirtyState({ worldMaps: state.worldMaps.map((entry) => entry.id === map.id ? map : entry) })),
