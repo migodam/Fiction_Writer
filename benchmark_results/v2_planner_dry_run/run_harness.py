@@ -48,9 +48,9 @@ from sidecar.models.state import (
 from sidecar.prompts.w1_prompts import (
     W1_EXTRACT_CHARACTERS_DEEP_BALANCED,
     W1_EXTRACT_CHARACTERS_DEEP_FINE,
-    W1_EXTRACT_EVENTS_DEEP_ARC,
     W1_EXTRACT_EVENTS_DEEP_CHAPTER,
     W1_EXTRACT_EVENTS_DEEP_DENSE,
+    W1_EXTRACT_EVENTS_DEEP_SPARSE,
 )
 from sidecar.supervisor.tools import (
     _select_extraction_prompts,
@@ -69,7 +69,7 @@ MATRIX = [
     ("case_2_50ch_zh_deep",     50, "zh", "deep",     "coarse_webnovel",  "coarse_webnovel",  W1_EXTRACT_CHARACTERS_DEEP_BALANCED,  W1_EXTRACT_EVENTS_DEEP_CHAPTER, 50),
     ("case_3_40ch_en_deep",     40, "en", "deep",     "balanced_novel",   "balanced_novel",   W1_EXTRACT_CHARACTERS_DEEP_BALANCED,  W1_EXTRACT_EVENTS_DEEP_CHAPTER, 40),
     ("case_4_20ch_en_balanced", 20, "en", "balanced", "balanced_novel",   "balanced_novel",   W1_EXTRACT_CHARACTERS_DEEP_BALANCED,  W1_EXTRACT_EVENTS_DEEP_CHAPTER, 24),
-    ("case_5_10ch_en_fast",     10, "en", "fast",     "coarse_webnovel",  "fine_short_story", W1_EXTRACT_CHARACTERS_DEEP_BALANCED,  W1_EXTRACT_EVENTS_DEEP_ARC,      5),
+    ("case_5_10ch_en_fast",     10, "en", "fast",     "coarse_webnovel",  "fine_short_story", W1_EXTRACT_CHARACTERS_DEEP_BALANCED,  W1_EXTRACT_EVENTS_DEEP_SPARSE,   5),
 ]
 
 

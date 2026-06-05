@@ -22,9 +22,9 @@ from sidecar.models.state import (
 from sidecar.prompts.w1_prompts import (
     W1_EXTRACT_CHARACTERS_DEEP_BALANCED,
     W1_EXTRACT_CHARACTERS_DEEP_FINE,
-    W1_EXTRACT_EVENTS_DEEP_ARC,
     W1_EXTRACT_EVENTS_DEEP_CHAPTER,
     W1_EXTRACT_EVENTS_DEEP_DENSE,
+    W1_EXTRACT_EVENTS_DEEP_SPARSE,
     W1_EXTRACT_RELATIONSHIPS_CORE,
     W1_EXTRACT_RELATIONSHIPS_DENSE,
     W1_EXTRACT_RELATIONSHIPS_RECURRING,
@@ -74,7 +74,7 @@ MATRIX = [
     (50, "zh", "deep",     "coarse_webnovel",  "coarse_webnovel",  W1_EXTRACT_CHARACTERS_DEEP_BALANCED,  W1_EXTRACT_EVENTS_DEEP_CHAPTER, 50),
     (40, "en", "deep",     "balanced_novel",   "balanced_novel",   W1_EXTRACT_CHARACTERS_DEEP_BALANCED,  W1_EXTRACT_EVENTS_DEEP_CHAPTER, 40),
     (20, "en", "balanced", "balanced_novel",   "balanced_novel",   W1_EXTRACT_CHARACTERS_DEEP_BALANCED,  W1_EXTRACT_EVENTS_DEEP_CHAPTER, 24),
-    (10, "en", "fast",     "coarse_webnovel",  "fine_short_story", W1_EXTRACT_CHARACTERS_DEEP_BALANCED,  W1_EXTRACT_EVENTS_DEEP_ARC,      5),
+    (10, "en", "fast",     "coarse_webnovel",  "fine_short_story", W1_EXTRACT_CHARACTERS_DEEP_BALANCED,  W1_EXTRACT_EVENTS_DEEP_SPARSE,   5),
 ]
 
 _SECRET_PATTERN = re.compile(r"sk-|DEEPSEEK_API_KEY|Bearer |api\.deepseek", re.IGNORECASE)
@@ -187,10 +187,10 @@ class TestPromptVariantDispatch:
         assert manifest["world"]["prompt_constant"] == "W1_EXTRACT_WORLD_DEEP_SPARSE"
         assert manifest["relationship"]["prompt_constant"] == "W1_EXTRACT_RELATIONSHIPS_CORE"
 
-    def test_fast_case_arc_level_event(self):
+    def test_fast_case_sparse_turning_points_event(self):
         state = _build_state(10, "en", "fast")
         manifest = _selected_extraction_prompt_manifest(state)
-        assert manifest["event"]["prompt_constant"] == "W1_EXTRACT_EVENTS_DEEP_ARC"
+        assert manifest["event"]["prompt_constant"] == "W1_EXTRACT_EVENTS_DEEP_SPARSE"
 
 
 # ── Group 3: Artifact integrity ────────────────────────────────────────────────
