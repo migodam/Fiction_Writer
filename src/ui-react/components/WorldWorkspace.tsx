@@ -1,16 +1,97 @@
 import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ExternalLink, Globe, Map as MapIcon, Plus, Trash2 } from 'lucide-react';
+import { ExternalLink, Globe, GripVertical, Map as MapIcon, Plus, Trash2 } from 'lucide-react';
+import {
+  DndContext,
+  DragEndEvent,
+  DragOverlay,
+  DragStartEvent,
+  PointerSensor,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
 import { useProjectStore, useUIStore } from '../store';
 import { cn } from '../utils';
 import { useI18n } from '../i18n';
 import { TagTreePanel } from './TagTreePanel';
-import type { WorldCategoryNode } from '../models/project';
+import type { WorldCategoryNode, WorldItem } from '../models/project';
 
 const CONTAMINATION_CONTAINER_NAMES = new Set([
   '人物关系图', '人物关系', '关系图', '关系网络',
   '事件时间线', '时间线', '时间轴',
 ]);
+
+// ---------------------------------------------------------------------------
+// Drag/drop sub-components
+// ---------------------------------------------------------------------------
+
+function DraggableWorldItem({
+  item,
+  isActive,
+  onClick,
+  onContextMenu,
+}: {
+  item: WorldItem;
+  isActive: boolean;
+  onClick: () => void;
+  onContextMenu: (e: React.MouseEvent) => void;
+}) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: item.id });
+  return (
+    <div
+      ref={setNodeRef}
+      data-testid={`world-item-${item.id}`}
+      className={cn(
+        'group relative w-full border-b border-divider px-4 py-4 text-left transition-colors cursor-pointer',
+        isActive ? 'bg-selected' : 'hover:bg-hover',
+        isDragging && 'opacity-40',
+      )}
+      onClick={onClick}
+      onContextMenu={onContextMenu}
+    >
+      <span
+        {...listeners}
+        {...attributes}
+        className="absolute left-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-40 cursor-grab active:cursor-grabbing"
+        onClick={(e) => e.stopPropagation()}
+        onContextMenu={(e) => e.stopPropagation()}
+      >
+        <GripVertical size={12} />
+      </span>
+      <div className="text-sm font-black text-text">{item.name}</div>
+      <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-text-3">{item.description}</div>
+    </div>
+  );
+}
+
+function DroppableCategoryHeader({
+  groupName,
+  children,
+}: {
+  groupName: string;
+  children: React.ReactNode;
+}) {
+  const { isOver, setNodeRef } = useDroppable({ id: `category-header-${groupName}` });
+  return (
+    <div
+      ref={setNodeRef}
+      className={cn(
+        'sticky top-0 z-10 px-4 py-2 text-[10px] font-black uppercase tracking-[0.2em] border-b transition-colors',
+        isOver
+          ? 'bg-brand/20 text-brand border-brand/30'
+          : 'bg-bg-elev-1 text-brand-2 border-divider',
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main workspace
+// ---------------------------------------------------------------------------
 
 export const WorldWorkspace = () => {
   const navigate = useNavigate();
@@ -28,6 +109,7 @@ export const WorldWorkspace = () => {
     addWorldItem,
     updateWorldItem,
     deleteWorldItem,
+    moveWorldItemToCategory,
     updateWorldSettings,
     createWorldMap,
     updateWorldMap,
@@ -43,6 +125,9 @@ export const WorldWorkspace = () => {
   const [renamingContainerId, setRenamingContainerId] = useState<string | null>(null);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [showCategoryTree, setShowCategoryTree] = useState(true);
+  const [draggingItemId, setDraggingItemId] = useState<string | null>(null);
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   const activeContainer = worldContainers.find((container) => container.id === activeContainerId) || worldContainers[0] || null;
   const activeItem = worldItems.find((item) => item.id === activeItemId) || null;
@@ -72,6 +157,51 @@ export const WorldWorkspace = () => {
     if (!activeMap) return [];
     return worldItems.flatMap((item) => item.mapMarkers).filter((marker) => activeMap.markerIds.includes(marker.id));
   }, [activeMap, worldItems]);
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    setDraggingItemId(null);
+    const { active, over } = event;
+    if (!over || !active) return;
+    const itemId = String(active.id);
+    const overId = String(over.id);
+    if (!overId.startsWith('category-header-')) return;
+    const targetGroupName = overId.replace('category-header-', '');
+
+    // Find the container whose name matches the drop target group name
+    const targetContainer = worldContainers.find(
+      (c) => c.name === targetGroupName || c.importCategoryKey === targetGroupName,
+    );
+    if (!targetContainer) return;
+
+    const item = worldItems.find((i) => i.id === itemId);
+    if (!item || item.containerId === targetContainer.id) return;
+
+    const newCategory = (targetContainer as any).importCategoryKey ?? 'concept';
+    const newCategoryPath = [
+      item.categoryPath?.[0] ?? '世界模型',
+      targetContainer.name,
+      item.name,
+    ];
+    moveWorldItemToCategory(itemId, newCategory, targetContainer.id, newCategoryPath);
+  };
+
+  const makeItemContextMenu = (item: WorldItem) => (e: React.MouseEvent) => {
+    e.preventDefault();
+    openContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [{
+        id: 'delete',
+        label: t('common.delete'),
+        action: () => {
+          deleteWorldItem(item.id);
+          if (activeItemId === item.id) setActiveItemId(null);
+          setLastActionStatus(t('world.itemDeleted', 'World item deleted'));
+        },
+        destructive: true,
+      }],
+    });
+  };
 
   if (sidebarSection === 'settings') {
     return (
@@ -298,59 +428,64 @@ export const WorldWorkspace = () => {
             )}
           </div>
         )}
-        <div className="h-full overflow-y-auto custom-scrollbar" data-testid="world-item-list">
-          {groupedItems.groups.size > 0 ? (
-            <>
-              {Array.from(groupedItems.groups.entries()).map(([groupName, items]) => (
-                <div key={groupName} data-testid={`world-category-group-${groupName}`}>
-                  <div className="sticky top-0 z-10 px-4 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-brand-2 bg-bg-elev-1 border-b border-divider">
-                    {groupName}
+
+        <DndContext
+          sensors={sensors}
+          onDragStart={(e: DragStartEvent) => setDraggingItemId(String(e.active.id))}
+          onDragEnd={handleDragEnd}
+        >
+          <div className="h-full overflow-y-auto custom-scrollbar" data-testid="world-item-list">
+            {groupedItems.groups.size > 0 ? (
+              <>
+                {Array.from(groupedItems.groups.entries()).map(([groupName, items]) => (
+                  <div key={groupName} data-testid={`world-category-group-${groupName}`}>
+                    <DroppableCategoryHeader groupName={groupName}>
+                      {groupName}
+                    </DroppableCategoryHeader>
+                    {items.map((item) => (
+                      <DraggableWorldItem
+                        key={item.id}
+                        item={item}
+                        isActive={activeItemId === item.id}
+                        onClick={() => setActiveItemId(item.id)}
+                        onContextMenu={makeItemContextMenu(item)}
+                      />
+                    ))}
                   </div>
-                  {items.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      data-testid={`world-item-${item.id}`}
-                      className={cn('w-full border-b border-divider px-4 py-4 text-left transition-colors', activeItemId === item.id ? 'bg-selected' : 'hover:bg-hover')}
-                      onClick={() => setActiveItemId(item.id)}
-                      onContextMenu={(e) => { e.preventDefault(); openContextMenu({ x: e.clientX, y: e.clientY, items: [{ id: 'delete', label: t('common.delete'), action: () => { deleteWorldItem(item.id); if (activeItemId === item.id) setActiveItemId(null); setLastActionStatus(t('world.itemDeleted', 'World item deleted')); }, destructive: true }] }); }}
-                    >
-                      <div className="text-sm font-black text-text">{item.name}</div>
-                      <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-text-3">{item.description}</div>
-                    </button>
-                  ))}
-                </div>
-              ))}
-              {groupedItems.ungrouped.map((item) => (
-                <button
+                ))}
+                {groupedItems.ungrouped.map((item) => (
+                  <DraggableWorldItem
+                    key={item.id}
+                    item={item}
+                    isActive={activeItemId === item.id}
+                    onClick={() => setActiveItemId(item.id)}
+                    onContextMenu={makeItemContextMenu(item)}
+                  />
+                ))}
+              </>
+            ) : (
+              containerItems.map((item) => (
+                <DraggableWorldItem
                   key={item.id}
-                  type="button"
-                  data-testid={`world-item-${item.id}`}
-                  className={cn('w-full border-b border-divider px-4 py-4 text-left transition-colors', activeItemId === item.id ? 'bg-selected' : 'hover:bg-hover')}
+                  item={item}
+                  isActive={activeItemId === item.id}
                   onClick={() => setActiveItemId(item.id)}
-                  onContextMenu={(e) => { e.preventDefault(); openContextMenu({ x: e.clientX, y: e.clientY, items: [{ id: 'delete', label: t('common.delete'), action: () => { deleteWorldItem(item.id); if (activeItemId === item.id) setActiveItemId(null); setLastActionStatus(t('world.itemDeleted', 'World item deleted')); }, destructive: true }] }); }}
-                >
-                  <div className="text-sm font-black text-text">{item.name}</div>
-                  <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-text-3">{item.description}</div>
-                </button>
-              ))}
-            </>
-          ) : (
-            containerItems.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                data-testid={`world-item-${item.id}`}
-                className={cn('w-full border-b border-divider px-4 py-4 text-left transition-colors', activeItemId === item.id ? 'bg-selected' : 'hover:bg-hover')}
-                onClick={() => setActiveItemId(item.id)}
-                onContextMenu={(e) => { e.preventDefault(); openContextMenu({ x: e.clientX, y: e.clientY, items: [{ id: 'delete', label: t('common.delete'), action: () => { deleteWorldItem(item.id); if (activeItemId === item.id) setActiveItemId(null); setLastActionStatus(t('world.itemDeleted', 'World item deleted')); }, destructive: true }] }); }}
-              >
-                <div className="text-sm font-black text-text">{item.name}</div>
-                <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-text-3">{item.description}</div>
-              </button>
-            ))
-          )}
-        </div>
+                  onContextMenu={makeItemContextMenu(item)}
+                />
+              ))
+            )}
+          </div>
+          <DragOverlay>
+            {draggingItemId && (() => {
+              const item = worldItems.find((i) => i.id === draggingItemId);
+              return item ? (
+                <div className="bg-card border border-white/20 rounded-xl px-4 py-3 text-sm font-black text-text shadow-xl opacity-90">
+                  {item.name}
+                </div>
+              ) : null;
+            })()}
+          </DragOverlay>
+        </DndContext>
       </aside>
 
       <main className="flex-1 overflow-y-auto custom-scrollbar p-10">
