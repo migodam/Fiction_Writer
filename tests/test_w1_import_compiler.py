@@ -1310,6 +1310,79 @@ def test_node_write_to_project_writes_manuscript_before_cancellable_proposals(tm
     assert manuscript["chapters"][0]["manuscript_content"] == "Text survives cancellation."
 
 
+def test_node_write_to_project_writes_manuscript_node_projection(tmp_path, monkeypatch):
+    """writing/manuscript/nodes.json and .md files must be written BEFORE proposal writes."""
+    import json as _json
+
+    proposal_call_count = {"n": 0}
+
+    async def fake_propose_write(op, _project_path):
+        proposal_call_count["n"] += 1
+        return {"id": f"p_{op['entity_id']}", "confidence": op["confidence"]}
+
+    monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", fake_propose_write)
+
+    state = _make_write_state(
+        tmp_path,
+        manuscript_chapters=[
+            {
+                "chapter_id": "chap_1",
+                "title": "第一章",
+                "orderIndex": 0,
+                "chunk_ids": [0],
+                "manuscript_content": "韩立踏上修仙之路，历经千辛万苦，终成大道。",
+            },
+            {
+                "chapter_id": "chap_2",
+                "title": "第二章",
+                "orderIndex": 1,
+                "chunk_ids": [1],
+                "manuscript_content": "韩立进入七玄门，开始修炼长春功。",
+            },
+        ],
+    )
+    state["source_language"] = "zh"
+
+    asyncio.run(w1_import.node_write_to_project(state))
+
+    nodes_path = tmp_path / "writing" / "manuscript" / "nodes.json"
+    assert nodes_path.exists(), "writing/manuscript/nodes.json must be written"
+    nodes = _json.loads(nodes_path.read_text(encoding="utf-8"))
+
+    assert len(nodes) == 4
+    chapter_nodes = [n for n in nodes if n["type"] == "chapter_outline"]
+    scene_nodes = [n for n in nodes if n["type"] == "scene_outline"]
+    assert len(chapter_nodes) == 2
+    assert len(scene_nodes) == 2
+
+    ch1_node = next(n for n in chapter_nodes if n["linkedChapterId"] == "chap_1")
+    assert ch1_node["title"] == "第一章"
+    assert ch1_node["parentId"] is None
+    assert ch1_node["depth"] == 0
+    assert ch1_node["orderIndex"] == 0
+
+    sc1_node = next(n for n in scene_nodes if n["linkedChapterId"] == "chap_1")
+    assert sc1_node["parentId"] == ch1_node["id"]
+    assert sc1_node["depth"] == 1
+    assert sc1_node["linkedSceneId"] is not None
+
+    # CJK wordCount counts characters in U+4E00-U+9FFF range, not whitespace-split
+    assert ch1_node["wordCount"] > 1, "CJK wordCount should use character count, not whitespace split"
+
+    for sc_node in scene_nodes:
+        md_path = tmp_path / "writing" / "manuscript" / f"{sc_node['id']}.md"
+        assert md_path.exists(), f"{sc_node['id']}.md must be written"
+        content = md_path.read_text(encoding="utf-8")
+        assert content.strip(), f"{sc_node['id']}.md must have non-empty content"
+        # Verify actual sample text is present, not only non-zero word count
+        if sc_node["linkedChapterId"] == "chap_1":
+            assert "韩立" in content, "Chapter 1 .md must contain sample prose text"
+
+    for node in nodes:
+        assert "/" not in node["id"] and "\\" not in node["id"] and " " not in node["id"], \
+            f"node id {node['id']!r} contains unsafe characters"
+
+
 def test_synthesize_relationships_falls_back_to_evidence_candidates(tmp_path, monkeypatch):
     async def fake_invoke(*_args, **_kwargs):
         return {"relationships": []}
