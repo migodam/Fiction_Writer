@@ -184,3 +184,142 @@ test.describe('Writing workspace — imported chapter display', () => {
     expect(summaryValue.trim().length).toBeGreaterThan(0);
   });
 });
+
+// ── Manuscript node view ──────────────────────────────────────────────────────
+
+function makeManuscriptNodesFixture() {
+  const chapters = CHAPTER_TITLES.map((title, i) => ({
+    id: `chap_mn${String(i + 1).padStart(2, '0')}`,
+    title,
+    summary: `${title}概要`,
+    goal: '', notes: '', sceneIds: [`scene_mn${String(i + 1).padStart(2, '0')}`],
+    orderIndex: i, status: 'draft',
+  }));
+  const manuscriptNodes = chapters.flatMap((ch, i) => {
+    const sceneId = `scene_mn${String(i + 1).padStart(2, '0')}`;
+    const chNodeId = `mn_chap_mn${String(i + 1).padStart(2, '0')}`;
+    const scNodeId = `mn_${sceneId}`;
+    return [
+      { id: chNodeId, title: ch.title, type: 'chapter_outline', parentId: null,
+        orderIndex: i, linkedChapterId: ch.id, linkedSceneId: null,
+        depth: 0, collapsed: false, wordCount: 50 },
+      { id: scNodeId, title: '章节正文', type: 'scene_outline', parentId: chNodeId,
+        orderIndex: 0, linkedChapterId: ch.id, linkedSceneId: sceneId,
+        depth: 1, collapsed: false, wordCount: 50 },
+    ];
+  });
+  return {
+    metadata: {
+      schemaVersion: 5, projectId: 'proj_mn_test', name: 'Manuscript Node Test',
+      rootPath: 'memory://manuscript-node-test', storageMode: 'memory',
+      locale: 'zh-CN', version: 5,
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+      template: 'blank',
+      capabilities: { import: true, rag: false, scripts: false },
+      storageBackends: { canonical: 'project-folder-json', rag: 'project-folder-keyword-index' },
+      futureBackends: [],
+    },
+    chapters,
+    manuscriptNodes,
+  };
+}
+
+async function injectManuscriptFixture(page: Page) {
+  const fixture = makeManuscriptNodesFixture();
+  await page.addInitScript(
+    ({ project }) => {
+      localStorage.setItem('narrative-ide-project', JSON.stringify(project));
+      localStorage.setItem('narrative-ide-last-path', 'memory://manuscript-node-test');
+      const mockIpcRenderer = {
+        invoke: async (channel: string) => {
+          if (channel === 'sidecar:spawn') return { ok: true, port: 8765 };
+          if (channel === 'settings:load-app') return {};
+          return {};
+        },
+        on: () => {}, removeAllListeners: () => {}, send: () => {},
+      };
+      (window as any).require = (module: string) => {
+        if (module === 'electron') return { ipcRenderer: mockIpcRenderer };
+        throw new Error(`Module not found: ${module}`);
+      };
+    },
+    { project: fixture }
+  );
+}
+
+test.describe('Writing workspace — manuscript node tree display', () => {
+  test.beforeEach(async ({ page }) => {
+    await injectManuscriptFixture(page);
+    await page.goto('http://localhost:3000/writing/manuscript');
+    await expect(page.getByTestId('manuscript-workspace')).toBeVisible();
+  });
+
+  test('manuscript workspace shows all 10 chapter nodes', async ({ page }) => {
+    const workspace = page.getByTestId('manuscript-workspace');
+    for (const title of CHAPTER_TITLES) {
+      await expect(workspace.getByText(title, { exact: true })).toBeVisible();
+    }
+  });
+
+  test('chapter nodes and scene nodes are present in the tree', async ({ page }) => {
+    const chNode = page.getByTestId('manuscript-node-mn_chap_mn01');
+    await expect(chNode).toBeVisible();
+    const scNode = page.getByTestId('manuscript-node-mn_scene_mn01');
+    await expect(scNode).toBeVisible();
+  });
+});
+
+test.describe('Writing workspace — manuscript node content readability', () => {
+  test('clicking a scene node shows non-empty content via loadManuscriptNodeContent', async ({ page }) => {
+    const fixture = makeManuscriptNodesFixture();
+
+    const fakeFiles: Record<string, string> = {};
+    for (const node of fixture.manuscriptNodes) {
+      if ((node as any).type === 'scene_outline') {
+        const filePath = `memory://manuscript-node-test/writing/manuscript/${(node as any).id}.md`;
+        fakeFiles[filePath] = `${(node as any).title}的正文内容，韩立踏上修仙之路。`;
+      }
+    }
+
+    await page.addInitScript(
+      ({ project, files }) => {
+        localStorage.setItem('narrative-ide-project', JSON.stringify(project));
+        localStorage.setItem('narrative-ide-last-path', 'memory://manuscript-node-test');
+        const mockIpcRenderer = {
+          invoke: async (channel: string) => {
+            if (channel === 'sidecar:spawn') return { ok: true, port: 8765 };
+            if (channel === 'settings:load-app') return {};
+            return {};
+          },
+          on: () => {}, removeAllListeners: () => {}, send: () => {},
+        };
+        const fakeFsModule = {
+          existsSync: (p: string) => p in (files as Record<string, string>),
+          readFileSync: (p: string, _enc?: string) => (files as Record<string, string>)[p] ?? '',
+          mkdirSync: () => {},
+          writeFileSync: (p: string, content: string) => { (files as Record<string, string>)[p] = content; },
+          readdirSync: () => [],
+        };
+        const fakePathModule = {
+          join: (...parts: string[]) => parts.join('/').replace(/\/+/g, '/'),
+        };
+        (window as any).require = (module: string) => {
+          if (module === 'electron') return { ipcRenderer: mockIpcRenderer };
+          if (module === 'fs') return fakeFsModule;
+          if (module === 'path') return fakePathModule;
+          throw new Error(`Module not found: ${module}`);
+        };
+      },
+      { project: fixture, files: fakeFiles }
+    );
+
+    await page.goto('http://localhost:3000/writing/manuscript');
+    await expect(page.getByTestId('manuscript-workspace')).toBeVisible();
+
+    await page.getByTestId('manuscript-node-mn_scene_mn01').click();
+    await expect(page.getByTestId('manuscript-editor')).toBeVisible();
+
+    const wordCountEl = page.getByTestId('manuscript-editor-wordcount');
+    await expect(wordCountEl).not.toContainText('0 ');
+  });
+});

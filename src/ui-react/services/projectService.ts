@@ -5,6 +5,8 @@ import type {
   ExportArtifact,
   ExportProjectInput,
   Locale,
+  ManuscriptNode,
+  ManuscriptNodeType,
   NarrativeProject,
   PackageSource,
   ProjectTemplate,
@@ -629,6 +631,7 @@ const serializeProjectToFolder = (
   const writingDir = path.join(rootPath, 'writing');
   const chaptersDir = path.join(writingDir, 'chapters');
   const scenesDir = path.join(writingDir, 'scenes');
+  const manuscriptDir = path.join(writingDir, 'manuscript');
   const systemDir = path.join(rootPath, 'system');
   const schemaDir = path.join(systemDir, 'schema');
   const tasksDir = path.join(systemDir, 'tasks');
@@ -657,6 +660,7 @@ const serializeProjectToFolder = (
     writingDir,
     chaptersDir,
     scenesDir,
+    manuscriptDir,
     systemDir,
     schemaDir,
     tasksDir,
@@ -746,6 +750,7 @@ const serializeProjectToFolder = (
       content: undefined,
     });
   });
+  writeJson(fs, path.join(manuscriptDir, 'nodes.json'), project.manuscriptNodes || []);
   const inboxPath = path.join(systemDir, 'inbox.json');
   writeJson(fs, inboxPath, mergeDiskInboxForSave(fs, inboxPath, project.proposals, project.proposalHistory));
   writeJson(fs, path.join(systemDir, 'history.json'), project.proposalHistory);
@@ -959,6 +964,7 @@ export const projectService = {
     const storyboardsDir = runtime.path.join(entitiesDir, 'storyboards');
     const chaptersDir = runtime.path.join(resolvedPath, 'writing', 'chapters');
     const scenesDir = runtime.path.join(resolvedPath, 'writing', 'scenes');
+    const manuscriptNodeDir = runtime.path.join(resolvedPath, 'writing', 'manuscript');
     const systemDir = runtime.path.join(resolvedPath, 'system');
     const tasksDir = runtime.path.join(systemDir, 'tasks');
     const runsDir = runtime.path.join(systemDir, 'runs');
@@ -1030,6 +1036,34 @@ export const projectService = {
       }),
       retrievalHistory: safeReadJson(runtime.fs, runtime.path.join(ragDir, 'retrieval-history.json'), []),
       videoPackages: readJsonFilesSafe<NarrativeProject['videoPackages'][number]>(runtime, videoExportsDir),
+      manuscriptNodes: (() => {
+        const raw = safeReadJson(runtime.fs, runtime.path.join(manuscriptNodeDir, 'nodes.json'), []);
+        if (!Array.isArray(raw)) {
+          console.warn('[openProject] nodes.json: expected array, got', typeof raw);
+          return [];
+        }
+        const seen = new Set<string>();
+        return (raw as unknown[]).reduce<ManuscriptNode[]>((acc, n: unknown) => {
+          const node = n as Record<string, unknown>;
+          if (!node || typeof node !== 'object' || typeof node['id'] !== 'string') return acc;
+          const id = node['id'] as string;
+          if (seen.has(id)) return acc;
+          seen.add(id);
+          acc.push({
+            id,
+            title: typeof node['title'] === 'string' ? node['title'] : '',
+            type: (node['type'] as ManuscriptNodeType) ?? 'note',
+            parentId: (node['parentId'] as string | null) ?? null,
+            orderIndex: typeof node['orderIndex'] === 'number' ? (node['orderIndex'] as number) : 0,
+            linkedChapterId: (node['linkedChapterId'] as string | null) ?? null,
+            linkedSceneId: (node['linkedSceneId'] as string | null) ?? null,
+            depth: typeof node['depth'] === 'number' ? (node['depth'] as number) : 0,
+            collapsed: Boolean(node['collapsed']),
+            wordCount: typeof node['wordCount'] === 'number' ? (node['wordCount'] as number) : 0,
+          });
+          return acc;
+        }, []);
+      })(),
       uiState: safeReadJson(runtime.fs, runtime.path.join(systemDir, 'ui-state.json'), undefined),
       ...safeReadJson(runtime.fs, runtime.path.join(systemDir, 'index-cache.json'), {
         unreadUpdates: { activities: {}, sections: {}, entities: {} },

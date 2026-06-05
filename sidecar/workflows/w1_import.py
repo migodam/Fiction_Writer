@@ -3978,6 +3978,69 @@ def _write_manuscript_json(project_path: Path, state: ImportState, manuscript_ch
         _ms_f.write('\n  ]\n}\n')
 
 
+def _safe_node_id(raw_id: str) -> str:
+    """Return a filename-safe version of raw_id for use in ManuscriptNode ids and .md filenames."""
+    return re.sub(r"[/\\:*?\"<>| \x00-\x1f]", "_", raw_id)
+
+
+def _estimate_word_count(text: str, source_language: str) -> int:
+    """CJK: count characters in U+4E00–U+9FFF; Latin: whitespace-split tokens."""
+    if source_language == "zh":
+        return sum(1 for ch in text if "一" <= ch <= "鿿")
+    return len(text.split())
+
+
+def _write_manuscript_nodes(
+    project_path: Path,
+    manuscript_scene_pairs: list[tuple[dict, dict]],
+    source_language: str,
+) -> None:
+    """Write ManuscriptNode tree + per-chapter .md content to writing/manuscript/.
+
+    Called BEFORE proposal writes so the projection survives proposal cancellation.
+    Follows the same early-write semantics as _write_manuscript_json.
+    """
+    ms_dir = project_path / "writing" / "manuscript"
+    ms_dir.mkdir(parents=True, exist_ok=True)
+    source_is_zh = source_language == "zh"
+    scene_title = "章节正文" if source_is_zh else "Chapter Text"
+    nodes: list[dict] = []
+    for idx, (chapter_info, _mc) in enumerate(manuscript_scene_pairs):
+        chap_id = chapter_info["chapter_id"]
+        scene_id = chapter_info["scene_id"]
+        chap_node_id = _safe_node_id(f"mn_{chap_id}")
+        scene_node_id = _safe_node_id(f"mn_{scene_id}")
+        content = chapter_info.get("content", "") or ""
+        word_count = _estimate_word_count(content, source_language)
+        nodes.append({
+            "id": chap_node_id,
+            "title": chapter_info["title"],
+            "type": "chapter_outline",
+            "parentId": None,
+            "orderIndex": idx,
+            "linkedChapterId": chap_id,
+            "linkedSceneId": None,
+            "depth": 0,
+            "collapsed": False,
+            "wordCount": word_count,
+        })
+        nodes.append({
+            "id": scene_node_id,
+            "title": scene_title,
+            "type": "scene_outline",
+            "parentId": chap_node_id,
+            "orderIndex": 0,
+            "linkedChapterId": chap_id,
+            "linkedSceneId": scene_id,
+            "depth": 1,
+            "collapsed": False,
+            "wordCount": word_count,
+        })
+        (ms_dir / f"{scene_node_id}.md").write_text(content, encoding="utf-8")
+    with open(ms_dir / "nodes.json", "w", encoding="utf-8") as f:
+        json.dump(nodes, f, ensure_ascii=False, indent=2)
+
+
 async def node_write_to_project(state: ImportState) -> dict:
     """Write entities to project, push proposals, write manuscript.json, trigger W2 post_import."""
     import gc as _gc
@@ -4509,19 +4572,26 @@ async def node_write_to_project(state: ImportState) -> dict:
             },
             mc,
         ))
+
+    # Phase 2: write ManuscriptNode projection BEFORE cancellable proposal writes
+    _write_manuscript_nodes(project_path, manuscript_scene_pairs, source_language)
+
+    # Phase 3: chapter proposals
+    for chapter_info, mc in manuscript_scene_pairs:
+        chap_id = chapter_info["chapter_id"]
         op = {
             "op_type": "create",
             "entity_type": "chapter",
             "entity_id": chap_id,
             "data": {
                 "id": chap_id,
-                "title": title,
-                "orderIndex": idx,
-                "content": mc.get("manuscript_content", ""),
-                "manuscriptContent": mc.get("manuscript_content", ""),
-                "summary": summary,
-                "goal": goal,
-                "notes": f"Imported from: {state.get('source_file_path', '')}; chunks: {', '.join(map(str, mc.get('chunk_ids', [])))}",
+                "title": chapter_info["title"],
+                "orderIndex": chapter_info["orderIndex"],
+                "content": chapter_info["content"],
+                "manuscriptContent": chapter_info["content"],
+                "summary": chapter_info["summary"],
+                "goal": chapter_info["goal"],
+                "notes": chapter_info["notes"],
                 "sceneIds": [],
                 "status": "draft",
                 "importRunId": import_run_id,
@@ -4541,7 +4611,7 @@ async def node_write_to_project(state: ImportState) -> dict:
                 "blocked": bool(proposal.get("blockedReason") or proposal.get("requiresManualReview")),
             })
         except Exception as e:
-            errors.append(f"Failed to propose chapter '{title}': {str(e)}")
+            errors.append(f"Failed to propose chapter '{chapter_info['title']}': {str(e)}")
 
     for chapter_info, _mc in manuscript_scene_pairs:
         scene_title = "章节正文" if source_is_zh else "Chapter Text"
