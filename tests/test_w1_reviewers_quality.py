@@ -288,5 +288,57 @@ class TestQualityReviewer(unittest.TestCase):
         self.assertIn(report["verdict"], ("needs_repair", "needs_orchestrator_rerun"))
 
 
+    def test_quality_catches_xiangjia_gong_misrouted(self):
+        """QualityReviewer detects 项甲功 placed under rules and emits reclassify repair."""
+        proposals = [_make_world_proposal("wi_xjg", "项甲功", category="rule", description="一种基础功法")]
+        state = _make_state(proposals=proposals)
+        report = self.reviewer.review(state)
+        mismatch = [f for f in report["findings"] if f["check_name"] == "world_wrong_classification"]
+        self.assertGreaterEqual(len(mismatch), 1, "Expected world_wrong_classification finding")
+        reclassify = [r for r in report.get("local_repair_actions", []) if r["action_type"] == "reclassify"]
+        self.assertGreaterEqual(len(reclassify), 1, "Expected reclassify repair")
+        ops = reclassify[0].get("proposed_operations", [])
+        has_correct_target = any(op.get("new_category") == "cultivation_method" for op in ops)
+        self.assertTrue(has_correct_target, f"Expected new_category=cultivation_method in proposed_operations, got {ops}")
+
+    def test_reclassify_repair_updates_container_key_and_category_path(self):
+        """pipeline_tools reclassify also updates container_key and categoryPath when proposed_operations present."""
+        import asyncio
+        from sidecar.supervisor.pipeline_tools import repair_import_artifacts
+        state = {
+            "entity_registry": {
+                "world_detailed": {
+                    "wi_xjg": {
+                        "entity_id": "wi_xjg",
+                        "name": "项甲功",
+                        "category": "rule",
+                        "container_key": "rules",
+                        "categoryPath": ["世界模型", "修炼境界与制度", "项甲功"],
+                    }
+                },
+                "characters": {},
+            },
+            "minor_repair_log": [],
+            "supervisor_log": [],
+        }
+        repair_action = {
+            "action_type": "reclassify",
+            "target_entity_ids": ["wi_xjg"],
+            "description": "reclassify to category=cultivation_method",
+            "proposed_operations": [{
+                "op": "reclassify_world_item",
+                "entity_id": "wi_xjg",
+                "new_category": "cultivation_method",
+                "new_container_key": "cultivation_methods",
+                "new_category_path": ["世界模型", "功法与术法", "项甲功"],
+            }],
+        }
+        result = asyncio.run(repair_import_artifacts(state, [repair_action]))
+        item = result["entity_registry"]["world_detailed"]["wi_xjg"]
+        self.assertEqual(item["category"], "cultivation_method")
+        self.assertEqual(item["container_key"], "cultivation_methods")
+        self.assertEqual(item["categoryPath"], ["世界模型", "功法与术法", "项甲功"])
+
+
 if __name__ == "__main__":
     unittest.main()

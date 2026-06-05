@@ -12,6 +12,11 @@ from sidecar.supervisor.reviewers.schemas import (
     ReviewFinding,
     ReviewReport,
 )
+from sidecar.supervisor.organizer import (
+    classify_world_item,
+    _container_key_for_category,
+    _build_category_path,
+)
 
 
 _AGE_PHRASE_RE = re.compile(r"(\d{1,3}岁|[零一二三四五六七八九十百]+岁)")
@@ -149,11 +154,20 @@ class QualityReviewer(BaseReviewer):
     ) -> None:
         for op in world_ops:
             fields = op.get("fields") or {}
-            if fields.get("category", "").lower() == "character":
-                entity_id = op.get("entityId", "?")
+            entity_id = op.get("entityId", "?")
+            name = fields.get("name", entity_id)
+            current_category = fields.get("category", "").lower()
+            raw_category = fields.get("raw_category", current_category)
+            description = fields.get("description", "")
+
+            # Case 1: world item erroneously classified as "character"
+            if current_category == "character":
+                target_category = classify_world_item(name, raw_category, description)
+                target_container = _container_key_for_category(target_category)
+                target_path = _build_category_path(name, target_category)
                 findings.append(self._finding(
                     "world_wrong_classification",
-                    f"World entity '{fields.get('name', entity_id)}' classified as 'character'",
+                    f"World entity {name!r} classified as 'character'",
                     "high",
                     entity_refs=[entity_id],
                     entity_id=entity_id,
@@ -161,7 +175,51 @@ class QualityReviewer(BaseReviewer):
                 repairs.append(self._repair(
                     "reclassify",
                     [entity_id],
-                    f"Reclassify world entity '{fields.get('name', entity_id)}' from category=character to correct world category",
+                    f"reclassify to category={target_category}",
+                    deterministic=True,
+                    proposed_operations=[{
+                        "op": "reclassify_world_item",
+                        "entity_id": entity_id,
+                        "new_category": target_category,
+                        "new_container_key": target_container,
+                        "new_category_path": target_path,
+                    }],
+                ))
+                continue
+
+            # Case 2: semantic mismatch — name signals a different category than assigned
+            if not current_category:
+                continue
+            expected_category = classify_world_item(name, raw_category, description)
+            if expected_category == current_category:
+                continue
+            # Only emit when the mismatch is high-confidence (cultivation ↔ rule is clearest)
+            high_confidence = (
+                (expected_category == "cultivation_method" and current_category in ("rule", "system"))
+                or (expected_category in ("rule", "system") and current_category == "cultivation_method")
+            )
+            if high_confidence:
+                target_container = _container_key_for_category(expected_category)
+                target_path = _build_category_path(name, expected_category)
+                findings.append(self._finding(
+                    "world_wrong_classification",
+                    f"{name!r} has category={current_category!r} but name signals {expected_category!r}",
+                    "medium",
+                    entity_refs=[entity_id],
+                    entity_id=entity_id,
+                ))
+                repairs.append(self._repair(
+                    "reclassify",
+                    [entity_id],
+                    f"reclassify to category={expected_category}",
+                    deterministic=True,
+                    proposed_operations=[{
+                        "op": "reclassify_world_item",
+                        "entity_id": entity_id,
+                        "new_category": expected_category,
+                        "new_container_key": target_container,
+                        "new_category_path": target_path,
+                    }],
                 ))
 
     def _check_world_module_pollution(

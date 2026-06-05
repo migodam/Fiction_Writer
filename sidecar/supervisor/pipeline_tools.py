@@ -14,6 +14,7 @@ from sidecar.supervisor.reviewers.fact_reviewer import FactReviewer
 from sidecar.supervisor.reviewers.consistency_reviewer import ConsistencyReviewer
 from sidecar.supervisor.tools import rerun_window
 from sidecar.workflows.w1_import import node_write_to_project
+from sidecar.supervisor.organizer import _container_key_for_category
 
 
 async def run_quality_review(state: ImportSupervisorState) -> dict:
@@ -129,11 +130,26 @@ async def repair_import_artifacts(
                     repair_log.append(f"merge_duplicate: marked {dup_id!r} skip_create=True")
 
         elif action_type == "reclassify":
-            new_category = str(action.get("description", "")).split("to category=")[-1].strip()
+            proposed = action.get("proposed_operations") or []
+            if proposed:
+                op = proposed[0]
+                new_category = op.get("new_category", "")
+                new_container_key = op.get("new_container_key", "")
+                new_category_path = op.get("new_category_path", [])
+            else:
+                new_category = str(action.get("description", "")).split("to category=")[-1].strip()
+                new_container_key = _container_key_for_category(new_category)
+                new_category_path = []
             for entity_id in target_ids:
                 if entity_id in world_detailed:
                     world_detailed[entity_id]["category"] = new_category
-                    repair_log.append(f"reclassify: {entity_id!r} → category={new_category!r}")
+                    if new_container_key:
+                        world_detailed[entity_id]["container_key"] = new_container_key
+                    if new_category_path:
+                        world_detailed[entity_id]["categoryPath"] = new_category_path
+                    repair_log.append(
+                        f"reclassify: {entity_id!r} → category={new_category!r} container={new_container_key!r}"
+                    )
 
     registry["characters"] = chars
     registry["world_detailed"] = world_detailed
