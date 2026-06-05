@@ -415,3 +415,45 @@ def test_organizer_full_acceptance_matrix():
     assert "供奉堂" in surviving, "供奉堂 must survive as location/organization — not excluded"
     assert surviving["供奉堂"]["container_key"] in ("locations", "organizations"), \
         f"供奉堂 container_key must be locations or organizations, got {surviving['供奉堂']['container_key']}"
+
+
+# ---------------------------------------------------------------------------
+# New tests — classify_world_item taxonomy fix
+# ---------------------------------------------------------------------------
+
+
+def test_xiangjia_gong_routes_to_cultivation_method():
+    """项甲功 with raw_category='规则与制度' must route to cultivation_methods, not rules."""
+    from sidecar.supervisor.organizer import classify_world_item
+    result = classify_world_item("项甲功", "规则与制度", "一种基础功法，修炼速度快")
+    assert result == "cultivation_method", f"Expected cultivation_method, got {result!r}"
+
+
+def test_xiulian_jingjie_routes_to_rule():
+    """修炼境界 (cultivation realm/rank system) routes to rule, not cultivation_method."""
+    from sidecar.supervisor.organizer import classify_world_item
+    result = classify_world_item("修炼境界", "system", "描述修炼层次的等级制度")
+    assert result in ("rule", "system"), f"Expected rule or system, got {result!r}"
+
+
+def test_ji_ming_dizi_still_excluded():
+    """记名弟子 still excluded as identity_rank (cultivation-suffix check must not affect it)."""
+    inp = _make_input(
+        world_candidates={"记名弟子": _world_candidate(category="rule", description="弟子等级")},
+    )
+    out = organize_project_content(inp)
+    excluded_names = {x["name"] for x in out["excluded_items"]}
+    assert "记名弟子" in excluded_names, "记名弟子 must be excluded"
+    excluded_reason = {x["name"]: x["reason"] for x in out["excluded_items"]}
+    assert excluded_reason["记名弟子"] == "identity_rank", \
+        f"Expected identity_rank, got {excluded_reason['记名弟子']!r}"
+
+
+def test_classify_world_item_direct_call():
+    """classify_world_item is importable and handles the main routing cases."""
+    from sidecar.supervisor.organizer import classify_world_item
+    assert classify_world_item("长春功", "cultivation_methods", "") == "cultivation_method"
+    assert classify_world_item("七玄门", "organization", "") == "organization"
+    assert classify_world_item("神手谷", "location", "") == "location"
+    # Core fix: 功 suffix beats raw_category rule signal
+    assert classify_world_item("项甲功", "rule", "") == "cultivation_method"

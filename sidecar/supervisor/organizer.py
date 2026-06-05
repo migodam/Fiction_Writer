@@ -137,6 +137,18 @@ _ROLE_RANK_NAMES: frozenset[str] = frozenset({
     "执事", "内门", "外门",
 })
 
+# Name terminal suffixes that strongly signal a cultivation technique
+_CULTIVATION_NAME_SUFFIXES: tuple[str, ...] = (
+    "功", "法诀", "秘术", "术法", "功诀", "内功", "外功", "心法",
+    "剑诀", "步法", "刀法", "拳法", "掌法", "指法", "气法",
+)
+
+# Name tokens that signal a rule/realm/system item (in the name itself, not raw_category)
+_RULE_NAME_HINTS: tuple[str, ...] = (
+    "境界", "层", "炼气期", "筑基期", "结丹期", "元婴期", "化神期",
+    "制度", "门规", "法规",
+)
+
 # Category alias map (raw string → canonical category)
 _CATEGORY_ALIASES: dict[str, str] = {
     "place": "location",
@@ -245,37 +257,63 @@ def _is_role_rank_misrouted(name: str, raw_category: str) -> bool:
     return any(rank in stripped for rank in _ROLE_RANK_NAMES)
 
 
-def _normalize_category(name: str, raw_category: Any = "") -> str:
-    """Resolve raw category string to a canonical WORLD_ONTOLOGY_CATEGORIES value."""
+def classify_world_item(name: str, raw_category: str, description: str = "") -> str:
+    """Deterministic taxonomy classifier. Returns a WORLD_ONTOLOGY_CATEGORIES value.
+
+    Priority order (earlier rules win):
+    1. Person/character markers in raw_category → custom
+    2. Name ends with cultivation suffix AND description doesn't say rank/realm → cultivation_method
+    3. Name contains rule/realm hints (境界, 层, 制度…) → rule
+    4. Role/rank token in name AND not a location suffix → rule
+    5. Explicit cultivation hint in raw_category → cultivation_method
+    6. Name location / org suffix → location / organization
+    7. Alias map on raw_category
+    8. Substring matches on raw_category
+    9. Name suffix fallback
+    10. Default → concept
+    """
     raw = str(raw_category or "").strip().lower()
     clean = name.strip()
+    desc_lower = (description or "").lower()
 
-    # Person/character markers → custom (will be excluded upstream, but normalize defensively)
+    # 1. Person/character markers in raw → custom (defensive; exclusion handles this upstream)
     if any(t in raw for t in ("person", "character", "人物", "角色", "人名")):
         return "custom"
 
-    # Role/rank suffix in name AND name doesn't end in a location suffix → rule
+    # 2. Terminal cultivation-method suffix in name → cultivation_method
+    #    "项甲功" ends in "功" — overrides raw rule/system signal unless desc says rank/realm
+    if any(clean.endswith(s) for s in _CULTIVATION_NAME_SUFFIXES):
+        if not any(t in desc_lower for t in ("境界", "层次", "等级制度", "rank")):
+            return "cultivation_method"
+
+    # 3. Name itself contains realm/rule tokens (e.g. 修炼境界, 弟子制度)
+    if any(t in clean for t in _RULE_NAME_HINTS) and not any(
+        clean.endswith(s) for s in _CULTIVATION_NAME_SUFFIXES
+    ):
+        return "rule"
+
+    # 4. Role/rank suffix in name AND name doesn't end in a location suffix → rule
     if any(t in clean for t in _ROLE_RANK_NAMES) and not any(
         clean.endswith(s) for s in _LOC_AMBIGUOUS_SUFFIXES
     ):
         return "rule"
 
-    # Explicit cultivation hints in raw category
+    # 5. Explicit cultivation hints in raw category
     if any(t in raw for t in ("method", "spell", "cultivation", "功法", "法术", "术法", "法诀", "秘术", "修炼法门")):
         return "cultivation_method"
 
-    # Name suffix → location / organization (higher priority than alias map)
+    # 6. Name suffix → location / organization (higher priority than alias map)
     if any(t in clean for t in _LOC_HINTS):
         return "location"
     if any(t in clean for t in _ORG_HINTS):
         return "organization"
 
-    # Alias map
+    # 7. Alias map
     alias = _CATEGORY_ALIASES.get(raw)
     if alias:
         return alias
 
-    # Raw string substring matches
+    # 8. Raw string substring matches
     if any(t in raw for t in ("organization", "organisation", "sect", "clan", "guild", "组织", "门派", "宗门", "帮派")):
         return "organization"
     if any(t in raw for t in ("faction", "alliance", "势力", "阵营", "联盟", "派系")):
@@ -295,13 +333,18 @@ def _normalize_category(name: str, raw_category: Any = "") -> str:
     if any(t in raw for t in ("custom", "自定义")):
         return "custom"
 
-    # Fallback: check name suffixes again (catch cases where raw was empty)
+    # 9. Name suffix fallback (catch cases where raw was empty)
     if any(t in clean for t in _LOC_HINTS):
         return "location"
     if any(t in clean for t in _ORG_HINTS):
         return "organization"
 
     return "concept"
+
+
+def _normalize_category(name: str, raw_category: Any = "") -> str:
+    """Thin wrapper kept for backward compatibility. Delegates to classify_world_item."""
+    return classify_world_item(name, str(raw_category or ""))
 
 
 def _container_key_for_category(category: str) -> str:
@@ -420,7 +463,13 @@ def organize_project_content(organizer_input: OrganizerInput) -> OrganizerOutput
             continue
 
         # --- Classify and emit world item ---
-        category = _normalize_category(name, raw_category)
+        description = str(
+            candidate.get("description")
+            or candidate.get("summary")
+            or candidate.get("notes")
+            or ""
+        )
+        category = classify_world_item(name, raw_category, description)
         container_key = _container_key_for_category(category)
         category_path = _build_category_path(name, category)
 
@@ -430,12 +479,6 @@ def organize_project_content(organizer_input: OrganizerInput) -> OrganizerOutput
                 f"Ambiguous: '{name}' defaulted to location; may be organization — verify context."
             )
 
-        description = str(
-            candidate.get("description")
-            or candidate.get("summary")
-            or candidate.get("notes")
-            or ""
-        )
         raw_attrs = candidate.get("attributes") or []
         attributes: list[dict[str, str]] = []
         if isinstance(raw_attrs, list):
