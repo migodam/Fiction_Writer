@@ -1521,6 +1521,66 @@ class TestJudgeImportResultStatus(unittest.TestCase):
         self.assertEqual(artifact.get("result_status"), "budget_exhausted")
 
 
+# ── Language policy in W1_CLASSIFY_CHARACTER_TAGS ─────────────────────────────
+
+class TestTagClassificationLanguagePolicy(unittest.TestCase):
+    """Verify that W1_CLASSIFY_CHARACTER_TAGS carries language policy placeholders
+    and that node_classify_character_tags injects them at call time."""
+
+    def test_tag_classification_zh_prompt_includes_language_policy(self):
+        """Prompt template must contain {source_language_label} and {language_policy}."""
+        from sidecar.prompts.w1_prompts import W1_CLASSIFY_CHARACTER_TAGS
+        self.assertIn("{source_language_label}", W1_CLASSIFY_CHARACTER_TAGS,
+                      "W1_CLASSIFY_CHARACTER_TAGS is missing {source_language_label} placeholder")
+        self.assertIn("{language_policy}", W1_CLASSIFY_CHARACTER_TAGS,
+                      "W1_CLASSIFY_CHARACTER_TAGS is missing {language_policy} placeholder")
+
+    def test_tag_classification_en_prompt_includes_language_policy(self):
+        """node_classify_character_tags must render the prompt with 'English' for source_language='en'."""
+        from sidecar.workflows.w1_import import node_classify_character_tags
+
+        state = _make_state(
+            source_language="en",
+            entity_registry={
+                "characters": {
+                    "c_001": {
+                        "canonical_name": "Alice",
+                        "importance": "core",
+                        "aliases": [],
+                        "summary": "Hero",
+                        "background": "",
+                        "role_in_story": "protagonist",
+                        "personality_traits": [],
+                        "goals": [],
+                        "fears": [],
+                        "secrets": [],
+                        "arc_notes": "",
+                    }
+                },
+                "events": {},
+                "world": {},
+                "world_detailed": {},
+            },
+        )
+
+        captured_kwargs: list[dict] = []
+
+        async def _capture_invoke(_llm, _template, **kwargs):
+            captured_kwargs.append(kwargs)
+            return {"tags": [], "character_importance_updates": []}
+
+        with (
+            patch("sidecar.workflows.w1_import._get_llm", return_value=MagicMock()),
+            patch("sidecar.workflows.w1_import._invoke_json_prompt", new=AsyncMock(side_effect=_capture_invoke)),
+        ):
+            asyncio.run(node_classify_character_tags(state))
+
+        self.assertTrue(captured_kwargs, "node_classify_character_tags did not invoke _invoke_json_prompt")
+        rendered_label = captured_kwargs[0].get("source_language_label", "")
+        self.assertEqual(rendered_label, "English",
+                         f"Expected source_language_label='English', got {rendered_label!r}")
+
+
 # ── Cost guard: TOS thematic_rerun_wave_cap ───────────────────────────────────
 
 class TestTOSThematicRerunWaveCap(unittest.TestCase):

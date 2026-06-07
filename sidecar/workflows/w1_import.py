@@ -3356,6 +3356,13 @@ def _timeline_branch_color(index: int) -> str:
 
 async def node_architect_timeline(state: ImportState) -> dict:
     """Deduplicate and place timeline candidates into branch-aware event data."""
+    if state.get("extract_timeline") is False:
+        _sid = state.get("session_id", "")
+        if _sid:
+            from sidecar.workflows.w1_run_events import append_event
+            append_event(_sid, {"phase": "skip", "tool": "architect_timeline", "status": "skipped", "message": "Timeline extraction disabled by user toggle."})
+        return {"timeline_branches": [], "timeline_architecture": {}, "progress": state.get("progress", 0.75)}
+
     project_path = state["project_path"]
     snapshot = _load_existing_project_snapshot(project_path)
     registry = dict(state.get("entity_registry", {}))
@@ -4003,6 +4010,16 @@ def _write_manuscript_nodes(
     """
     ms_dir = project_path / "writing" / "manuscript"
     ms_dir.mkdir(parents=True, exist_ok=True)
+    nodes_path = ms_dir / "nodes.json"
+    if not manuscript_scene_pairs:
+        if nodes_path.exists():
+            try:
+                existing = json.loads(nodes_path.read_text(encoding="utf-8"))
+                if isinstance(existing, list) and existing:
+                    return
+            except Exception:
+                return
+        return
     source_is_zh = source_language == "zh"
     scene_title = "章节正文" if source_is_zh else "Chapter Text"
     nodes: list[dict] = []
@@ -4042,7 +4059,7 @@ def _write_manuscript_nodes(
             "wordCount": word_count,
         })
         (ms_dir / f"{scene_node_id}.md").write_text(content, encoding="utf-8")
-    with open(ms_dir / "nodes.json", "w", encoding="utf-8") as f:
+    with open(nodes_path, "w", encoding="utf-8") as f:
         json.dump(nodes, f, ensure_ascii=False, indent=2)
 
 
@@ -4761,6 +4778,13 @@ def route_after_build(state: ImportState) -> str:
 
 async def node_synthesize_relationships(state: ImportState) -> dict:
     """Post-chunk: consolidate raw relationship candidates into final relationships."""
+    if state.get("extract_relationships") is False:
+        _sid = state.get("session_id", "")
+        if _sid:
+            from sidecar.workflows.w1_run_events import append_event
+            append_event(_sid, {"phase": "skip", "tool": "synthesize_relationships", "status": "skipped", "message": "Relationship extraction disabled by user toggle."})
+        return {"relationships": [], "progress": state.get("progress", 0.87)}
+
     if not _HAS_DEEP_PROMPTS:
         return {"relationships": [], "progress": state.get("progress", 0.87)}
 
@@ -4926,6 +4950,9 @@ async def node_classify_character_tags(state: ImportState) -> dict:
         registry["characters"][cid].setdefault("tag_ids", [])
         registry["characters"][cid]["tag_ids"] = []
 
+    _src_lang = state.get("source_language", "zh")
+    _src_lang_label = "Chinese (Simplified)" if _src_lang == "zh" else "English"
+    _lang_policy = state.get("context", {}).get("language_policy", "preserve_source")
     llm = _get_llm(state)
     _session_id = str(state.get("session_id", "") or state.get("context", {}).get("session_id", "") or "")
     try:
@@ -4934,6 +4961,8 @@ async def node_classify_character_tags(state: ImportState) -> dict:
             W1_CLASSIFY_CHARACTER_TAGS,
             session_id=_session_id,
             characters_json=json.dumps(characters_payload, ensure_ascii=False, indent=2),
+            source_language_label=_src_lang_label,
+            language_policy=_lang_policy,
         )
     except Exception as e:
         errors.append(f"Character tag classification failed: {str(e)}")
@@ -4991,6 +5020,13 @@ async def node_classify_character_tags(state: ImportState) -> dict:
 
 async def node_infer_world_settings(state: ImportState) -> dict:
     """Post-chunk: infer world settings plus suggested branches and containers."""
+    if state.get("extract_world") is False:
+        _sid = state.get("session_id", "")
+        if _sid:
+            from sidecar.workflows.w1_run_events import append_event
+            append_event(_sid, {"phase": "skip", "tool": "infer_world_settings", "status": "skipped", "message": "World model extraction disabled by user toggle."})
+        return {"world_settings": {}, "timeline_branches": [], "world_containers": [], "progress": state.get("progress", 0.91)}
+
     if not _HAS_DEEP_PROMPTS:
         return {"world_settings": {}, "timeline_branches": [], "world_containers": [], "progress": state.get("progress", 0.91)}
 
@@ -5972,6 +6008,7 @@ async def run_streaming(project_path: str, config: dict):
         return
 
     import_mode = config.get("import_mode", "import_all")
+    _profile_cfg: dict = config.get("profile_config") or {}
     initial_state: ImportState = {
         "project_path": project_path,
         "workflow_id": "W1",
@@ -6002,6 +6039,9 @@ async def run_streaming(project_path: str, config: dict):
         "progress": 0.0,
         "errors": [],
         "status": "running",
+        "extract_relationships": _profile_cfg.get("extract_relationships", True),
+        "extract_world": _profile_cfg.get("extract_world", True),
+        "extract_timeline": _profile_cfg.get("extract_timeline", True),
     }
     thread_id = config.get("thread_id", f"w1-{uuid.uuid4().hex[:8]}")
     compiled = get_graph()

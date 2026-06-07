@@ -1694,6 +1694,8 @@ If no relationship has enough support, return: {{"relationships": []}}
 """
 
 W1_CLASSIFY_CHARACTER_TAGS: str = """
+[language_policy={language_policy}] OUTPUT LANGUAGE: {source_language_label}. All user-visible text fields (name, description) MUST be written in {source_language_label}.
+
 You are classifying imported characters into high-value editorial tags.
 
 ## Characters JSON
