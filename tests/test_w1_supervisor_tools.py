@@ -1561,6 +1561,7 @@ class TestTagClassificationLanguagePolicy(unittest.TestCase):
                 "world": {},
                 "world_detailed": {},
             },
+            context={"language_policy": "preserve_source"},
         )
 
         captured_kwargs: list[dict] = []
@@ -1579,6 +1580,10 @@ class TestTagClassificationLanguagePolicy(unittest.TestCase):
         rendered_label = captured_kwargs[0].get("source_language_label", "")
         self.assertEqual(rendered_label, "English",
                          f"Expected source_language_label='English', got {rendered_label!r}")
+        captured_lp = captured_kwargs[0].get("language_policy", "")
+        self.assertIsNotNone(captured_lp, "language_policy kwarg must be passed")
+        self.assertIn(captured_lp, {"preserve_source", "normalize_to_source", "allow_mixed"},
+                      f"language_policy value unexpected: {captured_lp!r}")
 
 
 # ── Cost guard: TOS thematic_rerun_wave_cap ───────────────────────────────────
