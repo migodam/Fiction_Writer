@@ -77,6 +77,13 @@ def build_planner_proposal_prompt_context(state: dict[str, Any]) -> dict[str, An
             "suppress_minor_npcs",
             "relationship_evidence_required",
             "world_boundary_strictness",
+            "event_density_strategy",
+            "topology_fidelity",
+            "world_model_scope",
+            "timeline_label_granularity",
+            "reviewer_mode",
+            "rerun_scope",
+            "organizer_strictness",
         ],
         "safety_contract": {
             "llm_planner_can_propose_only": True,

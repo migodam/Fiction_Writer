@@ -409,6 +409,19 @@ class TestPromptPolicyPatch:
 
 
 class TestPlannerLlmZeroCostHelpers:
+    def test_planner_context_includes_organizer_strictness(self):
+        """Test that context includes all three new W3 knobs in allowed_prompt_policy_patch_keys."""
+        context = build_planner_proposal_prompt_context({
+            "prompt_profile": "deep",
+            "source_language": "zh",
+            "chunks": [{"content": "第一章 韩立入门。"}],
+            "tool_operating_spec": _tos(),
+        })
+        allowed_keys = context["allowed_prompt_policy_patch_keys"]
+        assert "organizer_strictness" in allowed_keys, f"organizer_strictness missing from {allowed_keys}"
+        assert "reviewer_mode" in allowed_keys, f"reviewer_mode missing from {allowed_keys}"
+        assert "rerun_scope" in allowed_keys, f"rerun_scope missing from {allowed_keys}"
+
     def test_build_prompt_context_is_schema_oriented_and_safe(self):
         context = build_planner_proposal_prompt_context({
             "prompt_profile": "deep",
