@@ -31,9 +31,11 @@ from sidecar.supervisor.prompt_policy import (
     choose_prompt_policy_patch,
     prompt_policy_decision,
 )
+from sidecar.supervisor.organizer import OrganizerInput, organize_project_content
 from sidecar.supervisor.tool_registry import build_tool_registry
 from sidecar.workflows.w1_import import (
     _chunk_progress,
+    _write_import_artifact,
     node_split_chunks,
     node_validate_file,
 )
@@ -878,6 +880,27 @@ async def run_supervisor_policy(
             {}, {"world_count": len(state.get("entity_registry", {}).get("world", {}))}, "proceed",
         )
 
+    # ── 3c. Content organizer ────────────────────────────────────────────────
+    _org_input = OrganizerInput(
+        characters=state.get("entity_registry", {}).get("characters", {}),
+        events=list(state.get("entity_registry", {}).get("events", {}).values()),
+        relationships=state.get("relationships", []),
+        world_candidates=state.get("entity_registry", {}).get("world_detailed", {}),
+        manuscript_notes=[],
+        timeline_architecture=state.get("timeline_architecture", {}),
+        project_digest=state.get("project_structure_digest", {}),
+        source_language=state.get("source_language", "zh"),
+    )
+    _org_out = organize_project_content(_org_input)
+    state = {**state, "entity_registry": {
+        **state.get("entity_registry", {}),
+        "world_detailed": {item["name"]: item for item in _org_out["world_items"]},
+    }}
+    _project_path = state.get("project_path", "")
+    _import_run_id = state.get("import_run_id", "")
+    if _project_path and _import_run_id:
+        _write_import_artifact(_project_path, _import_run_id, "organizer_output.json", dict(_org_out))
+
     # ── 4. Minor repair ──────────────────────────────────────────────────────
     state = _with_status(state, current_tool="minor_repair", orchestrator_phase="repairing")
     repair_update = await tools["minor_repair"](state)
@@ -1177,6 +1200,29 @@ async def run_supervisor_streaming(
         state = {**state, **repair_update, "current_stage": "minor_repair"}
         _emit_activity(state, phase="repairing", tool="minor_repair", status="success", message="Deterministic repair complete.")
         yield _PROGRESS_REDUCE_REPAIR, "reduce_repair", state.get("errors", [])
+
+        # ── 3c. Content organizer (streaming path) ───────────────────────────
+        _emit_activity(state, phase="reducing", tool="organizer", status="start", message="Running content organizer to filter world candidates.")
+        _org_input_s = OrganizerInput(
+            characters=state.get("entity_registry", {}).get("characters", {}),
+            events=list(state.get("entity_registry", {}).get("events", {}).values()),
+            relationships=state.get("relationships", []),
+            world_candidates=state.get("entity_registry", {}).get("world_detailed", {}),
+            manuscript_notes=[],
+            timeline_architecture=state.get("timeline_architecture", {}),
+            project_digest=state.get("project_structure_digest", {}),
+            source_language=state.get("source_language", "zh"),
+        )
+        _org_out_s = organize_project_content(_org_input_s)
+        state = {**state, "entity_registry": {
+            **state.get("entity_registry", {}),
+            "world_detailed": {item["name"]: item for item in _org_out_s["world_items"]},
+        }}
+        _project_path_s = state.get("project_path", "")
+        _import_run_id_s = state.get("import_run_id", "")
+        if _project_path_s and _import_run_id_s:
+            _write_import_artifact(_project_path_s, _import_run_id_s, "organizer_output.json", dict(_org_out_s))
+        _emit_activity(state, phase="reducing", tool="organizer", status="success", message="Content organizer complete.")
 
         # Architect
         state = _with_status(state, current_tool="architect_timeline", orchestrator_phase="architecting")

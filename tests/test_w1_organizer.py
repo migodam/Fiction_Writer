@@ -457,3 +457,38 @@ def test_classify_world_item_direct_call():
     assert classify_world_item("神手谷", "location", "") == "location"
     # Core fix: 功 suffix beats raw_category rule signal
     assert classify_world_item("项甲功", "rule", "") == "cultivation_method"
+
+
+# ---------------------------------------------------------------------------
+# Task C — Legacy LangGraph path includes organize_world_items node
+# ---------------------------------------------------------------------------
+
+
+def test_legacy_langgraph_includes_organize_world_items_node():
+    """The LangGraph graph in w1_import.py must contain an 'organize_world_items'
+    node that is reachable from 'architect_timeline'.
+
+    We verify this by inspecting the source text of w1_import.py rather than
+    instantiating the full LangGraph (which requires live API credentials and
+    real project files).
+    """
+    import re as _re
+    from pathlib import Path
+
+    src_path = Path(w1_import.__file__)
+    source = src_path.read_text(encoding="utf-8")
+
+    # 1. The node must be added to the graph
+    assert _re.search(r'\.add_node\(\s*["\']organize_world_items["\']', source), (
+        "'organize_world_items' node not found in LangGraph builder — "
+        "the legacy path is missing the organizer stage"
+    )
+
+    # 2. There must be an edge from architect_timeline -> organize_world_items
+    assert _re.search(
+        r'\.add_edge\(\s*["\']architect_timeline["\'],\s*["\']organize_world_items["\']',
+        source,
+    ), (
+        "No add_edge('architect_timeline', 'organize_world_items') found — "
+        "the organizer is not wired into the LangGraph after architect_timeline"
+    )

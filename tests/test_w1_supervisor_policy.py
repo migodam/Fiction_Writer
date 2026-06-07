@@ -1372,5 +1372,146 @@ class TestSupervisorActivityAndCancel(unittest.TestCase):
         w1_run_events.clear_session(session_id)
 
 
+# ── Task C: Organizer wired into supervisor pipeline ─────────────────────────
+
+
+class TestOrganizerInSupervisorPipeline(unittest.TestCase):
+    """Verify that the content organizer is called inside run_supervisor_policy
+    between reduce_world_entities and architect_timeline."""
+
+    def _make_state_with_person_in_world(self) -> dict:
+        """State with a person name ('韩立') injected into world_detailed."""
+        state = _make_state()
+        state["entity_registry"] = {
+            "characters": {"char_001": {"name": "韩立", "canonical_name": "韩立"}},
+            "events": {},
+            "world": {},
+            "world_detailed": {
+                "韩立": {"category": "concept", "description": "main character", "confidence": 0.9},
+                "七玄门": {"category": "organization", "description": "a sect", "confidence": 0.85},
+            },
+        }
+        return state
+
+    def test_supervisor_policy_calls_organizer_between_reduce_and_architect(self):
+        """organize_project_content must be called exactly once during run_supervisor_policy."""
+        from sidecar.supervisor.policy import run_supervisor_policy
+        from sidecar.supervisor import organizer as _org_module
+
+        call_order: list[str] = []
+        organizer_calls: list[dict] = []
+
+        real_organize = _org_module.organize_project_content
+
+        def spy_organize(inp):
+            call_order.append("organizer")
+            organizer_calls.append(dict(inp))
+            return real_organize(inp)
+
+        windows = [_make_window("pwin_org", [0, 1])]
+        state = self._make_state_with_person_in_world()
+        state["prompt_windows"] = windows
+
+        def reduce_world_spy(s):
+            call_order.append("reduce_world_entities")
+            return {"entity_registry": s.get("entity_registry", {})}
+
+        async def architect_spy(s):
+            call_order.append("architect_timeline")
+            return {"timeline_architecture": {}, "timeline_branches": []}
+
+        tools = _make_tools(
+            segment_result={"prompt_windows": windows, "supervisor_log": []},
+        )
+        tools["reduce_world_entities"] = reduce_world_spy
+        tools["architect_timeline"] = AsyncMock(side_effect=architect_spy)
+
+        with patch("sidecar.supervisor.policy.organize_project_content", spy_organize):
+            _run(run_supervisor_policy(state, tools))
+
+        self.assertEqual(
+            len(organizer_calls), 1,
+            f"Expected organizer called exactly once, got {len(organizer_calls)}"
+        )
+        # Confirm call order: reduce_world_entities → organizer → architect_timeline
+        try:
+            rwe_idx = call_order.index("reduce_world_entities")
+            org_idx = call_order.index("organizer")
+            arch_idx = call_order.index("architect_timeline")
+            self.assertLess(rwe_idx, org_idx, "organizer must come after reduce_world_entities")
+            self.assertLess(org_idx, arch_idx, "organizer must come before architect_timeline")
+        except ValueError as exc:
+            self.fail(f"Missing step in call_order {call_order}: {exc}")
+
+    def test_organizer_output_updates_world_detailed(self):
+        """Person name in world_detailed must be excluded by organizer after reduce step."""
+        from sidecar.supervisor.policy import run_supervisor_policy
+
+        windows = [_make_window("pwin_excl", [0])]
+        state = self._make_state_with_person_in_world()
+        state["prompt_windows"] = windows
+
+        # Use passthrough mocks for all reduce/repair steps so world_detailed is preserved
+        async def passthrough_reduce(s):
+            return {"entity_registry": s.get("entity_registry", {})}
+
+        async def passthrough_repair(s):
+            return {"entity_registry": s.get("entity_registry", {}), "minor_repair_log": []}
+
+        tools = _make_tools(
+            segment_result={"prompt_windows": windows, "supervisor_log": []},
+        )
+        tools["reduce_entities"] = passthrough_reduce
+        tools["minor_repair"] = passthrough_repair
+        # Add reduce_world_entities tool so step 3b runs (also passthrough)
+        tools["reduce_world_entities"] = lambda s: {"entity_registry": s.get("entity_registry", {})}
+
+        result = _run(run_supervisor_policy(state, tools))
+
+        world_detailed = result.get("entity_registry", {}).get("world_detailed", {})
+        self.assertNotIn(
+            "韩立", world_detailed,
+            f"Person name '韩立' must be excluded by organizer; found in world_detailed: {list(world_detailed.keys())}"
+        )
+        # 七玄门 is a valid world entity (sect name) — it should survive
+        self.assertIn(
+            "七玄门", world_detailed,
+            "Valid world entity '七玄门' must survive after organizer pass"
+        )
+
+    def test_organizer_output_artifact_written(self):
+        """organizer_output.json must be created when project_path + import_run_id are set."""
+        import json
+        import tempfile
+        import os
+        from sidecar.supervisor.policy import run_supervisor_policy
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            windows = [_make_window("pwin_art", [0])]
+            state = self._make_state_with_person_in_world()
+            state["prompt_windows"] = windows
+            state["project_path"] = tmpdir
+            state["import_run_id"] = "test_art_run"
+
+            tools = _make_tools(
+                segment_result={"prompt_windows": windows, "supervisor_log": []},
+            )
+            tools["reduce_world_entities"] = lambda s: {"entity_registry": s.get("entity_registry", {})}
+
+            _run(run_supervisor_policy(state, tools))
+
+            artifact_path = os.path.join(
+                tmpdir, "system", "imports", "test_art_run", "organizer_output.json"
+            )
+            self.assertTrue(
+                os.path.exists(artifact_path),
+                f"organizer_output.json not found at {artifact_path}"
+            )
+            with open(artifact_path) as f:
+                data = json.load(f)
+            self.assertIn("world_items", data, "organizer_output.json must have 'world_items' key")
+            self.assertIsInstance(data["world_items"], list)
+
+
 if __name__ == "__main__":
     unittest.main()
