@@ -385,5 +385,108 @@ class TestDetectLanguage(unittest.TestCase):
         self.assertEqual(_detect_language(mostly_cjk), "zh")
 
 
+class TestWindowingContentIntegrity(unittest.TestCase):
+    """F-1 through F-3: windowing content integrity chain tests."""
+
+    # ── F-1: source_block["text"] == chunk["manuscript_content"] exactly ──────
+
+    def test_source_block_text_matches_manuscript_content(self):
+        """Every source_block["text"] must equal the originating chunk's manuscript_content."""
+        cjk_strings = [
+            "韩立踏上修仙之路。" * 10,   # 90 chars
+            "宗门考核开始，众弟子齐聚。" * 8,  # 96 chars
+            "长春功秘籍残卷现世，掀起波澜。" * 12,  # 156 chars
+        ]
+        chunks = []
+        for i, content in enumerate(cjk_strings):
+            chunks.append({
+                "chunk_id": i,
+                "manuscript_content": content,
+                "raw_content": content,
+                "content": content,
+                "chapter_hint": f"第{i + 1}章",
+                "char_start": sum(len(s) for s in cjk_strings[:i]),
+                "char_end": sum(len(s) for s in cjk_strings[:i + 1]),
+                "source_span": {
+                    "start": sum(len(s) for s in cjk_strings[:i]),
+                    "end": sum(len(s) for s in cjk_strings[:i + 1]),
+                },
+            })
+
+        state = _make_state(profile="deep", chunks=chunks)
+        digest = _EMPTY_DIGEST
+
+        from sidecar.workflows.w1_import import _build_prompt_windows
+        windows = _build_prompt_windows(state, chunks, digest)
+
+        # Build lookup: chunk_id → original manuscript_content
+        chunk_by_id = {c["chunk_id"]: c for c in chunks}
+
+        for w in windows:
+            for sb in w.get("source_blocks", []):
+                cid = sb["chunk_id"]
+                original = chunk_by_id[cid]
+                self.assertEqual(
+                    sb["text"],
+                    original["manuscript_content"],
+                    f"source_block text mismatch for chunk_id={cid}",
+                )
+                self.assertEqual(
+                    len(sb["text"]),
+                    len(original["manuscript_content"]),
+                    f"source_block text length mismatch for chunk_id={cid}",
+                )
+
+    # ── F-2: normal chapters never get oversized split_reason ─────────────────
+
+    def test_normal_chapters_never_get_oversized_split(self):
+        """Small chunks that fit within source_budget must never get the oversized split_reason."""
+        # 10 small chunks of ~50 tokens each (~300 chars for CJK); well within 4000-token budget
+        chunks = [_make_chunk(i, chars=300) for i in range(10)]
+        state = _make_state(profile="deep", chunks=chunks)
+        digest = _EMPTY_DIGEST
+
+        from sidecar.workflows.w1_import import _build_prompt_windows
+        windows = _build_prompt_windows(state, chunks, digest)
+
+        for w in windows:
+            self.assertNotEqual(
+                w.get("split_reason"),
+                "single_oversized_chapter_paragraph_split",
+                f"Window {w.get('id')} unexpectedly has oversized split_reason for small chunks",
+            )
+
+    # ── F-3: oversized chapter splits carry explicit split metadata ───────────
+
+    def test_oversized_chapter_split_has_explicit_metadata(self):
+        """An oversized chapter that exceeds source_budget must produce split windows with
+        split_index and total_splits metadata (encoded in the chapter_range label)."""
+        # CJK ~1 token/char; deep source_budget ~224k tokens.
+        # Use 100 large paragraphs (3000 CJK chars each = ~300k tokens total) to exceed budget.
+        # Fewer paragraphs keeps the test fast (vs. thousands of tiny paragraphs).
+        big_text = ("韩" * 3_000 + "\n\n") * 100  # ~300k chars ~300k tokens; 100 paragraph units
+        chunk = _make_chunk(0, content=big_text, chars=len(big_text))
+        state = _make_state(profile="deep", chunks=[chunk])
+        digest = _EMPTY_DIGEST
+
+        from sidecar.workflows.w1_import import _build_prompt_windows
+        windows = _build_prompt_windows(state, [chunk], digest)
+
+        oversized_windows = [
+            w for w in windows
+            if w.get("split_reason") == "single_oversized_chapter_paragraph_split"
+        ]
+        self.assertGreater(len(oversized_windows), 0, "Expected at least one oversized split window")
+
+        # The chapter_range for each part window should indicate part N/M
+        for w in oversized_windows:
+            chapter_range = w.get("chapter_range", "")
+            self.assertIn(
+                "part",
+                chapter_range,
+                f"Oversized split window chapter_range={chapter_range!r} must contain 'part N/M'",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

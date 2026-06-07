@@ -2132,3 +2132,95 @@ def test_branch_with_merge_hint_event_has_endmode_merge(tmp_path):
         f"Expected endMode='merge' but got '{mentor_branch.get('endMode')}'"
     )
     assert mentor_branch.get("mergeEventId") is not None, "mergeEventId should be set"
+
+
+# ── F-4: supervisor-path content chain integrity ──────────────────────────────
+
+def test_supervisor_path_content_chain_integrity(tmp_path, monkeypatch):
+    """chapter_proposals and scene_proposals must both carry the original manuscript_content."""
+    KNOWN_TEXT = "韩立踏上修仙之路" * 20  # 180 chars of known CJK content
+
+    captured_ops = []
+
+    async def fake_propose_write(op, _project_path):
+        captured_ops.append(op)
+        return {"id": f"p_{op['entity_id']}", "confidence": op["confidence"], "status": "pending"}
+
+    monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", fake_propose_write)
+
+    state = _make_write_state(
+        tmp_path,
+        manuscript_chapters=[
+            {
+                "chapter_id": "chap_integrity_1",
+                "title": "第一章",
+                "orderIndex": 0,
+                "chunk_ids": [0],
+                "manuscript_content": KNOWN_TEXT,
+            },
+        ],
+        entity_registry={"characters": {}, "events": {}, "world": {}, "world_detailed": {}},
+    )
+    state["source_language"] = "zh"
+
+    asyncio.run(w1_import.node_write_to_project(state))
+
+    chapter_op = next(op for op in captured_ops if op["entity_type"] == "chapter")
+    scene_op = next(op for op in captured_ops if op["entity_type"] == "scene")
+
+    # Chapter proposal must carry the original manuscript_content
+    assert chapter_op["data"]["content"] == KNOWN_TEXT, (
+        f"chapter_op content mismatch: got {chapter_op['data']['content']!r}"
+    )
+    # Scene proposal must carry the original manuscript_content
+    assert scene_op["data"]["content"] == KNOWN_TEXT, (
+        f"scene_op content mismatch: got {scene_op['data']['content']!r}"
+    )
+
+
+# ── F-5: nodes.json includes source_span per node ─────────────────────────────
+
+def test_manuscript_nodes_json_includes_source_span(tmp_path, monkeypatch):
+    """nodes.json written by _write_manuscript_nodes must include source_span on chapter nodes."""
+
+    async def fake_propose_write(op, _project_path):
+        return {"id": f"p_{op['entity_id']}", "confidence": op["confidence"], "status": "pending"}
+
+    monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", fake_propose_write)
+
+    state = _make_write_state(
+        tmp_path,
+        manuscript_chapters=[
+            {
+                "chapter_id": "chap_span_test",
+                "title": "第一章",
+                "orderIndex": 0,
+                "chunk_ids": [0],
+                "manuscript_content": "韩立踏上修仙之路。",
+                "source_span": {"start": 100, "end": 500},
+            },
+        ],
+        entity_registry={"characters": {}, "events": {}, "world": {}, "world_detailed": {}},
+    )
+    state["source_language"] = "zh"
+
+    asyncio.run(w1_import.node_write_to_project(state))
+
+    nodes_path = tmp_path / "writing" / "manuscript" / "nodes.json"
+    assert nodes_path.exists(), "nodes.json must be written by node_write_to_project"
+    nodes_json = json.loads(nodes_path.read_text(encoding="utf-8"))
+
+    # Find the chapter_outline node (type == "chapter_outline")
+    chapter_nodes = [n for n in nodes_json if n.get("type") == "chapter_outline"]
+    assert len(chapter_nodes) > 0, "Expected at least one chapter_outline node in nodes.json"
+
+    chapter_node = chapter_nodes[0]
+    assert "source_span" in chapter_node, (
+        f"chapter_outline node missing source_span: {chapter_node}"
+    )
+    assert chapter_node["source_span"]["start"] == 100, (
+        f"Expected source_span.start=100, got {chapter_node['source_span']}"
+    )
+    assert chapter_node["source_span"]["end"] == 500, (
+        f"Expected source_span.end=500, got {chapter_node['source_span']}"
+    )

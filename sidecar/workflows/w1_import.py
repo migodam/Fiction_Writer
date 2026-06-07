@@ -4023,7 +4023,7 @@ def _write_manuscript_nodes(
     source_is_zh = source_language == "zh"
     scene_title = "章节正文" if source_is_zh else "Chapter Text"
     nodes: list[dict] = []
-    for idx, (chapter_info, _mc) in enumerate(manuscript_scene_pairs):
+    for idx, (chapter_info, mc) in enumerate(manuscript_scene_pairs):
         chap_id = chapter_info["chapter_id"]
         scene_id = chapter_info["scene_id"]
         chap_node_id = _safe_node_id(f"mn_{chap_id}")
@@ -4045,6 +4045,7 @@ def _write_manuscript_nodes(
             "depth": 0,
             "collapsed": False,
             "wordCount": word_count,
+            "source_span": mc.get("source_span"),   # propagate from chunk; None if absent
         })
         nodes.append({
             "id": scene_node_id,
