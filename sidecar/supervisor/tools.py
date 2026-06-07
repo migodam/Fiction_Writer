@@ -1468,20 +1468,37 @@ async def minor_repair(state: ImportSupervisorState) -> dict:
         if latin_stripped:
             repair_log.append(f"language_validation: stripped {latin_stripped} Latin-dominant traits for zh source")
 
+    # Tag name language validation for zh source
+    tag_stripped = 0
+    character_tags: list[dict] = []
+    if state.get("character_tags"):
+        character_tags = [dict(tag) for tag in state.get("character_tags", [])]
+        if source_lang == "zh":
+            for tag in character_tags:
+                if isinstance(tag, dict) and isinstance(tag.get("name", ""), str):
+                    if re.search(r"[A-Za-z]{3,}", tag.get("name", "")):
+                        tag["name"] = ""
+                        tag_stripped += 1
+        if tag_stripped:
+            repair_log.append(f"language_validation: blanked {tag_stripped} English-dominant tag names for zh source")
+
     registry["characters"] = chars
     registry["world"] = world_map
     registry["world_detailed"] = world_detailed
     registry["events"] = events
 
     log = list(state.get("supervisor_log", []))
-    log.append(f"minor_repair: groupKey={groupkey_fixed}, orgs_migrated={migrated}, resequenced={resequenced}, latin_stripped={latin_stripped}")
+    log.append(f"minor_repair: groupKey={groupkey_fixed}, orgs_migrated={migrated}, resequenced={resequenced}, latin_stripped={latin_stripped}, tag_stripped={tag_stripped}")
 
-    return {
+    result = {
         "entity_registry": registry,
         "minor_repair_log": repair_log,
         "supervisor_log": log,
         "current_stage": "minor_repair",
     }
+    if character_tags:
+        result["character_tags"] = character_tags
+    return result
 
 
 # ── Tool: proposal_write ────────────────────────────────────────────────────────

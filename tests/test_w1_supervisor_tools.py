@@ -805,6 +805,63 @@ class TestMinorRepairShortLatinStrip(unittest.TestCase):
         )
 
 
+# ── Test 15: minor_repair strips English-dominant tag names for zh source ─────
+
+class TestMinorRepairTagNameStrip(unittest.TestCase):
+    def test_minor_repair_strips_english_tag_names_for_zh(self):
+        state = _make_state(
+            source_language="zh",
+            character_tags=[
+                {"name": "Protagonist", "description": "主角"},
+                {"name": "主角", "description": "主角"},
+                {"name": "Cultivation Expert", "description": "修仙者"},
+                {"name": "配角", "description": "配角"},
+            ],
+        )
+        result = _run(minor_repair(state))
+        tags = result.get("character_tags", [])
+
+        # English-dominant tags should be blanked
+        self.assertEqual(tags[0]["name"], "", f"Expected 'Protagonist' to be blanked, got '{tags[0]['name']}'")
+        # Chinese tags should be preserved
+        self.assertEqual(tags[1]["name"], "主角", f"Expected '主角' to be preserved, got '{tags[1]['name']}'")
+        # English-dominant tags should be blanked
+        self.assertEqual(tags[2]["name"], "", f"Expected 'Cultivation Expert' to be blanked, got '{tags[2]['name']}'")
+        # Chinese tags should be preserved
+        self.assertEqual(tags[3]["name"], "配角", f"Expected '配角' to be preserved, got '{tags[3]['name']}'")
+
+    def test_minor_repair_does_not_strip_tag_names_for_en_source(self):
+        state = _make_state(
+            source_language="en",
+            character_tags=[
+                {"name": "Protagonist", "description": "main character"},
+                {"name": "Antagonist", "description": "opposing force"},
+            ],
+        )
+        result = _run(minor_repair(state))
+        tags = result.get("character_tags", [])
+
+        # English tags should be preserved for English source
+        self.assertEqual(tags[0]["name"], "Protagonist")
+        self.assertEqual(tags[1]["name"], "Antagonist")
+
+    def test_minor_repair_logs_tag_name_stripping(self):
+        state = _make_state(
+            source_language="zh",
+            character_tags=[
+                {"name": "Protagonist", "description": "主角"},
+                {"name": "Supporting Actor", "description": "配角"},
+            ],
+        )
+        result = _run(minor_repair(state))
+        repair_log = result.get("minor_repair_log", [])
+
+        # Check that the repair log mentions tag name stripping
+        log_text = " ".join(repair_log)
+        self.assertIn("language_validation", log_text)
+        self.assertIn("English-dominant tag names", log_text)
+
+
 # ── Tool registry ─────────────────────────────────────────────────────────────
 
 class TestToolRegistry(unittest.TestCase):
