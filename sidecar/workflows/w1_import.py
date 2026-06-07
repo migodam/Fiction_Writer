@@ -4774,6 +4774,30 @@ def route_after_build(state: ImportState) -> str:
     return "synthesize_relationships"
 
 
+# ── Relationship type normalization helpers ───────────────────────────────────
+
+_ZH_CATEGORY_LABELS: dict[str, str] = {
+    "family":          "家族关系",
+    "romantic":        "情感关系",
+    "rivalry":         "竞争关系",
+    "mentor_disciple": "师徒关系",
+    "sworn_brothers":  "结拜关系",
+    "political":       "政治关系",
+    "conflict":        "对立关系",
+    "unknown":         "关系",
+}
+
+
+def _normalize_relationship_type(raw_type: str, category: str, source_language: str) -> tuple[str, str]:
+    """Return (display_type, source_label). For zh: map category → canonical Chinese label;
+    preserve raw_type as source_label if it differs from canonical."""
+    if source_language != "zh":
+        return raw_type, ""
+    canonical = _ZH_CATEGORY_LABELS.get(category, "关系")
+    source_label = raw_type if (raw_type and raw_type != canonical) else ""
+    return canonical, source_label
+
+
 # ── Synthesis node stubs (populated by Codex in Steps 3–5) ───────────────────
 
 async def node_synthesize_relationships(state: ImportState) -> dict:
@@ -4830,11 +4854,17 @@ async def node_synthesize_relationships(state: ImportState) -> dict:
             if key in seen_keys:
                 continue
             seen_keys.add(key)
+            _fb_raw_type = str(rel.get("type", "")).strip()
+            _fb_category = str(rel.get("category", "unknown")).strip()
+            _fb_source_lang = state.get("source_language", "zh")
+            _fb_display_type, _fb_source_label = _normalize_relationship_type(_fb_raw_type, _fb_category, _fb_source_lang)
+            _fb_display_type = _fb_display_type or "relationship"
             fallback.append({
                 "id": f"rel_{uuid.uuid4().hex[:8]}",
                 "sourceId": source_id,
                 "targetId": target_id,
-                "type": str(rel.get("type", "")).strip() or "relationship",
+                "type": _fb_display_type,
+                "sourceLabel": _fb_source_label,
                 "description": str(rel.get("description", "")).strip(),
                 "strength": None,
                 "category": str(rel.get("category", "other")).strip() or "other",
@@ -4846,6 +4876,9 @@ async def node_synthesize_relationships(state: ImportState) -> dict:
         return fallback
 
     _session_id = str(state.get("session_id", "") or state.get("context", {}).get("session_id", "") or "")
+    _src_lang = state.get("source_language", "zh")
+    _src_lang_label = "Chinese (Simplified)" if _src_lang == "zh" else "English"
+    _lang_policy = state.get("context", {}).get("language_policy", "preserve_source")
     registry_payload = {
         "characters": [
             {
@@ -4864,6 +4897,8 @@ async def node_synthesize_relationships(state: ImportState) -> dict:
             session_id=_session_id,
             entity_registry_json=json.dumps(registry_payload, ensure_ascii=False, indent=2),
             relationship_candidates_json=json.dumps(raw_relationships, ensure_ascii=False, indent=2),
+            source_language_label=_src_lang_label,
+            language_policy=_lang_policy,
         )
     except Exception as e:
         errors.append(f"Relationship synthesis failed: {str(e)}")
@@ -4900,11 +4935,18 @@ async def node_synthesize_relationships(state: ImportState) -> dict:
             continue
         seen_keys.add(key)
 
+        _raw_type = str(rel.get("type", "")).strip()
+        _category = str(rel.get("category", "unknown")).strip()
+        _source_lang = state.get("source_language", "zh")
+        _display_type, _source_label = _normalize_relationship_type(_raw_type, _category, _source_lang)
+        _display_type = _display_type or "relationship"
+
         relationships.append({
             "id": rel.get("id") or f"rel_{uuid.uuid4().hex[:8]}",
             "sourceId": source_id,
             "targetId": target_id,
-            "type": str(rel.get("type", "")).strip() or "relationship",
+            "type": _display_type,
+            "sourceLabel": _source_label,
             "description": str(rel.get("description", "")).strip(),
             "strength": rel.get("strength"),
             "category": str(rel.get("category", "other")).strip() or "other",

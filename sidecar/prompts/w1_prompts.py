@@ -1646,6 +1646,8 @@ Output valid JSON ONLY — no markdown fences, no prose before or after. Replace
 """
 
 W1_SYNTHESIZE_RELATIONSHIPS: str = """
+[language_policy={language_policy}] OUTPUT LANGUAGE: {source_language_label}. All user-visible text fields MUST be written in {source_language_label}.
+
 You are consolidating raw relationship candidates from a novel import pipeline.
 
 ## Entity Registry JSON

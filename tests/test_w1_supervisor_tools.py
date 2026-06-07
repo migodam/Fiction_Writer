@@ -1605,5 +1605,140 @@ class TestTOSThematicRerunWaveCap(unittest.TestCase):
         self.assertEqual(spec["thematic_rerun_wave_cap"], 1)
 
 
+# ── Relationship type normalization (Task B) ──────────────────────────────────
+
+class TestRelationshipTypeNormalization(unittest.TestCase):
+    """Verify _normalize_relationship_type maps zh categories to canonical labels."""
+
+    def test_relationship_type_normalized_to_zh_canonical(self):
+        """_normalize_relationship_type('解惑', 'mentor_disciple', 'zh') → ('师徒关系', '解惑')."""
+        from sidecar.workflows.w1_import import _normalize_relationship_type
+        display_type, source_label = _normalize_relationship_type("解惑", "mentor_disciple", "zh")
+        self.assertEqual(display_type, "师徒关系",
+                         f"Expected '师徒关系', got {display_type!r}")
+        self.assertEqual(source_label, "解惑",
+                         f"Expected '解惑' preserved as sourceLabel, got {source_label!r}")
+
+    def test_mentor_disciple_解惑_demoted_to_source_label(self):
+        """node_synthesize_relationships must store type='师徒关系', sourceLabel='解惑' for zh input."""
+        from sidecar.workflows.w1_import import node_synthesize_relationships
+
+        state = _make_state(
+            source_language="zh",
+            extract_relationships=True,
+            raw_relationships=[
+                {
+                    "source_candidate_id": "c_001",
+                    "target_candidate_id": "c_002",
+                    "type": "解惑",
+                    "category": "mentor_disciple",
+                    "description": "师父为弟子解答修炼疑惑",
+                    "directionality": "source_to_target",
+                    "evidence": ["第一章：师父解惑"],
+                    "confidence": 0.9,
+                }
+            ],
+            entity_registry={
+                "characters": {
+                    "c_001": {"canonical_name": "老师", "aliases": []},
+                    "c_002": {"canonical_name": "弟子", "aliases": []},
+                },
+                "events": {},
+                "world": {},
+                "world_detailed": {},
+            },
+            context={"language_policy": "preserve_source"},
+        )
+
+        llm_result = {
+            "relationships": [
+                {
+                    "id": "rel_abc12345",
+                    "source_id": "c_001",
+                    "target_id": "c_002",
+                    "type": "解惑",
+                    "category": "mentor_disciple",
+                    "description": "师父为弟子解答修炼疑惑",
+                    "directionality": "source_to_target",
+                    "status": "active",
+                    "strength": 0.8,
+                    "evidence": ["第一章：师父解惑"],
+                    "confidence": 0.9,
+                }
+            ]
+        }
+
+        async def _mock_invoke(_llm, _template, **kwargs):
+            return llm_result
+
+        with (
+            patch("sidecar.workflows.w1_import._get_llm", return_value=MagicMock()),
+            patch("sidecar.workflows.w1_import._invoke_json_prompt", new=AsyncMock(side_effect=_mock_invoke)),
+            patch("sidecar.workflows.w1_import._HAS_DEEP_PROMPTS", True),
+        ):
+            result = asyncio.run(node_synthesize_relationships(state))
+
+        rels = result.get("relationships", [])
+        self.assertTrue(rels, "Expected at least one relationship in output")
+        rel = rels[0]
+        self.assertEqual(rel.get("type"), "师徒关系",
+                         f"Expected type='师徒关系', got {rel.get('type')!r}")
+        self.assertEqual(rel.get("sourceLabel"), "解惑",
+                         f"Expected sourceLabel='解惑', got {rel.get('sourceLabel')!r}")
+
+    def test_relationship_synthesis_injects_language_policy(self):
+        """node_synthesize_relationships must pass source_language_label and language_policy to _invoke_json_prompt."""
+        from sidecar.workflows.w1_import import node_synthesize_relationships
+
+        state = _make_state(
+            source_language="zh",
+            extract_relationships=True,
+            raw_relationships=[
+                {
+                    "source_candidate_id": "c_001",
+                    "target_candidate_id": "c_002",
+                    "type": "师徒",
+                    "category": "mentor_disciple",
+                    "description": "师父与弟子",
+                    "directionality": "source_to_target",
+                    "evidence": ["第一章"],
+                    "confidence": 0.9,
+                }
+            ],
+            entity_registry={
+                "characters": {
+                    "c_001": {"canonical_name": "老师", "aliases": []},
+                    "c_002": {"canonical_name": "弟子", "aliases": []},
+                },
+                "events": {},
+                "world": {},
+                "world_detailed": {},
+            },
+            context={"language_policy": "preserve_source"},
+        )
+
+        captured_kwargs: list[dict] = []
+
+        async def _capture_invoke(_llm, _template, **kwargs):
+            captured_kwargs.append(kwargs)
+            return {"relationships": []}
+
+        with (
+            patch("sidecar.workflows.w1_import._get_llm", return_value=MagicMock()),
+            patch("sidecar.workflows.w1_import._invoke_json_prompt", new=AsyncMock(side_effect=_capture_invoke)),
+            patch("sidecar.workflows.w1_import._HAS_DEEP_PROMPTS", True),
+        ):
+            asyncio.run(node_synthesize_relationships(state))
+
+        self.assertTrue(captured_kwargs, "node_synthesize_relationships did not invoke _invoke_json_prompt")
+        call_kw = captured_kwargs[0]
+        self.assertIn("source_language_label", call_kw,
+                      "source_language_label kwarg must be passed to _invoke_json_prompt")
+        self.assertIn("language_policy", call_kw,
+                      "language_policy kwarg must be passed to _invoke_json_prompt")
+        self.assertEqual(call_kw.get("source_language_label"), "Chinese (Simplified)",
+                         f"Expected 'Chinese (Simplified)', got {call_kw.get('source_language_label')!r}")
+
+
 if __name__ == "__main__":
     unittest.main()
