@@ -113,13 +113,34 @@ character-card-<characterId>
 new-character-btn
 generate-character-btn
 
+entity-not-found
+entity-not-found-back
+
 character-name-input
 character-alias-input
 character-background-input
+character-summary-input
 character-traits-input
 character-goals-input
 character-fears-input
 character-secrets-input
+character-birthday-input
+character-speechstyle-input
+character-arc-input
+
+character-duplicate-btn
+character-archive-btn
+character-merge-btn
+delete-character-btn
+
+archive-impact-modal
+archive-confirm-btn
+hard-delete-confirm-btn
+archive-cancel-btn
+
+relationship-section-outgoing
+relationship-section-incoming
+relationship-section-bidirectional
 
 candidate-card-<candidateId>
 candidate-confirm-btn

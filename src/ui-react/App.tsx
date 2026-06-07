@@ -909,7 +909,7 @@ const AppContent = () => {
             <Route path="/workbench/*" element={<WorkbenchWorkspace />} />
             <Route path="/writing/*" element={<WritingWorkspace />} />
             <Route path="/characters" element={<Navigate to="/characters/overview" replace />} />
-            <Route path="/characters/list" element={<Navigate to="/characters/overview" replace />} />
+            <Route path="/characters/list" element={<CharactersWorkspace />} />
             <Route path="/characters/overview" element={<CharactersWorkspace />} />
             <Route path="/characters/candidates" element={<CharactersWorkspace />} />
             <Route path="/characters/relationships" element={<Navigate to="/characters/relationship-graph" replace />} />

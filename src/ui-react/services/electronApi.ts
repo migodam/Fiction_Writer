@@ -65,6 +65,9 @@ export interface W1CustomProfileConfig {
   language_policy: 'preserve_source' | 'normalize_to_source' | 'allow_mixed';
   input_window_budget: number;
   output_token_budget: number;
+  extract_relationships?: boolean;
+  extract_world?: boolean;
+  extract_timeline?: boolean;
 }
 
 export interface W1OrchestratorOverrides {

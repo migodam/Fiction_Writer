@@ -9,6 +9,8 @@ import { CharacterRelationshipFlow } from './graph';
 import { AIPortraitModal } from './ai/AIPortraitModal';
 import { electronApi } from '../services/electronApi';
 import { TagTreePanel } from './TagTreePanel';
+import { ArchiveImpactModal } from './ArchiveImpactModal';
+import { CHARACTER_COMMANDS } from '../commands/characterCommands';
 import type { CharacterTag } from '../models/project';
 
 export const CharactersWorkspace = () => {
@@ -25,6 +27,8 @@ export const CharactersWorkspace = () => {
     addCharacter,
     updateCharacter,
     deleteCharacter,
+    archiveCharacter,
+    hardDeleteCharacter,
     addCharacterTag,
     addRelationship,
     updateRelationship,
@@ -42,6 +46,7 @@ export const CharactersWorkspace = () => {
     setCharacterGroupCollapsed,
     toggleCharacterGroupCollapsed,
     setGraphSidebarLinkageEnabled,
+    setSelectedEntity,
   } = useProjectStore();
   const { t } = useI18n();
   const { openContextMenu, setLastActionStatus } = useUIStore();
@@ -50,6 +55,7 @@ export const CharactersWorkspace = () => {
   const [showNewPartition, setShowNewPartition] = useState(false);
   const [newPartitionName, setNewPartitionName] = useState('');
   const [dragCharacterId, setDragCharacterId] = useState<string | null>(null);
+  const [confirmArchiveId, setConfirmArchiveId] = useState<string | null>(null);
   const route = location.pathname.includes('/relationship-graph')
     ? 'relationship-graph'
     : location.pathname.includes('/tags')
@@ -72,7 +78,14 @@ export const CharactersWorkspace = () => {
     [characters, search, characterPartitions, showMinor],
   );
 
-  const selected = characters.find((character) => character.id === characterId) || grouped[0]?.items[0] || null;
+  const foundCharacter = characterId ? characters.find((c) => c.id === characterId) ?? null : null;
+  const selected = foundCharacter ?? (characterId ? null : (grouped[0]?.items[0] ?? null));
+
+  useEffect(() => {
+    if (characterId && foundCharacter) {
+      setSelectedEntity('character', characterId);
+    }
+  }, [characterId, foundCharacter?.id, setSelectedEntity]);
 
   const handleAddPartition = () => {
     const name = newPartitionName.trim();
@@ -240,7 +253,7 @@ export const CharactersWorkspace = () => {
                     }}
                   >
                     <span className="text-[11px] font-black uppercase tracking-[0.22em] text-text-3">
-                      {group.group.charAt(0).toUpperCase() + group.group.slice(1)}
+                      {t('characters.importance.' + group.group, group.group.charAt(0).toUpperCase() + group.group.slice(1))}
                     </span>
                     <span className="rounded-full border border-border bg-bg px-2 py-0.5 text-[10px] font-black text-text-3">{group.items.length}</span>
                   </button>
@@ -266,15 +279,19 @@ export const CharactersWorkspace = () => {
                         openContextMenu({
                           x: e.clientX,
                           y: e.clientY,
-                          items: [{
-                            id: 'delete',
-                            label: t('common.delete'),
-                            action: () => {
-                              deleteCharacter(character.id);
-                              setLastActionStatus(t('characters.characterDeleted'));
+                          items: [
+                            {
+                              id: 'duplicate',
+                              label: t(CHARACTER_COMMANDS['character:duplicate'].labelKey, 'Duplicate'),
+                              action: () => CHARACTER_COMMANDS['character:duplicate'].execute({ character, characters, navigate, addCharacter, setConfirmArchiveId }),
                             },
-                            destructive: true,
-                          }],
+                            {
+                              id: 'archive',
+                              label: t(CHARACTER_COMMANDS['character:archive'].labelKey, 'Archive'),
+                              action: () => CHARACTER_COMMANDS['character:archive'].execute({ character, characters, navigate, addCharacter, setConfirmArchiveId }),
+                              destructive: true,
+                            },
+                          ],
                         });
                       }}
                     >
@@ -329,21 +346,73 @@ export const CharactersWorkspace = () => {
           <RelationshipGraphPanel />
         ) : route === 'tags' ? (
           <TagsPanel />
+        ) : characterId && !foundCharacter ? (
+          <div data-testid="entity-not-found" className="flex min-h-[480px] flex-col items-center justify-center gap-4 text-text-3">
+            <p className="text-lg font-black">{t('common.entityNotFound', 'Entity not found')}</p>
+            <button
+              type="button"
+              data-testid="entity-not-found-back"
+              className="rounded-xl border border-border px-4 py-2 text-sm text-text-2 hover:bg-hover"
+              onClick={() => navigate('/characters/list')}
+            >
+              {t('common.backToList', 'Back to list')}
+            </button>
+          </div>
         ) : selected ? (
-          <CharacterDetail character={selected} tab={tab} />
+          <CharacterDetail character={selected} tab={tab} setConfirmArchiveId={setConfirmArchiveId} />
         ) : (
           <div className="flex min-h-[480px] items-center justify-center text-text-3">{t('characters.noCharactersYet')}</div>
         )}
       </main>
+      {confirmArchiveId && (
+        <ArchiveImpactModal
+          characterId={confirmArchiveId}
+          characterName={characters.find((c) => c.id === confirmArchiveId)?.name || ''}
+          onArchive={() => {
+            archiveCharacter(confirmArchiveId);
+            setConfirmArchiveId(null);
+            setLastActionStatus(t('characters.characterArchived', 'Character archived'));
+            navigate('/characters');
+          }}
+          onHardDelete={() => {
+            hardDeleteCharacter(confirmArchiveId);
+            setConfirmArchiveId(null);
+            setLastActionStatus(t('characters.characterDeleted'));
+            navigate('/characters');
+          }}
+          onCancel={() => setConfirmArchiveId(null)}
+        />
+      )}
     </div>
   );
 };
 
-const CharacterDetail = ({ character, tab }: any) => {
+type RelDirection = 'bidirectional' | 'outgoing' | 'incoming';
+interface RelGroup { dir: RelDirection; label: string; rels: any[]; }
+
+function groupRelationshipsByDirection(characterId: string, rels: any[]): RelGroup[] {
+  const statusOrder: Record<string, number> = { active: 0, strained: 1, broken: 2, unknown: 3 };
+  const sort = (a: any, b: any) =>
+    (statusOrder[a.status || 'unknown'] ?? 3) - (statusOrder[b.status || 'unknown'] ?? 3);
+  const bidir = rels.filter((r) => r.directionality === 'bidirectional');
+  const out = rels.filter(
+    (r) => r.sourceId === characterId && r.directionality !== 'target_to_source' && r.directionality !== 'bidirectional',
+  );
+  const inc = rels.filter(
+    (r) => r.targetId === characterId && r.directionality !== 'source_to_target' && r.directionality !== 'bidirectional',
+  );
+  const groups: RelGroup[] = [];
+  if (bidir.length) groups.push({ dir: 'bidirectional', label: '↔', rels: [...bidir].sort(sort) });
+  if (out.length) groups.push({ dir: 'outgoing', label: '→', rels: [...out].sort(sort) });
+  if (inc.length) groups.push({ dir: 'incoming', label: '←', rels: [...inc].sort(sort) });
+  return groups;
+}
+
+const CharacterDetail = ({ character, tab, setConfirmArchiveId }: any) => {
   const navigate = useNavigate();
   const { t } = useI18n();
   const { openContextMenu, setLastActionStatus } = useUIStore();
-  const { characters, relationships, timelineEvents, characterTags, updateCharacter, addCharacterTag, toggleCharacterTagMembership, addRelationship, deleteRelationship, deleteCharacter, projectRoot, characterPartitions } = useProjectStore();
+  const { characters, relationships, timelineEvents, characterTags, updateCharacter, addCharacter, addCharacterTag, toggleCharacterTagMembership, addRelationship, deleteRelationship, projectRoot, characterPartitions } = useProjectStore();
   const [draft, setDraft] = useState(character);
   const [newTag, setNewTag] = useState('');
   const [tagOpen, setTagOpen] = useState(false);
@@ -370,29 +439,45 @@ const CharacterDetail = ({ character, tab }: any) => {
             <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('characters.characterDetail')}</div>
             <div className="mt-2 text-3xl font-black text-text">{draft.name || t('characters.untitledCharacter')}</div>
           </div>
-          <button
-            type="button"
-            data-testid="delete-character-btn"
-            className="rounded-xl border border-red/40 p-2 text-red hover:bg-red/10"
-            onClick={() => {
-              openContextMenu({
-                x: 0,
-                y: 0,
-                items: [{
-                  id: 'delete-character',
-                  label: t('common.delete'),
-                  action: () => {
-                    deleteCharacter(character.id);
-                    setLastActionStatus(t('characters.characterDeleted'));
-                    navigate('/characters');
-                  },
-                  destructive: true,
-                }],
-              });
-            }}
-          >
-            <Trash2 size={16} />
-          </button>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              data-testid="character-duplicate-btn"
+              className="rounded-xl border border-border px-3 py-2 text-sm text-text-2 hover:bg-hover"
+              onClick={() => {
+                const newId = `char_${Date.now()}`;
+                addCharacter({ ...draft, id: newId, name: `${draft.name} (copy)`, relationshipIds: [], linkedSceneIds: [], linkedEventIds: [] });
+                navigate(`/characters/profile/${newId}`);
+              }}
+            >
+              {t('characters.duplicateCharacter', 'Duplicate')}
+            </button>
+            <button
+              type="button"
+              data-testid="character-archive-btn"
+              className="rounded-xl border border-border px-3 py-2 text-sm text-text-2 hover:bg-hover"
+              onClick={() => setConfirmArchiveId && setConfirmArchiveId(character.id)}
+            >
+              {t('characters.archiveCharacter', 'Archive')}
+            </button>
+            <button
+              type="button"
+              data-testid="character-merge-btn"
+              className="rounded-xl border border-border px-3 py-2 text-sm text-text-3 cursor-not-allowed opacity-50"
+              disabled
+              title={t('characters.mergeComingSoon', 'Merge (coming soon)')}
+            >
+              {t('characters.mergeCharacter', 'Merge')}
+            </button>
+            <button
+              type="button"
+              data-testid="delete-character-btn"
+              className="rounded-xl border border-red/40 p-2 text-red hover:bg-red/10"
+              onClick={() => setConfirmArchiveId && setConfirmArchiveId(character.id)}
+            >
+              <Trash2 size={16} />
+            </button>
+          </div>
         </div>
         <div className="flex gap-3">
           <button type="button" className="rounded-xl border border-border px-4 py-3 text-sm text-text-2" onClick={() => navigate('/characters/relationship-graph')}>
@@ -418,52 +503,47 @@ const CharacterDetail = ({ character, tab }: any) => {
         ))}
       </div>
 
-      {tab === 'profile' ? (
-        <div className="mb-6 grid gap-4 rounded-3xl border border-border bg-card p-5 lg:grid-cols-2">
-          <input
-            data-testid="character-name-input"
-            value={draft.name}
-            onChange={(event) => setDraft({ ...draft, name: event.target.value })}
-            className="rounded-2xl border border-border bg-bg px-4 py-3 text-sm font-bold outline-none"
-            placeholder={t('characters.characterName')}
-          />
-          <textarea
-            data-testid="character-background-input"
-            value={draft.background}
-            onChange={(event) => setDraft({ ...draft, background: event.target.value })}
-            className="h-24 rounded-2xl border border-border bg-bg px-4 py-3 text-sm outline-none lg:col-span-2"
-            placeholder={t('characters.characterBackground')}
-          />
-        </div>
-      ) : null}
-
       {tab === 'relationships' ? (
         <div className="grid gap-6 xl:grid-cols-[1fr_0.85fr]">
           <div className="rounded-3xl border border-border bg-card p-6">
             <div className="mb-4 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{t('characters.relationshipsConnected')}</div>
-            <div className="space-y-3">
-              {relatedRelationships.map((relationship) => {
-                const otherId = relationship.sourceId === draft.id ? relationship.targetId : relationship.sourceId;
-                const other = characters.find((entry) => entry.id === otherId);
-                return (
-                  <div key={relationship.id} className="rounded-2xl border border-border bg-bg-elev-1 p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-black text-text">{other?.name || otherId}</div>
-                        <div className="mt-1 text-xs text-text-3">{relationship.type}</div>
-                      </div>
-                      <button type="button" className="rounded border border-red/40 p-1 text-red" onClick={() => deleteRelationship(relationship.id)}>
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
-                    <div className="mt-3 text-sm leading-relaxed text-text-2">{relationship.description}</div>
+            {(() => {
+              const relGroups = groupRelationshipsByDirection(draft.id, relatedRelationships);
+              const statusCls: Record<string, string> = {
+                active: 'border-green/30 bg-green/5',
+                strained: 'border-amber/30 bg-amber/5',
+                broken: 'border-red/30 bg-red/5',
+                unknown: 'border-border bg-bg-elev-1',
+              };
+              if (relGroups.length === 0) {
+                return <div className="py-6 text-center text-sm text-text-3">{t('characters.noCharactersYet')}</div>;
+              }
+              return relGroups.map((group) => (
+                <div key={group.dir} data-testid={`relationship-section-${group.dir}`} className="mb-4">
+                  <div className="mb-2 text-[10px] font-black uppercase tracking-widest text-text-3">
+                    {group.label} {t(`characters.rel_${group.dir}`, group.dir)} ({group.rels.length})
                   </div>
-                );
-              })}
-              {relatedRelationships.length === 0 && (
-                <div className="py-6 text-center text-sm text-text-3">{t('characters.noCharactersYet')}</div>
-              )}
-            </div>
+                  {group.rels.map((rel: any) => {
+                    const otherId = rel.sourceId === draft.id ? rel.targetId : rel.sourceId;
+                    const other = characters.find((e) => e.id === otherId);
+                    return (
+                      <div key={rel.id} className={`mb-2 rounded-2xl border p-4 ${statusCls[rel.status || 'unknown']}`}>
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-black text-text">{other?.name || otherId}</div>
+                            <div className="mt-1 text-xs text-text-3">{rel.type}</div>
+                          </div>
+                          <button type="button" className="rounded border border-red/40 p-1 text-red" onClick={() => deleteRelationship(rel.id)}>
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                        {rel.description && <div className="mt-2 text-sm leading-relaxed text-text-2">{rel.description}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              ));
+            })()}
           </div>
           <div className="rounded-3xl border border-brand/30 bg-brand/5 p-6">
             <div className="mb-4 text-[10px] font-black uppercase tracking-[0.18em] text-brand">{t('characters.createRelationshipLabel')}</div>
@@ -554,13 +634,13 @@ const CharacterDetail = ({ character, tab }: any) => {
       ) : (
         <div className="grid gap-6 xl:grid-cols-[1.25fr_0.75fr]">
           <div className="space-y-6">
-            <input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} className="w-full bg-transparent text-5xl font-black tracking-tight outline-none" placeholder={t('characters.characterName')} />
-            <textarea value={draft.background} onChange={(event) => setDraft({ ...draft, background: event.target.value })} className="h-56 w-full rounded-3xl border border-border bg-bg-elev-1 p-6 font-serif text-sm leading-relaxed text-text-2 outline-none" placeholder={t('characters.characterBackground')} />
-            <textarea value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} className="h-28 w-full rounded-3xl border border-border bg-bg p-5 text-sm leading-relaxed text-text-2 outline-none" placeholder={t('characters.characterSummaryPlaceholder')} />
+            <input data-testid="character-name-input" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} className="w-full bg-transparent text-5xl font-black tracking-tight outline-none" placeholder={t('characters.characterName')} />
+            <textarea data-testid="character-background-input" value={draft.background} onChange={(event) => setDraft({ ...draft, background: event.target.value })} className="h-56 w-full rounded-3xl border border-border bg-bg-elev-1 p-6 font-serif text-sm leading-relaxed text-text-2 outline-none" placeholder={t('characters.characterBackground')} />
+            <textarea data-testid="character-summary-input" value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} className="h-28 w-full rounded-3xl border border-border bg-bg p-5 text-sm leading-relaxed text-text-2 outline-none" placeholder={t('characters.characterSummaryPlaceholder')} />
             <div className="grid gap-4 md:grid-cols-2">
-              <input value={draft.traits || ''} onChange={(event) => setDraft({ ...draft, traits: event.target.value })} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('characters.traitsPlaceholder')} />
-              <input value={draft.goals || ''} onChange={(event) => setDraft({ ...draft, goals: event.target.value })} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('characters.goalsPlaceholder')} />
-              <input value={draft.fears || ''} onChange={(event) => setDraft({ ...draft, fears: event.target.value })} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('characters.fearsPlaceholder')} />
+              <input data-testid="character-traits-input" value={draft.traits || ''} onChange={(event) => setDraft({ ...draft, traits: event.target.value })} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('characters.traitsPlaceholder')} />
+              <input data-testid="character-goals-input" value={draft.goals || ''} onChange={(event) => setDraft({ ...draft, goals: event.target.value })} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('characters.goalsPlaceholder')} />
+              <input data-testid="character-fears-input" value={draft.fears || ''} onChange={(event) => setDraft({ ...draft, fears: event.target.value })} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('characters.fearsPlaceholder')} />
               <select value={draft.importance || 'ungrouped'} onChange={(event) => setDraft({ ...draft, importance: event.target.value, groupKey: event.target.value })} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none">
                 {characterPartitions.map((group) => <option key={group} value={group}>{group.charAt(0).toUpperCase() + group.slice(1)}</option>)}
               </select>
@@ -662,9 +742,9 @@ const CharacterDetail = ({ character, tab }: any) => {
             <div className="rounded-3xl border border-border bg-card p-5">
               <div className="mb-3 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{t('characters.profileMeta')}</div>
               <div className="grid gap-3">
-                <input value={draft.birthdayText || ''} onChange={(event) => setDraft({ ...draft, birthdayText: event.target.value })} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('characters.birthdayPlaceholder')} />
-                <input value={draft.speechStyle || ''} onChange={(event) => setDraft({ ...draft, speechStyle: event.target.value })} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('characters.speechStylePlaceholder')} />
-                <textarea value={draft.arc || ''} onChange={(event) => setDraft({ ...draft, arc: event.target.value })} className="h-32 rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('characters.characterArcPlaceholder')} />
+                <input data-testid="character-birthday-input" value={draft.birthdayText || ''} onChange={(event) => setDraft({ ...draft, birthdayText: event.target.value })} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('characters.birthdayPlaceholder')} />
+                <input data-testid="character-speechstyle-input" value={draft.speechStyle || ''} onChange={(event) => setDraft({ ...draft, speechStyle: event.target.value })} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('characters.speechStylePlaceholder')} />
+                <textarea data-testid="character-arc-input" value={draft.arc || ''} onChange={(event) => setDraft({ ...draft, arc: event.target.value })} className="h-32 rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('characters.characterArcPlaceholder')} />
               </div>
             </div>
           </div>

@@ -293,6 +293,7 @@ export interface WorldItem {
   assetPath?: string | null;
   tagIds?: string[];
   categoryPath?: string[];
+  categoryId?: string | null;
   parentId?: string | null;
   importCategoryKey?: string;
 }
@@ -354,10 +355,13 @@ export interface GraphBoard {
 }
 
 export interface ProposalOperation {
-  op: 'create' | 'update' | 'delete' | 'link' | 'unlink';
+  op: 'create' | 'update' | 'delete' | 'link' | 'unlink' | 'reclassify_world_item';
   entityType: EntityKind;
   entityId?: string | null;
   fields?: Record<string, unknown>;
+  new_category?: string;
+  new_container_key?: string;
+  new_category_path?: string[];
 }
 
 export interface Proposal {
