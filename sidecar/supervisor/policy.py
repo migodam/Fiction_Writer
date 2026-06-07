@@ -1188,18 +1188,20 @@ async def run_supervisor_streaming(
             _emit_activity(state, phase="cancelled", tool="workflow", status="cancelled", level="warning", message="Import cancelled after extraction loop.")
             return
 
-        # Reduce + repair
+        # Reduce entities
         state = _with_status(state, current_tool="reduce_entities", orchestrator_phase="reducing")
         _emit_activity(state, phase="reducing", tool="reduce_entities", status="start", message="Reducing extracted entities.")
         reduce_update = await tools["reduce_entities"](state)
         state = {**state, **reduce_update, "current_stage": "reduce_entities"}
         _emit_activity(state, phase="reducing", tool="reduce_entities", status="success", message="Entity reduction complete.")
-        state = _with_status(state, current_tool="minor_repair", orchestrator_phase="repairing")
-        _emit_activity(state, phase="repairing", tool="minor_repair", status="start", message="Running deterministic repair.")
-        repair_update = await tools["minor_repair"](state)
-        state = {**state, **repair_update, "current_stage": "minor_repair"}
-        _emit_activity(state, phase="repairing", tool="minor_repair", status="success", message="Deterministic repair complete.")
-        yield _PROGRESS_REDUCE_REPAIR, "reduce_repair", state.get("errors", [])
+
+        # ── 3b. Reduce world entities (streaming path) ───────────────────────
+        if "reduce_world_entities" in tools:
+            state = _with_status(state, current_tool="reduce_world_entities", orchestrator_phase="reducing")
+            _emit_activity(state, phase="reducing", tool="reduce_world_entities", status="start", message="Reducing world entities.")
+            rwe_update = tools["reduce_world_entities"](state)
+            state = {**state, **rwe_update, "current_stage": "reduce_world_entities"}
+            _emit_activity(state, phase="reducing", tool="reduce_world_entities", status="success", message="World entity reduction complete.")
 
         # ── 3c. Content organizer (streaming path) ───────────────────────────
         _emit_activity(state, phase="reducing", tool="organizer", status="start", message="Running content organizer to filter world candidates.")
@@ -1223,6 +1225,14 @@ async def run_supervisor_streaming(
         if _project_path_s and _import_run_id_s:
             _write_import_artifact(_project_path_s, _import_run_id_s, "organizer_output.json", dict(_org_out_s))
         _emit_activity(state, phase="reducing", tool="organizer", status="success", message="Content organizer complete.")
+
+        # ── 4. Minor repair (streaming path) ─────────────────────────────────
+        state = _with_status(state, current_tool="minor_repair", orchestrator_phase="repairing")
+        _emit_activity(state, phase="repairing", tool="minor_repair", status="start", message="Running deterministic repair.")
+        repair_update = await tools["minor_repair"](state)
+        state = {**state, **repair_update, "current_stage": "minor_repair"}
+        _emit_activity(state, phase="repairing", tool="minor_repair", status="success", message="Deterministic repair complete.")
+        yield _PROGRESS_REDUCE_REPAIR, "reduce_repair", state.get("errors", [])
 
         # Architect
         state = _with_status(state, current_tool="architect_timeline", orchestrator_phase="architecting")
