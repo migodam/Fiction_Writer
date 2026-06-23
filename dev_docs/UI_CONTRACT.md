@@ -1,5 +1,8 @@
 # UI Contract (v0.1)
 
+> Status: reference-only UI snapshot.
+> Use `dev_docs/README.md` to find the current canonical docs before relying on this file.
+
 This document defines the expected UI layout, panels, buttons, and routing transitions for each major activity in the Narrative IDE.
 
 ## Global Layout Elements

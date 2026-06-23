@@ -22,11 +22,12 @@ class ChunkConfig(TypedDict, total=False):
     overlap: int
 
 
-class Chunk(TypedDict):
+class Chunk(TypedDict, total=False):
     chunk_id: int
     char_start: int
     char_end: int
     content: str
+    raw_content: str   # chapter text only, without overlap prefix; use for manuscript assembly
     chapter_hint: str | None
     entity_mentions: list[str]
 
@@ -89,13 +90,15 @@ def _split_by_chapter(text: str, chunk_size: int, overlap: int) -> list[Chunk]:
                 abs_end = content_start + sub["char_end"]
                 # Prepend overlap from previous chunk
                 overlap_prefix = _get_overlap_prefix(chunks, overlap)
-                final_content = overlap_prefix + sub["content"]
+                sub_raw = sub.get("raw_content", sub["content"])
+                final_content = overlap_prefix + sub_raw
                 chunks.append(
                     Chunk(
                         chunk_id=chunk_id,
                         char_start=abs_start,
                         char_end=abs_end,
                         content=final_content,
+                        raw_content=sub_raw,
                         chapter_hint=headings[i],
                         entity_mentions=[],
                     )
@@ -109,6 +112,7 @@ def _split_by_chapter(text: str, chunk_size: int, overlap: int) -> list[Chunk]:
                     char_start=content_start,
                     char_end=content_end,
                     content=overlap_prefix + raw_content,
+                    raw_content=raw_content,
                     chapter_hint=headings[i],
                     entity_mentions=[],
                 )
@@ -144,6 +148,7 @@ def _split_by_paragraph(text: str, chunk_size: int, overlap: int) -> list[Chunk]
                     char_start=chunk_abs_start,
                     char_end=abs_pos,
                     content=overlap_prefix + content,
+                    raw_content=content,
                     chapter_hint=None,
                     entity_mentions=[],
                 )
@@ -167,6 +172,7 @@ def _split_by_paragraph(text: str, chunk_size: int, overlap: int) -> list[Chunk]
                 char_start=chunk_abs_start,
                 char_end=abs_pos,
                 content=overlap_prefix + content,
+                raw_content=content,
                 chapter_hint=None,
                 entity_mentions=[],
             )
@@ -178,6 +184,7 @@ def _split_by_paragraph(text: str, chunk_size: int, overlap: int) -> list[Chunk]
             char_start=0,
             char_end=len(text),
             content=text,
+            raw_content=text,
             chapter_hint=None,
             entity_mentions=[],
         )
@@ -204,6 +211,7 @@ def _split_fixed(text: str, chunk_size: int, overlap: int) -> list[Chunk]:
                 char_start=pos,
                 char_end=end,
                 content=overlap_prefix + raw_content,
+                raw_content=raw_content,
                 chapter_hint=None,
                 entity_mentions=[],
             )

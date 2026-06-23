@@ -47,10 +47,50 @@ export interface W3ProgressEvent {
 
 // ── W1 Import ────────────────────────────────────────────────────────────────
 
+export type W1PromptProfile = 'fast' | 'balanced' | 'deep' | 'custom';
+
+export interface W1CustomProfileConfig {
+  quality_target: 'draft' | 'standard' | 'high' | 'max';
+  chapters_per_window_min: number;
+  chapters_per_window_max: number;
+  max_chapters_per_window: number;
+  character_granularity: 'major_only' | 'named_only' | 'all';
+  event_density: 'arc_level' | 'chapter_level' | 'scene_level';
+  timeline_topology_depth: 'flat' | 'branched' | 'full_dag';
+  world_strictness: 'named_only' | 'with_description' | 'full_attributes';
+  validation_strictness: 'off' | 'per_window' | 'per_arc';
+  rerun_budget: number;
+  max_rerun_iterations: number;
+  judge_pass_threshold: number;
+  language_policy: 'preserve_source' | 'normalize_to_source' | 'allow_mixed';
+  input_window_budget: number;
+  output_token_budget: number;
+  extract_relationships?: boolean;
+  extract_world?: boolean;
+  extract_timeline?: boolean;
+}
+
+export interface W1OrchestratorOverrides {
+  use_orchestrator: boolean;
+  use_supervisor: boolean;
+  rerun_budget: number;
+  judge_pass_threshold: number;
+  quality_target: W1CustomProfileConfig['quality_target'];
+  language_policy: W1CustomProfileConfig['language_policy'];
+}
+
 export interface W1StartPayload {
   projectRoot: string;
   source_file_path: string;
   import_mode?: 'import_content_only' | 'import_all';
+  prompt_profile?: W1PromptProfile;
+  use_supervisor?: boolean;
+  use_orchestrator?: boolean;
+  custom_profile_config?: W1CustomProfileConfig;
+  orchestrator_overrides?: W1OrchestratorOverrides;
+  api_key?: string;
+  model?: string;
+  endpoint?: string;
 }
 
 export interface W1StartResult {
@@ -62,12 +102,136 @@ export interface W1CancelPayload {
   session_id: string;
 }
 
+export interface W1TokenLedger {
+  actual_input_tokens: number;
+  actual_output_tokens: number;
+  actual_total_tokens: number;
+  api_call_count: number;
+  estimated_input_tokens: number;
+  cost_usd?: number;
+  cost_unavailable_reason?: string;
+  model?: string;
+}
+
 export interface W1StatusResult {
   status: string;
   progress: number;
   errors: string[];
   completed_chunks: number;
   total_chunks: number;
+  current_step?: string;
+  prompt_profile?: W1PromptProfile;
+  proposals_count?: number;
+  extraction_counts?: W1ExtractionCounts;
+  import_review_report?: W1ImportReviewReport;
+  current_tool?: string;
+  current_window?: string | number;
+  chapter_range?: string | { start?: string; end?: string };
+  orchestrator_phase?: string;
+  judge_score?: number;
+  rerun_reason?: string;
+  converge_status?: string;
+  judge_artifact_summary?: W1JudgeArtifactSummary;
+  last_activity_at?: string;
+  last_activity_message?: string;
+  active_api_calls?: number;
+  elapsed_seconds?: number;
+  idle_seconds?: number;
+  cancel_requested?: boolean;
+  token_budget_exhausted?: boolean;
+  token_ledger?: W1TokenLedger;
+}
+
+export interface W1ExtractionCounts {
+  characters: number;
+  events: number;
+  world_items: number;
+  relationships: number;
+}
+
+export interface ImportObservabilitySummary {
+  characters_extracted?: number;
+  events_extracted?: number;
+  world_items_extracted?: number;
+  relationships_extracted?: number;
+  manuscript_chapters_count?: number;
+  manuscript_written?: boolean;
+  canonical_events_count?: number;
+  branch_count?: number;
+  duplicate_count?: number;
+  topology_warning_count?: number;
+}
+
+export interface W1ImportReviewReport {
+  import_run_id?: string;
+  status?: 'pass' | 'warning' | 'fail' | 'acceptable_with_warnings';
+  warnings?: string[];
+  errors?: string[];
+  proposal_counts?: Record<string, number>;
+  safe_accept_ids?: string[];
+  blocked_ids?: string[];
+  failed_chunks?: Array<{ chunk_id?: number; errors?: string[] }>;
+  duplicate_merges?: Array<Record<string, unknown>>;
+  low_confidence_items?: Array<Record<string, unknown>>;
+  model?: string;
+  prompt_profile?: W1PromptProfile;
+  artifact_paths?: Record<string, string>;
+  judge_artifact_summary?: W1JudgeArtifactSummary;
+  judge_artifact?: W1JudgeArtifactSummary;
+  import_observability?: ImportObservabilitySummary;
+}
+
+export interface W1JudgeArtifactSummary {
+  status?: string;
+  score?: number;
+  judge_score?: number;
+  converge_status?: string;
+  rerun_reason?: string;
+  summary?: string;
+  strengths?: string[];
+  risks?: string[];
+  required_reruns?: string[];
+  recommendations?: string[];
+}
+
+export interface ChunkLogEntry {
+  chunk_id: number;
+  total_chunks: number;
+  step: string;
+  new_characters: number;
+  updated_characters: number;
+  new_events: number;
+  new_world: number;
+  duration_ms: number;
+  excerpt: string;
+  errors: string[];
+  timestamp: string;
+}
+
+export interface W1ActivityEntry {
+  id: number;
+  timestamp: string;
+  level: 'info' | 'warning' | 'error' | string;
+  phase: string;
+  tool: string;
+  window_id?: string;
+  chapter_range?: string;
+  prompt_label?: string;
+  status: 'start' | 'success' | 'retry' | 'fail' | 'skip' | 'heartbeat' | 'cancelled' | string;
+  message: string;
+  elapsed_ms?: number;
+  duration_ms?: number | null;
+  completed?: number | null;
+  total?: number | null;
+  active_api_calls?: number;
+  error?: string;
+}
+
+export interface W1ConsoleResult {
+  entries: ChunkLogEntry[];
+  activity_entries: W1ActivityEntry[];
+  paused: boolean;
+  breakpoint_chunk: number | null;
 }
 
 // ── W2 Manuscript Sync ───────────────────────────────────────────────────────
@@ -76,11 +240,22 @@ export interface W2StartPayload {
   projectRoot: string;
   mode: string;
   target_chapter_id?: string;
+  api_key?: string;
+  model?: string;
+  endpoint?: string;
 }
 
 export interface W2StartResult {
   session_id: string;
   status: string;
+  error?: string;
+}
+
+export interface W2StatusResult {
+  status: string;
+  progress: number;
+  errors: string[];
+  proposals_count: number;
 }
 
 // ── W4 Consistency Check ─────────────────────────────────────────────────────
@@ -102,7 +277,6 @@ export interface W4StartResult {
 export interface W4StatusResult {
   status: string;
   progress: number;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   issues: any[];
   severity_counts: Record<string, number>;
   errors: string[];
@@ -129,7 +303,6 @@ export interface W5StatusResult {
   status: string;
   progress: number;
   report_markdown: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   engine_results: Record<string, any>;
   errors: string[];
 }
@@ -154,7 +327,6 @@ export interface W6StatusResult {
   status: string;
   progress: number;
   report_markdown: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   feedback_items: any[];
   errors: string[];
 }
@@ -198,7 +370,6 @@ export interface OrchestratorStartPayload {
 export interface OrchestratorStartResult {
   session_id: string;
   status: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   plan: any[];
 }
 
@@ -207,9 +378,7 @@ export interface OrchestratorStatusResult {
   current_step: number;
   total_steps: number;
   progress: number;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   pending_permission: any | null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   plan?: any[];
   errors?: string[];
 }
@@ -421,6 +590,36 @@ export const electronApi = {
     return (await ipcRenderer.invoke('w1:status', { projectRoot, session_id: sessionId })) as W1StatusResult;
   },
 
+  async w1Console(projectRoot: string, sessionId: string, after = 0, activityAfter = 0): Promise<W1ConsoleResult> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return { entries: [], activity_entries: [], paused: false, breakpoint_chunk: null };
+    return (await ipcRenderer.invoke('w1:console', { projectRoot, session_id: sessionId, after, activity_after: activityAfter })) as W1ConsoleResult;
+  },
+
+  async w1SetBreakpoint(projectRoot: string, sessionId: string, chunkId: number | null): Promise<{ ok: boolean }> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return { ok: false };
+    return (await ipcRenderer.invoke('w1:set_breakpoint', { projectRoot, session_id: sessionId, chunk_id: chunkId })) as { ok: boolean };
+  },
+
+  async w1Resume(projectRoot: string, sessionId: string): Promise<{ ok: boolean }> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return { ok: false };
+    return (await ipcRenderer.invoke('w1:resume', { projectRoot, session_id: sessionId })) as { ok: boolean };
+  },
+
+  async w1Rewind(projectRoot: string, sessionId: string, toChunkId: number): Promise<{ ok: boolean; new_session_id?: string }> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return { ok: false };
+    return (await ipcRenderer.invoke('w1:rewind', { projectRoot, session_id: sessionId, to_chunk_id: toChunkId })) as { ok: boolean; new_session_id?: string };
+  },
+
+  async fetchPrompts(projectRoot: string): Promise<Record<string, { name: string; text: string }[]>> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return {};
+    return (await ipcRenderer.invoke('prompts:list', { projectRoot })) as Record<string, { name: string; text: string }[]>;
+  },
+
   async sidecarSpawn(projectRoot: string): Promise<{ ok: boolean; port: number }> {
     const ipcRenderer = getIpcRenderer();
     if (!ipcRenderer) return { ok: false, port: 0 };
@@ -433,6 +632,12 @@ export const electronApi = {
     const ipcRenderer = getIpcRenderer();
     if (!ipcRenderer) return { session_id: '', status: 'error' };
     return (await ipcRenderer.invoke('w2:start', payload)) as W2StartResult;
+  },
+
+  async w2Status(projectRoot: string, sessionId: string): Promise<W2StatusResult> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return { status: 'error', progress: 0, errors: ['ipc_unavailable'], proposals_count: 0 };
+    return (await ipcRenderer.invoke('w2:status', { projectRoot, session_id: sessionId })) as W2StatusResult;
   },
 
   // ── W4 Consistency Check ──────────────────────────────────────────────────
@@ -505,14 +710,12 @@ export const electronApi = {
     return (await ipcRenderer.invoke('orchestrator:status', { projectRoot, session_id: sessionId })) as OrchestratorStatusResult;
   },
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async orchestratorGrant(projectRoot: string, stepId: string, sessionId: string): Promise<any> {
     const ipcRenderer = getIpcRenderer();
     if (!ipcRenderer) return { status: 'error' };
     return ipcRenderer.invoke('orchestrator:grant', { projectRoot, stepId, session_id: sessionId });
   },
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async orchestratorDeny(projectRoot: string, stepId: string, sessionId: string, reason: string): Promise<any> {
     const ipcRenderer = getIpcRenderer();
     if (!ipcRenderer) return { status: 'error' };

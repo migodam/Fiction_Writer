@@ -1,5 +1,6 @@
 import React, { useCallback } from 'react';
 import type { TimelineEvent } from '../../models/project';
+import { truncateTimelineLabel, type TimelineLabelPlacement } from './timelineLayoutEngine';
 import type { Point } from './bezierMath';
 import { EventTooltip } from './EventTooltip';
 
@@ -13,6 +14,7 @@ interface TimelineEventNodeProps {
   onPointerMove: (eventId: string, e: React.PointerEvent<SVGCircleElement>) => void;
   onContextMenu: (eventId: string, e: React.MouseEvent<SVGCircleElement>) => void;
   onHover: (eventId: string | null) => void;
+  labelPlacement?: TimelineLabelPlacement;
 }
 
 const importanceRadius = (importance?: string): number => {
@@ -39,11 +41,21 @@ export function TimelineEventNode({
   onPointerMove,
   onContextMenu,
   onHover,
+  labelPlacement,
 }: TimelineEventNodeProps) {
   const baseR = importanceRadius(event.importance);
   const color = importanceColor(event.importance);
   const isDragging = dragMode !== null;
   const isDropDragging = dragMode === 'drop';
+  const label = labelPlacement ?? {
+    id: event.id,
+    text: truncateTimelineLabel(event.title),
+    visible: true,
+    dx: 0,
+    dy: baseR + 16,
+    width: 0,
+    height: 14,
+  };
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent<SVGCircleElement>) => {
@@ -79,7 +91,11 @@ export function TimelineEventNode({
       data-testid={`timeline-event-node-${event.id}`}
       data-position-x={position.x}
       data-position-y={position.y}
+      data-label-visible={label.visible ? 'true' : 'false'}
+      data-label-x={position.x + label.dx}
+      data-label-y={position.y + label.dy}
     >
+      <title>{event.title}</title>
       {/* Hover ring — expands on hover */}
       <circle
         r={isHovered ? baseR + 8 : baseR + 2}
@@ -132,19 +148,24 @@ export function TimelineEventNode({
       {/* Tooltip on hover (not during drag) */}
       <EventTooltip event={event} visible={isHovered && !isDragging} />
 
-      {/* Title label below node */}
-      <text
-        y={baseR + 16}
-        textAnchor="middle"
-        fill="currentColor"
-        fontSize={10}
-        fontWeight={600}
-        opacity={0.8}
-        pointerEvents="none"
-        style={{ userSelect: 'none' }}
-      >
-        {event.title.length > 18 ? event.title.slice(0, 18) + '…' : event.title}
-      </text>
+      {label.visible && (
+        <text
+          x={label.dx}
+          y={label.dy}
+          textAnchor="middle"
+          fill="currentColor"
+          fontSize={10}
+          fontWeight={600}
+          opacity={0.8}
+          pointerEvents="none"
+          style={{ userSelect: 'none' }}
+          data-testid={`timeline-event-label-${event.id}`}
+          data-label-width={label.width}
+          data-label-height={label.height}
+        >
+          {label.text}
+        </text>
+      )}
     </g>
   );
 }

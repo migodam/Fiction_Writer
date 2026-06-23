@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { useLocation, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, Eye, PanelLeft, PanelRight, Plus, RefreshCw, Search, Sparkles, Upload } from 'lucide-react';
 import { useProjectStore, useUIStore } from '../store';
 import { PaneResizeHandle } from './PaneResizeHandle';
@@ -76,13 +76,29 @@ export const WritingWorkspace = () => {
 
 const ChapterEditor = () => {
   const { t } = useI18n();
-  const { chapters, scenes, selectedEntity, addChapter, updateChapter, addScene, setSelectedEntity, startManuscriptSync, projectRoot } = useProjectStore();
+  const navigate = useNavigate();
+  const {
+    chapters,
+    scenes,
+    selectedEntity,
+    addChapter,
+    updateChapter,
+    addScene,
+    setSelectedEntity,
+    startManuscriptSync,
+    projectRoot,
+    w2Status,
+    w2Progress,
+    w2ProposalCount,
+    w2Errors,
+  } = useProjectStore();
   const { setLastActionStatus } = useUIStore();
   const activeId = selectedEntity.type === 'chapter' ? selectedEntity.id : chapters[0]?.id || null;
   const chapter = chapters.find((entry) => entry.id === activeId) || chapters[0] || null;
   const [draft, setDraft] = useState(chapter);
   const [previewingChapterId, setPreviewingChapterId] = useState<string | null>(null);
   const [isImportOpen, setIsImportOpen] = useState(false);
+  const isW2Running = w2Status === 'running';
 
   useEffect(() => setDraft(chapter), [chapter]);
 
@@ -93,6 +109,19 @@ const ChapterEditor = () => {
     }
     return buckets;
   }, [chapters]);
+
+  const runW2ForChapter = (chapterId: string) => {
+    void startManuscriptSync({ projectRoot: projectRoot || '', mode: 'single_chapter', target_chapter_id: chapterId }).then(() => {
+      const latest = useProjectStore.getState();
+      if (latest.w2Status === 'done') {
+        setLastActionStatus(latest.w2ProposalCount > 0 ? `W2 produced ${latest.w2ProposalCount} proposal(s)` : 'W2 finished with no proposals');
+      }
+      if (latest.w2Status === 'error') {
+        setLastActionStatus('W2 manuscript sync failed');
+      }
+    });
+    setLastActionStatus('W2 manuscript sync started');
+  };
 
   return (
     <div className="flex h-full overflow-hidden bg-bg">
@@ -140,14 +169,14 @@ const ChapterEditor = () => {
                       type="button"
                       data-testid={`chapter-sync-btn-${item.id}`}
                       className="rounded-lg border border-border p-1.5 text-text-3 hover:border-green-400 hover:text-green-400"
+                      disabled={isW2Running}
                       onClick={(e) => {
                         e.stopPropagation();
-                        startManuscriptSync({ projectRoot: projectRoot || '', mode: 'single_chapter', target_chapter_id: item.id });
-                        setLastActionStatus('Syncing chapter…');
+                        runW2ForChapter(item.id);
                       }}
                       title="Sync chapter with project data"
                     >
-                      <RefreshCw size={12} />
+                      <RefreshCw size={12} className={cn(isW2Running && 'animate-spin')} />
                     </button>
                     <button
                       type="button"
@@ -176,8 +205,53 @@ const ChapterEditor = () => {
                 <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('writing.chapter.detail.heading')}</div>
                 <div className="text-sm font-black text-text">{t('writing.chapter.detail.subtitle')}</div>
               </div>
-              <button type="button" className="rounded-xl bg-brand px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-white" data-testid="save-chapter-btn" onClick={() => { updateChapter(draft); setLastActionStatus('Chapter saved'); }}>{t('writing.chapter.saveBtn')}</button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-2 rounded-xl border border-border px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-text-2 hover:border-green-400 hover:text-green-400 disabled:cursor-not-allowed disabled:opacity-60"
+                  data-testid="w2-sync-chapter-btn"
+                  disabled={isW2Running || !draft}
+                  onClick={() => draft && runW2ForChapter(draft.id)}
+                >
+                  <RefreshCw size={13} className={cn(isW2Running && 'animate-spin')} />
+                  {isW2Running ? 'Syncing' : 'Sync Canon'}
+                </button>
+                <button type="button" className="rounded-xl bg-brand px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-white" data-testid="save-chapter-btn" onClick={() => { updateChapter(draft); setLastActionStatus('Chapter saved'); }}>{t('writing.chapter.saveBtn')}</button>
+              </div>
             </div>
+            {w2Status !== 'idle' && (
+              <div className="mb-6 rounded-3xl border border-border bg-bg-elev-1 p-5" data-testid="w2-status-card">
+                <div className="mb-3 flex items-start justify-between gap-4">
+                  <div>
+                    <div className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-2">W2 Manuscript Sync</div>
+                    <div className="mt-1 text-sm font-bold text-text" data-testid="w2-status-label">
+                      {w2Status === 'running' && 'Scanning this chapter for canon changes'}
+                      {w2Status === 'done' && (w2ProposalCount > 0 ? `${w2ProposalCount} proposal(s) sent to Workbench` : 'Sync complete. No proposals were needed.')}
+                      {w2Status === 'error' && 'Sync failed'}
+                    </div>
+                  </div>
+                  <div className="rounded-full border border-border px-3 py-1 text-[10px] font-black uppercase tracking-widest text-text-2">{Math.round(w2Progress * 100)}%</div>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-bg">
+                  <div className="h-full rounded-full bg-brand transition-all" data-testid="w2-progress-bar" style={{ width: `${Math.max(4, Math.round(w2Progress * 100))}%` }} />
+                </div>
+                {w2Status === 'done' && (
+                  <button
+                    type="button"
+                    data-testid="w2-open-workbench-btn"
+                    className="mt-4 rounded-xl border border-border px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-text-2 hover:border-brand hover:text-brand"
+                    onClick={() => navigate('/workbench/inbox')}
+                  >
+                    Open Workbench Inbox
+                  </button>
+                )}
+                {w2Status === 'error' && (
+                  <div className="mt-4 rounded-2xl border border-red/30 bg-red/10 p-4 text-sm text-red" data-testid="w2-error-msg">
+                    {w2Errors[0] || 'The sync could not complete. Check provider credentials and try again.'}
+                  </div>
+                )}
+              </div>
+            )}
             <input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} className="mb-4 w-full bg-transparent text-5xl font-black tracking-tight outline-none" data-testid="chapter-title-input" />
             <textarea value={draft.summary} onChange={(e) => setDraft({ ...draft, summary: e.target.value })} className="mb-4 h-24 w-full rounded-3xl border border-border bg-bg p-5 text-sm text-text-2 outline-none" data-testid="chapter-summary-input" />
             <div className="grid gap-4 lg:grid-cols-2">

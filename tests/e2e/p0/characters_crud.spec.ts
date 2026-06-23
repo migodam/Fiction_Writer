@@ -12,6 +12,25 @@ test('create character and save', async ({ page }) => {
   await expect(page.getByText(/Saved|已保存/)).toBeVisible();
 });
 
+test('profile tab exposes all documented fields', async ({ page }) => {
+  await page.goto('/characters/profile/char_aria');
+
+  await expect(page.getByTestId('character-name-input')).toBeVisible();
+  await expect(page.getByTestId('character-background-input')).toBeVisible();
+  await expect(page.getByTestId('character-summary-input')).toBeVisible();
+  await expect(page.getByTestId('character-traits-input')).toBeVisible();
+  await expect(page.getByTestId('character-goals-input')).toBeVisible();
+  await expect(page.getByTestId('character-fears-input')).toBeVisible();
+  await expect(page.getByTestId('character-birthday-input')).toBeVisible();
+  await expect(page.getByTestId('character-speechstyle-input')).toBeVisible();
+  await expect(page.getByTestId('character-arc-input')).toBeVisible();
+
+  await page.getByTestId('character-traits-input').fill('坚韧, 谨慎');
+  await page.getByTestId('inspector-save').click();
+  await expect(page.getByText(/Saved|已保存/)).toBeVisible();
+  await expect(page.getByTestId('character-traits-input')).toHaveValue('坚韧, 谨慎');
+});
+
 test('candidate confirmation flow', async ({ page }) => {
   await page.goto('/');
 

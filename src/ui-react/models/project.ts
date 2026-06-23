@@ -1,4 +1,4 @@
-export const PROJECT_SCHEMA_VERSION = 4;
+export const PROJECT_SCHEMA_VERSION = 5;
 
 export type EntityKind =
   | 'character'
@@ -11,6 +11,7 @@ export type EntityKind =
   | 'chapter'
   | 'scene'
   | 'world_container'
+  | 'world_settings'
   | 'proposal'
   | 'issue'
   | 'graph_node'
@@ -36,7 +37,17 @@ export type Locale = 'en' | 'zh-CN';
 export type ProposalStatus = 'pending' | 'accepted' | 'rejected' | 'archived';
 export type IssueStatus = 'open' | 'resolved' | 'ignored';
 export type TaskStatus = 'queued' | 'running' | 'awaiting_user_input' | 'completed' | 'failed' | 'canceled';
-export type ProposalSource = 'graph' | 'consistency' | 'agent' | 'import' | 'script' | 'video';
+export type ProposalSource =
+  | 'graph'
+  | 'consistency'
+  | 'agent'
+  | 'import'
+  | 'script'
+  | 'video'
+  | 'quality_reviewer'
+  | 'fact_reviewer'
+  | 'consistency_reviewer'
+  | 'organizer';
 export type ProposalKind =
   | 'entity_update'
   | 'import_review'
@@ -131,6 +142,18 @@ export interface CharacterTag {
   color: string;
   description: string;
   characterIds: string[];
+  parentTagId?: string | null;
+  sortOrder?: number;
+  collapsed?: boolean;
+}
+
+export interface WorldCategoryNode {
+  id: string;
+  name: string;
+  parentId: string | null;
+  sortOrder: number;
+  scope: 'world';
+  collapsed?: boolean;
 }
 
 export interface Candidate {
@@ -188,6 +211,10 @@ export interface TimelineEvent {
   layoutLock?: boolean;
   modalStateHints?: string[];
   position?: { x: number; y: number };
+  globalOrderIndex?: number;
+  chapterNumber?: number;
+  sourceChunkIds?: string[];
+  sourceOrder?: number;
 }
 
 export interface Relationship {
@@ -235,6 +262,8 @@ export interface WorldContainer {
   isDefault?: boolean;
   isCollapsed?: boolean;
   sortOrder?: number;
+  description?: string;
+  importCategoryKey?: string;
 }
 
 export interface WorldAttribute {
@@ -263,6 +292,10 @@ export interface WorldItem {
   mapMarkers: WorldMapMarker[];
   assetPath?: string | null;
   tagIds?: string[];
+  categoryPath?: string[];
+  categoryId?: string | null;
+  parentId?: string | null;
+  importCategoryKey?: string;
 }
 
 export interface WorldSettings {
@@ -322,10 +355,13 @@ export interface GraphBoard {
 }
 
 export interface ProposalOperation {
-  op: 'create' | 'update' | 'delete' | 'link' | 'unlink';
+  op: 'create' | 'update' | 'delete' | 'link' | 'unlink' | 'reclassify_world_item';
   entityType: EntityKind;
   entityId?: string | null;
   fields?: Record<string, unknown>;
+  new_category?: string;
+  new_container_key?: string;
+  new_category_path?: string[];
 }
 
 export interface Proposal {
@@ -348,6 +384,40 @@ export interface Proposal {
   status: ProposalStatus;
   createdAt: string;
   resolvedAt?: string;
+  data?: Record<string, unknown>;
+  entityType?: string;
+  /** Set by resolveProposal when applyProposalOperations returns a blockedReason. Display-only; not canonical. */
+  lastBlockReason?: string;
+  lastBlockedAt?: string;
+}
+
+export interface DependencyEdge {
+  fromId: string;
+  toId: string;
+  reason: string;
+}
+
+export interface ReviewFinding {
+  findingId: string;
+  checkName: string;
+  description: string;
+  severity: 'low' | 'medium' | 'high';
+  entityRefs: string[];
+  evidenceRefs: string[];
+}
+
+export type PackageSource = 'w1_import' | 'quality_reviewer' | 'fact_reviewer' | 'consistency_reviewer' | 'organizer';
+
+export interface ProposalPackage {
+  id: string;
+  source: PackageSource;
+  title: string;
+  summary: string;
+  risk: 'low' | 'medium' | 'high';
+  proposals: Proposal[];
+  dependencyGraph: DependencyEdge[];
+  reviewerFindings?: ReviewFinding[];
+  blockedReason?: string;
 }
 
 export interface ConsistencyIssue {
@@ -898,6 +968,7 @@ export interface NarrativeProject {
   scenes: Scene[];
   worldContainers: WorldContainer[];
   worldItems: WorldItem[];
+  worldCategories?: WorldCategoryNode[];
   worldSettings: WorldSettings;
   worldMaps: WorldMapDocument[];
   graphBoards: GraphBoard[];

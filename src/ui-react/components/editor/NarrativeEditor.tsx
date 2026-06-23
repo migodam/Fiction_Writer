@@ -154,7 +154,7 @@ export const NarrativeEditor = React.forwardRef<NarrativeEditorHandle, Narrative
     if (editor.getHTML() !== newContent) {
       editor.commands.setContent(newContent, { emitUpdate: false });
     }
-  }, [content]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [content]);
 
   if (!editor) return null;
 

@@ -10,18 +10,23 @@ from fastapi import FastAPI
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sidecar.routers import metadata, orchestrator, proposals, status, workflows
+from sidecar.routers import metadata, orchestrator, prompts, proposals, status, workflows
 
 
 def create_app(project_path: str = "") -> FastAPI:
     app = FastAPI(title="Narrative IDE Sidecar", version="0.1.0")
     app.state.project_path = project_path
 
+    @app.get("/health")
+    async def health_check():
+        return {"status": "ok"}
+
     app.include_router(workflows.router)
     app.include_router(status.router)
     app.include_router(proposals.router, prefix="/proposals")
     app.include_router(metadata.router, prefix="/metadata")
     app.include_router(orchestrator.router, prefix="/orchestrator")
+    app.include_router(prompts.router, prefix="/prompts")
     return app
 
 

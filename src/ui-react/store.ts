@@ -45,17 +45,68 @@ import type {
   WorldMapDocument,
   WorldSettings,
   WorldContainer,
+  WorldCategoryNode,
   WorldItem,
   AppSettings,
 } from './models/project';
 import { buildBranchControlPoints, cubicBezierPoint, nearestTOnCurve, tFromOrderIndex } from './components/timeline/bezierMath';
+import { applyTimelineOperation } from './components/timeline/TimelineOperations';
 import { createStarterProject } from './mock/seedProject';
 import { projectService } from './services/projectService';
 import { appSettingsService, defaultAppSettings } from './services/appSettingsService';
 import * as metadataService from './services/metadataService';
 import { electronApi } from './services/electronApi';
+import type { W1CustomProfileConfig, W1OrchestratorOverrides, W1PromptProfile } from './services/electronApi';
 
 const UI_SETTINGS_KEY = 'narrative-ide-ui-settings';
+const W1_POLL_INTERVAL_MS = 3000;
+const W1_SILENT_SPEND_TIMEOUT_MS = 30 * 60 * 1000;
+const W1_ABSOLUTE_TIMEOUT_MS = 4 * 60 * 60 * 1000;
+
+export const defaultW1CustomProfileConfig: W1CustomProfileConfig = {
+  quality_target: 'max',
+  chapters_per_window_min: 2,
+  chapters_per_window_max: 6,
+  max_chapters_per_window: 6,
+  character_granularity: 'all',
+  event_density: 'scene_level',
+  timeline_topology_depth: 'full_dag',
+  world_strictness: 'full_attributes',
+  validation_strictness: 'per_window',
+  rerun_budget: 3,
+  max_rerun_iterations: 3,
+  judge_pass_threshold: 0.85,
+  language_policy: 'normalize_to_source',
+  input_window_budget: 32000,
+  output_token_budget: 4000,
+  extract_relationships: true,
+  extract_world: true,
+  extract_timeline: true,
+};
+
+const buildW1OrchestratorOverrides = (config: W1CustomProfileConfig, enabled = true): W1OrchestratorOverrides => ({
+  use_orchestrator: enabled,
+  use_supervisor: enabled,
+  rerun_budget: config.rerun_budget,
+  judge_pass_threshold: config.judge_pass_threshold,
+  quality_target: config.quality_target,
+  language_policy: config.language_policy,
+});
+
+interface W1RuntimeStatus {
+  current_tool?: string;
+  current_window?: string | number;
+  chapter_range?: string | { start?: string; end?: string };
+  orchestrator_phase?: string;
+  judge_score?: number;
+  rerun_reason?: string;
+  converge_status?: string;
+  judge_artifact_summary?: import('./services/electronApi').W1JudgeArtifactSummary;
+  last_activity_message?: string;
+  active_api_calls?: number;
+  elapsed_seconds?: number;
+  idle_seconds?: number;
+}
 
 type PanelKind = 'sidebar' | 'inspector' | 'agentDock' | 'writingOutline' | 'writingContext';
 type ContextMenuItem = { id: string; label: string; action: () => void; destructive?: boolean };
@@ -115,8 +166,15 @@ interface ProjectState {
   characters: Character[];
   characterTags: CharacterTag[];
   characterPartitions: string[];
+  graphImportanceFilter: string[];           // importance values hidden from graph; [] = show all
+  characterGroupCollapsed: Record<string, boolean>;  // sidebar group collapse state
+  graphSidebarLinkageEnabled: boolean;       // sidebar collapse drives graph filter when true
   addCharacterPartition: (name: string) => void;
   deleteCharacterPartition: (name: string) => void;
+  setGraphImportanceFilter: (filter: string[]) => void;
+  setCharacterGroupCollapsed: (collapsed: Record<string, boolean>) => void;
+  toggleCharacterGroupCollapsed: (group: string) => void;
+  setGraphSidebarLinkageEnabled: (enabled: boolean) => void;
   candidates: Candidate[];
   timelineEvents: TimelineEvent[];
   timelineBranches: TimelineBranch[];
@@ -128,6 +186,7 @@ interface ProjectState {
   worldItems: WorldItem[];
   worldSettings: WorldSettings;
   worldMaps: WorldMapDocument[];
+  worldCategories: WorldCategoryNode[];
   graphBoards: GraphBoard[];
   activeGraphBoardId: string | null;
   betaPersonas: BetaPersona[];
@@ -164,10 +223,19 @@ interface ProjectState {
   addCharacter: (character: Character) => void;
   updateCharacter: (character: Character) => void;
   deleteCharacter: (id: string) => void;
+  archiveCharacter: (id: string) => void;
+  hardDeleteCharacter: (id: string) => void;
   addCharacterTag: (tag: CharacterTag) => void;
   updateCharacterTag: (tag: CharacterTag) => void;
   deleteCharacterTag: (tagId: string) => void;
   toggleCharacterTagMembership: (tagId: string, characterId: string) => void;
+  moveCharacterTag: (tagId: string, newParentId: string | null, insertBeforeSiblingId?: string | null) => void;
+  toggleCharacterTagCollapsed: (tagId: string) => void;
+  addWorldCategory: (node: WorldCategoryNode) => void;
+  updateWorldCategory: (node: WorldCategoryNode) => void;
+  deleteWorldCategory: (nodeId: string) => void;
+  moveWorldCategory: (nodeId: string, newParentId: string | null, insertBeforeSiblingId?: string | null) => void;
+  toggleWorldCategoryCollapsed: (nodeId: string) => void;
   confirmCandidate: (candidateId: string) => string | null;
   rejectCandidate: (candidateId: string) => void;
   addTimelineEvent: (event: TimelineEvent) => void;
@@ -205,6 +273,7 @@ interface ProjectState {
   addWorldItem: (item: WorldItem) => void;
   updateWorldItem: (item: WorldItem) => void;
   deleteWorldItem: (id: string) => void;
+  moveWorldItemToCategory: (itemId: string, newCategory: string, newContainerId: string, newCategoryPath: string[], newCategoryId?: string | null, newParentId?: string | null) => void;
   updateWorldSettings: (settings: WorldSettings) => void;
   createWorldMap: (map: WorldMapDocument) => void;
   updateWorldMap: (map: WorldMapDocument) => void;
@@ -220,10 +289,13 @@ interface ProjectState {
   updateGraphEdge: (boardId: string, edge: Partial<GraphBoard['edges'][number]> & { id: string }) => void;
   setGraphBoardView: (boardId: string, view: GraphBoard['view']) => void;
   resolveProposal: (proposalId: string, status: Proposal['status']) => void;
+  resolveProposals: (proposalIds: string[], status: Proposal['status']) => void;
+  resolveAllProposals: (status: Proposal['status']) => void;
   resolveIssue: (issueId: string, resolution: 'resolved' | 'ignored') => void;
   dismissIssue: (issueId: string) => void;
   addProposal: (proposal: Proposal) => void;
   addGraphSyncProposal: (title: string, preview: string) => void;
+  updatePromptTemplate: (template: PromptTemplate) => void;
   addExportArtifact: (artifact: ExportArtifact) => void;
   addBetaPersona: (persona: BetaPersona) => void;
   updateBetaPersona: (persona: BetaPersona) => void;
@@ -278,15 +350,44 @@ interface ProjectState {
   resetW3: () => void;
 
   // W1 Import state
-  w1Status: 'idle' | 'running' | 'done' | 'error' | 'cancelled';
+  w1Status: 'idle' | 'running' | 'done' | 'error' | 'cancelled' | 'paused';
   w1Progress: number;
   w1CompletedChunks: number;
   w1TotalChunks: number;
   w1Errors: string[];
+  w1CurrentStep: string;
   w1SessionId: string | null;
   w1ImportMode: 'import_content_only' | 'import_all';
+  w1ConsoleLog: import('./services/electronApi').ChunkLogEntry[];
+  w1ActivityLog: import('./services/electronApi').W1ActivityEntry[];
+  w1LastActivityAt: string;
+  w1IdleSeconds: number;
+  w1ElapsedSeconds: number;
+  w1ActiveApiCalls: number;
+  w1TokenLedger: import('./services/electronApi').W1TokenLedger | null;
+  w1CancelRequested: boolean;
+  w1ConnectionWarning: string | null;
+  w1Paused: boolean;
+  w1BreakpointChunk: number | null;
+  w1PromptProfile: W1PromptProfile;
+  w1CustomProfileConfig: W1CustomProfileConfig;
+  w1OrchestratorOverrides: W1OrchestratorOverrides;
+  w1RuntimeStatus: W1RuntimeStatus | null;
+  w1ProposalCount: number;
+  w1ExtractionCounts: import('./services/electronApi').W1ExtractionCounts | null;
+  w1ImportReviewReport: import('./services/electronApi').W1ImportReviewReport | null;
+  w1UseSupervisor: boolean;
+  w1SupervisorDecisions: unknown[];
+  w1GateFailures: unknown[];
+  w1SupervisorIteration: number;
   setW1ImportMode: (mode: 'import_content_only' | 'import_all') => void;
-  startImport: (payload: { projectRoot: string; sourceFilePath: string; importMode?: 'import_content_only' | 'import_all' }) => Promise<void>;
+  setW1PromptProfile: (profile: W1PromptProfile) => void;
+  setW1CustomProfileConfig: (patch: Partial<W1CustomProfileConfig>) => void;
+  setW1UseSupervisor: (v: boolean) => void;
+  setW1Breakpoint: (chunkId: number | null) => Promise<void>;
+  resumeW1: () => Promise<void>;
+  rewindW1: (toChunkId: number) => Promise<void>;
+  startImport: (payload: { projectRoot: string; sourceFilePath: string; importMode?: 'import_content_only' | 'import_all'; customProfileConfig?: W1CustomProfileConfig; orchestratorOverrides?: W1OrchestratorOverrides }) => Promise<void>;
   cancelImport: () => Promise<void>;
   resetImport: () => void;
 
@@ -294,6 +395,7 @@ interface ProjectState {
   w2Status: 'idle' | 'running' | 'done' | 'error';
   w2Progress: number;
   w2ProposalCount: number;
+  w2Errors: string[];
   startManuscriptSync: (payload: { projectRoot: string; mode: string; target_chapter_id?: string }) => Promise<void>;
 
   // Entity focus (navigates sidebar to entity)
@@ -332,11 +434,46 @@ interface ProjectState {
   orchestratorPlan: any[];
   orchestratorCurrentStep: number;
   orchestratorPendingPermission: any | null;
+  orchestratorErrors: string[];
   orchestratorSessionId: string | null;
   startOrchestrator: (payload: { projectRoot: string; goal: string; auto_apply_threshold?: number }) => Promise<void>;
   grantPermission: (projectRoot: string, stepId: string) => Promise<void>;
   denyPermission: (projectRoot: string, stepId: string, reason: string) => Promise<void>;
   resetOrchestrator: () => void;
+  // Undo/Redo
+  undoStack: UndoEntry[];
+  redoStack: UndoEntry[];
+  captureUndoSnapshot: (label: string) => void;
+  undoAction: () => Promise<void>;
+  redoAction: () => Promise<void>;
+  pendingUndoTransaction: { label: string; snapshot: ProjectDataSnapshot; undoStack: UndoEntry[] } | null;
+  beginUndoTransaction: (label: string) => void;
+  commitUndoTransaction: () => void;
+  cancelUndoTransaction: () => void;
+  rollbackUndoTransaction: () => void;
+}
+
+const MAX_UNDO_DEPTH = 20;
+
+type ProjectDataSnapshot = Pick<ProjectState,
+  | 'characters' | 'characterTags' | 'characterPartitions' | 'candidates'
+  | 'timelineEvents' | 'timelineBranches' | 'relationships'
+  | 'chapters' | 'scenes' | 'currentSceneContent'
+  | 'worldContainers' | 'worldItems' | 'worldSettings' | 'worldMaps' | 'worldCategories'
+  | 'graphBoards' | 'activeGraphBoardId'
+  | 'betaPersonas' | 'betaRuns'
+  | 'simulationEngines' | 'simulationLabs' | 'simulationReviewers' | 'simulationRuns'
+  | 'proposals' | 'proposalHistory' | 'issues' | 'exports' | 'archivedIds'
+  | 'todos' | 'manuscriptNodes'
+  | 'importJobs' | 'promptTemplates' | 'ragDocuments' | 'ragChunks'
+  | 'scripts' | 'storyboards' | 'videoPackages' | 'taskRequests' | 'taskRuns'
+  | 'taskArtifacts' | 'taskRunLogs'
+>;
+
+interface UndoEntry {
+  id: string;
+  label: string;
+  snapshot: ProjectDataSnapshot;
 }
 
 const now = () => new Date().toISOString();
@@ -516,6 +653,9 @@ const deriveState = (project: NarrativeProject) => {
     characters: hydratedProject.characters,
     characterTags: hydratedProject.characterTags,
     characterPartitions: hydratedProject.characterPartitions ?? ['core', 'major', 'supporting', 'minor', 'ungrouped'],
+    graphImportanceFilter: [],
+    characterGroupCollapsed: {},
+    graphSidebarLinkageEnabled: true,
     candidates: hydratedProject.candidates,
     timelineEvents: hydratedProject.timelineEvents,
     timelineBranches: hydratedProject.timelineBranches,
@@ -527,6 +667,7 @@ const deriveState = (project: NarrativeProject) => {
     worldItems: hydratedProject.worldItems,
     worldSettings: hydratedProject.worldSettings,
     worldMaps: hydratedProject.worldMaps,
+    worldCategories: hydratedProject.worldCategories ?? [],
     graphBoards: hydratedProject.graphBoards,
     activeGraphBoardId:
       hydratedProject.uiState.view.activeGraphBoardId ||
@@ -586,6 +727,7 @@ const cloneProject = (state: ProjectState, locale?: Locale): NarrativeProject =>
   worldItems: state.worldItems,
   worldSettings: state.worldSettings,
   worldMaps: state.worldMaps,
+  worldCategories: state.worldCategories,
   graphBoards: state.graphBoards,
   betaPersonas: state.betaPersonas,
   betaRuns: state.betaRuns,
@@ -754,10 +896,117 @@ export const useUIStore = create<UIState>((set) => ({
   },
 }));
 
+const extractSnapshot = (state: ProjectState): ProjectDataSnapshot => ({
+  characters: state.characters, characterTags: state.characterTags,
+  characterPartitions: state.characterPartitions, candidates: state.candidates,
+  timelineEvents: state.timelineEvents, timelineBranches: state.timelineBranches,
+  relationships: state.relationships, chapters: state.chapters, scenes: state.scenes,
+  currentSceneContent: state.currentSceneContent,
+  worldContainers: state.worldContainers, worldItems: state.worldItems,
+  worldSettings: state.worldSettings, worldMaps: state.worldMaps, worldCategories: state.worldCategories,
+  graphBoards: state.graphBoards, activeGraphBoardId: state.activeGraphBoardId,
+  betaPersonas: state.betaPersonas, betaRuns: state.betaRuns,
+  simulationEngines: state.simulationEngines, simulationLabs: state.simulationLabs,
+  simulationReviewers: state.simulationReviewers, simulationRuns: state.simulationRuns,
+  proposals: state.proposals, proposalHistory: state.proposalHistory,
+  issues: state.issues, exports: state.exports, archivedIds: state.archivedIds,
+  todos: state.todos, manuscriptNodes: state.manuscriptNodes,
+  importJobs: state.importJobs, promptTemplates: state.promptTemplates,
+  ragDocuments: state.ragDocuments, ragChunks: state.ragChunks,
+  scripts: state.scripts, storyboards: state.storyboards, videoPackages: state.videoPackages,
+  taskRequests: state.taskRequests, taskRuns: state.taskRuns,
+  taskArtifacts: state.taskArtifacts, taskRunLogs: state.taskRunLogs,
+});
+
 export const useProjectStore = create<ProjectState>((set, get) => ({
   ...deriveState(defaultProject),
   saveStatus: 'Idle',
   selectedEntity: { type: null, id: null },
+  undoStack: [],
+  redoStack: [],
+  pendingUndoTransaction: null,
+  captureUndoSnapshot: (label) => {
+    const snapshot = extractSnapshot(get());
+    const entry: UndoEntry = { id: crypto.randomUUID(), label, snapshot };
+    set((s) => ({
+      undoStack: [entry, ...s.undoStack].slice(0, MAX_UNDO_DEPTH),
+      redoStack: [],
+    }));
+  },
+  undoAction: async () => {
+    const state = get();
+    if (state.undoStack.length === 0) return;
+    const [entry, ...restUndo] = state.undoStack;
+    const redoEntry: UndoEntry = {
+      id: crypto.randomUUID(),
+      label: entry.label,
+      snapshot: extractSnapshot(state),
+    };
+    set({
+      ...entry.snapshot,
+      undoStack: restUndo,
+      redoStack: [redoEntry, ...state.redoStack].slice(0, MAX_UNDO_DEPTH),
+      saveStatus: 'Unsaved changes' as SaveStatus,
+    });
+    await get().saveProject();
+  },
+  redoAction: async () => {
+    const state = get();
+    if (state.redoStack.length === 0) return;
+    const [entry, ...restRedo] = state.redoStack;
+    const undoEntry: UndoEntry = {
+      id: crypto.randomUUID(),
+      label: entry.label,
+      snapshot: extractSnapshot(state),
+    };
+    set({
+      ...entry.snapshot,
+      redoStack: restRedo,
+      undoStack: [undoEntry, ...state.undoStack].slice(0, MAX_UNDO_DEPTH),
+      saveStatus: 'Unsaved changes' as SaveStatus,
+    });
+    await get().saveProject();
+  },
+  beginUndoTransaction: (label) => {
+    if (get().pendingUndoTransaction) {
+      console.warn('[undo] beginUndoTransaction called while transaction already pending; ignoring');
+      return;
+    }
+    const snapshot = extractSnapshot(get());
+    const undoStack = get().undoStack;
+    set({ pendingUndoTransaction: { label, snapshot, undoStack } });
+  },
+  commitUndoTransaction: () => {
+    const { pendingUndoTransaction } = get();
+    if (!pendingUndoTransaction) return;
+    const current = extractSnapshot(get());
+    const prev = pendingUndoTransaction.snapshot;
+    const changed =
+      current.timelineBranches !== prev.timelineBranches ||
+      current.timelineEvents !== prev.timelineEvents;
+    if (!changed) {
+      set({ pendingUndoTransaction: null });
+      return;
+    }
+    const entry: UndoEntry = {
+      id: crypto.randomUUID(),
+      label: pendingUndoTransaction.label,
+      snapshot: pendingUndoTransaction.snapshot,
+    };
+    set({
+      undoStack: [entry, ...pendingUndoTransaction.undoStack].slice(0, MAX_UNDO_DEPTH),
+      redoStack: [],
+      pendingUndoTransaction: null,
+    });
+  },
+  cancelUndoTransaction: () => {
+    set({ pendingUndoTransaction: null });
+  },
+  rollbackUndoTransaction: () => {
+    const pending = get().pendingUndoTransaction;
+    if (!pending) return;
+    set({ ...pending.snapshot, undoStack: pending.undoStack, pendingUndoTransaction: null });
+  },
   setSelectedEntity: (type, id) => set((state) => ({
     selectedEntity: { type, id },
     unreadUpdates: id ? { ...state.unreadUpdates, entities: { ...state.unreadUpdates.entities, [id]: false } } : state.unreadUpdates,
@@ -767,7 +1016,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({ saveStatus: 'Saving' });
     const project = projectService.createProject({ name: input?.name || 'Starter Demo Project', rootPath: input?.rootPath, template: input?.template || 'starter-demo', locale: input?.locale || uiLocale });
     useUIStore.getState().hydrateFromProjectUiState(project.uiState);
-    set({ ...deriveState(project), selectedEntity: { type: null, id: null }, saveStatus: 'Saved' });
+    set({ ...deriveState(project), selectedEntity: { type: null, id: null }, saveStatus: 'Saved', undoStack: [], redoStack: [], pendingUndoTransaction: null });
     useUIStore.getState().setLocale(project.metadata.locale);
     setTimeout(() => get().saveStatus === 'Saved' && set({ saveStatus: 'Idle' }), 1200);
   },
@@ -780,7 +1029,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({ saveStatus: 'Saving' });
     const project = projectService.openProject(rootPath);
     useUIStore.getState().hydrateFromProjectUiState(project.uiState);
-    set({ ...deriveState(project), selectedEntity: { type: null, id: null }, saveStatus: 'Saved' });
+    set({ ...deriveState(project), selectedEntity: { type: null, id: null }, saveStatus: 'Saved', undoStack: [], redoStack: [], pendingUndoTransaction: null });
     useUIStore.getState().setLocale(project.metadata.locale);
     if (rootPath) get().loadMetadata(rootPath);
     // Open/migrate SQLite DB (fire-and-forget; JSON store still drives memory)
@@ -791,23 +1040,27 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   saveProject: async () => {
     set({ saveStatus: 'Saving' });
     const savedProject = projectService.saveProject(cloneProject(get(), useUIStore.getState().locale));
-    set({ ...deriveState(savedProject), saveStatus: 'Saved' });
+    const { graphImportanceFilter, characterGroupCollapsed, graphSidebarLinkageEnabled } = get();
+    set({ ...deriveState(savedProject), graphImportanceFilter, characterGroupCollapsed, graphSidebarLinkageEnabled, saveStatus: 'Saved' });
     setTimeout(() => get().saveStatus === 'Saved' && set({ saveStatus: 'Idle' }), 1200);
   },
-  loadProject: (project) => { useUIStore.getState().hydrateFromProjectUiState(project.uiState); set({ ...deriveState(project), selectedEntity: { type: null, id: null }, saveStatus: 'Idle' }); },
+  loadProject: (project) => { useUIStore.getState().hydrateFromProjectUiState(project.uiState); set({ ...deriveState(project), selectedEntity: { type: null, id: null }, saveStatus: 'Idle', undoStack: [], redoStack: [], pendingUndoTransaction: null }); },
   setProjectLocale: (locale) => set((state) => ({ currentProject: cloneProject(state, locale), saveStatus: 'Unsaved changes' })),
   syncProjectUiState: () => set((state) => ({ currentProject: cloneProject(state, useUIStore.getState().locale), saveStatus: state.saveStatus === 'Idle' ? 'Unsaved changes' : state.saveStatus })),
   addCharacter: (character) => {
+    get().captureUndoSnapshot('Add character');
     set((state) => withDirtyState({ characters: [...state.characters, character] }));
     const { projectRoot } = get();
     if (projectRoot) electronApi.dbUpsert(projectRoot, 'characters', character.id, character).catch(() => {});
   },
   updateCharacter: (character) => {
+    get().captureUndoSnapshot('Edit character');
     set((state) => withDirtyState({ characters: state.characters.map((entry) => entry.id === character.id ? character : entry) }));
     const { projectRoot } = get();
     if (projectRoot) electronApi.dbUpsert(projectRoot, 'characters', character.id, character).catch(() => {});
   },
   deleteCharacter: (id) => {
+    get().captureUndoSnapshot('Delete character');
     set((state) => withDirtyState({
       characters: state.characters
         .filter((entry) => entry.id !== id)
@@ -828,16 +1081,26 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       electronApi.dbDelete(projectRoot, 'characters', id).catch(() => {});
     }
   },
-  addCharacterTag: (tag) => set((state) => withDirtyState({ characterTags: [...state.characterTags, tag] })),
-  updateCharacterTag: (tag) => set((state) => withDirtyState({ characterTags: state.characterTags.map((entry) => entry.id === tag.id ? tag : entry) })),
-  deleteCharacterTag: (tagId) => set((state) => withDirtyState({
-    characterTags: state.characterTags.filter((tag) => tag.id !== tagId),
-    characters: state.characters.map((character) => ({ ...character, tagIds: character.tagIds.filter((id) => id !== tagId) })),
-  })),
-  addCharacterPartition: (name) => set((state) => withDirtyState({
-    characterPartitions: [...state.characterPartitions, name],
-  })),
-  deleteCharacterPartition: (name) => set((state) => {
+  archiveCharacter: (id) => {
+    get().captureUndoSnapshot('Archive character');
+    set((state) => withDirtyState({
+      archivedIds: Array.from(new Set([...state.archivedIds, id])),
+    }));
+  },
+  hardDeleteCharacter: (id) => {
+    const state = get();
+    const hasRefs =
+      state.relationships.some((r) => r.sourceId === id || r.targetId === id) ||
+      state.timelineEvents.some((e) => (e.participantCharacterIds ?? []).includes(id)) ||
+      state.scenes.some((s) => (s.linkedCharacterIds ?? []).includes(id));
+    if (hasRefs) return;
+    get().deleteCharacter(id);
+  },
+  addCharacterTag: (tag) => { get().captureUndoSnapshot('Add tag'); set((state) => withDirtyState({ characterTags: [...state.characterTags, tag] })); },
+  updateCharacterTag: (tag) => { get().captureUndoSnapshot('Edit tag'); set((state) => withDirtyState({ characterTags: state.characterTags.map((entry) => entry.id === tag.id ? tag : entry) })); },
+  deleteCharacterTag: (tagId) => { get().captureUndoSnapshot('Delete tag'); set((state) => withDirtyState({ characterTags: state.characterTags.filter((tag) => tag.id !== tagId), characters: state.characters.map((character) => ({ ...character, tagIds: character.tagIds.filter((id) => id !== tagId) })) })); },
+  addCharacterPartition: (name) => { get().captureUndoSnapshot('Add character group'); set((state) => withDirtyState({ characterPartitions: [...state.characterPartitions, name] })); },
+  deleteCharacterPartition: (name) => { get().captureUndoSnapshot('Delete character group'); set((state) => {
     const characters = state.characters.map(c =>
       c.importance === name ? { ...c, importance: 'ungrouped' as const } : c
     );
@@ -845,12 +1108,82 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       characterPartitions: state.characterPartitions.filter(p => p !== name),
       characters,
     });
-  }),
-  toggleCharacterTagMembership: (tagId, characterId) => set((state) => withDirtyState({
+  }); },
+  setGraphImportanceFilter: (filter) => set({ graphImportanceFilter: filter }),
+  setCharacterGroupCollapsed: (collapsed) => set({ characterGroupCollapsed: collapsed }),
+  toggleCharacterGroupCollapsed: (group) => set((s) => ({
+    characterGroupCollapsed: { ...s.characterGroupCollapsed, [group]: !s.characterGroupCollapsed[group] },
+  })),
+  setGraphSidebarLinkageEnabled: (enabled) => set({ graphSidebarLinkageEnabled: enabled }),
+  toggleCharacterTagMembership: (tagId, characterId) => { get().captureUndoSnapshot('Toggle tag'); set((state) => withDirtyState({
     characterTags: state.characterTags.map((tag) => tag.id !== tagId ? tag : { ...tag, characterIds: tag.characterIds.includes(characterId) ? tag.characterIds.filter((id) => id !== characterId) : [...tag.characterIds, characterId] }),
     characters: state.characters.map((character) => character.id !== characterId ? character : { ...character, tagIds: character.tagIds.includes(tagId) ? character.tagIds.filter((id) => id !== tagId) : [...character.tagIds, tagId] }),
+  })); },
+  moveCharacterTag: (tagId, newParentId, insertBeforeSiblingId) => set((state) => {
+    const isDescendantOfTag = (candidateId: string | null, ancestorId: string, tags: CharacterTag[]): boolean => {
+      if (!candidateId) return false;
+      if (candidateId === ancestorId) return true;
+      const parent = tags.find((t) => t.id === candidateId)?.parentTagId;
+      return isDescendantOfTag(parent ?? null, ancestorId, tags);
+    };
+    if (newParentId && isDescendantOfTag(newParentId, tagId, state.characterTags)) {
+      console.warn(`moveCharacterTag: cycle detected — cannot move ${tagId} under ${newParentId}`);
+      return state;
+    }
+    const siblings = state.characterTags
+      .filter((t) => t.id !== tagId && (t.parentTagId ?? null) === newParentId)
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+    const insertIdx = insertBeforeSiblingId ? siblings.findIndex((t) => t.id === insertBeforeSiblingId) : siblings.length;
+    const finalIdx = insertIdx < 0 ? siblings.length : insertIdx;
+    const updatedTags = state.characterTags.map((tag) => {
+      if (tag.id === tagId) return { ...tag, parentTagId: newParentId, sortOrder: finalIdx };
+      const sibIdx = siblings.findIndex((s) => s.id === tag.id);
+      if (sibIdx >= 0) return { ...tag, sortOrder: sibIdx < finalIdx ? sibIdx : sibIdx + 1 };
+      return tag;
+    });
+    return withDirtyState({ characterTags: updatedTags });
+  }),
+  toggleCharacterTagCollapsed: (tagId) => set((state) => withDirtyState({
+    characterTags: state.characterTags.map((tag) => tag.id !== tagId ? tag : { ...tag, collapsed: !tag.collapsed }),
+  })),
+  addWorldCategory: (node) => {
+    if (!get().pendingUndoTransaction) get().captureUndoSnapshot('Add world category');
+    set((state) => withDirtyState({ worldCategories: [...state.worldCategories, node] }));
+  },
+  updateWorldCategory: (node) => { set((state) => withDirtyState({ worldCategories: state.worldCategories.map((n) => n.id === node.id ? node : n) })); },
+  deleteWorldCategory: (nodeId) => { set((state) => withDirtyState({ worldCategories: state.worldCategories.filter((n) => n.id !== nodeId) })); },
+  moveWorldCategory: (nodeId, newParentId, insertBeforeSiblingId) => {
+    if (!get().pendingUndoTransaction) get().captureUndoSnapshot('Move world category');
+    set((state) => {
+      const isDescendantOfNode = (candidateId: string | null, ancestorId: string, nodes: WorldCategoryNode[]): boolean => {
+        if (!candidateId) return false;
+        if (candidateId === ancestorId) return true;
+        const parent = nodes.find((n) => n.id === candidateId)?.parentId;
+        return isDescendantOfNode(parent ?? null, ancestorId, nodes);
+      };
+      if (newParentId && isDescendantOfNode(newParentId, nodeId, state.worldCategories)) {
+        console.warn(`moveWorldCategory: cycle detected — cannot move ${nodeId} under ${newParentId}`);
+        return state;
+      }
+      const siblings = state.worldCategories
+        .filter((n) => n.id !== nodeId && n.parentId === newParentId)
+        .sort((a, b) => a.sortOrder - b.sortOrder);
+      const insertIdx = insertBeforeSiblingId ? siblings.findIndex((n) => n.id === insertBeforeSiblingId) : siblings.length;
+      const finalIdx = insertIdx < 0 ? siblings.length : insertIdx;
+      const updatedNodes = state.worldCategories.map((node) => {
+        if (node.id === nodeId) return { ...node, parentId: newParentId, sortOrder: finalIdx };
+        const sibIdx = siblings.findIndex((s) => s.id === node.id);
+        if (sibIdx >= 0) return { ...node, sortOrder: sibIdx < finalIdx ? sibIdx : sibIdx + 1 };
+        return node;
+      });
+      return withDirtyState({ worldCategories: updatedNodes });
+    });
+  },
+  toggleWorldCategoryCollapsed: (nodeId) => set((state) => withDirtyState({
+    worldCategories: state.worldCategories.map((n) => n.id !== nodeId ? n : { ...n, collapsed: !n.collapsed }),
   })),
   confirmCandidate: (candidateId) => {
+    get().captureUndoSnapshot('Confirm candidate');
     let confirmedId: string | null = null;
     set((state) => {
       const candidate = state.candidates.find((entry) => entry.id === candidateId);
@@ -861,10 +1194,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     });
     return confirmedId;
   },
-  rejectCandidate: (candidateId) => set((state) => withDirtyState({ candidates: state.candidates.filter((entry) => entry.id !== candidateId) })),
-  addTimelineEvent: (event) => set((state) => withDirtyState({ timelineEvents: [...state.timelineEvents, event] })),
-  updateTimelineEvent: (event) => set((state) => withDirtyState({ timelineEvents: state.timelineEvents.map((entry) => entry.id === event.id ? event : entry) })),
-  deleteTimelineEvent: (id) => set((state) => withDirtyState({
+  rejectCandidate: (candidateId) => { get().captureUndoSnapshot('Reject candidate'); set((state) => withDirtyState({ candidates: state.candidates.filter((entry) => entry.id !== candidateId) })); },
+  addTimelineEvent: (event) => { get().captureUndoSnapshot('Add event'); set((state) => withDirtyState({ timelineEvents: [...state.timelineEvents, event] })); },
+  updateTimelineEvent: (event) => { get().captureUndoSnapshot('Edit event'); set((state) => withDirtyState({ timelineEvents: state.timelineEvents.map((entry) => entry.id === event.id ? event : entry) })); },
+  deleteTimelineEvent: (id) => { get().captureUndoSnapshot('Delete event'); set((state) => withDirtyState({
     timelineEvents: state.timelineEvents.filter((entry) => entry.id !== id),
     timelineBranches: state.timelineBranches.map((branch) => {
       const endAnchor = resolveEndAnchor(branch);
@@ -880,10 +1213,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         },
       );
     }),
-  })),
-  addTimelineBranch: (branch) => set((state) => withDirtyState({ timelineBranches: [...state.timelineBranches, branch] })),
-  updateTimelineBranch: (branch) => set((state) => withDirtyState({ timelineBranches: state.timelineBranches.map((entry) => entry.id === branch.id ? branch : entry) })),
-  deleteTimelineBranch: (branchId) => set((state) => {
+  })); },
+  addTimelineBranch: (branch) => { get().captureUndoSnapshot('Add branch'); set((state) => withDirtyState({ timelineBranches: [...state.timelineBranches, branch] })); },
+  updateTimelineBranch: (branch) => { get().captureUndoSnapshot('Edit branch'); set((state) => withDirtyState({ timelineBranches: state.timelineBranches.map((entry) => entry.id === branch.id ? branch : entry) })); },
+  deleteTimelineBranch: (branchId) => { get().captureUndoSnapshot('Delete branch'); set((state) => {
     const branchEventCount = state.timelineEvents.filter((entry) => entry.branchId === branchId).length;
     // Safer than orphaning: `TimelineEvent.branchId` is currently required across the model, canvas,
     // and persistence layer, so we block deletion until the timeline is empty instead of silently
@@ -916,8 +1249,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           sharedBranchIds: (entry.sharedBranchIds || []).filter((sharedBranchId) => sharedBranchId !== branchId),
         })),
     });
-  }),
+  }); },
   createTimelineBranch: (mode, anchor) => {
+    get().captureUndoSnapshot('Create branch');
     const state = get();
     const parentBranchId = mode === 'forked' ? anchor?.branchId || state.timelineBranches[0]?.id || null : null;
     const branchId = `branch_${Date.now()}`;
@@ -949,41 +1283,29 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set((current) => withDirtyState({ timelineBranches: [...current.timelineBranches, branch] }));
     return branchId;
   },
-  moveTimelineEvent: (eventId, targetBranchId, targetSlot) => set((state) => {
-    const moving = state.timelineEvents.find((entry) => entry.id === eventId);
-    if (!moving) return state;
-    const otherEvents = state.timelineEvents.filter((entry) => entry.id !== eventId);
-    const targetEvents = otherEvents
-      .filter((entry) => entry.branchId === targetBranchId)
-      .sort((a, b) => a.orderIndex - b.orderIndex);
-    const insertAt = Math.min(Math.max(targetSlot, 0), targetEvents.length);
-    const reorderedTarget = [...targetEvents.slice(0, insertAt), { ...moving, branchId: targetBranchId }, ...targetEvents.slice(insertAt)]
-      .map((entry, index) => ({ ...entry, orderIndex: index }));
-    const untouched = otherEvents
-      .filter((entry) => entry.branchId !== targetBranchId && entry.branchId !== moving.branchId)
-      .map((entry) => entry);
-    const sourceRemainder = otherEvents
-      .filter((entry) => entry.branchId === moving.branchId && moving.branchId !== targetBranchId)
-      .sort((a, b) => a.orderIndex - b.orderIndex)
-      .map((entry, index) => ({ ...entry, orderIndex: index }));
-    return withDirtyState(
-      propagateTimelineAnchorDependencies(
-        state.timelineBranches,
-        [...untouched, ...sourceRemainder, ...reorderedTarget],
-      ),
+  moveTimelineEvent: (eventId, targetBranchId, targetSlot) => { if (!get().pendingUndoTransaction) get().captureUndoSnapshot('Move event'); set((state) => {
+    const { timelineBranches, timelineEvents, warnings } = applyTimelineOperation(
+      { timelineBranches: state.timelineBranches, timelineEvents: state.timelineEvents },
+      { type: 'move_event', eventId, branchId: targetBranchId, orderIndex: targetSlot },
     );
-  }),
-  setTimelineBranchGeometry: (branchId, geometry) => set((state) => withDirtyState({
-    timelineBranches: state.timelineBranches.map((entry) => entry.id === branchId ? {
-      ...entry,
-      geometry: {
-        laneOffset: geometry?.laneOffset ?? entry.geometry?.laneOffset ?? 0,
-        bend: geometry?.bend ?? entry.geometry?.bend ?? 0.25,
-        thickness: geometry?.thickness ?? entry.geometry?.thickness ?? 1,
-      },
-    } : entry),
-  })),
-  setTimelineBranchAnchors: (branchId, startPos, endPos, anchors) => set((state) => {
+    if (warnings.length > 0) console.warn('[Timeline] moveTimelineEvent:', warnings);
+    return withDirtyState(propagateTimelineAnchorDependencies(timelineBranches, timelineEvents));
+  }); },
+  setTimelineBranchGeometry: (branchId, geometry) => { if (!get().pendingUndoTransaction) get().captureUndoSnapshot('Adjust branch'); set((state) => {
+    const existing = state.timelineBranches.find((b) => b.id === branchId);
+    const { timelineBranches, timelineEvents } = applyTimelineOperation(
+      { timelineBranches: state.timelineBranches, timelineEvents: state.timelineEvents },
+      { type: 'update_branch_geometry', branchId, geometry: {
+        laneOffset: geometry?.laneOffset ?? existing?.geometry?.laneOffset ?? 0,
+        bend: geometry?.bend ?? existing?.geometry?.bend ?? 0.25,
+        thickness: geometry?.thickness ?? existing?.geometry?.thickness ?? 1,
+      }},
+    );
+    return withDirtyState({ timelineBranches, timelineEvents });
+  }); },
+  // NOTE: endAnchor, endMode, mergeTargetBranchId, mergeEventId are CANONICAL topology fields.
+  // They are written to disk via saveProject() and must not be in BRANCH_RUNTIME_FIELDS.
+  setTimelineBranchAnchors: (branchId, startPos, endPos, anchors) => { if (!get().pendingUndoTransaction) get().captureUndoSnapshot('Anchor branch'); set((state) => {
     const previousBranch = state.timelineBranches.find((entry) => entry.id === branchId);
     if (!previousBranch) {
       return state;
@@ -1001,33 +1323,33 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const nextEvents = remapBranchEventPositions(state.timelineEvents, branchId, previousBranch, nextBranch);
 
     return withDirtyState(propagateTimelineAnchorDependencies(nextBranches, nextEvents));
-  }),
+  }); },
   updateTimelineEventPosition: (eventId, position) => set((state) => withDirtyState(
     propagateTimelineAnchorDependencies(
       state.timelineBranches,
       state.timelineEvents.map((entry) => (entry.id === eventId ? { ...entry, position } : entry)),
     ),
   )),
-  addRelationship: (relationship) => set((state) => withDirtyState({
+  addRelationship: (relationship) => { get().captureUndoSnapshot('Add relationship'); set((state) => withDirtyState({
     relationships: [...state.relationships, relationship],
     characters: state.characters.map((character) => character.id === relationship.sourceId || character.id === relationship.targetId ? { ...character, relationshipIds: Array.from(new Set([...(character.relationshipIds || []), relationship.id])) } : character),
-  })),
-  updateRelationship: (relationship) => set((state) => withDirtyState({ relationships: state.relationships.map((entry) => entry.id === relationship.id ? relationship : entry) })),
-  deleteRelationship: (id) => set((state) => withDirtyState({
-    relationships: state.relationships.filter((entry) => entry.id !== id),
-    characters: state.characters.map((character) => ({ ...character, relationshipIds: (character.relationshipIds || []).filter((entry) => entry !== id) })),
-  })),
+  })); },
+  updateRelationship: (relationship) => { get().captureUndoSnapshot('Edit relationship'); set((state) => withDirtyState({ relationships: state.relationships.map((entry) => entry.id === relationship.id ? relationship : entry) })); },
+  deleteRelationship: (id) => { get().captureUndoSnapshot('Delete relationship'); set((state) => withDirtyState({ relationships: state.relationships.filter((entry) => entry.id !== id), characters: state.characters.map((character) => ({ ...character, relationshipIds: (character.relationshipIds || []).filter((entry) => entry !== id) })) })); },
   addChapter: (chapter) => {
+    get().captureUndoSnapshot('Add chapter');
     set((state) => withDirtyState({ chapters: [...state.chapters, chapter] }));
     const { projectRoot } = get();
     if (projectRoot) electronApi.dbUpsert(projectRoot, 'chapters', chapter.id, chapter).catch(() => {});
   },
   updateChapter: (chapter) => {
+    get().captureUndoSnapshot('Edit chapter');
     set((state) => withDirtyState({ chapters: state.chapters.map((entry) => entry.id === chapter.id ? chapter : entry) }));
     const { projectRoot } = get();
     if (projectRoot) electronApi.dbUpsert(projectRoot, 'chapters', chapter.id, chapter).catch(() => {});
   },
   deleteChapter: (id) => {
+    get().captureUndoSnapshot('Delete chapter');
     set((state) => withDirtyState({ chapters: state.chapters.filter((entry) => entry.id !== id) }));
     const { projectRoot } = get();
     if (projectRoot) {
@@ -1035,16 +1357,19 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
   addScene: (scene) => {
+    get().captureUndoSnapshot('Add scene');
     set((state) => withDirtyState({ scenes: [...state.scenes, scene] }));
     const { projectRoot } = get();
     if (projectRoot) electronApi.dbUpsert(projectRoot, 'scenes', scene.id, scene).catch(() => {});
   },
   updateScene: (scene) => {
+    get().captureUndoSnapshot('Edit scene');
     set((state) => withDirtyState({ scenes: state.scenes.map((entry) => entry.id === scene.id ? scene : entry), currentSceneContent: scene.content }));
     const { projectRoot } = get();
     if (projectRoot) electronApi.dbUpsert(projectRoot, 'scenes', scene.id, scene).catch(() => {});
   },
   deleteScene: (id) => {
+    get().captureUndoSnapshot('Delete scene');
     set((state) => withDirtyState({
       scenes: state.scenes.filter((entry) => entry.id !== id),
       chapters: state.chapters.map((ch) => ({ ...ch, sceneIds: ch.sceneIds.filter((sid) => sid !== id) })),
@@ -1058,30 +1383,58 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   addScript: (script) => set((state) => withDirtyState({ scripts: [...state.scripts, script] })),
   addStoryboard: (storyboard) => set((state) => withDirtyState({ storyboards: [...state.storyboards, storyboard] })),
   updateStoryboard: (storyboard) => set((state) => withDirtyState({ storyboards: state.storyboards.map((entry) => entry.id === storyboard.id ? storyboard : entry) })),
-  addWorldContainer: (container) => set((state) => withDirtyState({ worldContainers: [...state.worldContainers, container] })),
-  updateWorldContainer: (container) => set((state) => withDirtyState({ worldContainers: state.worldContainers.map((entry) => entry.id === container.id ? container : entry) })),
-  deleteWorldContainer: (id) => set((state) => withDirtyState({ worldContainers: state.worldContainers.filter((entry) => entry.id !== id), worldItems: state.worldItems.filter((entry) => entry.containerId !== id) })),
-  addWorldItem: (item) => set((state) => withDirtyState({ worldItems: [...state.worldItems, item] })),
-  updateWorldItem: (item) => set((state) => withDirtyState({ worldItems: state.worldItems.map((entry) => entry.id === item.id ? item : entry) })),
-  deleteWorldItem: (id) => set((state) => withDirtyState({ worldItems: state.worldItems.filter((entry) => entry.id !== id) })),
-  updateWorldSettings: (worldSettings) => set(() => withDirtyState({ worldSettings })),
+  addWorldContainer: (container) => { get().captureUndoSnapshot('Add container'); set((state) => withDirtyState({ worldContainers: [...state.worldContainers, container] })); },
+  updateWorldContainer: (container) => { get().captureUndoSnapshot('Edit container'); set((state) => withDirtyState({ worldContainers: state.worldContainers.map((entry) => entry.id === container.id ? container : entry) })); },
+  deleteWorldContainer: (id) => { get().captureUndoSnapshot('Delete container'); set((state) => withDirtyState({ worldContainers: state.worldContainers.filter((entry) => entry.id !== id), worldItems: state.worldItems.filter((entry) => entry.containerId !== id) })); },
+  addWorldItem: (item) => { get().captureUndoSnapshot('Add world item'); set((state) => withDirtyState({ worldItems: [...state.worldItems, item] })); },
+  updateWorldItem: (item) => { get().captureUndoSnapshot('Edit world item'); set((state) => withDirtyState({ worldItems: state.worldItems.map((entry) => entry.id === item.id ? item : entry) })); },
+  deleteWorldItem: (id) => { get().captureUndoSnapshot('Delete world item'); set((state) => withDirtyState({ worldItems: state.worldItems.filter((entry) => entry.id !== id) })); },
+  moveWorldItemToCategory: (itemId, newCategory, newContainerId, newCategoryPath, newCategoryId?, newParentId?) => {
+    if (!get().pendingUndoTransaction) get().captureUndoSnapshot('Move world item');
+    set((state) => withDirtyState({
+      worldItems: state.worldItems.map((item) =>
+        item.id === itemId
+          ? {
+              ...item,
+              containerId: newContainerId,
+              category: newCategory,
+              categoryPath: newCategoryPath,
+              categoryId: newCategoryId !== undefined ? newCategoryId : (item.categoryId ?? null),
+              parentId: newParentId !== undefined ? newParentId : item.parentId,
+            }
+          : item
+      ),
+    }));
+  },
+  updateWorldSettings: (worldSettings) => { get().captureUndoSnapshot('Edit world settings'); set(() => withDirtyState({ worldSettings })); },
   createWorldMap: (map) => set((state) => withDirtyState({ worldMaps: [...state.worldMaps, map] })),
   updateWorldMap: (map) => set((state) => withDirtyState({ worldMaps: state.worldMaps.map((entry) => entry.id === map.id ? map : entry) })),
-  addGraphBoard: (board) => set((state) => withDirtyState({ graphBoards: [...state.graphBoards, board], activeGraphBoardId: board.id })),
-  updateGraphBoard: (board) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((entry) => entry.id === board.id ? board : entry) })),
-  deleteGraphBoard: (boardId) => set((state) => {
-    const nextBoards = state.graphBoards.filter((entry) => entry.id !== boardId);
-    return withDirtyState({ graphBoards: nextBoards, activeGraphBoardId: nextBoards[0]?.id || null });
-  }),
+  addGraphBoard: (board) => { get().captureUndoSnapshot('Add board'); set((state) => withDirtyState({ graphBoards: [...state.graphBoards, board], activeGraphBoardId: board.id })); },
+  updateGraphBoard: (board) => { get().captureUndoSnapshot('Edit board'); set((state) => withDirtyState({ graphBoards: state.graphBoards.map((entry) => entry.id === board.id ? board : entry) })); },
+  deleteGraphBoard: (boardId) => { get().captureUndoSnapshot('Delete board'); set((state) => { const nextBoards = state.graphBoards.filter((entry) => entry.id !== boardId); return withDirtyState({ graphBoards: nextBoards, activeGraphBoardId: nextBoards[0]?.id || null }); }); },
   setActiveGraphBoard: (boardId) => set((state) => withDirtyState({ activeGraphBoardId: boardId, currentProject: state.currentProject ? { ...cloneProject(state), uiState: { ...cloneProject(state).uiState, view: { ...cloneProject(state).uiState.view, activeGraphBoardId: boardId } } } : state.currentProject })),
-  addGraphNode: (boardId, node) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, nodes: [...board.nodes, node], selectedNodeIds: [node.id] } : board) })),
-  updateGraphNode: (boardId, node) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, nodes: board.nodes.map((entry) => entry.id === node.id ? node : entry) } : board) })),
-  addGraphEdge: (boardId, edge) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, edges: [...board.edges, edge] } : board) })),
-  deleteGraphNode: (boardId, nodeId) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, nodes: board.nodes.filter((n) => n.id !== nodeId), edges: board.edges.filter((e) => e.sourceId !== nodeId && e.targetId !== nodeId), selectedNodeIds: board.selectedNodeIds.filter((id) => id !== nodeId) } : board) })),
-  deleteGraphEdge: (boardId, edgeId) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, edges: board.edges.filter((e) => e.id !== edgeId) } : board) })),
-  updateGraphEdge: (boardId, edge) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, edges: board.edges.map((e) => e.id === edge.id ? { ...e, ...edge } : e) } : board) })),
+  addGraphNode: (boardId, node) => { get().captureUndoSnapshot('Add node'); set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, nodes: [...board.nodes, node], selectedNodeIds: [node.id] } : board) })); },
+  updateGraphNode: (boardId, node) => { get().captureUndoSnapshot('Edit node'); set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, nodes: board.nodes.map((entry) => entry.id === node.id ? node : entry) } : board) })); },
+  addGraphEdge: (boardId, edge) => { get().captureUndoSnapshot('Add edge'); set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, edges: [...board.edges, edge] } : board) })); },
+  deleteGraphNode: (boardId, nodeId) => { get().captureUndoSnapshot('Delete node'); set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, nodes: board.nodes.filter((n) => n.id !== nodeId), edges: board.edges.filter((e) => e.sourceId !== nodeId && e.targetId !== nodeId), selectedNodeIds: board.selectedNodeIds.filter((id) => id !== nodeId) } : board) })); },
+  deleteGraphEdge: (boardId, edgeId) => { get().captureUndoSnapshot('Delete edge'); set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, edges: board.edges.filter((e) => e.id !== edgeId) } : board) })); },
+  updateGraphEdge: (boardId, edge) => { get().captureUndoSnapshot('Edit edge'); set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, edges: board.edges.map((e) => e.id === edge.id ? { ...e, ...edge } : e) } : board) })); },
   setGraphBoardView: (boardId, view) => set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, view } : board) })),
-  resolveProposal: (proposalId, status) => set((state) => withDirtyState(projectService.resolveProposal(cloneProject(state, useUIStore.getState().locale), proposalId, status))),
+  resolveProposal: (proposalId, status) => {
+    set((state) => withDirtyState(projectService.resolveProposal(cloneProject(state, useUIStore.getState().locale), proposalId, status)));
+  },
+  resolveProposals: (proposalIds, status) => {
+    set((state) => withDirtyState(projectService.resolveProposals(cloneProject(state, useUIStore.getState().locale), proposalIds, status)));
+  },
+  resolveAllProposals: (status) => {
+    const pending = get().proposals.filter((p) => p.status === 'pending' || !p.status);
+    if (!pending.length) return;
+    set((state) => withDirtyState(projectService.resolveProposals(
+      cloneProject(state, useUIStore.getState().locale),
+      pending.map((proposal) => proposal.id),
+      status,
+    )));
+  },
   resolveIssue: (issueId, resolution) => set((state) => withDirtyState({
     issues: state.issues.map((issue) => issue.id === issueId ? { ...issue, status: resolution, visibility: 'history', dismissedAt: new Date().toISOString() } : issue),
   })),
@@ -1089,6 +1442,11 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     issues: state.issues.map((issue) => issue.id === issueId ? { ...issue, status: 'ignored', visibility: 'hidden', dismissedAt: new Date().toISOString() } : issue),
   })),
   addProposal: (proposal) => set((state) => withDirtyState({ proposals: [proposal, ...state.proposals], unreadUpdates: { ...state.unreadUpdates, activities: { ...state.unreadUpdates.activities, workbench: true }, sections: { ...state.unreadUpdates.sections, 'workbench.inbox': true }, entities: { ...state.unreadUpdates.entities, [proposal.id]: true } } })),
+  updatePromptTemplate: (template) => set((state) => withDirtyState({
+    promptTemplates: state.promptTemplates.some(t => t.id === template.id)
+      ? state.promptTemplates.map(t => t.id === template.id ? template : t)
+      : [...state.promptTemplates, template],
+  })),
   addGraphSyncProposal: (title, preview) => set((state) => {
     const proposal: Proposal = {
       id: `proposal_${Date.now()}`,
@@ -1255,20 +1613,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set((state) => withDirtyState({ todos: state.todos.filter((t) => t.id !== id) })),
   manuscriptNodes: [],
   addManuscriptNode: (node) => {
+    get().captureUndoSnapshot('Add node');
     const id = crypto.randomUUID();
     const newNode: ManuscriptNode = { ...node, id };
     set((state) => withDirtyState({ manuscriptNodes: [...state.manuscriptNodes, newNode] }));
     return newNode;
   },
-  updateManuscriptNode: (id, updates) =>
-    set((state) =>
-      withDirtyState({
-        manuscriptNodes: state.manuscriptNodes.map((n) => (n.id === id ? { ...n, ...updates } : n)),
-      })
-    ),
-  deleteManuscriptNode: (id) =>
-    set((state) =>
-      withDirtyState({
+  updateManuscriptNode: (id, updates) => { get().captureUndoSnapshot('Edit node'); set((state) => withDirtyState({ manuscriptNodes: state.manuscriptNodes.map((n) => (n.id === id ? { ...n, ...updates } : n)) })); },
+  deleteManuscriptNode: (id) => { get().captureUndoSnapshot('Delete node'); set((state) => withDirtyState({
         manuscriptNodes: (() => {
           // Collect all ids to delete (node + all descendants)
           const toDelete = new Set<string>();
@@ -1282,9 +1634,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           }
           return state.manuscriptNodes.filter(n => !toDelete.has(n.id));
         })(),
-      })
-    ),
+      })); },
   moveManuscriptNode: (id, newParentId, newOrderIndex) => {
+    get().captureUndoSnapshot('Move node');
     // Guard: newParentId must not be a descendant of id
     if (newParentId !== null) {
       const isDescendant = (ancestorId: string, targetId: string, nodes: ManuscriptNode[]): boolean => {
@@ -1351,14 +1703,24 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   loadManuscriptNodeContent: async (projectRoot, nodeId) => {
     const scope = globalThis as typeof globalThis & { require?: NodeRequire };
     const loader = scope.require;
-    if (!loader) return '';
+    const node = get().manuscriptNodes.find((entry) => entry.id === nodeId);
+    const linkedScene = node?.linkedSceneId
+      ? get().scenes.find((scene) => scene.id === node.linkedSceneId)
+      : null;
+    if (!loader) return linkedScene?.content || '';
     try {
       const fs = loader('fs') as typeof import('fs');
       const path = loader('path') as typeof import('path');
       const filePath = path.join(projectRoot, 'writing', 'manuscript', `${nodeId}.md`);
-      return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
-    } catch {
+      if (fs.existsSync(filePath)) return fs.readFileSync(filePath, 'utf8');
+      if (linkedScene?.content) return linkedScene.content;
+      if (node?.linkedSceneId) {
+        const scenePath = path.join(projectRoot, 'writing', 'scenes', `${node.linkedSceneId}.md`);
+        if (fs.existsSync(scenePath)) return fs.readFileSync(scenePath, 'utf8');
+      }
       return '';
+    } catch {
+      return linkedScene?.content || '';
     }
   },
   saveManuscriptNodeContent: async (projectRoot, nodeId, content) => {
@@ -1434,50 +1796,286 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   w1CompletedChunks: 0,
   w1TotalChunks: 0,
   w1Errors: [],
+  w1CurrentStep: '',
   w1SessionId: null,
   w1ImportMode: 'import_all',
+  w1ConsoleLog: [],
+  w1ActivityLog: [],
+  w1LastActivityAt: '',
+  w1IdleSeconds: 0,
+  w1ElapsedSeconds: 0,
+  w1ActiveApiCalls: 0,
+  w1TokenLedger: null,
+  w1CancelRequested: false,
+  w1ConnectionWarning: null,
+  w1Paused: false,
+  w1BreakpointChunk: null,
+  w1PromptProfile: 'balanced',
+  w1CustomProfileConfig: defaultW1CustomProfileConfig,
+  w1OrchestratorOverrides: buildW1OrchestratorOverrides(defaultW1CustomProfileConfig),
+  w1RuntimeStatus: null,
+  w1ProposalCount: 0,
+  w1ExtractionCounts: null,
+  w1ImportReviewReport: null,
+  w1UseSupervisor: false,
+  w1SupervisorDecisions: [],
+  w1GateFailures: [],
+  w1SupervisorIteration: 0,
   setW1ImportMode: (mode) => set({ w1ImportMode: mode }),
+  setW1PromptProfile: (profile) => set((state) => {
+    const supervisorDefault = profile === 'deep' || profile === 'custom';
+    return {
+      w1PromptProfile: profile,
+      w1UseSupervisor: supervisorDefault,
+      w1OrchestratorOverrides: buildW1OrchestratorOverrides(state.w1CustomProfileConfig, supervisorDefault),
+    };
+  }),
+  setW1CustomProfileConfig: (patch) => set((state) => {
+    const nextConfig = {
+      ...state.w1CustomProfileConfig,
+      ...patch,
+    };
+    nextConfig.max_chapters_per_window = nextConfig.chapters_per_window_max;
+    nextConfig.max_rerun_iterations = nextConfig.rerun_budget;
+    return {
+      w1CustomProfileConfig: nextConfig,
+      w1OrchestratorOverrides: buildW1OrchestratorOverrides(nextConfig, state.w1PromptProfile === 'deep' || state.w1PromptProfile === 'custom' || state.w1UseSupervisor),
+    };
+  }),
+  setW1UseSupervisor: (v) => set({ w1UseSupervisor: v }),
+  setW1Breakpoint: async (chunkId) => {
+    const { projectRoot, w1SessionId } = get();
+    if (!projectRoot || !w1SessionId) return;
+    set({ w1BreakpointChunk: chunkId });
+    await electronApi.w1SetBreakpoint(projectRoot, w1SessionId, chunkId);
+  },
+  resumeW1: async () => {
+    const { projectRoot, w1SessionId } = get();
+    if (!projectRoot || !w1SessionId) return;
+    set({ w1Paused: false, w1BreakpointChunk: null });
+    await electronApi.w1Resume(projectRoot, w1SessionId);
+  },
+  rewindW1: async (toChunkId) => {
+    const { projectRoot, w1SessionId } = get();
+    if (!projectRoot || !w1SessionId) return;
+    const result = await electronApi.w1Rewind(projectRoot, w1SessionId, toChunkId);
+    if (result.ok && result.new_session_id) {
+      set({ w1SessionId: result.new_session_id, w1Status: 'running', w1Paused: false, w1BreakpointChunk: null, w1ConsoleLog: [], w1ActivityLog: [], w1ConnectionWarning: null });
+    }
+  },
   startImport: async (payload) => {
-    const { projectRoot, w1ImportMode } = get();
+    const { projectRoot, w1ImportMode, w1PromptProfile, w1UseSupervisor, w1CustomProfileConfig, w1OrchestratorOverrides } = get();
     const mode = payload.importMode ?? w1ImportMode;
     const effectiveRoot = projectRoot || payload.projectRoot;
-    set({ w1Status: 'running', w1Progress: 0, w1Errors: [], w1SessionId: null });
+    if (!effectiveRoot) {
+      set({ w1Status: 'error', w1Errors: ['No project root — open a project first.'] });
+      return;
+    }
+    // Resolve the active provider/model credentials from settings (same pattern as startW3)
+    const appSettings = useUIStore.getState().appSettings;
+    const profiles = appSettings?.providerProfiles ?? [];
+    const modelProfiles = appSettings?.modelProfiles ?? [];
+    const providerProfile = profiles.find((p: { id: string }) => p.id === appSettings?.selectedProviderProfileId) ?? profiles[0] as { apiKey?: string; endpoint?: string } | undefined;
+    const modelProfile = modelProfiles.find((m: { id: string }) => m.id === appSettings?.selectedModelProfileId) ?? modelProfiles[0] as { model?: string } | undefined;
+    set({
+      w1Status: 'running',
+      w1Progress: 0,
+      w1Errors: [],
+      w1SessionId: null,
+      w1CurrentStep: '',
+      w1ProposalCount: 0,
+      w1ImportReviewReport: null,
+      w1RuntimeStatus: null,
+      w1ConsoleLog: [],
+      w1ActivityLog: [],
+      w1LastActivityAt: '',
+      w1IdleSeconds: 0,
+      w1ElapsedSeconds: 0,
+      w1ActiveApiCalls: 0,
+      w1TokenLedger: null,
+      w1CancelRequested: false,
+      w1ConnectionWarning: null,
+    });
+    // Ensure sidecar is alive before calling start
+    try { await electronApi.sidecarSpawn(effectiveRoot); } catch { /* best effort */ }
     let sessionId: string | null = null;
+    // Retry start up to 3 times with delay (sidecar may still be booting)
+    let result: any = null;
+    const shouldUseSupervisor = w1PromptProfile === 'deep' || w1PromptProfile === 'custom' || w1UseSupervisor;
+    const customProfileConfig = payload.customProfileConfig ?? w1CustomProfileConfig;
+    const orchestratorOverrides = payload.orchestratorOverrides ?? buildW1OrchestratorOverrides(
+      customProfileConfig,
+      shouldUseSupervisor || w1OrchestratorOverrides.use_orchestrator,
+    );
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        result = await electronApi.w1Start({
+          projectRoot: effectiveRoot,
+          source_file_path: payload.sourceFilePath,
+          import_mode: mode,
+          prompt_profile: w1PromptProfile,
+          use_supervisor: shouldUseSupervisor,
+          use_orchestrator: shouldUseSupervisor,
+          custom_profile_config: w1PromptProfile === 'custom'
+            ? customProfileConfig
+            : ({
+                extract_relationships: customProfileConfig.extract_relationships,
+                extract_world: customProfileConfig.extract_world,
+                extract_timeline: customProfileConfig.extract_timeline,
+              } as unknown as W1CustomProfileConfig),
+          orchestrator_overrides: shouldUseSupervisor ? orchestratorOverrides : undefined,
+          api_key: providerProfile?.apiKey ?? '',
+          model: modelProfile?.model ?? 'deepseek-chat',
+          endpoint: providerProfile?.endpoint ?? 'https://api.deepseek.com/v1',
+        });
+        break;
+      } catch (e) {
+        if (attempt < 2) {
+          await new Promise(r => setTimeout(r, 2000));
+          continue;
+        }
+        set({ w1Status: 'error', w1Errors: [String(e)] });
+        return;
+      }
+    }
     try {
-      const result = await electronApi.w1Start({
-        projectRoot: effectiveRoot,
-        source_file_path: payload.sourceFilePath,
-        import_mode: mode,
-      });
       sessionId = result.session_id || null;
       set({ w1SessionId: sessionId });
       if (result.status === 'error') {
-        set({ w1Status: 'error', w1Errors: ['Import failed to start'] });
+        set({ w1Status: 'error', w1Errors: [result.error || 'Import failed to start'] });
         return;
       }
     } catch (e) {
       set({ w1Status: 'error', w1Errors: [String(e)] });
       return;
     }
-    // Poll sidecar for progress
-    for (let i = 0; i < 600; i++) {
-      await new Promise(r => setTimeout(r, 3000));
+    // Poll sidecar for progress. Stop only when the run is truly silent: no
+    // recent activity, no active API call, and no token/cost movement. Long
+    // deep imports can legitimately exceed 30 minutes while still making
+    // visible progress.
+    let consoleLogOffset = 0;
+    let activityLogOffset = 0;
+    let consecutivePollFailures = 0;
+    const pollStartedAt = Date.now();
+    let lastTokenTotal = 0;
+    let lastTokenProgressAt = pollStartedAt;
+    let lastActivityProgressAt = pollStartedAt;
+    while (true) {
+      await new Promise(r => setTimeout(r, W1_POLL_INTERVAL_MS));
       const { w1Status: cur } = get();
       if (cur === 'cancelled') return;
       try {
         const s = await electronApi.w1Status(effectiveRoot, sessionId ?? undefined);
+        consecutivePollFailures = 0;
+        const now = Date.now();
+        const tokenTotal = Number(s.token_ledger?.actual_total_tokens ?? 0);
+        if (tokenTotal > lastTokenTotal) {
+          lastTokenTotal = tokenTotal;
+          lastTokenProgressAt = now;
+        }
+        if ((s.last_activity_message || s.current_tool || s.current_step) && Number(s.idle_seconds ?? 0) < 90) {
+          lastActivityProgressAt = now;
+        }
         set({
           w1Progress: s.progress ?? 0,
           w1CompletedChunks: s.completed_chunks ?? 0,
           w1TotalChunks: s.total_chunks ?? 0,
           w1Errors: s.errors ?? [],
+          w1CurrentStep: s.current_step ?? '',
+          w1PromptProfile: s.prompt_profile ?? w1PromptProfile,
+          w1ProposalCount: s.proposals_count ?? 0,
+          w1ExtractionCounts: s.extraction_counts ?? null,
+          w1ImportReviewReport: s.import_review_report ?? null,
+          w1LastActivityAt: s.last_activity_at ?? '',
+          w1IdleSeconds: s.idle_seconds ?? 0,
+          w1ElapsedSeconds: s.elapsed_seconds ?? 0,
+          w1ActiveApiCalls: s.active_api_calls ?? 0,
+          w1TokenLedger: s.token_ledger ?? null,
+          w1CancelRequested: Boolean(s.cancel_requested),
+          w1ConnectionWarning: null,
+          w1RuntimeStatus: {
+            current_tool: s.current_tool,
+            current_window: s.current_window,
+            chapter_range: s.chapter_range,
+            orchestrator_phase: s.orchestrator_phase,
+            judge_score: s.judge_score,
+            rerun_reason: s.rerun_reason,
+            converge_status: s.converge_status,
+            judge_artifact_summary: s.judge_artifact_summary,
+            last_activity_message: s.last_activity_message,
+            active_api_calls: s.active_api_calls,
+            elapsed_seconds: s.elapsed_seconds,
+            idle_seconds: s.idle_seconds,
+          },
         });
-        if (s.status === 'done') { set({ w1Status: 'done' }); return; }
+        // Also poll console log for real-time chunk detail
+        try {
+          const console = await electronApi.w1Console(effectiveRoot, sessionId ?? '', consoleLogOffset, activityLogOffset);
+          const chunkEntries = console.entries ?? [];
+          const activityEntries = console.activity_entries ?? [];
+          if (chunkEntries.length > 0) {
+            consoleLogOffset += chunkEntries.length;
+            set((state) => ({ w1ConsoleLog: [...state.w1ConsoleLog, ...chunkEntries] }));
+          }
+          if (activityEntries.length > 0) {
+            activityLogOffset += activityEntries.length;
+            set((state) => ({ w1ActivityLog: [...state.w1ActivityLog, ...activityEntries] }));
+          }
+          set({ w1Paused: console.paused, w1BreakpointChunk: console.breakpoint_chunk });
+          if (console.paused) {
+            set({ w1Status: 'paused' });
+            // Keep polling while paused so resume is reflected promptly
+          }
+        } catch (consoleError) {
+          set({ w1ConnectionWarning: `Console activity feed unavailable: ${String(consoleError)}` });
+        }
+        if (s.status === 'done') {
+          set({ w1Status: 'done' });
+          // Reload project from disk to surface newly-written proposals in system/inbox.json
+          try {
+            const { projectRoot } = get();
+            if (projectRoot) {
+              const freshProject = projectService.openProject(projectRoot);
+              if (freshProject) {
+                get().loadProject(freshProject);
+              }
+            }
+          } catch { /* best effort */ }
+          return;
+        }
         if (s.status === 'error') { set({ w1Status: 'error' }); return; }
         if (s.status === 'cancelled') { set({ w1Status: 'cancelled' }); return; }
-      } catch { /* sidecar temporarily unreachable — keep polling */ }
+        const elapsedMs = now - pollStartedAt;
+        const idleMs = Number(s.idle_seconds ?? 0) * 1000;
+        const tokenStallMs = now - lastTokenProgressAt;
+        const activityStallMs = now - lastActivityProgressAt;
+        const hasActiveApiCalls = Number(s.active_api_calls ?? 0) > 0;
+        const isSilent =
+          !hasActiveApiCalls &&
+          idleMs >= W1_SILENT_SPEND_TIMEOUT_MS &&
+          tokenStallMs >= W1_SILENT_SPEND_TIMEOUT_MS &&
+          activityStallMs >= W1_SILENT_SPEND_TIMEOUT_MS;
+        if (elapsedMs >= W1_SILENT_SPEND_TIMEOUT_MS && isSilent) {
+          try {
+            if (sessionId) await electronApi.w1Cancel({ session_id: sessionId });
+          } catch { /* best effort */ }
+          set({ w1Status: 'error', w1Errors: ['Import had no activity, no active API call, and no token progress for 30 minutes; it was cancelled to prevent silent spend.'] });
+          return;
+        }
+        if (elapsedMs >= W1_ABSOLUTE_TIMEOUT_MS) {
+          try {
+            if (sessionId) await electronApi.w1Cancel({ session_id: sessionId });
+          } catch { /* best effort */ }
+          set({ w1Status: 'error', w1Errors: ['Import exceeded the 4 hour absolute safety limit and was cancelled.'] });
+          return;
+        }
+      } catch (statusError) {
+        consecutivePollFailures += 1;
+        if (consecutivePollFailures >= 3) {
+          set({ w1ConnectionWarning: `Sidecar status polling failed ${consecutivePollFailures} times: ${String(statusError)}` });
+        }
+      }
     }
-    set({ w1Status: 'error', w1Errors: ['Import timed out after 30 minutes'] });
   },
   cancelImport: async () => {
     const { w1SessionId } = get();
@@ -1486,24 +2084,87 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       try { await electronApi.w1Cancel({ session_id: w1SessionId }); } catch { /* already cancelled */ }
     }
   },
-  resetImport: () => set({ w1Status: 'idle', w1Progress: 0, w1CompletedChunks: 0, w1TotalChunks: 0, w1Errors: [], w1SessionId: null }),
+  resetImport: () => set({
+    w1Status: 'idle',
+    w1Progress: 0,
+    w1CompletedChunks: 0,
+    w1TotalChunks: 0,
+    w1Errors: [],
+    w1CurrentStep: '',
+    w1SessionId: null,
+    w1ConsoleLog: [],
+    w1ActivityLog: [],
+    w1LastActivityAt: '',
+    w1IdleSeconds: 0,
+    w1ElapsedSeconds: 0,
+    w1ActiveApiCalls: 0,
+    w1TokenLedger: null,
+    w1CancelRequested: false,
+    w1ConnectionWarning: null,
+    w1Paused: false,
+    w1BreakpointChunk: null,
+    w1ProposalCount: 0,
+    w1ExtractionCounts: null,
+    w1ImportReviewReport: null,
+    w1RuntimeStatus: null,
+  }),
 
   // ── W2 Manuscript Sync ────────────────────────────────────────────────────
   w2Status: 'idle',
   w2Progress: 0,
   w2ProposalCount: 0,
+  w2Errors: [],
   startManuscriptSync: async (payload) => {
     const { projectRoot } = get();
-    set({ w2Status: 'running', w2Progress: 0 });
+    const effectiveRoot = projectRoot || payload.projectRoot;
+    const appSettings = useUIStore.getState().appSettings;
+    const profiles = appSettings?.providerProfiles ?? [];
+    const modelProfiles = appSettings?.modelProfiles ?? [];
+    const profile = profiles.find((p: { id: string }) => p.id === appSettings?.selectedProviderProfileId) ?? profiles[0] as { apiKey?: string; endpoint?: string } | undefined;
+    const modelProfile = modelProfiles.find((m: { id: string }) => m.id === appSettings?.selectedModelProfileId) ?? modelProfiles[0] as { model?: string } | undefined;
+    set({ w2Status: 'running', w2Progress: 0, w2ProposalCount: 0, w2Errors: [] });
     try {
-      await electronApi.w2Start({
-        projectRoot: projectRoot || payload.projectRoot,
+      try { await electronApi.sidecarSpawn(effectiveRoot); } catch { /* best effort */ }
+      const start = await electronApi.w2Start({
+        projectRoot: effectiveRoot,
         mode: payload.mode,
         target_chapter_id: payload.target_chapter_id,
+        api_key: profile?.apiKey ?? '',
+        model: modelProfile?.model ?? 'deepseek-chat',
+        endpoint: profile?.endpoint ?? 'https://api.deepseek.com/v1',
       });
-      set({ w2Status: 'done' });
+      if (!start.session_id || start.status === 'error') {
+        set({ w2Status: 'error', w2Errors: [start.error || 'Manuscript sync failed to start'] });
+        return;
+      }
+      for (let i = 0; i < 150; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        const s = await electronApi.w2Status(effectiveRoot, start.session_id);
+        set({
+          w2Progress: s.progress ?? 0,
+          w2ProposalCount: s.proposals_count ?? 0,
+          w2Errors: s.errors ?? [],
+        });
+        if (s.status === 'done' || s.status === 'completed') {
+          set({ w2Status: 'done', w2Progress: 1, w2ProposalCount: s.proposals_count ?? 0 });
+          try {
+            if (effectiveRoot) {
+              const freshProject = projectService.openProject(effectiveRoot);
+              if (freshProject) {
+                get().loadProject(freshProject);
+              }
+            }
+          } catch { /* best effort */ }
+          return;
+        }
+        if (s.status === 'error' || s.status === 'failed') {
+          set({ w2Status: 'error', w2Errors: s.errors?.length ? s.errors : ['Manuscript sync failed'] });
+          return;
+        }
+      }
+      set({ w2Status: 'error', w2Errors: ['Manuscript sync timed out'] });
     } catch (e) {
-      set({ w2Status: 'error' });
+      set({ w2Status: 'error', w2Errors: [String(e)] });
     }
   },
 
@@ -1667,6 +2328,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   orchestratorPlan: [],
   orchestratorCurrentStep: 0,
   orchestratorPendingPermission: null,
+  orchestratorErrors: [],
   orchestratorSessionId: null,
   startOrchestrator: async (payload) => {
     const appSettings = useUIStore.getState().appSettings;
@@ -1677,10 +2339,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const api_key = profile?.apiKey ?? '';
     const model = modelProfile?.model ?? 'deepseek-chat';
     const endpoint = profile?.endpoint ?? 'https://api.deepseek.com/v1';
-    set({ orchestratorStatus: 'planning', orchestratorProgress: 0, orchestratorPlan: [], orchestratorCurrentStep: 0, orchestratorPendingPermission: null, orchestratorSessionId: null });
+    set({ orchestratorStatus: 'planning', orchestratorProgress: 0, orchestratorPlan: [], orchestratorCurrentStep: 0, orchestratorPendingPermission: null, orchestratorErrors: [], orchestratorSessionId: null });
     try {
       const start = await electronApi.orchestratorStart({ ...payload, api_key, model, endpoint });
-      if (!start.session_id || start.status === 'error') { set({ orchestratorStatus: 'error' }); return; }
+      if (!start.session_id || start.status === 'error') { set({ orchestratorStatus: 'error', orchestratorErrors: ['Failed to start W0 orchestrator.'] }); return; }
       set({ orchestratorSessionId: start.session_id });
       const poll = async () => {
         for (let i = 0; i < 300; i++) {
@@ -1691,6 +2353,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
             orchestratorPlan: s.plan ?? [],
             orchestratorCurrentStep: s.current_step,
             orchestratorPendingPermission: s.pending_permission ?? null,
+            orchestratorErrors: s.errors ?? [],
           });
           const st = s.status as string;
           if (st === 'waiting_permission') { set({ orchestratorStatus: 'waiting_permission' }); return; }
@@ -1698,10 +2361,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           if (st === 'error' || st === 'failed') { set({ orchestratorStatus: 'error' }); return; }
           if (st === 'executing') { set({ orchestratorStatus: 'executing' }); }
         }
-        set({ orchestratorStatus: 'error' });
+        set({ orchestratorStatus: 'error', orchestratorErrors: ['W0 timed out before completion.'] });
       };
       await poll();
-    } catch { set({ orchestratorStatus: 'error' }); }
+    } catch (err) { set({ orchestratorStatus: 'error', orchestratorErrors: [String(err)] }); }
   },
   grantPermission: async (projectRoot, stepId) => {
     const { orchestratorSessionId } = get();
@@ -1718,13 +2381,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           orchestratorPlan: s.plan ?? [],
           orchestratorCurrentStep: s.current_step,
           orchestratorPendingPermission: s.pending_permission ?? null,
+          orchestratorErrors: s.errors ?? [],
         });
         const st = s.status as string;
         if (st === 'waiting_permission') { set({ orchestratorStatus: 'waiting_permission' }); return; }
         if (st === 'done' || st === 'completed') { set({ orchestratorStatus: 'done', orchestratorProgress: 1 }); return; }
         if (st === 'error' || st === 'failed') { set({ orchestratorStatus: 'error' }); return; }
       }
-      set({ orchestratorStatus: 'error' });
+      set({ orchestratorStatus: 'error', orchestratorErrors: ['W0 timed out before completion.'] });
     };
     poll();
   },
@@ -1732,7 +2396,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const { orchestratorSessionId } = get();
     if (!orchestratorSessionId) return;
     await electronApi.orchestratorDeny(projectRoot, stepId, orchestratorSessionId, reason);
-    set({ orchestratorStatus: 'error', orchestratorPendingPermission: null });
+    set({ orchestratorStatus: 'error', orchestratorPendingPermission: null, orchestratorErrors: [`Permission denied: ${reason}`] });
   },
   resetOrchestrator: () => set({
     orchestratorStatus: 'idle',
@@ -1740,6 +2404,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     orchestratorPlan: [],
     orchestratorCurrentStep: 0,
     orchestratorPendingPermission: null,
+    orchestratorErrors: [],
     orchestratorSessionId: null,
   }),
 
@@ -1777,3 +2442,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     return electronApi.dbSearch(projectRoot, query).catch(() => []);
   },
 }));
+
+if (typeof window !== 'undefined' && (import.meta as any).env?.DEV) {
+  (window as any).__narrativeStore = useProjectStore;
+}

@@ -1,56 +1,59 @@
 # Product Spec
 
 ## Product Definition
-Narrative IDE is a Windows-first, local-first desktop application for planning, drafting, structuring, and exporting narrative projects. It combines structured project data, freeform graph sketching, proposal review, and future agent-assisted workflows in one project-folder based environment.
+Narrative IDE is a local-first desktop environment for building and operating narrative projects. It combines structured project data, route-backed authoring modules, proposal review, workflow-driven analysis, and export surfaces inside one project-folder-based application.
 
-## Core Principles
-- Project-folder first: users create and open a folder-backed project, similar to Premiere-style project initialization.
-- Local-first persistence: canonical project data lives on disk in split JSON and content files.
-- Shared data model: Characters, Timeline, Writing, World, Graph, Workbench, and export all operate on the same canonical IDs and references.
-- Proposal gatekeeping: AI-generated changes never mutate canonical data directly. They must enter Workbench and be accepted or rejected by the user.
-- Mixed graph model: Graph boards can contain both freeform notes and structured entity references long term.
-- Reference safety: referenced entities cannot be hard-deleted without an explicit impact review.
-- Agent-ready shell: the UI must reserve space and state for future CLI-driven agents without forcing a chat-centric workflow.
+## Active Product Boundary
+- Active implementation baseline: `src/ui-react` + `src/electron` + `sidecar`
+- Active shell: Top Toolbar, Activity Bar, Sidebar, Workspace, Inspector, Agent Dock, Status Bar
+- Active workflow family: W0-W7, with uneven UI closure across workflows
+- Reference-only legacy paths: `src/ui` and prototype-era planning docs
 
-## Core Workflows
-1. Create or open a project folder.
-2. Build core story assets in Characters, Timeline, Writing, and World.
-3. Sketch freely in Graph using notes, reference cards, frames, and images.
-4. Generate sync proposals from Graph, Consistency, or future agents.
-5. Review all proposals in Workbench Inbox.
-6. Accept or reject proposals, with accepted items becoming canonical and resolved items moving to History.
-7. Export narrative content to Markdown or HTML with optional appendices.
+## Product Principles
+- Project-folder first: users create/open a folder-backed project.
+- Local-first persistence: canonical project data stays on disk.
+- Shared data model: route modules operate on shared canonical IDs and references.
+- Proposal gatekeeping: AI-originated writes enter a review flow before becoming canonical.
+- Reference safety: destructive operations must respect cross-entity references.
+- Headless-capable workflows: sidecar workflows should remain callable outside the Electron UI.
+- Agent-ready, not chat-only: the product supports workflow orchestration without collapsing into a pure chat surface.
 
-## Shell Layout
-- Top Toolbar: project lifecycle, save, command palette, future automation triggers.
-- Activity Bar: module switching.
-- Sidebar: section switching inside the current module.
-- Workspace: main content region.
-- Inspector: focused entity/proposal/issue details.
-- Agent Dock: right-side global future-agent surface.
-- Status Bar: project path, save state, selection, proposal counts.
+## Active User Journey
+1. Create or open a project.
+2. Build or import story structure.
+3. Review workflow-generated proposals and issues in Workbench.
+4. Author and revise scenes, characters, timeline, graph, and world state against shared references.
+5. Run workflow-assisted checks, simulation, beta feedback, or metadata grounding.
+6. Export deliverable content.
 
-## Module Responsibilities
-- Workbench: proposal inbox, history, issues, bulk actions.
-- Writing Studio: chapter/scene authoring with shared references and autosave.
-- Characters: profile records, portrait slots, birthday text, status flags, organization links, linked scenes/events.
-- Timeline: event order, branches, participant links, location links, scene links.
-- Graph: mixed freeform and structured board editing, sync proposal generation.
-- World Model: locations, organizations, items, lore, world map, notes, and custom containers.
-- Simulation: interactive scenario runner scaffold backed by project data.
-- Consistency: broken refs, state conflicts, ordering conflicts, missing links, duplicate detection.
-- Beta Reader: interactive feedback simulations tied to project content.
-- Publish: export configuration and Markdown/HTML export.
-- Insights: project analytics and coverage dashboards.
+## Active Module Inventory
+- Workbench: inbox, history, issues, imports/runs/prompts/task surfaces
+- Writing Studio: scenes, chapters, manuscript, scripts, storyboards
+- Characters: roster, candidates, relationship graph, tags
+- Timeline: branch/event canvas and editing flows
+- Graph: board-based freeform and structured relationship surfaces
+- World Model: entries, maps, settings
+- Simulation: labs and reviewers
+- Beta Reader: persona-driven feedback
+- Consistency: issue/audit surface
+- Agents: agent/orchestrator-facing workspace
+- Publish: export surfaces
+- Insights: dashboards and analytics
+- Reference Library: metadata/reference ingestion and chunk preview
 
-## Deferred Features
-These are intentionally deferred from the current implementation program:
-- Real agent execution
-- Floating agent window
+## Current Product Gaps
+- W0 Orchestrator is backend-capable but lacks a canonical production UI.
+- W2 Manuscript Sync is backend-capable but lacks a canonical production trigger.
+- Workbench proposal acceptance and canonical-data safety need stronger end-to-end closure.
+- Publish/export remains a partial product surface.
+- Sidecar lifecycle and runtime ergonomics still need hardening.
+
+## Deferred or Not in This Wave
+- New speculative workflows beyond W0-W7
+- Multimodal/video expansion beyond existing placeholder surfaces
 - Full undo/redo history
 - Version control UI
-- SQLite migration
-- Image generation beyond placeholder controls
+- Large schema redesigns without dedicated planning and decision-log entries
 
-## Legacy Docs Status
-Older UI and route docs remain as migration references. The files in this new source-of-truth set override them when conflicts exist.
+## Document Status
+This document is the product boundary source of truth. Older route/UI snapshots remain reference-only unless promoted through `dev_docs/README.md`.

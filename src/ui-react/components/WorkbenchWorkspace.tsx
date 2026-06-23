@@ -1,10 +1,11 @@
 import React, { useRef, useMemo, useState } from 'react';
-import { CheckCircle2, FileUp, Inbox, RefreshCw, ShieldAlert, Sparkles, UploadCloud, XCircle } from 'lucide-react';
+import { CheckCircle2, ChevronDown, ChevronRight, FileUp, Inbox, RefreshCw, ShieldAlert, Sparkles, UploadCloud, XCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { ImportWorkflow } from './ImportWorkflow';
 import { useProjectStore, useUIStore } from '../store';
 import { useI18n } from '../i18n';
-import type { Chapter, ImportJob, Proposal, Scene, TodoItem, TodoPriority, TodoStatus } from '../models/project';
+import type { Chapter, ImportJob, Proposal, ProposalPackage, Scene, TodoItem, TodoPriority, TodoStatus } from '../models/project';
+import { buildProposalPackages } from '../services/projectService';
 
 export const WorkbenchWorkspace = () => {
   const { sidebarSection, setLastActionStatus } = useUIStore();
@@ -18,6 +19,8 @@ export const WorkbenchWorkspace = () => {
     promptTemplates,
     todos,
     resolveProposal,
+    resolveProposals,
+    resolveAllProposals,
     addImportJob,
     updateImportJob,
     addChapter,
@@ -49,6 +52,21 @@ export const WorkbenchWorkspace = () => {
     runs: taskRuns.filter((run) => ['queued', 'running', 'awaiting_user_input'].includes(run.status)).length,
     prompts: promptTemplates.length,
   };
+  const proposalPackages = useMemo(
+    () => buildProposalPackages(proposals.filter((p) => p.status === 'pending' || !p.status)),
+    [proposals],
+  );
+  const packagedProposalIds = useMemo(
+    () => new Set(proposalPackages.flatMap((pkg) => pkg.proposals.map((p) => p.id))),
+    [proposalPackages],
+  );
+  const [expandedPackageIds, setExpandedPackageIds] = useState<Set<string>>(new Set());
+  const togglePackage = (id: string) =>
+    setExpandedPackageIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) { next.delete(id); } else { next.add(id); }
+      return next;
+    });
 
   const confirmImport = () => {
     if (!importState.previewChapters.length) return;
@@ -152,7 +170,7 @@ export const WorkbenchWorkspace = () => {
               {t('workbench.reviewCenterBody')}
             </p>
           </div>
-          <button type="button" className="rounded-2xl bg-brand px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-white" onClick={() => setImportState((current) => ({ ...current, open: true }))}>
+          <button type="button" data-testid="open-import-btn" className="rounded-2xl bg-brand px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-white" onClick={() => setImportState((current) => ({ ...current, open: true }))}>
             <FileUp size={14} className="mr-2 inline" />
             {t('import.title')}
           </button>
@@ -168,7 +186,34 @@ export const WorkbenchWorkspace = () => {
 
         {sidebarSection === 'inbox' && (
           <div className="space-y-4" data-testid="workbench-inbox-list">
-            {proposals.map((proposal) => (
+            {proposalPackages.length > 0 && (
+              <div className="space-y-3" data-testid="import-proposal-packages">
+                {proposalPackages.map((pkg) => (
+                  <PackageCard
+                    key={pkg.id}
+                    pkg={pkg}
+                    expanded={expandedPackageIds.has(pkg.id)}
+                    onToggle={() => togglePackage(pkg.id)}
+                    onAccept={() => resolveProposals(pkg.proposals.map((p) => p.id), 'accepted')}
+                    t={t}
+                  />
+                ))}
+              </div>
+            )}
+            {proposals.length > 1 && (
+              <div className="flex justify-end mb-4">
+                <button
+                  type="button"
+                  data-testid="accept-all-proposals-btn"
+                  className="inline-flex items-center gap-2 rounded-lg bg-green px-5 py-2 text-[11px] font-black uppercase tracking-widest text-text-invert"
+                  onClick={() => resolveAllProposals('accepted')}
+                >
+                  <CheckCircle2 size={14} />
+                  {t('workbench.acceptAll', 'Accept All')} ({proposals.length})
+                </button>
+              </div>
+            )}
+            {proposals.filter((p) => !packagedProposalIds.has(p.id)).map((proposal) => (
               <div key={proposal.id} className="rounded-2xl border border-border bg-card p-6 shadow-1" data-testid={`proposal-card-${proposal.id}`}>
                 <div className="mb-4 flex items-start justify-between gap-4">
                   <div>
@@ -179,12 +224,28 @@ export const WorkbenchWorkspace = () => {
                 </div>
                 <p className="text-sm leading-relaxed text-text-2">{proposal.description}</p>
                 <div className="mt-4 rounded-xl border border-border bg-bg-elev-1 p-4 text-sm text-text-2">{proposal.preview}</div>
+                {proposal.lastBlockReason && (
+                  <div
+                    data-testid={`proposal-blocked-reason-${proposal.id}`}
+                    className="mt-3 rounded-lg border border-amber/40 bg-amber/10 px-3 py-1.5 text-xs text-amber"
+                  >
+                    <span className="font-black uppercase tracking-widest">{t('workbench.blocked', 'Blocked')}: </span>
+                    {proposal.lastBlockReason}
+                  </div>
+                )}
                 <div className="mt-5 flex items-center gap-3">
-                  <button type="button" data-testid="proposal-accept-btn" className="inline-flex items-center gap-2 rounded-lg bg-green px-4 py-2 text-[11px] font-black uppercase tracking-widest text-text-invert" onClick={() => resolveProposal(proposal.id, 'accepted')}>
+                  <button
+                    type="button"
+                    data-testid={`proposal-accept-${proposal.id}`}
+                    disabled={Boolean(proposal.lastBlockReason)}
+                    title={proposal.lastBlockReason ? `${t('workbench.blocked', 'Blocked')}: ${proposal.lastBlockReason}` : undefined}
+                    className="inline-flex items-center gap-2 rounded-lg bg-green px-4 py-2 text-[11px] font-black uppercase tracking-widest text-text-invert disabled:cursor-not-allowed disabled:opacity-40"
+                    onClick={() => resolveProposal(proposal.id, 'accepted')}
+                  >
                     <CheckCircle2 size={14} />
                     {t('workbench.accept')}
                   </button>
-                  <button type="button" data-testid="proposal-reject-btn" className="inline-flex items-center gap-2 rounded-lg border border-red/40 px-4 py-2 text-[11px] font-black uppercase tracking-widest text-red" onClick={() => resolveProposal(proposal.id, 'rejected')}>
+                  <button type="button" data-testid={`proposal-reject-${proposal.id}`} className="inline-flex items-center gap-2 rounded-lg border border-red/40 px-4 py-2 text-[11px] font-black uppercase tracking-widest text-red" onClick={() => resolveProposal(proposal.id, 'rejected')}>
                     <XCircle size={14} />
                     {t('workbench.reject')}
                   </button>
@@ -196,7 +257,7 @@ export const WorkbenchWorkspace = () => {
         )}
 
         {sidebarSection === 'history' && (
-          <div className="space-y-4">
+          <div className="space-y-4" data-testid="workbench-history-list">
             {proposalHistory.map((proposal) => (
               <div key={proposal.id} className="rounded-2xl border border-border bg-card p-5 shadow-1">
                 <div className="flex items-center justify-between gap-4">
@@ -233,7 +294,7 @@ export const WorkbenchWorkspace = () => {
         {sidebarSection === 'imports' && <ImportsPanel importJobs={importJobs} onSelect={(id) => setSelectedEntity('import_job', id)} onOpenImport={() => setImportState((current) => ({ ...current, open: true }))} />}
 
         {sidebarSection === 'runs' && (
-          <div className="space-y-4">
+          <div className="space-y-4" data-testid="workbench-runs-list">
             {taskRuns.map((run) => (
               <div key={run.id} className="rounded-2xl border border-border bg-card p-6 shadow-1">
                 <div className="mb-3 flex items-start justify-between gap-4">
@@ -269,7 +330,7 @@ export const WorkbenchWorkspace = () => {
         )}
 
         {sidebarSection === 'prompts' && (
-          <div className="space-y-4">
+          <div className="space-y-4" data-testid="workbench-prompts-list">
             {promptTemplates.map((template) => (
               <button key={template.id} type="button" className="w-full rounded-2xl border border-border bg-card p-6 text-left shadow-1" onClick={() => setSelectedEntity('prompt_template', template.id)}>
                 <div className="mb-3 flex items-start justify-between gap-4">
@@ -593,14 +654,25 @@ const TasksPanel = ({
                   </div>
                   <h2 className="mt-2 text-lg font-black text-text">{proposal.title}</h2>
                   <p className="mt-1 text-sm text-text-2">{proposal.description}</p>
+                  {proposal.lastBlockReason && (
+                    <div
+                      data-testid={`proposal-blocked-reason-${proposal.id}`}
+                      className="mt-2 rounded-lg border border-amber/40 bg-amber/10 px-3 py-1.5 text-xs text-amber"
+                    >
+                      <span className="font-black uppercase tracking-widest">{t('todo.blocked', 'Blocked')}: </span>
+                      {proposal.lastBlockReason}
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   data-testid={`proposal-accept-${proposal.id}`}
+                  disabled={Boolean(proposal.lastBlockReason)}
+                  title={proposal.lastBlockReason ? `${t('todo.blocked', 'Blocked')}: ${proposal.lastBlockReason}` : undefined}
                   onClick={() => resolveProposal(proposal.id, 'accepted')}
-                  className="inline-flex items-center gap-2 rounded-lg bg-green px-4 py-2 text-[11px] font-black uppercase tracking-widest text-text-invert"
+                  className="inline-flex items-center gap-2 rounded-lg bg-green px-4 py-2 text-[11px] font-black uppercase tracking-widest text-text-invert disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <CheckCircle2 size={13} />
                   {t('todo.accept')}
@@ -826,3 +898,134 @@ const SummaryCard = ({ label, value }: { label: string; value: string }) => (
     <div className="mt-2 text-2xl font-black text-text">{value}</div>
   </div>
 );
+
+const RISK_STYLES: Record<'low' | 'medium' | 'high', string> = {
+  low: 'border-green/30 bg-green/10 text-green',
+  medium: 'border-amber/30 bg-amber/10 text-amber',
+  high: 'border-red/30 bg-red/10 text-red',
+};
+
+const getProposalDisplayName = (p: Proposal): string => {
+  // Prefer entity name from proposedOperations/operations fields over generic proposal title
+  const raw = p as unknown as Record<string, unknown>;
+  const ops = ((raw.proposedOperations || raw.operations) ?? []) as Array<Record<string, unknown>>;
+  for (const op of ops) {
+    const fields = (op.fields || op) as Record<string, unknown>;
+    if (typeof fields.name === 'string' && fields.name) return fields.name;
+    if (typeof fields.title === 'string' && fields.title) return fields.title;
+    if (typeof fields.label === 'string' && fields.label) return fields.label;
+  }
+  if (p.preview) return p.preview;
+  return p.title;
+};
+
+const PackageCard = ({
+  pkg,
+  expanded,
+  onToggle,
+  onAccept,
+  t,
+}: {
+  pkg: ProposalPackage;
+  expanded: boolean;
+  onToggle: () => void;
+  onAccept: () => void;
+  t: (key: string, fallback?: string) => string;
+}) => {
+  const isBlocked = Boolean(pkg.blockedReason);
+  const depCount = pkg.dependencyGraph.length;
+  const entityTypes = Array.from(new Set(pkg.proposals.map((p) => p.targetEntityType))).join(', ');
+
+  return (
+    <div
+      data-testid={`import-package-${pkg.id}`}
+      className="rounded-2xl border border-brand/30 bg-brand/5 p-5 shadow-1"
+    >
+      {/* Header row */}
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span
+              data-testid={`proposal-package-source-${pkg.id}`}
+              data-source={pkg.source}
+              className="text-[10px] font-black uppercase tracking-[0.22em] text-brand-2"
+            >
+              {pkg.title}
+            </span>
+            <span
+              data-testid={`proposal-package-risk-${pkg.id}`}
+              className={`rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-widest ${RISK_STYLES[pkg.risk]}`}
+            >
+              {pkg.risk}
+            </span>
+          </div>
+          <p
+            data-testid={`proposal-package-dep-summary-${pkg.id}`}
+            className="mt-1.5 text-sm leading-relaxed text-text-2"
+          >
+            {pkg.proposals.length} {t('workbench.packageProposalCount', 'proposals')} · {entityTypes}
+            {depCount > 0 && ` · ${depCount} ${t('workbench.packageDeps', 'dependencies')}`}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            data-testid={`proposal-package-expand-${pkg.id}`}
+            className="inline-flex items-center gap-1 rounded-lg border border-border px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-text-2"
+            onClick={onToggle}
+            aria-expanded={expanded}
+          >
+            {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            {expanded ? t('workbench.collapse', 'Collapse') : t('workbench.expand', 'Expand')}
+          </button>
+          {isBlocked ? (
+            <button
+              type="button"
+              data-testid={`retry-blocked-package-${pkg.id}`}
+              className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-amber px-5 py-2 text-[11px] font-black uppercase tracking-widest text-text-invert"
+              onClick={onAccept}
+            >
+              <RefreshCw size={14} />
+              {t('workbench.retryBlockedPackage', 'Retry')}
+            </button>
+          ) : (
+            <button
+              type="button"
+              data-testid={`accept-import-package-${pkg.id}`}
+              className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-green px-5 py-2 text-[11px] font-black uppercase tracking-widest text-text-invert"
+              onClick={onAccept}
+            >
+              <CheckCircle2 size={14} />
+              {t('workbench.acceptPackage', 'Accept Package')}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Blocked reason */}
+      {isBlocked && (
+        <div
+          data-testid={`import-package-blocked-reason-${pkg.id}`}
+          className="mt-4 rounded-lg border border-amber/40 bg-amber/10 px-3 py-2 text-xs leading-relaxed text-amber"
+        >
+          <span className="font-black uppercase tracking-widest">{t('workbench.blocked', 'Blocked')}: </span>
+          {pkg.blockedReason}
+        </div>
+      )}
+
+      {/* Expanded proposal list */}
+      {expanded && (
+        <ul className="mt-4 space-y-1.5 border-t border-border/40 pt-4">
+          {pkg.proposals.map((p) => (
+            <li key={p.id} className="flex items-center gap-2 text-sm text-text-2">
+              <span className="shrink-0 rounded border border-border bg-bg-elev-1 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-widest text-text-3">
+                {p.targetEntityType}
+              </span>
+              <span className="truncate">{getProposalDisplayName(p)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+};

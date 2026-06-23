@@ -1,81 +1,59 @@
 {
-  "current_module": "Narrative IDE v1 Beta",
-  "current_iteration": "2026-03-12/iter_04",
+  "current_module": "DevDocs governance reset",
+  "current_iteration": "2026-04-24/iter_01",
   "completed_modules": [
-    "Foundation shell",
-    "Workbench shell",
-    "Project initialization flow",
-    "Acceptance demo shell",
-    "Publish demo",
-    "World map demo",
-    "Schema migration and UI-state persistence",
-    "Route-backed character sections",
-    "Writing Studio pane system",
-    "Timeline branch upgrade",
-    "Graph multi-board baseline",
-    "Beta reader personas and aggregate panel"
+    "DevDocs governance index",
+    "Workflow status source",
+    "Parallel worktree protocol",
+    "Shared surfaces registry",
+    "Task pack template",
+    "Workstream board",
+    "Execution plan",
+    "Decision log",
+    "Repo agent doc sync"
   ],
   "qa_status": {
-    "foundation_shell": "Accepted",
-    "layout_and_locale": "Accepted",
-    "workbench_shell": "Accepted",
-    "characters": "Accepted",
-    "writing_studio": "Accepted",
-    "timeline": "Accepted",
-    "world_model": "Accepted",
-    "graph": "Accepted",
-    "beta_reader": "Accepted",
-    "publish_demo": "Accepted"
+    "devdocs_governance": "Accepted",
+    "agent_entry_doc_sync": "Accepted",
+    "docs_consistency_audit": "Accepted"
   },
   "playwright_status": {
-    "foundation_regression": "Passed",
-    "full_browser_suite": "Passed (30/30)",
-    "acceptance_suite": "Passed"
+    "foundation_regression": "Passed (1/1)",
+    "import_workflow_regression": "Passed (17/17)"
   },
   "progress": {
-    "phase_0": "Completed",
-    "phase_1": "Completed",
-    "phase_2": "Completed",
-    "phase_3": "Completed",
-    "phase_4": "Completed",
-    "phase_5": "In Progress",
-    "phase_6": "In Progress"
+    "governance_reset": "Implemented",
+    "docs_audit": "Completed",
+    "verification": "Completed"
   },
   "routes_implemented": [
-    "/workbench/inbox",
-    "/workbench/history",
-    "/workbench/issues",
-    "/workbench/bulk",
+    "/workbench/*",
     "/writing/*",
-    "/characters/list",
-    "/characters/candidates",
-    "/characters/relationships",
-    "/characters/tags",
-    "/characters/profile/:characterId",
+    "/characters/*",
     "/timeline/*",
     "/graph/*",
     "/world/*",
     "/simulation/*",
     "/beta-reader/*",
     "/consistency/*",
+    "/agents/*",
     "/publish/*",
-    "/insights/*"
+    "/insights/*",
+    "/metadata/*"
   ],
   "selector_coverage": 98,
   "data_testid_coverage": 98,
-  "last_test_run": "2026-03-12T12:24:33+08:00",
+  "last_test_run": "2026-04-24T23:59:00+08:00",
   "open_bugs": [],
   "known_issues": [
-    "Electron-backed folder create/open/save still needs a dedicated desktop-only end-to-end pass beyond browser-mode Playwright.",
-    "Graph marquee selection and higher-order board editing are not complete yet.",
-    "Timeline fork/merge semantics exist in data and baseline UI, but dedicated fork/merge editing controls are still lighter than the final product target.",
-    "Agent Dock contracts are ready for future CLI/LangGraph integration, but real task execution is not wired in."
+    "W0 Orchestrator still lacks a canonical production UI control surface.",
+    "W2 Manuscript Sync still lacks a canonical production UI trigger.",
+    "Publish/export closure remains incomplete.",
+    "Sidecar lifecycle and restart ergonomics still need hardening."
   ],
   "backlog": [
-    "Add Electron E2E coverage for the real project-folder lifecycle",
-    "Deepen graph editing with marquee selection, richer edge editing, and board management polish",
-    "Expand timeline fork/merge authoring controls and shared-event visualization",
-    "Wire real local task execution behind Agent Dock and Workbench",
-    "Add undo/history and richer release-grade export controls"
+    "Execute WS-01 through WS-06 from dev_docs/WORKSTREAM_BOARD.md",
+    "Run full docs consistency audit after each shared-surface change",
+    "Keep workflow status and integration docs aligned in every delivery wave"
   ]
 }

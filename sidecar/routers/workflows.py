@@ -22,6 +22,7 @@ _sessions: dict[str, dict] = {}
 
 # Per-workflow session stores for W1/W2/W4/W5/W6
 _w1_sessions: dict[str, dict] = {}
+_w1_tasks: dict[str, asyncio.Task] = {}
 _w2_sessions: dict[str, dict] = {}
 _w4_sessions: dict[str, dict] = {}
 _w5_sessions: dict[str, dict] = {}
@@ -190,9 +191,14 @@ class W1StartRequest(BaseModel):
     project_path: str
     source_file_path: str
     import_mode: str = "import_all"
+    prompt_profile: str = "balanced"
     api_key: str = ""
     model: str = "deepseek-chat"
     endpoint: str = "https://api.deepseek.com/v1"
+    use_supervisor: bool = False
+    use_orchestrator: bool = False
+    custom_profile_config: Optional[dict[str, Any]] = None
+    orchestrator_overrides: Optional[dict[str, Any]] = None
 
 
 class W1StartResponse(BaseModel):
@@ -214,6 +220,48 @@ class W1StatusResponse(BaseModel):
     errors: List[str] = []
     completed_chunks: int = 0
     total_chunks: int = 0
+    current_step: str = ""
+    prompt_profile: str = "balanced"
+    proposals_count: int = 0
+    extraction_counts: dict = {}
+    import_review_report: dict = {}
+    current_tool: str = ""
+    current_window: Any = ""
+    chapter_range: Any = ""
+    orchestrator_phase: str = ""
+    judge_score: Optional[float] = None
+    rerun_reason: str = ""
+    converge_status: str = ""
+    judge_artifact_summary: dict = {}
+    last_activity_at: str = ""
+    last_activity_message: str = ""
+    active_api_calls: int = 0
+    elapsed_seconds: int = 0
+    idle_seconds: int = 0
+    cancel_requested: bool = False
+    token_budget_exhausted: bool = False
+    token_ledger: dict = {}
+
+
+class W1ConsoleResponse(BaseModel):
+    entries: List[Any] = []
+    activity_entries: List[Any] = []
+    paused: bool = False
+    breakpoint_chunk: Optional[int] = None
+
+
+class W1BreakpointRequest(BaseModel):
+    session_id: str
+    chunk_id: Optional[int] = None   # None = clear breakpoint
+
+
+class W1ResumeRequest(BaseModel):
+    session_id: str
+
+
+class W1RewindRequest(BaseModel):
+    session_id: str
+    to_chunk_id: int
 
 
 # ── W2 Manuscript Sync models ────────────────────────────────────────────────
@@ -242,22 +290,133 @@ class W2StatusResult(BaseModel):
 # ── W1 background task ────────────────────────────────────────────────────────
 
 async def _run_w1(session_id: str, config: dict) -> None:
-    from sidecar.workflows.w1_import import run as w1_run
+    from sidecar.workflows.w1_import import run_streaming, _chunk_progress, _chunk_log
+    from sidecar.workflows.w1_run_events import append_event, session_status, set_active_call
+    project_path = config["project_path"]
+
+    # Poll _chunk_progress and _chunk_log every second so that mid-node chunk
+    # updates (written by node_process_chunks after each individual chunk) are
+    # reflected in the status and console endpoints without waiting for the node.
+    ctrl: dict = {"active": True}
+
+    async def _poll_chunk_progress() -> None:
+        while ctrl["active"]:
+            await asyncio.sleep(1)
+            progress_data = _chunk_progress.get(project_path)
+            log_entries = _chunk_log.get(project_path, [])
+            current = _w1_sessions.get(session_id, {})
+            if current.get("status") not in ("running", "paused"):
+                continue
+            updates: dict = {}
+            if progress_data:
+                c = progress_data.get("completed", 0)
+                t = progress_data.get("total", 0)
+                updates = {
+                    "completed_chunks": c,
+                    "total_chunks": t,
+                    "progress": 0.1 + 0.7 * (c / max(t, 1)),
+                    "current_step": "process_chunks",
+                }
+            if log_entries:
+                updates["chunk_log"] = log_entries[:]
+            if updates:
+                _w1_sessions[session_id] = {**current, **updates}
+
+    poll_task = asyncio.create_task(_poll_chunk_progress())
+
     try:
-        result = await w1_run(config["project_path"], config)
-        chunks = result.get("chunks", [])
+        append_event(session_id, {
+            "phase": "start",
+            "tool": "start_import",
+            "status": "start",
+            "message": (
+                f"Starting W1 import: profile={config.get('prompt_profile', 'balanced')}, "
+                f"mode={config.get('import_mode', 'import_all')}, "
+                f"model={config.get('context', {}).get('model', '')}"
+            ),
+        })
+        async for state_update in run_streaming(project_path, config):
+            current = _w1_sessions.get(session_id, {})
+            activity = session_status(session_id)
+            _w1_sessions[session_id] = {
+                **current,
+                "status": "running",
+                "progress": state_update.get("progress", 0.0),
+                "errors": state_update.get("errors", []),
+                "completed_chunks": state_update.get("completed_chunks", 0),
+                "total_chunks": state_update.get("total_chunks", 0),
+                "current_step": state_update.get("current_node", ""),
+                "prompt_profile": current.get("prompt_profile", config.get("prompt_profile", "balanced")),
+                "proposals_count": state_update.get("proposals_count", current.get("proposals_count", 0)),
+                "window_metrics": state_update.get("window_metrics") or current.get("window_metrics", {}),
+                "import_review_report": state_update.get("import_review_report") or current.get("import_review_report", {}),
+                "current_tool": state_update.get("current_tool", current.get("current_tool", "")),
+                "current_window": state_update.get("current_window", current.get("current_window", "")),
+                "chapter_range": state_update.get("chapter_range", current.get("chapter_range", "")),
+                "orchestrator_phase": state_update.get("orchestrator_phase", current.get("orchestrator_phase", "")),
+                "judge_score": state_update.get("judge_score", current.get("judge_score")),
+                "rerun_reason": state_update.get("rerun_reason", current.get("rerun_reason", "")),
+                "converge_status": state_update.get("converge_status", current.get("converge_status", "")),
+                "judge_artifact_summary": state_update.get("judge_artifact_summary")
+                or state_update.get("judge_artifact")
+                or current.get("judge_artifact_summary", {}),
+                **activity,
+            }
+        # Final state from the last update
+        final = _w1_sessions.get(session_id, {})
+        final["status"] = "done"
+        final["progress"] = 1.0
+        final.update(session_status(session_id))
+        append_event(session_id, {
+            "phase": "done",
+            "tool": "workflow",
+            "status": "success",
+            "message": "W1 import completed.",
+        })
+        _w1_sessions[session_id] = final
+    except asyncio.CancelledError:
+        append_event(session_id, {
+            "phase": "cancelled",
+            "tool": "workflow",
+            "status": "cancelled",
+            "level": "warning",
+            "message": "W1 import cancelled; no new API calls will be started.",
+        })
+        current = _w1_sessions.get(session_id, {})
         _w1_sessions[session_id] = {
-            "status": result.get("status", "done"),
-            "progress": result.get("progress", 1.0),
-            "errors": result.get("errors", []),
-            "completed_chunks": len(chunks),
-            "total_chunks": len(chunks),
+            **current,
+            "status": "cancelled",
+            "progress": current.get("progress", 0.0),
+            **session_status(session_id),
         }
+        raise
     except Exception as e:
+        append_event(session_id, {
+            "phase": "error",
+            "tool": "workflow",
+            "status": "fail",
+            "level": "error",
+            "message": "W1 import failed.",
+            "error": str(e),
+        })
         _w1_sessions[session_id] = {
             "status": "error", "progress": 0.0, "errors": [str(e)],
             "completed_chunks": 0, "total_chunks": 0,
+            "chunk_log": _chunk_log.get(project_path, []),
+            "paused": False, "breakpoint_chunk": None,
+            **session_status(session_id),
         }
+    finally:
+        ctrl["active"] = False
+        set_active_call(session_id, -9999)
+        poll_task.cancel()
+        _w1_tasks.pop(session_id, None)
+        _chunk_progress.pop(project_path, None)
+        _chunk_log.pop(project_path, None)
+        try:
+            await release_lock(project_path)
+        except Exception:
+            pass
 
 
 # ── W2 background task ────────────────────────────────────────────────────────
@@ -283,40 +442,297 @@ async def _run_w2(session_id: str, config: dict) -> None:
 @router.post("/workflow/w1/start", response_model=W1StartResponse)
 async def w1_start(body: W1StartRequest) -> W1StartResponse:
     """Start a W1 Import workflow run."""
+    from sidecar.workflows.w1_run_events import append_event, ensure_session, session_status
+
     session_id = str(uuid.uuid4())
-    _w1_sessions[session_id] = {
-        "status": "running", "progress": 0.0, "errors": [],
-        "completed_chunks": 0, "total_chunks": 0,
+    ensure_session(session_id)
+    custom_profile_config = body.custom_profile_config or {}
+    orchestrator_overrides = body.orchestrator_overrides or {}
+    effective_use_orchestrator = (
+        body.use_orchestrator
+        or bool(orchestrator_overrides.get("use_orchestrator"))
+        or body.prompt_profile in {"deep", "custom"}
+    )
+    effective_use_supervisor = body.use_supervisor or effective_use_orchestrator
+    tool_operating_spec_overrides = {
+        **custom_profile_config,
+        **orchestrator_overrides,
+    }
+    context = {
+        "api_key": body.api_key,
+        "model": body.model,
+        "endpoint": body.endpoint,
+        "prompt_profile": body.prompt_profile,
+        "use_supervisor": effective_use_supervisor,
+        "use_orchestrator": effective_use_orchestrator,
+        "custom_profile_config": custom_profile_config,
+        "orchestrator_overrides": orchestrator_overrides,
+        "tool_operating_spec_overrides": tool_operating_spec_overrides,
     }
     config = {
         "project_path": body.project_path,
         "source_file_path": body.source_file_path,
         "import_mode": body.import_mode,
-        "context": {"api_key": body.api_key, "model": body.model, "endpoint": body.endpoint},
+        "prompt_profile": body.prompt_profile,
+        "use_supervisor": effective_use_supervisor,
+        "use_orchestrator": effective_use_orchestrator,
+        "custom_profile_config": custom_profile_config,
+        "orchestrator_overrides": orchestrator_overrides,
+        "profile_config": custom_profile_config if body.prompt_profile == "custom" else {},
+        "context": context,
+        "session_id": session_id,
     }
-    asyncio.create_task(_run_w1(session_id, config))
+    _w1_sessions[session_id] = {
+        "status": "running", "progress": 0.0, "errors": [],
+        "completed_chunks": 0, "total_chunks": 0,
+        "prompt_profile": body.prompt_profile,
+        "use_supervisor": effective_use_supervisor,
+        "use_orchestrator": effective_use_orchestrator,
+        "custom_profile_config": custom_profile_config,
+        "orchestrator_overrides": orchestrator_overrides,
+        "supervisor_decisions": [],
+        "gate_failures": [],
+        "window_metrics": {},
+        "supervisor_iteration": 0,
+        "current_tool": "",
+        "current_window": "",
+        "chapter_range": "",
+        "orchestrator_phase": "",
+        "judge_score": None,
+        "rerun_reason": "",
+        "converge_status": "",
+        "judge_artifact_summary": {},
+        "chunk_log": [],
+        "paused": False,
+        "breakpoint_chunk": None,
+        "project_path": body.project_path,
+        "config": config,
+        **session_status(session_id),
+    }
+    append_event(session_id, {
+        "phase": "queued",
+        "tool": "start_import",
+        "status": "start",
+        "message": (
+            f"Queued W1 import: profile={body.prompt_profile}, mode={body.import_mode}, "
+            f"model={body.model}, supervisor={effective_use_supervisor}"
+        ),
+    })
+    _w1_tasks[session_id] = asyncio.create_task(_run_w1(session_id, config))
     return W1StartResponse(session_id=session_id, status="started")
 
 
 @router.post("/workflow/w1/cancel", response_model=W1CancelResponse)
 async def w1_cancel(body: W1CancelRequest) -> W1CancelResponse:
-    """Cancel a running W1 Import session (best-effort — marks session as cancelled)."""
+    """Cancel a running W1 Import session and stop scheduling new work."""
+    from sidecar.workflows.w1_import import _cancel_events, _pause_events
+    from sidecar.workflows.w1_run_events import append_event, mark_cancel_requested
+
     session = _w1_sessions.get(body.session_id, {})
     if session:
+        mark_cancel_requested(body.session_id)
+        project_path = session.get("project_path", "")
+        if project_path in _cancel_events:
+            _cancel_events[project_path].set()
+        if project_path in _pause_events:
+            _pause_events[project_path].set()
+        task = _w1_tasks.get(body.session_id)
+        if task and not task.done():
+            task.cancel()
+        append_event(body.session_id, {
+            "phase": "cancel",
+            "tool": "cancel",
+            "status": "cancelled",
+            "level": "warning",
+            "message": "Cancel requested by user.",
+        })
         _w1_sessions[body.session_id] = {**session, "status": "cancelled"}
     return W1CancelResponse(status="cancelled")
+
+
+@router.get("/workflow/w1/supervisor_status")
+async def w1_supervisor_status(session_id: str = "") -> dict:
+    """Return supervisor orchestration state for a running or completed session."""
+    session = _w1_sessions.get(session_id, {})
+    return {
+        "supervisor_decisions": session.get("supervisor_decisions", []),
+        "gate_failures": session.get("gate_failures", []),
+        "window_metrics": session.get("window_metrics", {}),
+        "supervisor_iteration": session.get("supervisor_iteration", 0),
+        "current_tool": session.get("current_tool", ""),
+        "current_window": session.get("current_window", ""),
+        "chapter_range": session.get("chapter_range", ""),
+        "orchestrator_phase": session.get("orchestrator_phase", ""),
+        "judge_score": session.get("judge_score"),
+        "rerun_reason": session.get("rerun_reason", ""),
+        "converge_status": session.get("converge_status", ""),
+        "judge_artifact": session.get("judge_artifact", session.get("judge_artifact_summary", {})),
+    }
+
+
+@router.get("/workflow/w1/console", response_model=W1ConsoleResponse)
+async def w1_console(session_id: str = "", after: int = 0, activity_after: int = 0) -> W1ConsoleResponse:
+    """Return new chunk log entries since index `after`."""
+    from sidecar.workflows.w1_run_events import list_events
+
+    session = _w1_sessions.get(session_id, {})
+    all_entries = session.get("chunk_log", [])
+    return W1ConsoleResponse(
+        entries=all_entries[after:],
+        activity_entries=list_events(session_id, activity_after),
+        paused=session.get("paused", False),
+        breakpoint_chunk=session.get("breakpoint_chunk"),
+    )
+
+
+@router.post("/workflow/w1/set_breakpoint")
+async def w1_set_breakpoint(body: W1BreakpointRequest) -> dict:
+    """Set or clear a breakpoint at a given chunk index."""
+    from sidecar.workflows.w1_import import _breakpoint_chunks
+    session = _w1_sessions.get(body.session_id, {})
+    if session:
+        session["breakpoint_chunk"] = body.chunk_id
+        _w1_sessions[body.session_id] = session
+        project_path = session.get("project_path", "")
+        if project_path:
+            _breakpoint_chunks[project_path] = body.chunk_id
+    return {"ok": True, "breakpoint_chunk": body.chunk_id}
+
+
+@router.post("/workflow/w1/resume")
+async def w1_resume(body: W1ResumeRequest) -> dict:
+    """Resume a paused W1 import session."""
+    from sidecar.workflows.w1_import import _pause_events
+    session = _w1_sessions.get(body.session_id, {})
+    if session:
+        session["paused"] = False
+        session["breakpoint_chunk"] = None
+        _w1_sessions[body.session_id] = session
+        project_path = session.get("project_path", "")
+        if project_path and project_path in _pause_events:
+            _pause_events[project_path].set()
+    return {"ok": True}
+
+
+@router.post("/workflow/w1/rewind")
+async def w1_rewind(body: W1RewindRequest) -> dict:
+    """Rewind import to a prior checkpoint state and restart from that point."""
+    import json
+    from pathlib import Path
+    from sidecar.workflows.w1_import import _cancel_events, _pause_events, _breakpoint_chunks
+
+    session = _w1_sessions.get(body.session_id, {})
+    if not session:
+        return {"ok": False, "error": "session_not_found"}
+
+    project_path = session.get("project_path", "")
+    if not project_path:
+        return {"ok": False, "error": "project_path_missing"}
+
+    # Signal cancel of the current run
+    if project_path in _cancel_events:
+        _cancel_events[project_path].set()
+    # Unblock any pause
+    if project_path in _pause_events:
+        _pause_events[project_path].set()
+
+    # Wait briefly for session to terminate
+    for _ in range(20):
+        await asyncio.sleep(0.2)
+        if _w1_sessions.get(body.session_id, {}).get("status") in ("cancelled", "error", "done"):
+            break
+
+    # Load and truncate checkpoint
+    checkpoint_path = Path(project_path) / "system" / "imports" / "import_progress.json"
+    if not checkpoint_path.exists():
+        checkpoint_path = Path(project_path) / "import_progress.json"
+
+    if checkpoint_path.exists():
+        try:
+            with open(checkpoint_path, encoding="utf-8") as f:
+                cp = json.load(f)
+            cp["completed_chunk_ids"] = [cid for cid in cp.get("completed_chunk_ids", []) if cid < body.to_chunk_id]
+            cp["chunk_extractions"] = [e for e in cp.get("chunk_extractions", []) if e.get("chunk_id", 0) < body.to_chunk_id]
+            # Rebuild registry from truncated extractions (approximate — full rebuild happens in node)
+            with open(checkpoint_path, "w", encoding="utf-8") as f:
+                json.dump(cp, f, ensure_ascii=False, indent=2)
+        except Exception as exc:
+            return {"ok": False, "error": f"checkpoint rewind failed: {exc}"}
+
+    # Re-launch with same config
+    old_config = session.get("config", {})
+    if not old_config:
+        return {"ok": False, "error": "original config missing from session"}
+
+    new_session_id = str(uuid.uuid4())
+    _w1_sessions[new_session_id] = {
+        "status": "running", "progress": 0.0, "errors": [],
+        "completed_chunks": body.to_chunk_id, "total_chunks": session.get("total_chunks", 0),
+        "chunk_log": session.get("chunk_log", [])[:body.to_chunk_id],
+        "paused": False, "breakpoint_chunk": None,
+        "project_path": project_path,
+        "config": old_config,
+    }
+    _breakpoint_chunks.pop(project_path, None)
+    asyncio.create_task(_run_w1(new_session_id, old_config))
+    return {"ok": True, "new_session_id": new_session_id}
 
 
 @router.get("/workflow/w1/status", response_model=W1StatusResponse)
 async def w1_status(session_id: str = "") -> W1StatusResponse:
     """Return current W1 Import workflow status."""
+    from sidecar.workflows.w1_run_events import session_status, session_token_ledger
+
+    import re as _re
     session = _w1_sessions.get(session_id, {})
+    activity = session_status(session_id)
+    errors = session.get("errors", [])
+    _budget_pattern = _re.compile(r"budget_exhausted|402|insufficient.?balance", _re.IGNORECASE)
+    token_budget_exhausted = (
+        any(_budget_pattern.search(str(e)) for e in errors)
+        or session.get("converge_status") == "budget_exhausted"
+    )
+    window_metrics = session.get("window_metrics", {}) or {}
+    extraction_counts = {
+        "characters": sum(int(m.get("char_count_extracted", 0) or 0) for m in window_metrics.values() if isinstance(m, dict)),
+        "events": sum(int(m.get("event_count_extracted", 0) or 0) for m in window_metrics.values() if isinstance(m, dict)),
+        "world_items": sum(int(m.get("world_count_extracted", 0) or 0) for m in window_metrics.values() if isinstance(m, dict)),
+        "relationships": sum(int(m.get("relationship_count_extracted", 0) or 0) for m in window_metrics.values() if isinstance(m, dict)),
+    }
+    estimated_input_tokens = sum(
+        int(m.get("estimated_input_tokens", 0) or 0)
+        for m in window_metrics.values()
+        if isinstance(m, dict)
+    )
+    model = (session.get("config") or {}).get("context", {}).get("model", "") or ""
+    ledger = session_token_ledger(session_id, model=model, estimated_input_tokens=estimated_input_tokens)
     return W1StatusResponse(
         status=session.get("status", "idle"),
         progress=session.get("progress", 0.0),
-        errors=session.get("errors", []),
+        errors=errors,
         completed_chunks=session.get("completed_chunks", 0),
         total_chunks=session.get("total_chunks", 0),
+        current_step=session.get("current_step", ""),
+        prompt_profile=session.get("prompt_profile", "balanced"),
+        proposals_count=session.get("proposals_count", 0),
+        extraction_counts=extraction_counts,
+        import_review_report=session.get("import_review_report", {}),
+        current_tool=session.get("current_tool", ""),
+        current_window=session.get("current_window", ""),
+        chapter_range=session.get("chapter_range", ""),
+        orchestrator_phase=session.get("orchestrator_phase", ""),
+        judge_score=session.get("judge_score"),
+        rerun_reason=session.get("rerun_reason", ""),
+        converge_status=session.get("converge_status", ""),
+        judge_artifact_summary=session.get("judge_artifact_summary", session.get("judge_artifact", {})),
+        last_activity_at=activity.get("last_activity_at", ""),
+        last_activity_message=activity.get("last_activity_message", ""),
+        active_api_calls=int(activity.get("active_api_calls", 0) or 0),
+        elapsed_seconds=int(activity.get("elapsed_seconds", 0) or 0),
+        idle_seconds=int(activity.get("idle_seconds", 0) or 0),
+        cancel_requested=bool(activity.get("cancel_requested", False)),
+        token_budget_exhausted=token_budget_exhausted,
+        token_ledger=ledger,
     )
 
 

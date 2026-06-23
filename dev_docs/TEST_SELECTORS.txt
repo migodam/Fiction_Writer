@@ -113,13 +113,34 @@ character-card-<characterId>
 new-character-btn
 generate-character-btn
 
+entity-not-found
+entity-not-found-back
+
 character-name-input
 character-alias-input
 character-background-input
+character-summary-input
 character-traits-input
 character-goals-input
 character-fears-input
 character-secrets-input
+character-birthday-input
+character-speechstyle-input
+character-arc-input
+
+character-duplicate-btn
+character-archive-btn
+character-merge-btn
+delete-character-btn
+
+archive-impact-modal
+archive-confirm-btn
+hard-delete-confirm-btn
+archive-cancel-btn
+
+relationship-section-outgoing
+relationship-section-incoming
+relationship-section-bidirectional
 
 candidate-card-<candidateId>
 candidate-confirm-btn
@@ -140,6 +161,13 @@ add-branch-btn
 timeline-zoom-slider
 
 timeline-branch-<branchId>
+timeline-branch-segment-<branchId>
+timeline-branch-handle-start-<branchId>
+timeline-branch-handle-end-<branchId>
+timeline-branch-handle-middle-<branchId>
+timeline-branch-handle-bend-<branchId>
+timeline-branch-control-in-<branchId>
+timeline-branch-control-out-<branchId>
 timeline-node-<eventId>
 
 event-title-input
@@ -210,6 +238,13 @@ editor-rewrite-btn
 editor-continue-btn
 editor-dialogue-btn
 
+w2-sync-chapter-btn
+w2-status-card
+w2-status-label
+w2-progress-bar
+w2-open-workbench-btn
+w2-error-msg
+
 context-panel
 
 context-insert-event
@@ -238,6 +273,71 @@ retry-btn
 clear-console-btn
 
 raw-output-toggle
+
+open-import-btn
+w1-mode-content-only
+w1-mode-import-all
+w1-prompt-profile-select
+w1-profile-explanation
+w1-prompt-review-panel
+w1-custom-expert-panel
+w1-custom-quality-target
+w1-custom-max-chapters-per-window
+w1-custom-character-granularity
+w1-custom-event-density
+w1-custom-timeline-topology-depth
+w1-custom-world-strictness
+w1-custom-validation-strictness
+w1-custom-rerun-budget
+w1-custom-language-policy
+w1-file-picker-btn
+w1-progress-bar
+w1-current-step
+w1-runtime-status-card
+w1-status-current-tool
+w1-status-current-window
+w1-status-chapter-range
+w1-status-orchestrator-phase
+w1-status-judge-score
+w1-status-rerun-reason
+w1-status-converge-status
+w1-console-toggle-btn
+w1-cancel-btn
+w1-error-item
+w1-review-step
+w1-success-msg
+w1-review-status
+w1-review-proposal-count
+w1-review-safe-count
+w1-review-warnings
+w1-review-failed-chunks
+w1-review-judge-summary
+w1-review-judge-score
+w1-review-converge-status
+w1-review-rerun-reason
+w1-accept-safe-all-btn
+w1-review-open-console-btn
+w1-close-btn
+
+-- Inbox proposal packages (W1 import + reviewer repair) --
+workbench-inbox-list
+import-proposal-packages
+import-package-{testId}              (outer card; testId = packageKey sanitized)
+accept-import-package-{testId}       (accept button when not blocked)
+retry-blocked-package-{testId}       (retry button when package is blocked)
+import-package-blocked-reason-{testId} (blocked reason banner)
+proposal-package-source-{testId}     (source reviewer badge label)
+proposal-package-risk-{testId}       (risk badge: low / medium / high)
+proposal-package-expand-{testId}     (expand/collapse toggle)
+proposal-package-dep-summary-{testId} (dependency count summary line)
+
+-- Inbox individual proposals (non-packaged) --
+proposal-card-{proposalId}
+proposal-accept-{proposalId}
+proposal-reject-{proposalId}
+proposal-blocked-reason-{proposalId}
+
+accept-all-proposals-btn
 
 ==================================================
 12 PUBLISH
@@ -329,5 +429,71 @@ ai-writing-modal
 ai-writing-close-btn
 
 ==================================================
+22 IMPORT WORKFLOW (W1)
+==================================================
+
+open-import-btn          (trigger button in Workbench review center)
+w1-mode-content-only     (radio label for content_only mode)
+w1-mode-import-all       (radio label for import_all mode)
+w1-prompt-profile-select (prompt profile selector: fast/balanced/deep/custom)
+w1-prompt-review-panel   (prompt/compiler strategy review disclosure)
+w1-file-picker-btn       (select file button)
+w1-progress-bar          (animated progress bar div)
+w1-current-step          (running import compiler stage label)
+w1-cancel-btn            (cancel import button)
+w1-error-item            (each error list item)
+w1-success-msg           (completion success paragraph)
+w1-close-btn             (close modal button)
+
+==================================================
+23 ORCHESTRATOR WORKFLOW (W0)
+==================================================
+
+w0-orchestrator-panel    (canonical W0 control surface in Agents workspace)
+w0-goal-input            (goal composition textarea)
+w0-start-btn             (start W0 button)
+w0-reset-btn             (reset local W0 UI state button)
+w0-status                (current W0 status label)
+w0-progress-label        (percentage label)
+w0-progress-bar          (progress bar div)
+w0-step-counter          (current step / total step label)
+w0-session-id            (active sidecar session identifier)
+w0-permission-card       (permission request card)
+w0-grant-btn             (grant pending permission)
+w0-deny-reason-input     (permission denial reason input)
+w0-deny-btn              (deny pending permission)
+w0-error-card            (error state card)
+w0-result-card           (completion state card)
+w0-plan-list             (planned workflow step list)
+w0-plan-empty            (empty plan placeholder)
+w0-plan-step-<index>     (planned workflow step card)
+
+==================================================
 END
 ==================================================
+
+-- Token/Cost UX (Worker F) --
+w1-token-cost-card            ImportWorkflow  Token/Cost card container (visible when token_ledger present in store)
+w1-token-cost-input           ImportWorkflow  Input tokens field: actual tokens or estimated + (est.) label when actual=0
+w1-token-cost-output          ImportWorkflow  Output tokens field: actual output tokens only; hidden when actual=0
+w1-token-cost-calls           ImportWorkflow  API call count field from token_ledger.api_call_count
+w1-token-cost-estimated-cost  ImportWorkflow  Estimated cost ($X.XXXX) or cost_unavailable_reason; hidden when neither present
+w1-budget-exhausted-banner    ImportWorkflow  Red 402/budget-exhausted banner; visible only during running/paused with budget error
+
+-- Hierarchical Tags and World Categories (Worker W5) --
+tag-tree-panel-<prefix>                  TagTreePanel   Root container; prefix = character-tag | world-category
+tag-tree-row-<prefix>-<id>               TagTreePanel   Outer div for the full row (drag container); renamed from -node- to avoid collision with renderNodeContent buttons
+tag-tree-row-<prefix>-<id>-expand        TagTreePanel   Collapse/expand chevron; visibility:hidden when node has no children
+tag-tree-row-<prefix>-<id>-drag-handle   TagTreePanel   Drag handle icon; opacity-0 until hover
+tag-tree-drop-before-<prefix>-<id>       TagTreePanel   6px thin drop zone above a row (drop before sibling)
+tag-tree-drop-inside-<prefix>-<id>       TagTreePanel   Full-row drop zone (drop inside, becomes child)
+world-category-tree                      WorldWorkspace  Container of the world category TagTreePanel (collapsible section)
+world-category-tree-toggle               WorldWorkspace  Button to expand/collapse the category tree panel
+world-category-node-<id>                 WorldWorkspace  Clickable filter button inside each category row (from renderNodeContent; distinct from tag-tree-row-*)
+add-world-category-btn                   WorldWorkspace  "Add Category" button to create a new root-level world category
+
+-- Sidebar/Graph Linkage (Worker W6) --
+character-group-header-{group}       CharactersWorkspace      Group folder collapse/expand button; {group} = importance partition name (e.g. core, major)
+graph-importance-filter-all          RelationshipGraphPanel   "All" chip — clears graphImportanceFilter and (if linkage on) expands all sidebar groups
+graph-importance-filter-{imp}        RelationshipGraphPanel   Per-importance filter chip; dimmed (opacity-40) when that group is hidden from graph
+graph-sidebar-linkage-toggle         RelationshipGraphPanel   Linkage toggle; text="Linked" when on (sidebar collapse drives graph filter)

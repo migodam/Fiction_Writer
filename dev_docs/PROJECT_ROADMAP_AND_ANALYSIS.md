@@ -1,5 +1,9 @@
 # Narrative IDE: Project State & Strategic Roadmap
 
+> Status: historical analysis and mixed-era roadmap snapshot.
+> Do not use this file to define new implementation work.
+> Use `dev_docs/EXECUTION_PLAN.md` for active delivery sequencing and `dev_docs/WORKSTREAM_BOARD.md` for assignable work.
+
 ## 1. Executive Summary
 The **Narrative IDE** is a Local-First AI Fiction Writing Software designed for long-term, AI-empowered fiction creation. It transitions the paradigm from "chat-based AI generation" to a "Software Engineering (SWE) structured workflow" for storytelling.
 

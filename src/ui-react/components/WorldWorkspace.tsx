@@ -1,9 +1,97 @@
 import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ExternalLink, Globe, Map as MapIcon, Plus, Trash2 } from 'lucide-react';
+import { ExternalLink, Globe, GripVertical, Map as MapIcon, Plus, Trash2 } from 'lucide-react';
+import {
+  DndContext,
+  DragEndEvent,
+  DragOverlay,
+  DragStartEvent,
+  PointerSensor,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
 import { useProjectStore, useUIStore } from '../store';
 import { cn } from '../utils';
 import { useI18n } from '../i18n';
+import { TagTreePanel } from './TagTreePanel';
+import type { WorldCategoryNode, WorldItem } from '../models/project';
+
+const CONTAMINATION_CONTAINER_NAMES = new Set([
+  '人物关系图', '人物关系', '关系图', '关系网络',
+  '事件时间线', '时间线', '时间轴',
+]);
+
+// ---------------------------------------------------------------------------
+// Drag/drop sub-components
+// ---------------------------------------------------------------------------
+
+function DraggableWorldItem({
+  item,
+  isActive,
+  onClick,
+  onContextMenu,
+}: {
+  item: WorldItem;
+  isActive: boolean;
+  onClick: () => void;
+  onContextMenu: (e: React.MouseEvent) => void;
+}) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: item.id });
+  return (
+    <div
+      ref={setNodeRef}
+      data-testid={`world-item-${item.id}`}
+      className={cn(
+        'group relative w-full border-b border-divider px-4 py-4 text-left transition-colors cursor-pointer',
+        isActive ? 'bg-selected' : 'hover:bg-hover',
+        isDragging && 'opacity-40',
+      )}
+      onClick={onClick}
+      onContextMenu={onContextMenu}
+    >
+      <span
+        {...listeners}
+        {...attributes}
+        className="absolute left-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-40 cursor-grab active:cursor-grabbing"
+        onClick={(e) => e.stopPropagation()}
+        onContextMenu={(e) => e.stopPropagation()}
+      >
+        <GripVertical size={12} />
+      </span>
+      <div className="text-sm font-black text-text">{item.name}</div>
+      <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-text-3">{item.description}</div>
+    </div>
+  );
+}
+
+function DroppableCategoryHeader({
+  groupName,
+  children,
+}: {
+  groupName: string;
+  children: React.ReactNode;
+}) {
+  const { isOver, setNodeRef } = useDroppable({ id: `category-header-${groupName}` });
+  return (
+    <div
+      ref={setNodeRef}
+      className={cn(
+        'sticky top-0 z-10 px-4 py-2 text-[10px] font-black uppercase tracking-[0.2em] border-b transition-colors',
+        isOver
+          ? 'bg-brand/20 text-brand border-brand/30'
+          : 'bg-bg-elev-1 text-brand-2 border-divider',
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main workspace
+// ---------------------------------------------------------------------------
 
 export const WorldWorkspace = () => {
   const navigate = useNavigate();
@@ -14,31 +102,127 @@ export const WorldWorkspace = () => {
     worldItems,
     worldSettings,
     worldMaps,
+    worldCategories,
     timelineEvents,
     scenes,
     addWorldContainer,
     addWorldItem,
     updateWorldItem,
     deleteWorldItem,
+    moveWorldItemToCategory,
     updateWorldSettings,
     createWorldMap,
     updateWorldMap,
     updateWorldContainer,
     deleteWorldContainer,
+    addWorldCategory,
+    moveWorldCategory,
+    toggleWorldCategoryCollapsed,
   } = useProjectStore();
   const [activeContainerId, setActiveContainerId] = useState(worldContainers[0]?.id || null);
   const [activeItemId, setActiveItemId] = useState(worldItems[0]?.id || null);
   const [activeMapId, setActiveMapId] = useState(worldMaps[0]?.id || null);
   const [renamingContainerId, setRenamingContainerId] = useState<string | null>(null);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
+  const [showCategoryTree, setShowCategoryTree] = useState(true);
+  const [draggingItemId, setDraggingItemId] = useState<string | null>(null);
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   const activeContainer = worldContainers.find((container) => container.id === activeContainerId) || worldContainers[0] || null;
   const activeItem = worldItems.find((item) => item.id === activeItemId) || null;
   const activeMap = worldMaps.find((map) => map.id === activeMapId) || worldMaps[0] || null;
   const containerItems = useMemo(() => worldItems.filter((item) => item.containerId === activeContainer?.id), [worldItems, activeContainer]);
+  const groupedItems = useMemo(() => {
+    const base = selectedCategoryId
+      ? containerItems.filter((item) => {
+          if (item.categoryId) return item.categoryId === selectedCategoryId;
+          const cat = worldCategories.find((c) => c.id === selectedCategoryId);
+          return cat ? (item.categoryPath?.includes(cat.name) ?? false) : false;
+        })
+      : containerItems;
+
+    const groups = new Map<string, typeof containerItems>();
+    const ungrouped: typeof containerItems = [];
+    for (const item of base) {
+      const groupKey = item.categoryId
+        ? (worldCategories.find((c) => c.id === item.categoryId)?.name ?? item.categoryPath?.[1] ?? null)
+        : (item.categoryPath && item.categoryPath.length >= 2 ? item.categoryPath[1] : null);
+      if (groupKey) {
+        if (!groups.has(groupKey)) groups.set(groupKey, []);
+        groups.get(groupKey)!.push(item);
+      } else {
+        ungrouped.push(item);
+      }
+    }
+    return { groups, ungrouped };
+  }, [containerItems, selectedCategoryId, worldCategories]);
+  const visibleCategories = useMemo(() => {
+    const hiddenRootIds = new Set(
+      worldCategories
+        .filter((c) => c.id === 'wcat_root' || c.name === '世界模型')
+        .map((c) => c.id),
+    );
+    return worldCategories
+      .filter((c) => !hiddenRootIds.has(c.id))
+      .map((c) => ({
+        ...c,
+        parentId: c.parentId !== null && hiddenRootIds.has(c.parentId) ? null : c.parentId,
+      }));
+  }, [worldCategories]);
+
   const activeMapMarkers = useMemo(() => {
     if (!activeMap) return [];
     return worldItems.flatMap((item) => item.mapMarkers).filter((marker) => activeMap.markerIds.includes(marker.id));
   }, [activeMap, worldItems]);
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    setDraggingItemId(null);
+    const { active, over } = event;
+    if (!over || !active) return;
+    const itemId = String(active.id);
+    const overId = String(over.id);
+    if (!overId.startsWith('category-header-')) return;
+    const targetGroupName = overId.replace('category-header-', '');
+
+    // Find the container whose name matches the drop target group name
+    const targetContainer = worldContainers.find(
+      (c) => c.name === targetGroupName || c.importCategoryKey === targetGroupName,
+    );
+    if (!targetContainer) return;
+
+    const item = worldItems.find((i) => i.id === itemId);
+    if (!item || item.containerId === targetContainer.id) return;
+
+    const newCategory = (targetContainer as any).importCategoryKey ?? 'concept';
+    const newCategoryPath = [
+      item.categoryPath?.[0] ?? '世界模型',
+      targetContainer.name,
+      item.name,
+    ];
+    const targetFolderNode = worldCategories.find(
+      (c) => c.name === targetGroupName || c.id === (targetContainer as any).importCategoryKey,
+    );
+    moveWorldItemToCategory(itemId, newCategory, targetContainer.id, newCategoryPath, targetFolderNode?.id ?? null);
+  };
+
+  const makeItemContextMenu = (item: WorldItem) => (e: React.MouseEvent) => {
+    e.preventDefault();
+    openContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [{
+        id: 'delete',
+        label: t('common.delete'),
+        action: () => {
+          deleteWorldItem(item.id);
+          if (activeItemId === item.id) setActiveItemId(null);
+          setLastActionStatus(t('world.itemDeleted', 'World item deleted'));
+        },
+        destructive: true,
+      }],
+    });
+  };
 
   if (sidebarSection === 'settings') {
     return (
@@ -132,16 +316,19 @@ export const WorldWorkspace = () => {
               <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('world.entries', 'World Entries')}</div>
               <div className="text-sm font-black text-text">{t('world.containersAndEntries', 'Containers and Entries')}</div>
             </div>
-            <button type="button" className="rounded-xl border border-border p-2 text-brand hover:border-brand" onClick={() => addWorldContainer({ id: `cont_${Date.now()}`, name: t('world.newContainer', 'New Container'), type: 'notebook', sortOrder: worldContainers.length, isCollapsed: false })}>
+            <button type="button" data-testid="create-container-btn" className="rounded-xl border border-border p-2 text-brand hover:border-brand" onClick={() => addWorldContainer({ id: `cont_${Date.now()}`, name: t('world.newContainer', 'New Container'), type: 'notebook', sortOrder: worldContainers.length, isCollapsed: false })}>
               <Plus size={16} />
             </button>
           </div>
         </div>
-        <div className="h-full overflow-y-auto custom-scrollbar p-2">
-          {worldContainers.map((container) => (
+        <div className="h-full overflow-y-auto custom-scrollbar p-2" data-testid="world-container-list">
+          {worldContainers
+            .filter((container) => !CONTAMINATION_CONTAINER_NAMES.has(container.name.trim()))
+            .map((container) => (
             <button
               key={container.id}
               type="button"
+              data-testid={`world-container-${container.id}`}
               className={cn('mb-2 w-full rounded-2xl border px-4 py-4 text-left', activeContainerId === container.id ? 'border-brand bg-selected' : 'border-border bg-card')}
               onClick={() => setActiveContainerId(container.id)}
               onContextMenu={(e) => {
@@ -204,7 +391,7 @@ export const WorldWorkspace = () => {
               <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{activeContainer?.type}</div>
               <div className="text-sm font-black text-text">{activeContainer?.name}</div>
             </div>
-            <button type="button" className="rounded-xl border border-border p-2 text-brand hover:border-brand" onClick={() => {
+            <button type="button" data-testid="add-world-item-btn" className="rounded-xl border border-border p-2 text-brand hover:border-brand" onClick={() => {
               if (!activeContainer) return;
               const itemId = `item_${Date.now()}`;
               addWorldItem({ id: itemId, containerId: activeContainer.id, type: activeContainer.id.includes('location') ? 'location' : 'note', name: t('world.newEntry', 'New Entry'), description: '', attributes: [], linkedCharacterIds: [], linkedEventIds: [], linkedSceneIds: [], mapMarkers: [], assetPath: null, tagIds: [] });
@@ -214,14 +401,113 @@ export const WorldWorkspace = () => {
             </button>
           </div>
         </div>
-        <div className="h-full overflow-y-auto custom-scrollbar">
-          {containerItems.map((item) => (
-            <button key={item.id} type="button" className={cn('w-full border-b border-divider px-4 py-4 text-left transition-colors', activeItemId === item.id ? 'bg-selected' : 'hover:bg-hover')} onClick={() => setActiveItemId(item.id)} onContextMenu={(e) => { e.preventDefault(); openContextMenu({ x: e.clientX, y: e.clientY, items: [{ id: 'delete', label: t('common.delete'), action: () => { deleteWorldItem(item.id); if (activeItemId === item.id) setActiveItemId(null); setLastActionStatus(t('world.itemDeleted', 'World item deleted')); }, destructive: true }] }); }}>
-              <div className="text-sm font-black text-text">{item.name}</div>
-              <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-text-3">{item.description}</div>
+        {visibleCategories.length > 0 && (
+          <div className="border-b border-border">
+            <button
+              type="button"
+              data-testid="world-category-tree-toggle"
+              aria-expanded={showCategoryTree}
+              className="flex w-full items-center justify-between px-4 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-brand-2 hover:bg-hover"
+              onClick={() => setShowCategoryTree((v) => !v)}
+            >
+              <span>{t('world.categories', 'Categories')}</span>
+              <Plus size={12} className={showCategoryTree ? 'rotate-45 transition-transform' : 'transition-transform'} />
             </button>
-          ))}
-        </div>
+            {showCategoryTree && (
+              <div className="px-2 pb-2" data-testid="world-category-tree">
+                <TagTreePanel<WorldCategoryNode>
+                  nodes={visibleCategories}
+                  renderNodeContent={(node) => (
+                    <button
+                      type="button"
+                      data-testid={`world-category-node-${node.id}`}
+                      className={cn('w-full rounded-xl px-3 py-1.5 text-left text-xs font-bold transition-colors', selectedCategoryId === node.id ? 'bg-brand/15 text-brand-2' : 'text-text-2 hover:bg-hover')}
+                      onClick={() => setSelectedCategoryId(selectedCategoryId === node.id ? null : node.id)}
+                    >
+                      {node.name}
+                      <span className="ml-1 text-text-3">
+                        ({containerItems.filter((i) => i.categoryPath?.includes(node.name)).length})
+                      </span>
+                    </button>
+                  )}
+                  onMove={(dragId, newParentId, insertBeforeSiblingId) => moveWorldCategory(dragId, newParentId, insertBeforeSiblingId)}
+                  onToggleCollapse={toggleWorldCategoryCollapsed}
+                  testIdPrefix="world-category"
+                />
+                <button
+                  type="button"
+                  data-testid="add-world-category-btn"
+                  className="mt-2 flex w-full items-center gap-1 rounded-xl border border-dashed border-border px-3 py-1.5 text-xs text-text-3 hover:border-brand hover:text-brand"
+                  onClick={() => {
+                    const id = `wcat_${Date.now()}`;
+                    addWorldCategory({ id, name: t('world.newCategory', 'New Category'), parentId: null, sortOrder: worldCategories.length, scope: 'world' });
+                  }}
+                >
+                  <Plus size={10} />
+                  {t('world.addCategory', 'Add Category')}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        <DndContext
+          sensors={sensors}
+          onDragStart={(e: DragStartEvent) => setDraggingItemId(String(e.active.id))}
+          onDragEnd={handleDragEnd}
+        >
+          <div className="h-full overflow-y-auto custom-scrollbar" data-testid="world-item-list">
+            {groupedItems.groups.size > 0 ? (
+              <>
+                {Array.from(groupedItems.groups.entries()).map(([groupName, items]) => (
+                  <div key={groupName} data-testid={`world-category-group-${groupName}`}>
+                    <DroppableCategoryHeader groupName={groupName}>
+                      {groupName}
+                    </DroppableCategoryHeader>
+                    {items.map((item) => (
+                      <DraggableWorldItem
+                        key={item.id}
+                        item={item}
+                        isActive={activeItemId === item.id}
+                        onClick={() => setActiveItemId(item.id)}
+                        onContextMenu={makeItemContextMenu(item)}
+                      />
+                    ))}
+                  </div>
+                ))}
+                {groupedItems.ungrouped.map((item) => (
+                  <DraggableWorldItem
+                    key={item.id}
+                    item={item}
+                    isActive={activeItemId === item.id}
+                    onClick={() => setActiveItemId(item.id)}
+                    onContextMenu={makeItemContextMenu(item)}
+                  />
+                ))}
+              </>
+            ) : (
+              containerItems.map((item) => (
+                <DraggableWorldItem
+                  key={item.id}
+                  item={item}
+                  isActive={activeItemId === item.id}
+                  onClick={() => setActiveItemId(item.id)}
+                  onContextMenu={makeItemContextMenu(item)}
+                />
+              ))
+            )}
+          </div>
+          <DragOverlay>
+            {draggingItemId && (() => {
+              const item = worldItems.find((i) => i.id === draggingItemId);
+              return item ? (
+                <div className="bg-card border border-white/20 rounded-xl px-4 py-3 text-sm font-black text-text shadow-xl opacity-90">
+                  {item.name}
+                </div>
+              ) : null;
+            })()}
+          </DragOverlay>
+        </DndContext>
       </aside>
 
       <main className="flex-1 overflow-y-auto custom-scrollbar p-10">
@@ -229,24 +515,24 @@ export const WorldWorkspace = () => {
           <div className="mx-auto max-w-5xl space-y-8">
             <div>
               <div className="mb-2 text-[10px] font-black uppercase tracking-[0.3em] text-text-3">{t('world.entryName', 'Entry Name')}</div>
-              <input value={activeItem.name} onChange={(event) => updateWorldItem({ ...activeItem, name: event.target.value })} className="w-full bg-transparent text-5xl font-black tracking-tight outline-none" />
+              <input data-testid="world-item-name-input" value={activeItem.name} onChange={(event) => updateWorldItem({ ...activeItem, name: event.target.value })} className="w-full bg-transparent text-5xl font-black tracking-tight outline-none" />
             </div>
             <div>
               <div className="mb-2 text-[10px] font-black uppercase tracking-[0.3em] text-text-3">{t('world.descriptionLabel', 'Description')}</div>
-              <textarea value={activeItem.description} onChange={(event) => updateWorldItem({ ...activeItem, description: event.target.value })} className="h-40 w-full rounded-3xl border border-border bg-bg p-5 font-serif text-sm leading-relaxed text-text-2 outline-none" />
+              <textarea data-testid="world-item-description-input" value={activeItem.description} onChange={(event) => updateWorldItem({ ...activeItem, description: event.target.value })} className="h-40 w-full rounded-3xl border border-border bg-bg p-5 font-serif text-sm leading-relaxed text-text-2 outline-none" />
             </div>
             <div className="rounded-3xl border border-border bg-card p-6">
               <div className="mb-4 flex items-center justify-between">
                 <div className="text-[10px] font-black uppercase tracking-[0.3em] text-text-3">{t('world.attributes', 'Attributes')}</div>
-                <button type="button" className="rounded-xl border border-border px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-text-2 hover:border-brand" onClick={() => updateWorldItem({ ...activeItem, attributes: [...activeItem.attributes, { key: '', value: '' }] })}>
+                <button type="button" data-testid="dynamic-field-add-row" className="rounded-xl border border-border px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-text-2 hover:border-brand" onClick={() => updateWorldItem({ ...activeItem, attributes: [...activeItem.attributes, { key: '', value: '' }] })}>
                   {t('world.addRow', 'Add Row')}
                 </button>
               </div>
               <div className="space-y-3">
                 {activeItem.attributes.map((attribute, index) => (
                   <div key={`${attribute.key}-${index}`} className="flex gap-3">
-                    <input value={attribute.key} onChange={(event) => updateWorldItem({ ...activeItem, attributes: activeItem.attributes.map((entry, entryIndex) => entryIndex === index ? { ...entry, key: event.target.value } : entry) })} className="flex-1 rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('world.attribute', 'Attribute')} />
-                    <input value={attribute.value} onChange={(event) => updateWorldItem({ ...activeItem, attributes: activeItem.attributes.map((entry, entryIndex) => entryIndex === index ? { ...entry, value: event.target.value } : entry) })} className="flex-[1.4] rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('world.value', 'Value')} />
+                    <input data-testid="dynamic-field-key-input" value={attribute.key} onChange={(event) => updateWorldItem({ ...activeItem, attributes: activeItem.attributes.map((entry, entryIndex) => entryIndex === index ? { ...entry, key: event.target.value } : entry) })} className="flex-1 rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('world.attribute', 'Attribute')} />
+                    <input data-testid="dynamic-field-value-input" value={attribute.value} onChange={(event) => updateWorldItem({ ...activeItem, attributes: activeItem.attributes.map((entry, entryIndex) => entryIndex === index ? { ...entry, value: event.target.value } : entry) })} className="flex-[1.4] rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('world.value', 'Value')} />
                     <button type="button" className="rounded-2xl border border-red/40 px-3 text-red" onClick={() => updateWorldItem({ ...activeItem, attributes: activeItem.attributes.filter((_, entryIndex) => entryIndex !== index) })}>
                       <Trash2 size={14} />
                     </button>
@@ -254,6 +540,9 @@ export const WorldWorkspace = () => {
                 ))}
               </div>
             </div>
+            <button type="button" data-testid="inspector-save" className="rounded-xl bg-brand px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-white" onClick={() => setLastActionStatus('Saved')}>
+              {t('common.save', 'Save')}
+            </button>
             <div className="grid gap-6 lg:grid-cols-2">
               <LinkPanel title={t('world.linkedTimeline', 'Linked Timeline')} items={timelineEvents.filter((event) => event.linkedWorldItemIds.includes(activeItem.id) || event.locationIds.includes(activeItem.id)).map((event) => ({ id: event.id, label: event.title, onClick: () => navigate(`/timeline/timeline?event=${event.id}`) }))} />
               <LinkPanel title={t('world.linkedScenes', 'Linked Scenes')} items={scenes.filter((scene) => scene.linkedWorldItemIds.includes(activeItem.id)).map((scene) => ({ id: scene.id, label: scene.title, onClick: () => navigate(`/writing/scenes?scene=${scene.id}`) }))} />

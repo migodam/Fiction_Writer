@@ -1,22 +1,38 @@
-# Fiction Writer Project Instructions
+# GEMINI.md
 
-This project is a **Local-First** AI Fiction Writing Software.
+This file provides operational guidance to Gemini-style coding agents working in this repository.
 
-## Architectural Principles
+## Start Here
+Read these before making changes:
+1. `dev_docs/README.md`
+2. `dev_docs/DEV_RULES.md`
+3. task-relevant canonical docs from the Source-of-Truth Registry
 
-1.  **Privacy First**: All logic must prioritize local execution. Avoid external API calls (like OpenAI/Anthropic) unless specifically requested by the user. Prefer local LLM interfaces like **Ollama** or **llama-cpp-python**.
-2.  **Long-Term Memory**: Implementation of RAG (Retrieval-Augmented Generation) or local state management to handle complex novel plot consistency.
-3.  **UI/UX**: Target a clean, distraction-free writing environment. Streamlit or a desktop-focused web app is preferred for the initial prototype.
-4.  **Extensibility**: The codebase should be modular, separating the LLM reasoning, content storage, and UI layers.
+## Active Stack
+- UI: `src/ui-react`
+- Desktop/runtime: `src/electron`
+- Workflow runtime: `sidecar`
 
-## Tech Stack
+Treat `src/ui` and other prototype-era paths as reference-only unless a task explicitly requires them.
 
--   **Backend**: Python 3.10+, FastAPI or Flask (if needed).
--   **UI**: Streamlit (fast prototyping) or Electron/React (long-term).
--   **Local LLM Interface**: Ollama (preferred) or llama-cpp.
--   **Vector DB (Optional)**: ChromaDB or FAISS for plot consistency.
+## Operating Principles
+1. Privacy-first and local-first still apply, but the active product is an Electron/React desktop app with a Python sidecar.
+2. Canonical product/workflow behavior comes from `dev_docs`, not from historical prototype assumptions.
+3. Workflow status lives in `dev_docs/WORKFLOW_STATUS.md`.
+4. UI/store/IPC/sidecar mappings live in `dev_docs/FRONTEND_BACKEND_CHECKLIST.md`.
+5. Parallel work must follow the worktree docs in `dev_docs/`.
+
+## Commands
+
+```bash
+npm install
+npm run electron:dev
+npm run ui:dev
+npm run ui:build
+npm run ui:lint
+npm run ui:format
+npm run test:e2e
+```
 
 ## Git Commit Style
-
--   Use clear, concise messages.
--   Prefix with `feat:`, `fix:`, `docs:`, or `chore:`.
+Use conventional commit prefixes: `feat:`, `fix:`, `docs:`, `chore:`.
