@@ -51,6 +51,7 @@ const GraphBoardNode: React.FC<{ data: { node: ProjectGraphNode } }> = ({ data }
   return (
     <div
       className="rounded-2xl border border-border p-3 shadow-sm"
+      data-testid={`graph-node-${n.id}`}
       style={{ background: bg, width: n.width || 180, minHeight: n.height || 80 }}
     >
       <Handle type="target" position={Position.Top} />

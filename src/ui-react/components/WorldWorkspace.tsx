@@ -135,16 +135,20 @@ export const WorldWorkspace = () => {
   const containerItems = useMemo(() => worldItems.filter((item) => item.containerId === activeContainer?.id), [worldItems, activeContainer]);
   const groupedItems = useMemo(() => {
     const base = selectedCategoryId
-      ? (() => {
+      ? containerItems.filter((item) => {
+          if (item.categoryId) return item.categoryId === selectedCategoryId;
           const cat = worldCategories.find((c) => c.id === selectedCategoryId);
-          return containerItems.filter((item) => cat && item.categoryPath?.includes(cat.name));
-        })()
+          return cat ? (item.categoryPath?.includes(cat.name) ?? false) : false;
+        })
       : containerItems;
+
     const groups = new Map<string, typeof containerItems>();
     const ungrouped: typeof containerItems = [];
     for (const item of base) {
-      if (item.categoryPath && item.categoryPath.length >= 2) {
-        const groupKey = item.categoryPath[1];
+      const groupKey = item.categoryId
+        ? (worldCategories.find((c) => c.id === item.categoryId)?.name ?? item.categoryPath?.[1] ?? null)
+        : (item.categoryPath && item.categoryPath.length >= 2 ? item.categoryPath[1] : null);
+      if (groupKey) {
         if (!groups.has(groupKey)) groups.set(groupKey, []);
         groups.get(groupKey)!.push(item);
       } else {
@@ -153,6 +157,20 @@ export const WorldWorkspace = () => {
     }
     return { groups, ungrouped };
   }, [containerItems, selectedCategoryId, worldCategories]);
+  const visibleCategories = useMemo(() => {
+    const hiddenRootIds = new Set(
+      worldCategories
+        .filter((c) => c.id === 'wcat_root' || c.name === '世界模型')
+        .map((c) => c.id),
+    );
+    return worldCategories
+      .filter((c) => !hiddenRootIds.has(c.id))
+      .map((c) => ({
+        ...c,
+        parentId: c.parentId !== null && hiddenRootIds.has(c.parentId) ? null : c.parentId,
+      }));
+  }, [worldCategories]);
+
   const activeMapMarkers = useMemo(() => {
     if (!activeMap) return [];
     return worldItems.flatMap((item) => item.mapMarkers).filter((marker) => activeMap.markerIds.includes(marker.id));
@@ -182,7 +200,10 @@ export const WorldWorkspace = () => {
       targetContainer.name,
       item.name,
     ];
-    moveWorldItemToCategory(itemId, newCategory, targetContainer.id, newCategoryPath);
+    const targetFolderNode = worldCategories.find(
+      (c) => c.name === targetGroupName || c.id === (targetContainer as any).importCategoryKey,
+    );
+    moveWorldItemToCategory(itemId, newCategory, targetContainer.id, newCategoryPath, targetFolderNode?.id ?? null);
   };
 
   const makeItemContextMenu = (item: WorldItem) => (e: React.MouseEvent) => {
@@ -380,11 +401,12 @@ export const WorldWorkspace = () => {
             </button>
           </div>
         </div>
-        {worldCategories.length > 0 && (
+        {visibleCategories.length > 0 && (
           <div className="border-b border-border">
             <button
               type="button"
               data-testid="world-category-tree-toggle"
+              aria-expanded={showCategoryTree}
               className="flex w-full items-center justify-between px-4 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-brand-2 hover:bg-hover"
               onClick={() => setShowCategoryTree((v) => !v)}
             >
@@ -394,7 +416,7 @@ export const WorldWorkspace = () => {
             {showCategoryTree && (
               <div className="px-2 pb-2" data-testid="world-category-tree">
                 <TagTreePanel<WorldCategoryNode>
-                  nodes={worldCategories}
+                  nodes={visibleCategories}
                   renderNodeContent={(node) => (
                     <button
                       type="button"

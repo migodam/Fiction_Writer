@@ -446,7 +446,7 @@ interface ProjectState {
   captureUndoSnapshot: (label: string) => void;
   undoAction: () => Promise<void>;
   redoAction: () => Promise<void>;
-  pendingUndoTransaction: { label: string; snapshot: ProjectDataSnapshot } | null;
+  pendingUndoTransaction: { label: string; snapshot: ProjectDataSnapshot; undoStack: UndoEntry[] } | null;
   beginUndoTransaction: (label: string) => void;
   commitUndoTransaction: () => void;
   cancelUndoTransaction: () => void;
@@ -973,10 +973,11 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       return;
     }
     const snapshot = extractSnapshot(get());
-    set({ pendingUndoTransaction: { label, snapshot } });
+    const undoStack = get().undoStack;
+    set({ pendingUndoTransaction: { label, snapshot, undoStack } });
   },
   commitUndoTransaction: () => {
-    const { pendingUndoTransaction, undoStack } = get();
+    const { pendingUndoTransaction } = get();
     if (!pendingUndoTransaction) return;
     const current = extractSnapshot(get());
     const prev = pendingUndoTransaction.snapshot;
@@ -993,7 +994,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       snapshot: pendingUndoTransaction.snapshot,
     };
     set({
-      undoStack: [entry, ...undoStack].slice(0, MAX_UNDO_DEPTH),
+      undoStack: [entry, ...pendingUndoTransaction.undoStack].slice(0, MAX_UNDO_DEPTH),
       redoStack: [],
       pendingUndoTransaction: null,
     });
@@ -1004,7 +1005,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   rollbackUndoTransaction: () => {
     const pending = get().pendingUndoTransaction;
     if (!pending) return;
-    set({ ...pending.snapshot, pendingUndoTransaction: null });
+    set({ ...pending.snapshot, undoStack: pending.undoStack, pendingUndoTransaction: null });
   },
   setSelectedEntity: (type, id) => set((state) => ({
     selectedEntity: { type, id },

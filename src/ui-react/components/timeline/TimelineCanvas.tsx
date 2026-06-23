@@ -136,6 +136,7 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
     beginUndoTransaction,
     commitUndoTransaction,
     cancelUndoTransaction,
+    rollbackUndoTransaction,
   } = useProjectStore();
   const { setLastActionStatus } = useUIStore();
   const { t } = useI18n();
@@ -512,6 +513,7 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
 
   const startEventDrag = useCallback(
     (interaction: DragState['interaction'], pressState: EventPressState, currentCanvasPos?: Point) => {
+      useProjectStore.getState().beginUndoTransaction('Move event');
       const nextDragState: DragState = {
         eventId: pressState.eventId,
         pointerId: pressState.pointerId,
@@ -547,6 +549,7 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
           moveTimelineEvent(state.eventId, state.snapTarget.branchId, slot);
         }
       }
+      useProjectStore.getState().commitUndoTransaction();
     },
     [branchEventsMap, eventCurveParams, events, moveTimelineEvent, updateTimelineEventPosition],
   );
@@ -684,6 +687,7 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
         );
         if (movement > MOVE_THRESHOLD_PX / zoom) {
           clearPendingEventPress();
+          useProjectStore.getState().beginUndoTransaction('Move event');
           const initialDragState = computePreviewState(
             {
               eventId: eventPressState.eventId,
@@ -728,6 +732,7 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
       setMode('idle');
 
       if (!activeDragState.hasMoved) {
+        useProjectStore.getState().rollbackUndoTransaction();
         if (activeDragState.interaction === 'move') {
           setEditingEventId(activeDragState.eventId);
         }
@@ -737,11 +742,32 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
       commitEventDrag(activeDragState);
     };
 
+    const cancelEventDrag = () => {
+      useProjectStore.getState().rollbackUndoTransaction();
+      dragStateRef.current = null;
+      setDragState(null);
+      setMode('idle');
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        cancelEventDrag();
+      }
+    };
+
+    const onPointerCancel = () => {
+      cancelEventDrag();
+    };
+
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('pointercancel', onPointerCancel);
     return () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('pointercancel', onPointerCancel);
     };
   }, [
     clearPendingEventPress,

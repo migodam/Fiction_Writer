@@ -29,6 +29,7 @@ export const ContextMenu = () => {
         <button
           type="button"
           key={item.id}
+          data-testid={`context-menu-item-${item.id}`}
           className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition-colors ${item.destructive ? 'text-red-300 hover:bg-red-500/10' : 'text-slate-100 hover:bg-white/6'}`}
           onClick={() => {
             item.action();

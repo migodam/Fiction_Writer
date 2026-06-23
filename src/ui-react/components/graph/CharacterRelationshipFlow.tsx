@@ -22,6 +22,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import { useProjectStore, useUIStore } from '../../store';
 import { useI18n } from '../../i18n';
+import { cn } from '../../utils';
 import type { Character, Relationship } from '../../models/project';
 
 type CharacterNodeData = {
@@ -157,7 +158,7 @@ function sortByGraphPriority(characters: Character[], relationships: Relationshi
 }
 
 // Characters → React Flow nodes, deterministic radial layout by relationship degree.
-function buildNodes(characters: Character[], relationships: Relationship[]): Node<CharacterNodeData>[] {
+function buildRadialNodes(characters: Character[], relationships: Relationship[]): Node<CharacterNodeData>[] {
   if (characters.length === 0) return [];
 
   const sorted = sortByGraphPriority(characters, relationships);
@@ -225,6 +226,107 @@ function buildEdges(relationships: Relationship[]): Edge<RelationshipEdgeData>[]
     markerStart: rel.directionality === 'bidirectional' ? { type: MarkerType.ArrowClosed } : undefined,
     animated: rel.status === 'active',
   };
+  });
+}
+
+export type GraphLayoutMode = 'radial' | 'cluster' | 'force-lite';
+
+const TIER_ORDER = ['core', 'major', 'supporting', 'minor', 'ungrouped'] as const;
+
+function buildClusterNodes(chars: Character[], rels: Relationship[]): Node<CharacterNodeData>[] {
+  const degree = relationshipDegrees(rels);
+  const groups = new Map<string, Character[]>(TIER_ORDER.map((t) => [t, []]));
+  for (const c of chars) {
+    const tier = (c.importance ?? 'ungrouped') as typeof TIER_ORDER[number];
+    (groups.get(tier) ?? groups.get('ungrouped')!).push(c);
+  }
+  const nodes: Node<CharacterNodeData>[] = [];
+  let col = 0;
+  for (const tier of TIER_ORDER) {
+    const group = (groups.get(tier) ?? []).sort((a, b) => (degree[b.id] ?? 0) - (degree[a.id] ?? 0));
+    if (group.length === 0) continue;
+    group.forEach((char, row) =>
+      nodes.push({
+        id: char.id,
+        type: 'character',
+        position: { x: col * 220, y: row * 120 },
+        data: { character: char, label: char.name, importance: char.importance ?? 'ungrouped', layoutRole: 'ring' as const },
+      }),
+    );
+    col++;
+  }
+  return nodes;
+}
+
+function buildForceLiteNodes(
+  chars: Character[],
+  rels: Relationship[],
+  iterations = 50,
+): Node<CharacterNodeData>[] {
+  const sorted = [...chars].sort((a, b) => a.id.localeCompare(b.id));
+  const n = sorted.length;
+  const R = 300;
+  const positions = sorted.map((_, i) => ({
+    x: Math.round(Math.cos((2 * Math.PI * i) / Math.max(n, 1)) * R),
+    y: Math.round(Math.sin((2 * Math.PI * i) / Math.max(n, 1)) * R),
+  }));
+  const idToIdx = new Map(sorted.map((c, i) => [c.id, i]));
+  const k = 120;
+  for (let iter = 0; iter < iterations; iter++) {
+    const forces = positions.map(() => ({ x: 0, y: 0 }));
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const dx = positions[i].x - positions[j].x || 0.01;
+        const dy = positions[i].y - positions[j].y || 0.01;
+        const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+        const fr = (k * k) / d;
+        forces[i].x += (dx / d) * fr; forces[i].y += (dy / d) * fr;
+        forces[j].x -= (dx / d) * fr; forces[j].y -= (dy / d) * fr;
+      }
+    }
+    for (const rel of rels) {
+      const i = idToIdx.get(rel.sourceId);
+      const j = idToIdx.get(rel.targetId);
+      if (i === undefined || j === undefined) continue;
+      const dx = positions[j].x - positions[i].x;
+      const dy = positions[j].y - positions[i].y;
+      const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+      const fa = (d * d) / k;
+      forces[i].x += (dx / d) * fa; forces[i].y += (dy / d) * fa;
+      forces[j].x -= (dx / d) * fa; forces[j].y -= (dy / d) * fa;
+    }
+    const t = Math.max(10, 100 - iter * 2);
+    for (let i = 0; i < n; i++) {
+      const fl = Math.sqrt(forces[i].x ** 2 + forces[i].y ** 2) || 1;
+      positions[i].x = Math.round(positions[i].x + (forces[i].x / fl) * Math.min(fl, t));
+      positions[i].y = Math.round(positions[i].y + (forces[i].y / fl) * Math.min(fl, t));
+    }
+  }
+  return sorted.map((char, i) => ({
+    id: char.id,
+    type: 'character',
+    position: positions[i],
+    data: { character: char, label: char.name, importance: char.importance ?? 'ungrouped', layoutRole: 'ring' as const },
+  }));
+}
+
+function resolveNodeLabelCollisions(
+  nodes: Node<CharacterNodeData>[],
+  nodeW = 140,
+  nodeH = 80,
+): Node<CharacterNodeData>[] {
+  const sorted = [...nodes].sort(
+    (a, b) => (importanceRank[a.data.importance] ?? 99) - (importanceRank[b.data.importance] ?? 99),
+  );
+  const placed: Array<{ x: number; y: number }> = [];
+  return sorted.map((node) => {
+    const { x } = node.position;
+    let y = node.position.y;
+    while (placed.some((p) => Math.abs(p.x - x) < nodeW && Math.abs(p.y - y) < nodeH)) {
+      y += 16;
+    }
+    placed.push({ x, y });
+    return { ...node, position: { x, y } };
   });
 }
 
@@ -374,6 +476,7 @@ export const CharacterRelationshipFlow: React.FC = () => {
   const { openContextMenu } = useUIStore();
   const { t } = useI18n();
   const [editingEdgeId, setEditingEdgeId] = useState<string | null>(null);
+  const [layoutMode, setLayoutMode] = useState<GraphLayoutMode>('radial');
 
   const visibleChars = useMemo(
     () =>
@@ -390,13 +493,26 @@ export const CharacterRelationshipFlow: React.FC = () => {
     [relationships, visibleCharIds],
   );
 
-  const [nodes, setNodes, onNodesChange] = useNodesState(buildNodes(visibleChars, visibleRelationships));
+  const buildByMode = useCallback(
+    (chars: Character[], rels: Relationship[], mode: GraphLayoutMode) => {
+      const base =
+        mode === 'cluster' ? buildClusterNodes(chars, rels)
+        : mode === 'force-lite' ? buildForceLiteNodes(chars, rels)
+        : buildRadialNodes(chars, rels);
+      return resolveNodeLabelCollisions(base);
+    },
+    [],
+  );
+
+  const [nodes, setNodes, onNodesChange] = useNodesState(
+    buildByMode(visibleChars, visibleRelationships, layoutMode),
+  );
   const [edges, setEdges, onEdgesChange] = useEdgesState(buildEdges(visibleRelationships));
 
-  // Update nodes when visible characters change
+  // Update nodes when visible characters, relationships, or layout mode change
   React.useEffect(() => {
-    setNodes(buildNodes(visibleChars, visibleRelationships));
-  }, [visibleChars, visibleRelationships, setNodes]);
+    setNodes(buildByMode(visibleChars, visibleRelationships, layoutMode));
+  }, [visibleChars, visibleRelationships, layoutMode, setNodes, buildByMode]);
 
   React.useEffect(() => {
     setEdges(buildEdges(visibleRelationships));
@@ -454,6 +570,22 @@ export const CharacterRelationshipFlow: React.FC = () => {
 
   return (
     <div className="relative h-full w-full" data-testid="character-relationship-flow">
+      <div className="absolute top-3 left-3 z-10 flex gap-1 rounded-xl border border-border bg-bg-elev-1 p-1 shadow">
+        {(['radial', 'cluster', 'force-lite'] as GraphLayoutMode[]).map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            data-testid={`graph-layout-mode-${mode}`}
+            onClick={() => setLayoutMode(mode)}
+            className={cn(
+              'rounded-lg px-3 py-1 text-[10px] font-black uppercase tracking-widest transition-colors',
+              layoutMode === mode ? 'bg-brand text-white' : 'text-text-3 hover:text-text',
+            )}
+          >
+            {mode === 'radial' ? '辐射' : mode === 'cluster' ? '聚类' : '力导向'}
+          </button>
+        ))}
+      </div>
       <ReactFlow
         nodes={nodes}
         edges={edges}

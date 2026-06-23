@@ -345,3 +345,136 @@ test('nested beginUndoTransaction preserves original snapshot', async ({ page })
   expect(restoredGeometry.laneOffset).toBe(originalGeometry.laneOffset);
   expect(restoredGeometry.bend).toBe(originalGeometry.bend);
 });
+
+// ─── Event drag tests (real Playwright pointer drag) ─────────────────────────
+
+const LONG_PRESS_WAIT = 600; // 500ms threshold + buffer
+
+async function injectTimelineForEventDrag(page: import('@playwright/test').Page) {
+  const branchA = {
+    ...BASE_BRANCH,
+    id: 'tx_branch_drag_a',
+    name: '干线',
+    anchorStartPos: { x: 0, y: 45 },
+    anchorEndPos: { x: 2000, y: 45 },
+    geometry: { laneOffset: 0, bend: 0.25, thickness: 1 },
+  };
+  const branchB = {
+    ...BASE_BRANCH,
+    id: 'tx_branch_drag_b',
+    name: '支线',
+    anchorStartPos: { x: 0, y: 135 },
+    anchorEndPos: { x: 2000, y: 135 },
+    geometry: { laneOffset: 90, bend: 0.25, thickness: 1 },
+  };
+  const event = {
+    ...BASE_EVENT,
+    id: 'tx_drag_evt',
+    branchId: 'tx_branch_drag_a',
+    orderIndex: 0,
+    title: '拖拽事件',
+  };
+  await injectAt(page, 'http://localhost:3000/timeline', {
+    timelineBranches: [branchA, branchB],
+    timelineEvents: [event],
+  });
+  // Reset undo state so stackBefore is 0 regardless of app initialization entries
+  await page.evaluate(() => {
+    (window as any).__narrativeStore.setState({ undoStack: [], redoStack: [], pendingUndoTransaction: null });
+  });
+  await expect(page.getByTestId('timeline-canvas')).toBeVisible();
+  await expect(page.getByTestId('timeline-event-node-tx_drag_evt')).toBeVisible();
+}
+
+test('pointer-dragging event to new branch creates exactly one undo entry and is reversible', async ({ page }) => {
+  await injectTimelineForEventDrag(page);
+  const stackBefore = await page.evaluate(() =>
+    (window as any).__narrativeStore.getState().undoStack.length,
+  );
+
+  const box = await page.getByTestId('timeline-event-node-tx_drag_evt').boundingBox();
+  expect(box).not.toBeNull();
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(LONG_PRESS_WAIT);
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2 + 90, { steps: 10 });
+  await page.mouse.up();
+
+  expect(
+    await page.evaluate(() => (window as any).__narrativeStore.getState().undoStack.length),
+  ).toBe(stackBefore + 1);
+
+  await page.keyboard.press('Meta+z');
+  const restored = await page.evaluate(() =>
+    (window as any).__narrativeStore
+      .getState()
+      .timelineEvents.find((e: any) => e.id === 'tx_drag_evt')?.branchId,
+  );
+  expect(restored).toBe('tx_branch_drag_a');
+});
+
+test('Escape during event pointer-drag cancels with zero undo entries', async ({ page }) => {
+  await injectTimelineForEventDrag(page);
+  const stackBefore = await page.evaluate(() =>
+    (window as any).__narrativeStore.getState().undoStack.length,
+  );
+
+  const box = await page.getByTestId('timeline-event-node-tx_drag_evt').boundingBox();
+  expect(box).not.toBeNull();
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(LONG_PRESS_WAIT);
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2 + 60, { steps: 5 });
+  await page.keyboard.press('Escape');
+  await page.mouse.up();
+
+  expect(
+    await page.evaluate(() => (window as any).__narrativeStore.getState().undoStack.length),
+  ).toBe(stackBefore);
+
+  const branch = await page.evaluate(() =>
+    (window as any).__narrativeStore
+      .getState()
+      .timelineEvents.find((e: any) => e.id === 'tx_drag_evt')?.branchId,
+  );
+  expect(branch).toBe('tx_branch_drag_a');
+});
+
+test('event drag undo does not roll back unrelated chapter data', async ({ page }) => {
+  await injectTimelineForEventDrag(page);
+  await page.evaluate(() => {
+    (window as any).__narrativeStore.setState((s: any) => ({
+      chapters: [
+        ...(s.chapters ?? []),
+        {
+          id: 'tx_chap_guard',
+          title: '守护章节',
+          summary: '',
+          goal: '',
+          notes: '',
+          sceneIds: [],
+          orderIndex: 0,
+          status: 'draft',
+        },
+      ],
+    }));
+  });
+
+  const box = await page.getByTestId('timeline-event-node-tx_drag_evt').boundingBox();
+  expect(box).not.toBeNull();
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(LONG_PRESS_WAIT);
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2 + 90, { steps: 10 });
+  await page.mouse.up();
+
+  await page.keyboard.press('Meta+z');
+
+  const chapPresent = await page.evaluate(
+    () =>
+      !!(window as any).__narrativeStore
+        .getState()
+        .chapters?.find((c: any) => c.id === 'tx_chap_guard'),
+  );
+  expect(chapPresent).toBe(true);
+});

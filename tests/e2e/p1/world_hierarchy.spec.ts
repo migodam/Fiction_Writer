@@ -133,3 +133,118 @@ test('items without categoryPath still render in flat fallback mode', async ({ p
   await expect(page.getByTestId('world-item-wlegacy_01')).toBeVisible();
   await expect(page.getByTestId('world-item-wlegacy_02')).toBeVisible();
 });
+
+// Test 5: children of hidden wcat_root are promoted to top-level in the category tree
+test('children of hidden wcat_root are visible as top-level nodes in TagTreePanel', async ({ page }) => {
+  await page.goto('http://localhost:3000');
+  await page.evaluate(() => {
+    (window as any).__narrativeStore.setState((s: any) => ({
+      worldCategories: [
+        { id: 'wcat_root', name: '世界模型', parentId: null, sortOrder: 0, scope: 'world' },
+        { id: 'wcat_child', name: '功法类型', parentId: 'wcat_root', sortOrder: 0, scope: 'world' },
+        { id: 'wcat_sib', name: '地理', parentId: 'wcat_root', sortOrder: 1, scope: 'world' },
+      ],
+      worldContainers: [
+        ...s.worldContainers,
+        { id: 'wc_vis_test', name: '可见测试', type: 'notebook' as const, sortOrder: 80 },
+      ],
+    }));
+  });
+  await page.getByTestId('activity-btn-world').click();
+  await page.getByTestId('world-container-wc_vis_test').click();
+
+  // Hidden root must not appear
+  await expect(page.getByTestId('world-category-node-wcat_root')).not.toBeVisible();
+  // Its children must be visible as top-level
+  await expect(page.getByTestId('world-category-node-wcat_child')).toBeVisible();
+  await expect(page.getByTestId('world-category-node-wcat_sib')).toBeVisible();
+});
+
+// Test 6: categoryId-based item filter uses stable ID not display string
+test('selecting category by ID filters items using categoryId field', async ({ page }) => {
+  await page.goto('http://localhost:3000');
+  await page.evaluate(() => {
+    (window as any).__narrativeStore.setState((s: any) => ({
+      worldContainers: [
+        ...s.worldContainers,
+        { id: 'wc_idtest', name: '测试容器', type: 'notebook' as const, sortOrder: 90 },
+      ],
+      worldItems: [
+        ...s.worldItems,
+        {
+          id: 'wi_match', containerId: 'wc_idtest', type: 'concept', name: '属于功法',
+          description: '', attributes: [], linkedCharacterIds: [], linkedEventIds: [],
+          linkedSceneIds: [], mapMarkers: [], tagIds: [],
+          categoryId: 'wcat_stable', categoryPath: ['世界模型', '功法类型'],
+        },
+        {
+          id: 'wi_other', containerId: 'wc_idtest', type: 'concept', name: '不属于',
+          description: '', attributes: [], linkedCharacterIds: [], linkedEventIds: [],
+          linkedSceneIds: [], mapMarkers: [], tagIds: [],
+          categoryId: 'wcat_other', categoryPath: ['世界模型', '其他'],
+        },
+      ],
+      worldCategories: [
+        { id: 'wcat_stable', name: '功法类型', parentId: null, sortOrder: 0, scope: 'world' },
+        { id: 'wcat_other', name: '其他', parentId: null, sortOrder: 1, scope: 'world' },
+      ],
+    }));
+  });
+  await page.getByTestId('activity-btn-world').click();
+  await page.getByTestId('world-container-wc_idtest').click();
+  await page.getByTestId('world-category-node-wcat_stable').click();
+  await expect(page.getByTestId('world-item-wi_match')).toBeVisible();
+  await expect(page.getByTestId('world-item-wi_other')).not.toBeVisible();
+});
+
+// Test 7: addWorldCategory creates exactly one undo entry and is reversible
+test('addWorldCategory creates one undo entry and is reversible', async ({ page }) => {
+  await page.goto('http://localhost:3000');
+  await page.evaluate(() => {
+    (window as any).__narrativeStore.setState({ undoStack: [], redoStack: [], pendingUndoTransaction: null });
+  });
+  const stackBefore = await page.evaluate(() =>
+    (window as any).__narrativeStore.getState().undoStack.length);
+  await page.evaluate(() => {
+    (window as any).__narrativeStore.getState().addWorldCategory(
+      { id: 'wcat_new_u', name: '新类别', parentId: null, sortOrder: 0, scope: 'world' },
+    );
+  });
+  const stackAfter = await page.evaluate(() =>
+    (window as any).__narrativeStore.getState().undoStack.length);
+  expect(stackAfter).toBe(stackBefore + 1);
+  await page.evaluate(async () => {
+    await (window as any).__narrativeStore.getState().undoAction();
+  });
+  const catExists = await page.evaluate(() =>
+    !!(window as any).__narrativeStore.getState().worldCategories.find((c: any) => c.id === 'wcat_new_u'));
+  expect(catExists).toBe(false);
+});
+
+// Test 8: moveWorldCategory creates exactly one undo entry and is reversible
+test('moveWorldCategory creates one undo entry and is reversible', async ({ page }) => {
+  await page.goto('http://localhost:3000');
+  await page.evaluate(() => {
+    (window as any).__narrativeStore.setState({
+      undoStack: [], redoStack: [], pendingUndoTransaction: null,
+      worldCategories: [
+        { id: 'wcat_u_a', name: '类别A', parentId: null, sortOrder: 0, scope: 'world' },
+        { id: 'wcat_u_b', name: '类别B', parentId: null, sortOrder: 1, scope: 'world' },
+      ],
+    });
+  });
+  const stackBefore = await page.evaluate(() =>
+    (window as any).__narrativeStore.getState().undoStack.length);
+  await page.evaluate(() => {
+    (window as any).__narrativeStore.getState().moveWorldCategory('wcat_u_b', 'wcat_u_a', null);
+  });
+  expect(await page.evaluate(() =>
+    (window as any).__narrativeStore.getState().undoStack.length,
+  )).toBe(stackBefore + 1);
+  await page.evaluate(async () => {
+    await (window as any).__narrativeStore.getState().undoAction();
+  });
+  const catB = await page.evaluate(() =>
+    (window as any).__narrativeStore.getState().worldCategories.find((c: any) => c.id === 'wcat_u_b'));
+  expect(catB?.parentId).toBeNull();
+});

@@ -18,6 +18,28 @@ TRAIT_NOISE_WARN = 0.35
 BRANCH_DENSITY_WARN = 24
 MAINLINE_DENSITY_WARN = 48
 
+# World-item contamination: meta-documents / UI concepts that should not be world items
+_CONTAMINATION_NAME_PATTERNS = [
+    re.compile(r"人物关系"),
+    re.compile(r"关系图"),
+    re.compile(r"关系网"),
+    re.compile(r"人物志"),
+    re.compile(r"年表"),
+    re.compile(r"时间线"),
+    re.compile(r"timeline", re.IGNORECASE),
+]
+
+# Container keys considered cultivation-related for misclassification detection
+_CULTIVATION_CONTAINERS: frozenset[str] = frozenset({
+    "systems",
+    "cultivation_methods",
+    "cultivation_ranks",
+    "cultivation_levels",
+    "cultivation_stages",
+    "techniques",
+    "abilities",
+})
+
 
 class DiagnosticInputError(ValueError):
     pass
@@ -351,7 +373,99 @@ def _timeline_metrics(timeline: dict[str, Any], operations: list[dict[str, Any]]
     }
 
 
-def _symptom_flags(metrics: dict[str, Any], review_report: dict[str, Any], inbox_count: int) -> dict[str, bool]:
+def _manuscript_projection_metrics(project_path: Path) -> dict[str, Any]:
+    nodes = _safe_list(_read_json(project_path / "writing" / "manuscript" / "nodes.json", default=[]))
+    chapter_node_count = sum(
+        1 for n in nodes if isinstance(n, dict) and n.get("type") == "chapter_outline"
+    )
+    manuscript_dir = project_path / "writing" / "manuscript"
+    scene_nodes_with_content = 0
+    for node in nodes:
+        if not isinstance(node, dict) or node.get("type") != "scene_outline":
+            continue
+        node_id = node.get("id")
+        if not node_id:
+            continue
+        md_path = manuscript_dir / f"{node_id}.md"
+        if md_path.exists() and md_path.read_text(encoding="utf-8").strip():
+            scene_nodes_with_content += 1
+    return {
+        "chapter_node_count": chapter_node_count,
+        "scene_nodes_with_content": scene_nodes_with_content,
+    }
+
+
+def _chapter_quality_metrics(project_path: Path) -> dict[str, Any]:
+    manuscript = _safe_dict(_read_json(project_path / "manuscript.json", default={}))
+    chapters = _safe_list(manuscript.get("chapters"))
+    chapter_numbers: list[int] = []
+    for ch in chapters:
+        if isinstance(ch, dict):
+            num = ch.get("chapterNumber")
+            if isinstance(num, int):
+                chapter_numbers.append(num)
+    counts = Counter(chapter_numbers)
+    duplicate_count = sum(1 for c in counts.values() if c > 1)
+    return {
+        "total_chapter_count": len(chapters),
+        "duplicate_chapter_number_count": duplicate_count,
+    }
+
+
+def _timeline_branch_quality(timeline: dict[str, Any]) -> dict[str, Any]:
+    branches = _safe_list(timeline.get("branches"))
+    canonical_events = _safe_list(timeline.get("canonical_events"))
+    active_branch_ids: set[str] = set()
+    for event in canonical_events:
+        if isinstance(event, dict):
+            branch_id = event.get("branchId") or event.get("branch_id")
+            if branch_id:
+                active_branch_ids.add(str(branch_id))
+    empty_count = sum(
+        1 for branch in branches
+        if isinstance(branch, dict) and branch.get("id") and str(branch["id"]) not in active_branch_ids
+    )
+    return {
+        "total_branch_count": len(branches),
+        "empty_branch_count": empty_count,
+    }
+
+
+def _world_quality_metrics(operations: list[dict[str, Any]]) -> dict[str, Any]:
+    contamination_count = 0
+    misclassification_count = 0
+    for op in operations:
+        if _entity_type(op) not in ("world_item", "world"):
+            continue
+        fields = _operation_fields(op)
+        name = str(fields.get("name") or "")
+        container_key = str(fields.get("container_key") or "")
+        is_contamination = any(p.search(name) for p in _CONTAMINATION_NAME_PATTERNS)
+        if is_contamination:
+            contamination_count += 1
+            if container_key in _CULTIVATION_CONTAINERS:
+                misclassification_count += 1
+    return {
+        "contamination_count": contamination_count,
+        "cultivation_misclassification_count": misclassification_count,
+    }
+
+
+def _reviewer_repair_metrics(import_dir: Path | None, inbox: Any) -> dict[str, Any]:
+    repair_present = bool(import_dir and (import_dir / "reviewer_repair_proposals.json").exists())
+    proposals = inbox if isinstance(inbox, list) else _safe_list(
+        _safe_dict(inbox).get("items") or _safe_dict(inbox).get("proposals")
+    )
+    blocked_count = sum(
+        1 for p in proposals if isinstance(p, dict) and p.get("status") == "blocked"
+    )
+    return {
+        "reviewer_repair_artifacts_present": repair_present,
+        "blocked_proposal_count": blocked_count,
+    }
+
+
+def _symptom_flags(metrics: dict[str, Any], review_report: dict[str, Any], inbox_count: int, artifact_quality: dict[str, Any] | None = None) -> dict[str, bool]:
     report_total = sum(int(value) for value in _safe_dict(review_report.get("proposal_counts")).values() if isinstance(value, int))
     summary = _safe_dict(metrics["summary_lengths"])
     traits = _safe_dict(metrics["trait_quality"])
@@ -359,7 +473,7 @@ def _symptom_flags(metrics: dict[str, Any], review_report: dict[str, Any], inbox
     branch_density = _safe_dict(timeline.get("branch_density"))
     mainline_density = _safe_dict(timeline.get("mainline_density"))
     scene_beat_counts = _safe_dict(timeline.get("scene_beat_discard_counts"))
-    return {
+    flags: dict[str, bool] = {
         "review_report_inbox_count_mismatch": bool(report_total and report_total != inbox_count),
         "overlong_character_summaries": int(summary.get("outlier_count") or 0) > 0,
         "trait_duplication_or_noise": float(traits.get("trait_duplication_noise_score") or 0) > TRAIT_NOISE_WARN,
@@ -369,6 +483,22 @@ def _symptom_flags(metrics: dict[str, Any], review_report: dict[str, Any], inbox
         "scene_beats_or_discards_present": int(timeline.get("discard_count") or 0) > 0 or bool(scene_beat_counts),
         "duplicate_event_clusters_present": int(timeline.get("event_duplicate_cluster_count") or 0) > 0,
     }
+    if artifact_quality is not None:
+        ms = _safe_dict(artifact_quality.get("manuscript_projection"))
+        ch = _safe_dict(artifact_quality.get("chapters"))
+        tb = _safe_dict(artifact_quality.get("timeline_branches"))
+        wq = _safe_dict(artifact_quality.get("world_quality"))
+        chapter_node_count = int(ms.get("chapter_node_count") or 0)
+        scene_with_content = int(ms.get("scene_nodes_with_content") or 0)
+        flags["smoke_chapter_count_not_10"] = int(ch.get("total_chapter_count") or 0) != 10
+        flags["manuscript_projection_missing_or_empty"] = (
+            chapter_node_count == 0 or scene_with_content < chapter_node_count
+        )
+        flags["duplicate_chapter_numbers_present"] = int(ch.get("duplicate_chapter_number_count") or 0) > 0
+        flags["empty_timeline_branches_present"] = int(tb.get("empty_branch_count") or 0) > 0
+        flags["world_module_contamination_present"] = int(wq.get("contamination_count") or 0) > 0
+        flags["world_cultivation_misclassification_present"] = int(wq.get("cultivation_misclassification_count") or 0) > 0
+    return flags
 
 
 def analyze_import(source: ImportSource) -> dict[str, Any]:
@@ -421,7 +551,17 @@ def analyze_import(source: ImportSource) -> dict[str, Any]:
             "low_confidence_item_count": len(_safe_list(review_report.get("low_confidence_items"))),
         },
     }
-    metrics["import_test6_symptom_flags"] = _symptom_flags(metrics, _safe_dict(review_report), metrics["inbox_proposal_count"])
+    artifact_quality: dict[str, Any] = {
+        "manuscript_projection": _manuscript_projection_metrics(project_path),
+        "chapters": _chapter_quality_metrics(project_path),
+        "timeline_branches": _timeline_branch_quality(_safe_dict(timeline)),
+        "world_quality": _world_quality_metrics(operations),
+        "reviewer_repair": _reviewer_repair_metrics(import_dir, inbox),
+    }
+    metrics["artifact_quality"] = artifact_quality
+    metrics["import_test6_symptom_flags"] = _symptom_flags(
+        metrics, _safe_dict(review_report), metrics["inbox_proposal_count"], artifact_quality
+    )
     return metrics
 
 

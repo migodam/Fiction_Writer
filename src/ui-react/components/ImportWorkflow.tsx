@@ -17,6 +17,30 @@ const profileExplanations: Record<W1PromptProfile, string> = {
   custom: 'Speed/cost follow your expert settings. Quality/window/validation are configurable. Supervisor/orchestrator are enabled by default.',
 };
 
+type ImportPresetKey =
+  | 'auto' | 'sparse_turning_points' | 'chapter_level' | 'scene_level'
+  | 'character_rich' | 'relationship_light' | 'manuscript_focused' | 'advanced';
+
+interface ImportPreset {
+  key: ImportPresetKey;
+  label: string;
+  description: string;
+  importMode: 'import_content_only' | 'import_all';
+  profile: W1PromptProfile;
+  configOverrides: Partial<W1CustomProfileConfig>;
+}
+
+const IMPORT_PRESETS: ImportPreset[] = [
+  { key: 'auto', label: 'Auto (Orchestrator decides)', description: 'Recommended. Orchestrator selects the best granularity for your source.', importMode: 'import_all', profile: 'balanced', configOverrides: {} },
+  { key: 'sparse_turning_points', label: 'Sparse turning points', description: 'Major plot turns only. Fast, low cost.', importMode: 'import_all', profile: 'custom', configOverrides: { event_density: 'arc_level', character_granularity: 'major_only', world_strictness: 'named_only', timeline_topology_depth: 'flat', validation_strictness: 'off' } },
+  { key: 'chapter_level', label: 'Chapter-level', description: 'One entry per chapter. Balanced cost and quality.', importMode: 'import_all', profile: 'custom', configOverrides: { event_density: 'chapter_level', character_granularity: 'named_only', world_strictness: 'with_description', timeline_topology_depth: 'branched', validation_strictness: 'per_window' } },
+  { key: 'scene_level', label: 'Scene-level', description: 'Scene-by-scene. High coverage, higher cost.', importMode: 'import_all', profile: 'custom', configOverrides: { event_density: 'scene_level', character_granularity: 'all', world_strictness: 'full_attributes', timeline_topology_depth: 'full_dag', validation_strictness: 'per_window' } },
+  { key: 'character_rich', label: 'Character-rich', description: 'All characters with full detail. Good for character-heavy stories.', importMode: 'import_all', profile: 'custom', configOverrides: { character_granularity: 'all', event_density: 'scene_level', world_strictness: 'full_attributes', timeline_topology_depth: 'full_dag', validation_strictness: 'per_arc' } },
+  { key: 'relationship_light', label: 'Relationship-light', description: 'Characters and events only; skips deep relationship mapping.', importMode: 'import_all', profile: 'custom', configOverrides: { event_density: 'chapter_level', character_granularity: 'named_only', world_strictness: 'with_description', extract_relationships: false } },
+  { key: 'manuscript_focused', label: 'Manuscript-focused', description: 'Imports chapter text only. No characters, events, or world model.', importMode: 'import_content_only', profile: 'fast', configOverrides: {} },
+  { key: 'advanced', label: 'Advanced (custom)', description: 'Configure every knob manually.', importMode: 'import_all', profile: 'custom', configOverrides: {} },
+];
+
 const formatChapterRange = (value: unknown) => {
   if (!value) return '';
   if (typeof value === 'string') return value;
@@ -122,6 +146,25 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
     setW1CustomProfileConfig(patch);
   }, [setW1CustomProfileConfig]);
 
+  const [activePreset, setActivePreset] = useState<ImportPresetKey>('auto');
+
+  const applyPreset = useCallback((preset: ImportPreset) => {
+    setActivePreset(preset.key);
+    setW1PromptProfile(preset.profile);
+    setW1ImportMode(preset.importMode);
+    if (Object.keys(preset.configOverrides).length > 0) {
+      setW1CustomProfileConfig(preset.configOverrides);
+    }
+  }, [setW1PromptProfile, setW1ImportMode, setW1CustomProfileConfig]);
+
+  const handleExtractionToggle = useCallback((patch: Partial<W1CustomProfileConfig>) => {
+    if (activePreset !== 'advanced') {
+      setActivePreset('advanced');
+      setW1PromptProfile('custom');
+    }
+    setW1CustomProfileConfig(patch);
+  }, [activePreset, setW1CustomProfileConfig, setW1PromptProfile]);
+
   const handlePickFile = useCallback(async () => {
     try {
       const files = await electronApi.pickFiles({
@@ -165,74 +208,71 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
       <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-border bg-card p-6 shadow-xl custom-scrollbar">
         <h2 className="mb-4 text-lg font-semibold text-text">{t('import.title')}</h2>
 
-        {/* Mode selector — visible when idle */}
+        {/* Preset picker + extraction toggles — visible when idle */}
         {isIdle && (
-          <div className="mb-4 space-y-2">
+          <div className="mb-4 space-y-3">
             <p className="text-sm font-medium text-text-2">{t('import.mode')}</p>
-            <label
-              data-testid="w1-mode-content-only"
-              className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3 hover:bg-hover"
-            >
-              <input
-                type="radio"
-                name="importMode"
-                value="import_content_only"
-                checked={w1ImportMode === 'import_content_only'}
-                onChange={() => setW1ImportMode('import_content_only')}
-                className="mt-0.5 accent-brand"
-              />
-              <span>
-                <span className="block text-sm font-medium text-text">{t('import.contentOnly')}</span>
-                <span className="block text-xs text-text-3">
-                  {t('import.contentOnlyDesc')}
-                </span>
-              </span>
-            </label>
-            <label
-              data-testid="w1-mode-import-all"
-              className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3 hover:bg-hover"
-            >
-              <input
-                type="radio"
-                name="importMode"
-                value="import_all"
-                checked={w1ImportMode === 'import_all'}
-                onChange={() => setW1ImportMode('import_all')}
-                className="mt-0.5 accent-brand"
-              />
-              <span>
-                <span className="block text-sm font-medium text-text">{t('import.importAll')}</span>
-                <span className="block text-xs text-text-3">
-                  {t('import.importAllDesc')}
-                </span>
-              </span>
-            </label>
-          </div>
-        )}
-
-        {isIdle && (
-          <div className="mb-4 rounded-xl border border-border bg-bg-elev-1 p-3">
-            <label htmlFor="w1-prompt-profile" className="mb-2 block text-sm font-medium text-text-2">
-              {t('import.promptProfile')}
-            </label>
-            <select
-              id="w1-prompt-profile"
-              data-testid="w1-prompt-profile-select"
-              value={w1PromptProfile}
-              onChange={(event) => setW1PromptProfile(event.target.value as W1PromptProfile)}
-              className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text"
-            >
-              <option value="fast">{t('import.promptFast')}</option>
-              <option value="balanced">{t('import.promptBalanced')}</option>
-              <option value="deep">{t('import.promptDeep')}</option>
-              <option value="custom">{t('import.promptCustom')}</option>
-            </select>
-            <p data-testid="w1-profile-explanation" className="mt-2 rounded-lg border border-border bg-card p-2 text-xs leading-relaxed text-text-2">
-              {profileExplanations[w1PromptProfile]}
-            </p>
-            <p className="mt-2 text-xs text-text-3">{t('import.promptProfileDesc')}</p>
-            {w1PromptProfile === 'custom' && (
-              <div data-testid="w1-custom-expert-panel" className="mt-3 rounded-xl border border-brand/30 bg-brand/5 p-3">
+            <div data-testid="import-preset-list" className="space-y-1">
+              {IMPORT_PRESETS.map((preset) => (
+                <button
+                  key={preset.key}
+                  type="button"
+                  data-testid={`preset-${preset.key}`}
+                  onClick={() => applyPreset(preset)}
+                  className={`w-full rounded-lg border p-3 text-left transition-colors hover:bg-hover ${
+                    activePreset === preset.key
+                      ? 'border-brand bg-brand/5'
+                      : 'border-border'
+                  }`}
+                >
+                  <span className="block text-sm font-medium text-text">{preset.label}</span>
+                  <span className="block text-xs text-text-3">{preset.description}</span>
+                </button>
+              ))}
+            </div>
+            {activePreset !== 'manuscript_focused' && (
+              <div className="rounded-xl border border-border bg-bg-elev-1 p-3">
+                <p className="mb-2 text-xs font-semibold text-text-2">{t('import.extractionToggles', 'Extract')}</p>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <label className="flex items-center gap-2 text-xs text-text-2">
+                    <input type="checkbox" checked disabled className="accent-brand" />
+                    {t('import.extractManuscript', 'Manuscript')}
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-2 text-xs text-text-2">
+                    <input
+                      type="checkbox"
+                      data-testid="toggle-extract-relationships"
+                      checked={w1CustomProfileConfig.extract_relationships !== false}
+                      onChange={(e) => handleExtractionToggle({ extract_relationships: e.target.checked })}
+                      className="accent-brand"
+                    />
+                    {t('import.extractRelationships', 'Relationships')}
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-2 text-xs text-text-2">
+                    <input
+                      type="checkbox"
+                      data-testid="toggle-extract-world"
+                      checked={w1CustomProfileConfig.extract_world !== false}
+                      onChange={(e) => handleExtractionToggle({ extract_world: e.target.checked })}
+                      className="accent-brand"
+                    />
+                    {t('import.extractWorld', 'World Model')}
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-2 text-xs text-text-2">
+                    <input
+                      type="checkbox"
+                      data-testid="toggle-extract-timeline"
+                      checked={w1CustomProfileConfig.extract_timeline !== false}
+                      onChange={(e) => handleExtractionToggle({ extract_timeline: e.target.checked })}
+                      className="accent-brand"
+                    />
+                    {t('import.extractTimeline', 'Timeline')}
+                  </label>
+                </div>
+              </div>
+            )}
+            {activePreset === 'advanced' && (
+              <div data-testid="w1-custom-expert-panel" className="rounded-xl border border-brand/30 bg-brand/5 p-3">
                 <div className="mb-3">
                   <div className="text-sm font-semibold text-text">{t('import.customExpert', 'Custom expert mode')}</div>
                   <p className="mt-1 text-xs text-text-3">
