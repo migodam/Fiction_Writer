@@ -61,6 +61,14 @@ For Chinese source text, W1 preserves Chinese user-facing labels/descriptions an
 
 The World organizer stage must exclude module-owned content from World Model proposals. Relationship graphs, event timelines, single scene beats, and person/role-only entries remain owned by Relationship, Timeline, Manuscript, or Character modules. W1 import world containers use localized semantic containers such as `地理位置`, `门派组织`, `功法与术法`, `修炼境界与制度`, and `文化与习俗`; empty English starter containers are removed during package acceptance. World proposals may include compatibility fields `categoryPath` and `parentId` for hierarchy display until a full tree model is introduced.
 
+## Semantic Reconciliation Contracts
+
+Character matches produce an `EntityMergeDecision/v1` in `reducer_artifact.json`. It records field-by-field union/append/preserve actions for aliases, background, experience entries, traits, notes, confidence, physical description, speech style, and arc notes. Existing canonical fields are never silently overwritten; divergent text is retained as evidence and reported in `semantic_conflicts`.
+
+For Chinese projects, character tag names must be Chinese. Known English editorial labels are translated while retaining `sourceName` and normalization metadata; unmapped English labels are rejected into `tag_rejections`, never blanked or proposed. The Chinese relationship ontology permits only normalized semantic categories with explicit `ontologyDirection`: mentor/political links are directed, while family, romance, rivalry, sworn-bond, conflict, and alliance links are symmetric. Event/action labels such as `解惑`/`选拔` and descriptive phrases such as `冷冰冰的师兄` are evidence or notes, not relationship types.
+
+Organizer container targets are deterministic: each emitted notebook has a stable `world_container_<container_key>` ID and every world item references it through `containerId` (with `parentId` reserved for a future folder tree). A candidate can occupy one normalized category/container only; person, rank, relationship, timeline, and manuscript contamination is excluded before placement.
+
 ## Stage 5b: Content Organizer
 
 `sidecar/supervisor/organizer.py` — called after Entity Reconciliation, before Timeline Architect.
@@ -146,6 +154,13 @@ The review is non-canonical: it may recommend merges, demotions, group correctio
 
 ## JSON Robustness Requirements
 Chunk prompt parsing must tolerate fenced JSON, trailing commas, and recoverable malformed model output. Failed extraction categories must write failure artifacts and must not be cached as successful empty prompt outputs.
+
+## Source Provenance And Manuscript Staging
+`SourceSpan` is the canonical W1 provenance shape: `raw_source_hash`, `absolute_start`, `absolute_end`, and `substring_hash`. `make_source_span()`, `validate_source_span()`, and `reconstruct_source_span()` validate spans against the original raw source using Python character offsets. Segment, chapter, and staged scene projections must carry valid spans; `node_build_manuscript()` derives chapter bodies only from raw source chunks, never from LLM extraction output.
+
+Before Workbench acceptance, W1 writes `staged_manuscript_projection.json` under `system/imports/<import_run_id>/`. It contains the deterministic chapter, ManuscriptNode, and scene-document payloads plus `acceptance_required: true`; W1 must not write canonical `manuscript.json`, `writing/manuscript/nodes.json`, or scene Markdown files. Chapter and scene proposals include `stagedManuscriptProjection` with the artifact path, contract version, chapter id, and scene id so the acceptance layer can apply the projection transactionally.
+
+`PlannerProposal.next_action` is a bounded optional hint. It may request a registered supervisor tool, `stop`, or a named-window `rerun`. Validation rejects unknown tools and malformed actions. `resolve_planner_next_action()` applies deterministic fallback and refuses reruns after the iteration cap or API-402 budget stop; a validated `stop` ends before supervisor tools begin. The proposal gate, validator sequence, and normal fixed pipeline remain deterministic.
 
 ## Parallel Workstream Handoff
 Future branches should treat this file and the artifact JSON files as the integration contract.

@@ -1674,6 +1674,8 @@ Use EXACTLY one of these categories:
 - `conflict` — active hostility without rivalry framing (assassination, war, vendetta)
 - `unknown` — insufficient evidence to categorise
 
+For Chinese source, emit only the ontology-backed labels (家族关系, 情感关系, 竞争关系, 师徒关系, 结拜关系, 政治关系, 对立关系, 盟友关系). `mentor_disciple` is directed; family, romance, rivalry, sworn bonds, conflict, and alliance are symmetric. Do NOT use events/actions (解惑, 选拔) or descriptive epithets (冷冰冰的师兄) as a relationship type: retain them only in evidence or description.
+
 Output valid JSON ONLY — no markdown fences, no prose before or after. Replace ALL `<angle-bracket placeholder>` text with actual values. No trailing commas. Numeric fields must be literal numbers:
 {{
   "relationships": [
@@ -1708,6 +1710,7 @@ Group characters into a compact, useful tag system for a fiction project.
 - Prefer 3-8 tags total unless the cast is extremely large
 - Tags should help navigation and editorial reasoning, not restate names
 - Every tag must include character_ids
+- For Chinese source, tag `name` MUST be Chinese. Translate known editorial labels (for example Protagonist -> 主角, Mentor -> 师长, Antagonist -> 反派, Allies -> 盟友, Family -> 家人); never emit English tag names and never emit an empty name.
 - Importance updates MUST use exactly one of: core | major | supporting | minor
   - core: protagonist or POV character present throughout
   - major: recurring named character with significant arc

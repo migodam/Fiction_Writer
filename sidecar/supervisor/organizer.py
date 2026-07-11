@@ -36,9 +36,11 @@ class OrganizerInput(TypedDict):
 
 
 class WorldContainerProposal(TypedDict):
+    id: str
     container_key: str
     label: str
     language: str
+    type: str
 
 
 class WorldItemProposal(TypedDict):
@@ -51,6 +53,7 @@ class WorldItemProposal(TypedDict):
     attributes: List[Dict[str, str]]
     confidence: float
     container_key: str
+    containerId: str
 
 
 class ExcludedItem(TypedDict):
@@ -302,11 +305,12 @@ def classify_world_item(name: str, raw_category: str, description: str = "") -> 
     if any(t in raw for t in ("method", "spell", "cultivation", "功法", "法术", "术法", "法诀", "秘术", "修炼法门")):
         return "cultivation_method"
 
-    # 6. Name suffix → location / organization (higher priority than alias map)
-    if any(t in clean for t in _LOC_HINTS):
-        return "location"
+    # 6. Name suffix → organization / location (higher priority than alias map).
+    # A sect such as 七玄门 contains a generic place-like character but is not a location.
     if any(t in clean for t in _ORG_HINTS):
         return "organization"
+    if any(t in clean for t in _LOC_HINTS):
+        return "location"
 
     # 7. Alias map
     alias = _CATEGORY_ALIASES.get(raw)
@@ -383,6 +387,11 @@ def _candidate_entity_id(name: str, candidate: dict) -> str:
     )
 
 
+def _container_id(container_key: str) -> str:
+    """Stable import target ID; safe to reference from every item proposal."""
+    return f"world_container_{container_key}"
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -409,6 +418,7 @@ def organize_project_content(organizer_input: OrganizerInput) -> OrganizerOutput
     world_items: list[WorldItemProposal] = []
     excluded_items: list[ExcludedItem] = []
 
+    emitted_keys: set[tuple[str, str]] = set()
     for name, candidate in world_candidates.items():
         if not isinstance(candidate, dict):
             candidate = {}
@@ -471,6 +481,11 @@ def organize_project_content(organizer_input: OrganizerInput) -> OrganizerOutput
         )
         category = classify_world_item(name, raw_category, description)
         container_key = _container_key_for_category(category)
+        dedupe_key = (name.strip(), category)
+        if dedupe_key in emitted_keys:
+            warnings.append(f"Duplicate world placement rejected: '{name}' already routes to {container_key}.")
+            continue
+        emitted_keys.add(dedupe_key)
         category_path = _build_category_path(name, category)
 
         # Ambiguity warning for 堂/院 suffix that defaulted to location
@@ -501,6 +516,7 @@ def organize_project_content(organizer_input: OrganizerInput) -> OrganizerOutput
             attributes=attributes,
             confidence=confidence,
             container_key=container_key,
+            containerId=_container_id(container_key),
         ))
 
     # --- Merge candidate detection ---
@@ -514,9 +530,11 @@ def organize_project_content(organizer_input: OrganizerInput) -> OrganizerOutput
 
     world_containers: list[WorldContainerProposal] = [
         WorldContainerProposal(
+            id=_container_id(k),
             container_key=k,
             label=_container_label(k, language),
             language=language,
+            type="notebook",
         )
         for k in used_keys
     ]

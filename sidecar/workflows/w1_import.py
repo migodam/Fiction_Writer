@@ -32,11 +32,22 @@ import os
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from sidecar.models.state import ImportState, ManuscriptChapter
+from sidecar.models.state import (
+    ImportState,
+    ManuscriptChapter,
+    make_source_span,
+    validate_source_span,
+)
 from sidecar.supervisor.organizer import organize_project_content, OrganizerInput
 from sidecar.shared import s2_memory_writer, s3_chunk_manager
 from sidecar.utils.lock import acquire_lock, release_lock, WorkflowBusyError
-from sidecar.workflows.w1_run_events import add_token_usage
+from sidecar.workflows.w1_run_events import (
+    BudgetPolicy,
+    add_token_usage,
+    budget_allows_call,
+    configure_budget,
+    record_call_usage,
+)
 from sidecar.prompts.w1_prompts import (
     W1_EXTRACT_CHARACTERS,
     W1_EXTRACT_CHARACTERS_DEEP,
@@ -312,11 +323,12 @@ Parser error:
 Malformed JSON:
 {raw[:24000]}
 """
-    async with _API_SEMAPHORE:
-        response = await llm.ainvoke([HumanMessage(content=repair_prompt)])
-    _usage = _extract_llm_usage(response)
-    if _usage and session_id:
-        add_token_usage(session_id, _usage[0], _usage[1])
+    response = await _ainvoke_with_budget(
+        llm,
+        [HumanMessage(content=repair_prompt)],
+        session_id=session_id,
+        estimated_input_tokens=_estimate_tokens(repair_prompt),
+    )
     repaired = response.content if isinstance(response.content, str) else str(response.content)
     return _parse_json_response(repaired)
 
@@ -351,11 +363,12 @@ async def _invoke_json_prompt(
     max_attempts = 4
     for attempt in range(max_attempts):
         try:
-            async with _API_SEMAPHORE:
-                response = await llm.ainvoke(messages)
-                _usage = _extract_llm_usage(response)
-                if _usage and session_id:
-                    add_token_usage(session_id, _usage[0], _usage[1])
+            response = await _ainvoke_with_budget(
+                llm,
+                messages,
+                session_id=session_id,
+                estimated_input_tokens=_estimate_tokens(prompt) + _estimate_tokens(system_content or ""),
+            )
             raw = response.content if isinstance(response.content, str) else str(response.content)
             try:
                 return _parse_json_response(raw)
@@ -388,6 +401,49 @@ async def _invoke_json_prompt(
                 await asyncio.sleep(wait)
                 continue
             raise
+
+
+def _llm_model_name(llm: Any) -> str:
+    return str(getattr(llm, "model_name", "") or getattr(llm, "model", "") or "")
+
+
+async def _ainvoke_with_budget(
+    llm: Any,
+    messages: list[Any],
+    *,
+    session_id: str = "",
+    estimated_input_tokens: int = 0,
+    estimated_output_tokens: int = 0,
+) -> Any:
+    """Run one provider call with E0 budget guards around the actual I/O."""
+    model = _llm_model_name(llm)
+    if session_id and not budget_allows_call(
+        session_id,
+        estimated_input_tokens=estimated_input_tokens,
+        estimated_output_tokens=estimated_output_tokens,
+        model=model,
+    ):
+        raise RuntimeError("budget_exhausted: preflight denied provider call")
+    async with _API_SEMAPHORE:
+        response = await llm.ainvoke(messages)
+    if session_id:
+        usage = _extract_llm_usage(response)
+        record_call_usage(
+            session_id,
+            usage[0] if usage else None,
+            usage[1] if usage else None,
+            model=model,
+        )
+    return response
+
+
+def configure_w1_budget(config: dict, session_id: str) -> None:
+    """Configure the E0 ledger once per W1 run when a policy is supplied."""
+    policy_data = config.get("budget_policy") or config.get("context", {}).get("budget_policy")
+    if not session_id or not isinstance(policy_data, dict):
+        return
+    model = str(config.get("context", {}).get("model") or config.get("model") or "deepseek-chat")
+    configure_budget(session_id, BudgetPolicy(**policy_data), model=model)
 
 
 def _append_unique_strings(target: list[str], values: list[Any]) -> None:
@@ -1157,6 +1213,82 @@ def _normal_key(value: Any) -> str:
     return re.sub(r"[\W_]+", "", text)
 
 
+_ZH_TAG_LABELS: dict[str, str] = {
+    "protagonist": "主角", "main character": "主要角色", "main characters": "主要角色",
+    "mentor": "师长", "mentors": "师长", "antagonist": "反派", "antagonists": "反派",
+    "ally": "盟友", "allies": "盟友", "family": "家人", "friends": "友人",
+    "minor character": "次要角色", "minor characters": "次要角色",
+    "villain": "反派", "rival": "对手", "cultivator": "修士",
+}
+
+
+def _normalize_character_tag(tag: dict, source_language: str) -> tuple[dict | None, dict | None]:
+    """Keep source tag evidence while guaranteeing a non-empty localized tag name."""
+    candidate = dict(tag)
+    raw_name = str(candidate.get("name", "")).strip()
+    if not raw_name:
+        return None, {"reason": "empty_tag_name", "source_tag": tag}
+    if source_language != "zh" or not re.search(r"[A-Za-z]", raw_name):
+        return candidate, None
+    normalized = _ZH_TAG_LABELS.get(raw_name.lower())
+    if not normalized:
+        return None, {
+            "reason": "unmapped_english_tag_for_chinese_source",
+            "source_name": raw_name,
+            "source_tag": tag,
+        }
+    candidate["name"] = normalized
+    candidate["sourceName"] = raw_name
+    candidate["normalization"] = "english_label_translated_to_chinese"
+    return candidate, None
+
+
+def _merge_evidence_values(existing: Any, incoming: Any) -> list[Any]:
+    """Stable union for list-like evidence while preserving structured entries."""
+    values = list(existing) if isinstance(existing, list) else ([existing] if existing else [])
+    additions = list(incoming) if isinstance(incoming, list) else ([incoming] if incoming else [])
+    seen = {json.dumps(value, ensure_ascii=False, sort_keys=True, default=str) for value in values}
+    for value in additions:
+        if not value:
+            continue
+        key = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+        if key not in seen:
+            values.append(value)
+            seen.add(key)
+    return values
+
+
+def _entity_merge_decision(existing: dict, incoming: dict, import_id: str) -> dict:
+    """Produce an auditable, field-specific merge plan without mutating canonical data."""
+    decision: dict[str, Any] = {
+        "contract": "EntityMergeDecision/v1",
+        "import_id": import_id,
+        "existing_id": str(existing.get("id", "")),
+        "fields": {},
+        "conflicts": [],
+    }
+    aliases = _merge_evidence_values(existing.get("aliases", []), incoming.get("aliases", []))
+    canonical = str(incoming.get("canonical_name") or incoming.get("name") or "").strip()
+    if canonical:
+        aliases = _merge_evidence_values(aliases, [canonical])
+    decision["fields"]["aliases"] = {"action": "union", "value": aliases, "source": "existing+import"}
+    for field in ("background", "physical_description", "speech_style", "arc_notes"):
+        old, new = str(existing.get(field, "") or "").strip(), str(incoming.get(field, "") or "").strip()
+        merged = _merge_text_field(old, new)
+        action = "preserve_existing" if not new or merged == old else "evidence_append"
+        decision["fields"][field] = {"action": action, "value": merged, "source": "existing+import"}
+        if old and new and merged != old and _normal_key(old) != _normal_key(new):
+            decision["conflicts"].append({"field": field, "existing": old, "incoming": new, "resolution": "preserve_and_append"})
+    for field in ("experience", "experiences", "personality_traits", "traits", "notes"):
+        value = _merge_evidence_values(existing.get(field, []), incoming.get(field, []))
+        if value:
+            decision["fields"][field] = {"action": "union", "value": value, "source": "existing+import"}
+    old_confidence = float(existing.get("importConfidence", existing.get("confidence", 0)) or 0)
+    new_confidence = float(incoming.get("confidence", 0) or 0)
+    decision["fields"]["confidence"] = {"action": "max", "value": max(old_confidence, new_confidence), "source": "existing+import"}
+    return decision
+
+
 def _artifact_dir(project_path: str | Path, import_run_id: str) -> Path:
     return Path(project_path) / "system" / "imports" / import_run_id
 
@@ -1631,12 +1763,76 @@ def _source_blocks_from_chunks(chunks: list[dict]) -> list[dict]:
             "text": source_text,
             "source_tokens": _estimate_tokens(source_text),
             "source_chars": len(source_text),
-            "source_span": chunk.get("source_span") or {
-                "start": int(chunk.get("char_start", 0) or 0),
-                "end": int(chunk.get("char_start", 0) or 0) + len(source_text),
-            },
+            "source_span": chunk.get("source_span"),
         })
     return blocks
+
+
+def _window_source_span(state: ImportState | dict, source_blocks: list[dict]) -> dict:
+    """Build one valid span for a prompt window from its raw-source blocks."""
+    raw_source = str(state.get("source_text", "") or "")
+    spans = [block.get("source_span") for block in source_blocks]
+    if raw_source and spans:
+        for span in spans:
+            ok, errors = validate_source_span(span or {}, raw_source)
+            if not ok:
+                raise ValueError(f"Invalid source span while building prompt window: {errors}")
+        return make_source_span(
+            raw_source,
+            min(span["absolute_start"] for span in spans),
+            max(span["absolute_end"] for span in spans),
+        )
+    # Compatibility for historical checkpoints that did not retain raw source.
+    # New W1 runs use the validated branch above.
+    combined = "".join(str(block.get("text", "") or "") for block in source_blocks)
+    return make_source_span(combined, 0, len(combined))
+
+
+def _window_source_text(state: ImportState | dict, source_blocks: list[dict]) -> str:
+    """Return exactly the raw substring identified by a window SourceSpan."""
+    raw_source = str(state.get("source_text", "") or "")
+    spans = [block.get("source_span") for block in source_blocks]
+    if raw_source and spans and all(validate_source_span(span or {}, raw_source)[0] for span in spans):
+        start = min(int(span["absolute_start"]) for span in spans)
+        end = max(int(span["absolute_end"]) for span in spans)
+        return raw_source[start:end]
+    return "".join(str(block.get("text", "") or "") for block in source_blocks)
+
+
+def _split_source_block_by_budget(state: ImportState | dict, block: dict, token_budget: int) -> list[dict]:
+    """Split one oversized source block while retaining exact absolute spans."""
+    parts = _split_text_by_paragraph_budget(str(block.get("text", "") or ""), token_budget)
+    raw_source = str(state.get("source_text", "") or "")
+    parent_span = block.get("source_span")
+    if not raw_source or not parent_span or not validate_source_span(parent_span, raw_source)[0]:
+        return [
+            {
+                **block,
+                "text": part,
+                "source_tokens": _estimate_tokens(part),
+                "source_chars": len(part),
+            }
+            for part in parts
+        ]
+
+    parent_start = int(parent_span["absolute_start"])
+    parent_end = int(parent_span["absolute_end"])
+    cursor = parent_start
+    result: list[dict] = []
+    for part in parts:
+        start = raw_source.find(part, cursor, parent_end)
+        if start < 0:
+            raise ValueError("Prompt-window split text could not be located in its SourceSpan")
+        end = start + len(part)
+        result.append({
+            **block,
+            "text": part,
+            "source_tokens": _estimate_tokens(part),
+            "source_chars": len(part),
+            "source_span": make_source_span(raw_source, start, end),
+        })
+        cursor = end
+    return result
 
 
 def _make_prompt_window(
@@ -1660,12 +1856,10 @@ def _make_prompt_window(
         source_blocks=source_blocks,
     )
     chunk_ids = [int(block.get("chunk_id", 0) or 0) for block in source_blocks]
-    source_spans = [block.get("source_span", {}) for block in source_blocks]
-    source_start = min([int(span.get("start", 0) or 0) for span in source_spans] or [0])
-    source_end = max([int(span.get("end", source_start) or source_start) for span in source_spans] or [source_start])
     source_tokens = sum(int(block.get("source_tokens", 0) or 0) for block in source_blocks)
     source_chars = sum(int(block.get("source_chars", 0) or 0) for block in source_blocks)
     fill_ratio = round(source_tokens / max(source_budget, 1), 4)
+    source_text = _window_source_text(state, source_blocks)
     return {
         "id": _stable_id(
             "pwin",
@@ -1676,7 +1870,12 @@ def _make_prompt_window(
         ),
         "chunk_ids": chunk_ids,
         "chapter_range": _chapter_range_label(source_blocks),
-        "text": window_text,
+        # `text` is the exact source payload identified by source_span. The
+        # rendered prompt is retained separately because its policy header is
+        # not part of the imported raw source.
+        "text": source_text,
+        "source_text": source_text,
+        "prompt_text": window_text,
         "source_blocks": source_blocks,
         "estimated_tokens": _estimate_tokens(window_text) + _SCHEMA_POLICY_RESERVE_TOKENS,
         "source_token_estimate": source_tokens,
@@ -1689,7 +1888,7 @@ def _make_prompt_window(
         "target_fill_ratio": _PACKED_WINDOW_TARGET_FILL_RATIO,
         "fill_ratio": fill_ratio,
         "split_reason": split_reason,
-        "source_span": {"start": source_start, "end": source_end},
+        "source_span": _window_source_span(state, source_blocks),
     }
 
 
@@ -1709,7 +1908,7 @@ def _refresh_prompt_window_text(state: ImportState, window: dict, digest: dict) 
     if not source_blocks:
         return dict(window)
     refreshed = dict(window)
-    refreshed["text"] = _render_prompt_window_text(
+    refreshed["prompt_text"] = _render_prompt_window_text(
         digest_content=digest_content,
         validation_content=validation_content,
         total_budget=total_budget,
@@ -1717,7 +1916,7 @@ def _refresh_prompt_window_text(state: ImportState, window: dict, digest: dict) 
         source_blocks=source_blocks,
     )
     refreshed["validation_token_estimate"] = _estimate_tokens(validation_content)
-    refreshed["estimated_tokens"] = _estimate_tokens(refreshed["text"]) + _SCHEMA_POLICY_RESERVE_TOKENS
+    refreshed["estimated_tokens"] = _estimate_tokens(refreshed["prompt_text"]) + _SCHEMA_POLICY_RESERVE_TOKENS
     refreshed["source_budget_tokens"] = source_budget
     refreshed["fill_ratio"] = round(
         int(refreshed.get("source_token_estimate", 0) or 0) / max(source_budget, 1),
@@ -1766,13 +1965,9 @@ def _build_prompt_windows(state: ImportState, chunks: list[dict], digest: dict) 
         block_tokens = int(block.get("source_tokens", 0) or 0)
         if block_tokens > source_budget:
             flush_current()
-            parts = _split_text_by_paragraph_budget(str(block.get("text", "")), source_budget)
-            for part_index, part in enumerate(parts):
-                part_block = dict(block)
-                part_block["text"] = part
-                part_block["source_tokens"] = _estimate_tokens(part)
-                part_block["source_chars"] = len(part)
-                part_block["chapter_hint"] = f"{block.get('chapter_hint')} part {part_index + 1}/{len(parts)}"
+            part_blocks = _split_source_block_by_budget(state, block, source_budget)
+            for part_index, part_block in enumerate(part_blocks):
+                part_block["chapter_hint"] = f"{block.get('chapter_hint')} part {part_index + 1}/{len(part_blocks)}"
                 windows.append(_make_prompt_window(
                     state,
                     source_blocks=[part_block],
@@ -1866,19 +2061,26 @@ def _build_supervised_prompt_windows(state: ImportState, chunks: list[dict], dig
                    _make_windows_from_batch(batch[mid:], late_zone, effective_cpw, iteration + 1)
 
         chunk_ids = [int(c.get("chunk_id", 0)) for c in batch]
-        # Combine all source text for this batch
-        source_text = "\n\n".join(
-            c.get("manuscript_content") or c.get("raw_content") or c.get("content", "")
-            for c in batch
-        )
+        source_blocks = _source_blocks_from_chunks(batch)
+        # Prefer the raw contiguous source slice, which is the only text a
+        # SourceSpan can faithfully reconstruct. Compatibility checkpoints fall
+        # back to the original chunk concatenation.
+        source_text = _window_source_text(state, source_blocks)
         chapter_hints = [str(c.get("chapter_hint") or f"Segment {c.get('chunk_id', 0) + 1}") for c in batch]
         chapter_range = f"{chapter_hints[0]}" if len(chapter_hints) == 1 else f"{chapter_hints[0]}–{chapter_hints[-1]}"
 
         source_budget = max(input_token_budget - _SCHEMA_POLICY_RESERVE_TOKENS - digest_tokens - validation_tokens, 1_000)
-        parts = _split_text_by_paragraph_budget(source_text, source_budget)
+        batch_block = {
+            "chunk_id": chunk_ids[0] if chunk_ids else 0,
+            "chapter_hint": chapter_range,
+            "text": source_text,
+            "source_span": _window_source_span(state, source_blocks),
+        }
+        part_blocks = _split_source_block_by_budget(state, batch_block, source_budget)
 
         batch_windows: list[dict] = []
-        for part_idx, part in enumerate(parts):
+        for part_idx, part_block in enumerate(part_blocks):
+            part = str(part_block["text"])
             header = (
                 "PROJECT_STRUCTURE_DIGEST:\n"
                 f"{digest_content}\n\n"
@@ -1892,17 +2094,17 @@ def _build_supervised_prompt_windows(state: ImportState, chunks: list[dict], dig
                 f"SOURCE_CHAPTERS [{chapter_range}]:\n"
             )
             window_text = header + part
-            split_reason = "complete_chapter_batch" if len(parts) == 1 else "oversized_batch_paragraph_split"
+            split_reason = "complete_chapter_batch" if len(part_blocks) == 1 else "oversized_batch_paragraph_split"
             win_id = _stable_id("pwin", import_run_id, *chunk_ids, part_idx, source_hash, iteration)
-            source_start = int(batch[0].get("source_span", {}).get("start", batch[0].get("char_start", 0)) or 0)
-            source_end = int(batch[-1].get("source_span", {}).get("end", batch[-1].get("char_end", source_start)) or source_start)
             source_token_estimate = _estimate_tokens(part)
             estimated_input_tokens = _estimate_tokens(window_text) + _SCHEMA_POLICY_RESERVE_TOKENS
             batch_windows.append({
                 "id": win_id,
                 "chunk_ids": chunk_ids,
-                "chapter_range": chapter_range if len(parts) == 1 else f"{chapter_range} part {part_idx + 1}/{len(parts)}",
-                "text": window_text,
+                "chapter_range": chapter_range if len(part_blocks) == 1 else f"{chapter_range} part {part_idx + 1}/{len(part_blocks)}",
+                "text": part,
+                "source_text": part,
+                "prompt_text": window_text,
                 "estimated_tokens": estimated_input_tokens,
                 "estimated_input_tokens": estimated_input_tokens,
                 "total_token_budget": input_token_budget,
@@ -1916,7 +2118,7 @@ def _build_supervised_prompt_windows(state: ImportState, chunks: list[dict], dig
                 "schema_policy_reserve_tokens": _SCHEMA_POLICY_RESERVE_TOKENS,
                 "fill_ratio": round(source_token_estimate / max(source_budget, 1), 4),
                 "split_reason": split_reason,
-                "source_span": {"start": source_start, "end": source_end},
+                "source_span": part_block.get("source_span") or _window_source_span(state, source_blocks),
                 "output_token_budget": output_token_budget,
                 "late_window_cap_applied": late_zone,
                 "late_window_threshold": late_threshold,
@@ -2122,23 +2324,30 @@ def _build_import_manifest(state: ImportState, text: str, chunks: list[dict]) ->
     )
     model = state.get("context", {}).get("model", "deepseek-chat")
     segments: list[dict] = []
-    running_offset = 0
+    search_offset = 0
     for index, chunk in enumerate(chunks):
         raw = chunk.get("manuscript_content") or chunk.get("raw_content") or chunk.get("content", "")
         chapter_hint = chunk.get("chapter_hint") or f"Segment {index + 1}"
         segment_id = _stable_id("seg", import_run_id, index, chapter_hint, _sha256_text(raw)[:16])
-        start = running_offset
+        candidate_start = int(chunk.get("char_start", search_offset) or search_offset)
+        if text[candidate_start:candidate_start + len(raw)] == raw:
+            start = candidate_start
+        else:
+            start = text.find(raw, search_offset)
+        if start < 0:
+            raise ValueError(f"Cannot reconstruct source span for import segment {index}")
         end = start + len(raw)
-        running_offset = end
+        search_offset = end
+        source_span = make_source_span(text, start, end)
         chunk["segment_id"] = segment_id
-        chunk["source_span"] = {"start": start, "end": end}
+        chunk["source_span"] = source_span
         segments.append({
             "id": segment_id,
             "level": "chapter" if chunk.get("chapter_hint") else "window",
             "title": chapter_hint,
             "chunk_id": index,
             "chapter_index": index,
-            "source_span": {"start": start, "end": end},
+            "source_span": source_span,
             "hash": _sha256_text(raw),
             "char_count": len(raw),
         })
@@ -2459,6 +2668,7 @@ async def node_split_chunks(state: ImportState) -> dict:
 
     return {
         "chunks": chunks,
+        "source_text": text,
         "import_run_id": manifest["import_run_id"],
         "prompt_profile": manifest["prompt_profile"],
         "import_run_manifest": manifest,
@@ -2507,10 +2717,10 @@ async def _legacy_node_process_chunks(state: ImportState) -> dict:
                 entity_registry_summary=_registry_summary(registry),
                 chunk_content=chunk_content[:8000],
             )
-            char_response = await llm.ainvoke([HumanMessage(content=char_prompt)])
-            _usage = _extract_llm_usage(char_response)
-            if _usage and _session_id:
-                add_token_usage(_session_id, _usage[0], _usage[1])
+            char_response = await _ainvoke_with_budget(
+                llm, [HumanMessage(content=char_prompt)], session_id=_session_id,
+                estimated_input_tokens=_estimate_tokens(char_prompt),
+            )
             char_data = _parse_json_response(char_response.content)
 
             # Process existing character updates
@@ -2578,10 +2788,10 @@ async def _legacy_node_process_chunks(state: ImportState) -> dict:
                 entity_registry_summary=_registry_summary(registry),
                 chunk_content=chunk_content[:8000],
             )
-            event_response = await llm.ainvoke([HumanMessage(content=event_prompt)])
-            _usage = _extract_llm_usage(event_response)
-            if _usage and _session_id:
-                add_token_usage(_session_id, _usage[0], _usage[1])
+            event_response = await _ainvoke_with_budget(
+                llm, [HumanMessage(content=event_prompt)], session_id=_session_id,
+                estimated_input_tokens=_estimate_tokens(event_prompt),
+            )
             event_data = _parse_json_response(event_response.content)
 
             events: list[dict] = []
@@ -2618,10 +2828,10 @@ async def _legacy_node_process_chunks(state: ImportState) -> dict:
                 known_world_entries=_world_summary(registry),
                 chunk_content=chunk_content[:8000],
             )
-            world_response = await llm.ainvoke([HumanMessage(content=world_prompt)])
-            _usage = _extract_llm_usage(world_response)
-            if _usage and _session_id:
-                add_token_usage(_session_id, _usage[0], _usage[1])
+            world_response = await _ainvoke_with_budget(
+                llm, [HumanMessage(content=world_prompt)], session_id=_session_id,
+                estimated_input_tokens=_estimate_tokens(world_prompt),
+            )
             world_data = _parse_json_response(world_response.content)
 
             world_mentions: list[str] = []
@@ -2716,6 +2926,7 @@ async def node_build_manuscript(state: ImportState) -> dict:
     """
     import_mode = state.get("import_mode", "import_all")
     chunks = state.get("chunks", [])
+    source_text = str(state.get("source_text", "") or "")
 
     def _build_from_chunks(raw_chunks: list[dict]) -> list[dict]:
         chapter_map: dict[str, list[dict]] = {}
@@ -2733,69 +2944,41 @@ async def node_build_manuscript(state: ImportState) -> dict:
         ordered_hints = sorted(chapter_order, key=lambda hint: _min_chunk_sort_key(chapter_map[hint]))
         for hint in ordered_hints:
             chapter_chunks = sorted(chapter_map[hint], key=lambda chunk: _chunk_sort_key(chunk.get("chunk_id")))
-            content = "\n\n".join(
-                c.get("manuscript_content", c.get("raw_content", c.get("content", ""))) for c in chapter_chunks
-            )
+            spans = [c.get("source_span") for c in chapter_chunks]
+            valid_spans = [span for span in spans if isinstance(span, dict)]
+            if source_text and len(valid_spans) == len(chapter_chunks):
+                for span in valid_spans:
+                    ok, errors = validate_source_span(span, source_text)
+                    if not ok:
+                        raise ValueError(f"Invalid source span while building manuscript: {errors}")
+                start = min(span["absolute_start"] for span in valid_spans)
+                end = max(span["absolute_end"] for span in valid_spans)
+                content = source_text[start:end]
+                source_span = make_source_span(source_text, start, end)
+            else:
+                # Compatibility fallback for pre-contract checkpoints. New imports
+                # always enter the branch above with the original raw source text.
+                content = "\n\n".join(
+                    c.get("manuscript_content", c.get("raw_content", c.get("content", ""))) for c in chapter_chunks
+                )
+                source_span = make_source_span(content, 0, len(content))
             chapter = {
-                "chapter_id": f"chap_{uuid.uuid4().hex[:8]}",
+                "chapter_id": _stable_id("chap", source_span["raw_source_hash"], source_span["absolute_start"], source_span["absolute_end"], hint),
                 "title": hint,
                 "chunk_ids": [c["chunk_id"] for c in chapter_chunks],
                 "manuscript_content": content,
+                "source_span": source_span,
                 "orderIndex": len(manuscript_chapters),
             }
             manuscript_chapters.append(_enrich_manuscript_chapter(chapter, state, content))
         return _sort_manuscript_chapters(_dedupe_manuscript_chapters(manuscript_chapters))
 
-    if import_mode == "import_content_only":
-        # Fast path: group raw chunks by chapter_hint
+    # Manuscript prose is always a deterministic raw-source projection. LLM
+    # extraction may describe scenes, but it must never supply a chapter body.
+    if chunks:
         return {"manuscript_chapters": _build_from_chunks(chunks), "progress": 0.88}
 
-    # import_all path: build from chunk_extractions when present. The
-    # supervisor path extracts by prompt window and may not produce per-chunk
-    # extraction records, so fall back to deterministic raw chunks.
-    extractions = state.get("chunk_extractions", [])
-    if not extractions and chunks:
-        return {"manuscript_chapters": _build_from_chunks(chunks), "progress": 0.88}
-
-    chunk_map2 = {c.get("chunk_id", i): c for i, c in enumerate(chunks)}
-    chapter_map2: dict[str, list[dict]] = {}
-    chapter_order2: list[str] = []
-
-    for extraction in extractions:
-        chunk_id = extraction.get("chunk_id", 0)
-        chunk_data = chunk_map2.get(chunk_id, {})
-        hint = chunk_data.get("chapter_hint") or f"Chapter {len(chapter_order2) + 1}"
-        if hint not in chapter_map2:
-            chapter_map2[hint] = []
-            chapter_order2.append(hint)
-        chapter_map2[hint].append(extraction)
-
-    manuscript_chapters2: list[dict] = []
-    ordered_hints2 = sorted(chapter_order2, key=lambda hint: _min_chunk_sort_key(chapter_map2[hint]))
-    for hint in ordered_hints2:
-        chapter_extractions = sorted(chapter_map2[hint], key=lambda extraction: _chunk_sort_key(extraction.get("chunk_id")))
-        content = "\n\n".join(
-            e.get("manuscript_content") or chunk_map2.get(e.get("chunk_id"), {}).get("content", "")
-            for e in chapter_extractions
-        )
-        chapter = {
-            "chapter_id": f"chap_{uuid.uuid4().hex[:8]}",
-            "title": hint,
-            "chunk_ids": [e["chunk_id"] for e in chapter_extractions],
-            "manuscript_content": content,
-            "orderIndex": len(manuscript_chapters2),
-        }
-        manuscript_chapters2.append(_enrich_manuscript_chapter(chapter, state, content))
-
-    if chunks and (
-        not manuscript_chapters2
-        or all(not c.get("manuscript_content") for c in manuscript_chapters2)
-    ):
-        # Failsafe: extractions path produced no chapters, or produced chapters with all-empty
-        # content (supervisor path where chunk_extractions have no manuscript_content and
-        # chunk_map2 lookup also fails). Fall back to raw chunks.
-        return {"manuscript_chapters": _build_from_chunks(chunks), "progress": 0.88}
-    return {"manuscript_chapters": _sort_manuscript_chapters(_dedupe_manuscript_chapters(manuscript_chapters2)), "progress": 0.88}
+    return {"manuscript_chapters": [], "progress": 0.88}
 
 
 async def node_generate_import_todos(state: ImportState) -> dict:
@@ -2870,6 +3053,7 @@ async def node_reconcile_entities(state: ImportState) -> dict:
     duplicate_candidates: list[dict] = []
     skipped_existing: list[dict] = []
     dependency_edges: list[dict] = []
+    semantic_conflicts: list[dict] = []
     character_id_map: dict[str, str] = {}
     tag_id_map: dict[str, str] = {}
 
@@ -2886,6 +3070,9 @@ async def node_reconcile_entities(state: ImportState) -> dict:
         if match and match.get("id"):
             entry["existing_project_id"] = match["id"]
             entry["skip_create"] = True
+            decision = _entity_merge_decision(match, entry, cid)
+            entry["entity_merge_decision"] = decision
+            semantic_conflicts.extend([{**conflict, "entity_type": "character", "import_id": cid, "existing_id": match["id"]} for conflict in decision["conflicts"]])
             character_id_map[cid] = match["id"]
             skipped_existing.append({
                 "entity_type": "character",
@@ -2902,8 +3089,14 @@ async def node_reconcile_entities(state: ImportState) -> dict:
             existing_tag_keys[key] = tag
 
     reconciled_tags: list[dict] = []
+    tag_rejections: list[dict] = []
     seen_new_tag_keys: set[str] = set()
     for tag in character_tags:
+        tag, rejection = _normalize_character_tag(tag, state.get("source_language", "en"))
+        if rejection:
+            tag_rejections.append(rejection)
+            continue
+        assert tag is not None
         key = _normal_key(tag.get("name", ""))
         if not key:
             continue
@@ -2934,14 +3127,15 @@ async def node_reconcile_entities(state: ImportState) -> dict:
                 dependency_edges.append({"from": cid, "to": tag_id, "type": "character_uses_tag"})
         entry["tag_ids"] = mapped_tags
 
-    existing_relationship_keys: set[tuple[str, str, str]] = set()
+    existing_relationship_keys: set[tuple[str, str, str, str]] = set()
     for rel in snapshot.get("relationships", []):
         left = str(rel.get("sourceId") or rel.get("source_id") or "")
         right = str(rel.get("targetId") or rel.get("target_id") or "")
-        label = _normal_key(rel.get("type", "") or rel.get("category", ""))
+        normalized = _relationship_ontology(rel, state.get("source_language", "en"))
+        if normalized is None:
+            continue
         if left and right:
-            existing_relationship_keys.add((left, right, label))
-            existing_relationship_keys.add((right, left, label))
+            existing_relationship_keys.add(_relationship_dedupe_key(left, right, normalized))
 
     reconciled_relationships: list[dict] = []
     seen_relationship_keys: set[tuple[str, str, str]] = set()
@@ -2949,7 +3143,12 @@ async def node_reconcile_entities(state: ImportState) -> dict:
         source = character_id_map.get(relationship.get("sourceId", ""), relationship.get("sourceId", ""))
         target = character_id_map.get(relationship.get("targetId", ""), relationship.get("targetId", ""))
         relationship = {**relationship, "sourceId": source, "targetId": target}
-        key = (source, target, _normal_key(relationship.get("type", "") or relationship.get("category", "")))
+        normalized = _relationship_ontology(relationship, state.get("source_language", "en"))
+        if normalized is None:
+            semantic_conflicts.append({"entity_type": "relationship", "sourceId": source, "targetId": target, "label": relationship.get("type", ""), "resolution": "demoted_to_evidence"})
+            continue
+        relationship.update(normalized)
+        key = _relationship_dedupe_key(source, target, relationship)
         if key in existing_relationship_keys:
             skipped_existing.append({
                 "entity_type": "relationship",
@@ -2974,6 +3173,8 @@ async def node_reconcile_entities(state: ImportState) -> dict:
         "dependency_edges": dependency_edges,
         "skipped_existing": skipped_existing,
         "warnings": [],
+        "semantic_conflicts": semantic_conflicts,
+        "tag_rejections": tag_rejections,
     }
     if state.get("import_run_id"):
         _write_import_artifact(project_path, state["import_run_id"], "reducer_artifact.json", artifact)
@@ -2981,6 +3182,7 @@ async def node_reconcile_entities(state: ImportState) -> dict:
         "entity_registry": registry,
         "relationships": reconciled_relationships,
         "character_tags": reconciled_tags,
+        "tag_rejections": tag_rejections,
         "reducer_artifact": artifact,
         "progress": max(float(state.get("progress", 0.84)), 0.86),
     }
@@ -3787,6 +3989,7 @@ async def node_organize_project(state: ImportState) -> dict:
                 "categoryPath": enriched.get("categoryPath", []),
                 "parentId": enriched.get("parentId"),
                 "container_key": enriched.get("container_key", ""),
+                "containerId": enriched.get("containerId", ""),
             }
         updated_world_detailed[name] = detail
 
@@ -3800,7 +4003,19 @@ async def node_organize_project(state: ImportState) -> dict:
         updated_world[name] = enriched.get("category") if enriched else cat
 
     updated_registry = {**registry, "world_detailed": updated_world_detailed, "world": updated_world}
-    return {"entity_registry": updated_registry}
+    # Organizer targets replace model-suggested containers for imported items;
+    # their stable IDs make container/item proposal dependencies deterministic.
+    world_containers = [
+        {
+            "id": container["id"],
+            "name": container["label"],
+            "type": container["type"],
+            "importCategoryKey": container["container_key"],
+            "isDefault": False,
+        }
+        for container in result.get("world_containers", [])
+    ]
+    return {"entity_registry": updated_registry, "world_containers": world_containers}
 
 
 def _reviewer_proposals_from_state(state: ImportState | dict) -> list[dict]:
@@ -4064,6 +4279,84 @@ def _write_manuscript_nodes(
         json.dump(nodes, f, ensure_ascii=False, indent=2)
 
 
+def _stage_manuscript_projection(
+    state: ImportState,
+    manuscript_scene_pairs: list[tuple[dict, dict]],
+    source_language: str,
+) -> dict:
+    """Persist an acceptance-gated manuscript projection outside canonical storage."""
+    raw_source = str(state.get("source_text", "") or "")
+    chapters: list[dict] = []
+    nodes: list[dict] = []
+    scene_documents: list[dict] = []
+    scene_title = "章节正文" if source_language == "zh" else "Chapter Text"
+    for index, (chapter_info, chapter) in enumerate(manuscript_scene_pairs):
+        source_span = chapter.get("source_span")
+        if raw_source:
+            ok, errors = validate_source_span(source_span or {}, raw_source)
+            if not ok:
+                raise ValueError(f"Cannot stage manuscript projection with invalid source span: {errors}")
+        elif not isinstance(source_span, dict) or not {"raw_source_hash", "absolute_start", "absolute_end", "substring_hash"}.issubset(source_span):
+            # Compatibility for historical checkpoints that predate SourceSpan.
+            # New imports always use the raw-source branch above.
+            source_span = make_source_span(str(chapter_info.get("content", "") or ""), 0, len(str(chapter_info.get("content", "") or "")))
+            chapter["source_span"] = source_span
+        chapter_id = chapter_info["chapter_id"]
+        scene_id = chapter_info["scene_id"]
+        chapter_node_id = _safe_node_id(f"mn_{chapter_id}")
+        scene_node_id = _safe_node_id(f"mn_{scene_id}")
+        content = chapter_info.get("content", "") or ""
+        word_count = _estimate_word_count(content, source_language)
+        chapters.append({
+            **chapter_info,
+            "source_span": source_span,
+            "acceptance_status": "pending",
+        })
+        nodes.extend([
+            {
+                "id": chapter_node_id,
+                "title": chapter_info["title"],
+                "type": "chapter_outline",
+                "parentId": None,
+                "orderIndex": index,
+                "linkedChapterId": chapter_id,
+                "linkedSceneId": None,
+                "depth": 0,
+                "collapsed": False,
+                "wordCount": word_count,
+                "source_span": source_span,
+            },
+            {
+                "id": scene_node_id,
+                "title": scene_title,
+                "type": "scene_outline",
+                "parentId": chapter_node_id,
+                "orderIndex": 0,
+                "linkedChapterId": chapter_id,
+                "linkedSceneId": scene_id,
+                "depth": 1,
+                "collapsed": False,
+                "wordCount": word_count,
+                "source_span": source_span,
+            },
+        ])
+        scene_documents.append({"node_id": scene_node_id, "scene_id": scene_id, "content": content, "source_span": source_span})
+    payload = {
+        "contract_version": "w1-staged-manuscript-v1",
+        "import_run_id": state.get("import_run_id", ""),
+        "source_file_path": state.get("source_file_path", ""),
+        "acceptance_required": True,
+        "application_target": "canonical_manuscript_after_proposal_acceptance",
+        "chapters": chapters,
+        "nodes": nodes,
+        "scene_documents": scene_documents,
+    }
+    artifact_path = _write_import_artifact(
+        state["project_path"], str(state.get("import_run_id", "")), "staged_manuscript_projection.json", payload
+    )
+    return {"artifact_path": artifact_path, "contract_version": payload["contract_version"]}
+
+
 async def node_write_to_project(state: ImportState) -> dict:
     """Write entities to project, push proposals, write manuscript.json, trigger W2 post_import."""
     import gc as _gc
@@ -4090,14 +4383,31 @@ async def node_write_to_project(state: ImportState) -> dict:
         existing_container_keys.add(spec["importCategoryKey"])
         existing_container_ids.add(spec["id"])
 
-    # Manuscript content is deterministic and cheap to persist. Write it before
-    # hundreds of proposal operations so cancellation/OOM during proposal_write
-    # does not leave the project with no imported manuscript text.
-    _write_manuscript_json(project_path, state, manuscript_chapters)
-
     # Compact receipts — one small dict per proposal — replace the old full-payload list.
     receipts: list[dict] = []
     errors: list[str] = list(state.get("errors", []))
+
+    # The staged contract is durable even if a later proposal operation is
+    # cancelled. It is deliberately outside canonical manuscript storage.
+    preaccept_pairs: list[tuple[dict, dict]] = []
+    for index, chapter in enumerate(_sort_manuscript_chapters(list(manuscript_chapters))):
+        content = str(chapter.get("manuscript_content", "") or "")
+        chapter_id = chapter.get("chapter_id") or _stable_id("chap", chapter.get("title", "Chapter"), index, _sha256_text(content))
+        scene_id = chapter.get("scene_id") or f"scene_{str(chapter_id).removeprefix('chap_')}"
+        preaccept_pairs.append((
+            {
+                "chapter_id": chapter_id,
+                "scene_id": scene_id,
+                "title": str(chapter.get("title") or "Untitled Chapter"),
+                "summary": str(chapter.get("summary") or _chapter_summary_fallback(str(chapter.get("title") or "Chapter"), content)),
+                "goal": str(chapter.get("goal") or _chapter_goal_fallback(source_language)),
+                "notes": str(chapter.get("notes") or _chapter_notes_fallback(state.get("source_file_path"), list(chapter.get("chunk_ids", [])))),
+                "orderIndex": index,
+                "content": content,
+            },
+            chapter,
+        ))
+    _stage_manuscript_projection(state, preaccept_pairs, source_language)
 
     def _dedupe_registry_characters_for_write() -> None:
         characters = registry.get("characters", {})
@@ -4166,6 +4476,57 @@ async def node_write_to_project(state: ImportState) -> dict:
     for cid in list(characters.keys()):
         entry = characters.pop(cid)
         if entry.get("skip_create"):
+            decision = entry.get("entity_merge_decision")
+            existing_id = str(entry.get("existing_project_id") or "")
+            if not isinstance(decision, dict) or not existing_id:
+                errors.append(f"Matched character {cid} has no executable EntityMergeDecision")
+                continue
+            fields = decision.get("fields", {})
+            update_data = {
+                "id": existing_id,
+                "aliases": fields.get("aliases", {}).get("value", []),
+                "background": fields.get("background", {}).get("value", ""),
+                "experience": fields.get("experience", {}).get("value", []),
+                "experiences": fields.get("experiences", {}).get("value", []),
+                "traits": fields.get("traits", {}).get("value", fields.get("personality_traits", {}).get("value", [])),
+                "personalityTraits": fields.get("personality_traits", {}).get("value", fields.get("traits", {}).get("value", [])),
+                "notes": fields.get("notes", {}).get("value", []),
+                "physicalDescription": fields.get("physical_description", {}).get("value", ""),
+                "speechStyle": fields.get("speech_style", {}).get("value", ""),
+                "arcNotes": fields.get("arc_notes", {}).get("value", ""),
+                "importConfidence": fields.get("confidence", {}).get("value", entry.get("confidence", 0)),
+                "mergeEvidence": {
+                    "importCharacterId": cid,
+                    "entityMergeDecision": decision,
+                    "semanticConflicts": decision.get("conflicts", []),
+                },
+                "importRunId": import_run_id,
+            }
+            op = {
+                "op_type": "update",
+                "entity_type": "character",
+                "entity_id": existing_id,
+                "data": update_data,
+                "source_workflow": "W1_import",
+                "confidence": float(fields.get("confidence", {}).get("value", entry.get("confidence", 0.7)) or 0.7),
+                "auto_apply": False,
+                "depends_on": [],
+                "diagnostics": {
+                    "contract": "EntityMergeDecision/v1",
+                    "semantic_conflicts": decision.get("conflicts", []),
+                },
+            }
+            try:
+                proposal = await s2_memory_writer.propose_write(op, str(project_path))
+                receipts.append({
+                    "id": proposal.get("id", ""),
+                    "entity_type": "character",
+                    "status": proposal.get("status", ""),
+                    "confidence": float(proposal.get("confidence", op["confidence"]) or op["confidence"]),
+                    "blocked": bool(proposal.get("blockedReason") or proposal.get("requiresManualReview")),
+                })
+            except Exception as e:
+                errors.append(f"Failed to propose character merge {cid}->{existing_id}: {str(e)}")
             continue
         entry = _compact_character_card(dict(entry))
         op = {
@@ -4451,6 +4812,7 @@ async def node_write_to_project(state: ImportState) -> dict:
         if _is_person_like_world_entry(name, detail, category):
             continue
         resolved_category, container_id = _resolve_container_id(name, detail.get("category", category))
+        container_id = detail.get("containerId") or container_id
         op = {
             "op_type": "create",
             "entity_type": "world_item",
@@ -4596,8 +4958,9 @@ async def node_write_to_project(state: ImportState) -> dict:
             mc,
         ))
 
-    # Phase 2: write ManuscriptNode projection BEFORE cancellable proposal writes
-    _write_manuscript_nodes(project_path, manuscript_scene_pairs, source_language)
+    # Stage the deterministic manuscript projection. Canonical manuscript files
+    # are written only by the proposal-acceptance path, never by W1 extraction.
+    staged_manuscript_projection = _stage_manuscript_projection(state, manuscript_scene_pairs, source_language)
 
     # Phase 3: chapter proposals
     for chapter_info, mc in manuscript_scene_pairs:
@@ -4618,6 +4981,12 @@ async def node_write_to_project(state: ImportState) -> dict:
                 "sceneIds": [],
                 "status": "draft",
                 "importRunId": import_run_id,
+                "sourceSpan": mc.get("source_span"),
+                "stagedManuscriptProjection": {
+                    **staged_manuscript_projection,
+                    "chapter_id": chap_id,
+                    "scene_id": chapter_info["scene_id"],
+                },
             },
             "source_workflow": "W1_import",
             "confidence": 0.90,
@@ -4636,7 +5005,7 @@ async def node_write_to_project(state: ImportState) -> dict:
         except Exception as e:
             errors.append(f"Failed to propose chapter '{chapter_info['title']}': {str(e)}")
 
-    for chapter_info, _mc in manuscript_scene_pairs:
+    for chapter_info, mc in manuscript_scene_pairs:
         scene_title = "章节正文" if source_is_zh else "Chapter Text"
         op = {
             "op_type": "create",
@@ -4656,6 +5025,12 @@ async def node_write_to_project(state: ImportState) -> dict:
                 "status": "draft",
                 "notes": chapter_info["notes"],
                 "importRunId": import_run_id,
+                "sourceSpan": mc.get("source_span"),
+                "stagedManuscriptProjection": {
+                    **staged_manuscript_projection,
+                    "chapter_id": chapter_info["chapter_id"],
+                    "scene_id": chapter_info["scene_id"],
+                },
             },
             "source_workflow": "W1_import",
             "confidence": 0.90,
@@ -4788,13 +5163,60 @@ _ZH_CATEGORY_LABELS: dict[str, str] = {
     "unknown":         "关系",
 }
 
+_RELATIONSHIP_ONTOLOGY: dict[str, dict[str, str]] = {
+    "family": {"label": "家族关系", "directionality": "symmetric"},
+    "romantic": {"label": "情感关系", "directionality": "symmetric"},
+    "rivalry": {"label": "竞争关系", "directionality": "symmetric"},
+    "sworn_brothers": {"label": "结拜关系", "directionality": "symmetric"},
+    "conflict": {"label": "对立关系", "directionality": "symmetric"},
+    "mentor_disciple": {"label": "师徒关系", "directionality": "directed"},
+    "political": {"label": "政治关系", "directionality": "directed"},
+    "alliance": {"label": "盟友关系", "directionality": "symmetric"},
+}
+_ZH_REL_CATEGORY_ALIASES = {
+    "家族": "family", "family": "family", "romance": "romantic", "情感": "romantic",
+    "竞争": "rivalry", "rivalry": "rivalry", "师徒": "mentor_disciple", "mentor": "mentor_disciple",
+    "政治": "political", "political": "political", "结拜": "sworn_brothers", "conflict": "conflict",
+    "对立": "conflict", "alliance": "alliance", "盟友": "alliance",
+}
+_RELATIONSHIP_FALSE_LABELS = frozenset({"解惑", "选拔", "冷冰冰的师兄"})
+
+
+def _relationship_ontology(relationship: dict, source_language: str) -> dict | None:
+    """Normalize only ontology-backed relationships; phrase/events stay as evidence."""
+    raw_type = str(relationship.get("type", "")).strip()
+    raw_category = str(relationship.get("category", "")).strip().lower()
+    if raw_type in _RELATIONSHIP_FALSE_LABELS or (len(raw_type) > 4 and any(token in raw_type for token in ("师兄", "师姐", "师弟", "师妹"))):
+        return None
+    key = _ZH_REL_CATEGORY_ALIASES.get(raw_category) or _ZH_REL_CATEGORY_ALIASES.get(raw_type.lower())
+    if not key:
+        # Chinese typed labels map through their canonical semantic forms only.
+        key = next((candidate for candidate, metadata in _RELATIONSHIP_ONTOLOGY.items() if raw_type == metadata["label"]), None)
+    metadata = _RELATIONSHIP_ONTOLOGY.get(key or "")
+    if not metadata:
+        return None if source_language == "zh" else {"ontologyType": raw_category or "other", "ontologyDirection": "directed"}
+    return {
+        "category": key,
+        "type": metadata["label"] if source_language == "zh" else raw_type or key,
+        "ontologyType": key,
+        "ontologyDirection": metadata["directionality"],
+        "sourceLabel": raw_type if raw_type and raw_type != metadata["label"] else relationship.get("sourceLabel", ""),
+        "directionality": "bidirectional" if metadata["directionality"] == "symmetric" else "source_to_target",
+    }
+
+
+def _relationship_dedupe_key(source_id: str, target_id: str, relationship: dict) -> tuple[str, str, str, str]:
+    direction = relationship.get("ontologyDirection") or relationship.get("directionality", "directed")
+    left, right = (tuple(sorted((source_id, target_id))) if direction == "symmetric" or relationship.get("directionality") == "bidirectional" else (source_id, target_id))
+    return left, right, str(relationship.get("ontologyType") or relationship.get("category", "other")), str(direction)
+
 
 def _normalize_relationship_type(raw_type: str, category: str, source_language: str) -> tuple[str, str]:
     """Return (display_type, source_label). For zh: map category → canonical Chinese label;
     preserve raw_type as source_label if it differs from canonical."""
     if source_language != "zh":
         return raw_type, ""
-    canonical = _ZH_CATEGORY_LABELS.get(category, "关系")
+    canonical = _RELATIONSHIP_ONTOLOGY.get(_ZH_REL_CATEGORY_ALIASES.get(category, category), {}).get("label", "关系")
     source_label = raw_type if (raw_type and raw_type != canonical) else ""
     return canonical, source_label
 
@@ -4844,32 +5266,25 @@ async def node_synthesize_relationships(state: ImportState) -> dict:
                 evidence_list = [str(rel.get("description", "")).strip()]
             if not evidence_list:
                 continue
-            directionality = str(rel.get("directionality", "bidirectional")).strip() or "bidirectional"
-            key_ids = tuple(sorted((source_id, target_id))) if directionality == "bidirectional" else (source_id, target_id)
-            key = (
-                key_ids,
-                str(rel.get("type", "")).strip().lower(),
-                str(rel.get("category", "")).strip().lower(),
-                directionality,
-            )
+            normalized = _relationship_ontology(rel, state.get("source_language", "zh"))
+            if normalized is None:
+                continue
+            key = _relationship_dedupe_key(source_id, target_id, normalized)
             if key in seen_keys:
                 continue
             seen_keys.add(key)
-            _fb_raw_type = str(rel.get("type", "")).strip()
-            _fb_category = str(rel.get("category", "unknown")).strip()
-            _fb_source_lang = state.get("source_language", "zh")
-            _fb_display_type, _fb_source_label = _normalize_relationship_type(_fb_raw_type, _fb_category, _fb_source_lang)
-            _fb_display_type = _fb_display_type or "relationship"
             fallback.append({
                 "id": f"rel_{uuid.uuid4().hex[:8]}",
                 "sourceId": source_id,
                 "targetId": target_id,
-                "type": _fb_display_type,
-                "sourceLabel": _fb_source_label,
+                "type": normalized["type"],
+                "sourceLabel": normalized.get("sourceLabel", ""),
                 "description": str(rel.get("description", "")).strip(),
                 "strength": None,
-                "category": str(rel.get("category", "other")).strip() or "other",
-                "directionality": directionality,
+                "category": normalized["category"],
+                "directionality": normalized["directionality"],
+                "ontologyType": normalized.get("ontologyType"),
+                "ontologyDirection": normalized.get("ontologyDirection"),
                 "status": "inferred_from_import",
                 "sourceNotes": "\n".join(evidence_list[:4]),
                 "importConfidence": float(rel.get("confidence", 0.70) or 0.70),
@@ -4920,38 +5335,26 @@ async def node_synthesize_relationships(state: ImportState) -> dict:
         if len(evidence_list) < 1:
             continue
 
-        directionality = str(rel.get("directionality", "bidirectional")).strip() or "bidirectional"
-        key_ids: tuple[str, str]
-        if directionality == "bidirectional":
-            key_ids = tuple(sorted((source_id, target_id)))
-        else:
-            key_ids = (source_id, target_id)
-        key = (
-            key_ids,
-            str(rel.get("type", "")).strip().lower(),
-            str(rel.get("category", "")).strip().lower(),
-            directionality,
-        )
+        normalized = _relationship_ontology(rel, state.get("source_language", "zh"))
+        if normalized is None:
+            continue
+        key = _relationship_dedupe_key(source_id, target_id, normalized)
         if key in seen_keys:
             continue
         seen_keys.add(key)
-
-        _raw_type = str(rel.get("type", "")).strip()
-        _category = str(rel.get("category", "unknown")).strip()
-        _source_lang = state.get("source_language", "zh")
-        _display_type, _source_label = _normalize_relationship_type(_raw_type, _category, _source_lang)
-        _display_type = _display_type or "relationship"
 
         relationships.append({
             "id": rel.get("id") or f"rel_{uuid.uuid4().hex[:8]}",
             "sourceId": source_id,
             "targetId": target_id,
-            "type": _display_type,
-            "sourceLabel": _source_label,
+            "type": normalized["type"],
+            "sourceLabel": normalized.get("sourceLabel", ""),
             "description": str(rel.get("description", "")).strip(),
             "strength": rel.get("strength"),
-            "category": str(rel.get("category", "other")).strip() or "other",
-            "directionality": directionality,
+            "category": normalized["category"],
+            "directionality": normalized["directionality"],
+            "ontologyType": normalized.get("ontologyType"),
+            "ontologyDirection": normalized.get("ontologyDirection"),
             "status": str(rel.get("status", "unknown")).strip() or "unknown",
             "sourceNotes": "\n".join(evidence_list),
             "importConfidence": float(rel.get("confidence", 0.75)),
@@ -5013,10 +5416,15 @@ async def node_classify_character_tags(state: ImportState) -> dict:
 
     used_tag_ids: set[str] = set()
     character_tags: list[dict] = []
+    tag_rejections: list[dict] = []
     for index, tag in enumerate(result.get("tags", [])):
-        name = str(tag.get("name", "")).strip()
-        if not name:
+        normalized_tag, rejection = _normalize_character_tag(tag, _src_lang)
+        if rejection:
+            tag_rejections.append(rejection)
             continue
+        assert normalized_tag is not None
+        tag = normalized_tag
+        name = str(tag["name"])
 
         character_ids = _resolve_character_ids(
             list(tag.get("character_ids", [])) + list(tag.get("character_names", [])),
@@ -5034,6 +5442,7 @@ async def node_classify_character_tags(state: ImportState) -> dict:
             "color": color,
             "description": str(tag.get("description", "")).strip(),
             "characterIds": character_ids,
+            **({"sourceName": tag["sourceName"], "normalization": tag["normalization"]} if tag.get("sourceName") else {}),
         }
         character_tags.append(tag_entry)
         for cid in character_ids:
@@ -5057,6 +5466,7 @@ async def node_classify_character_tags(state: ImportState) -> dict:
         "character_tags": character_tags,
         "entity_registry": registry,
         "errors": errors,
+        "tag_rejections": tag_rejections,
         "progress": 0.89,
     }
 
@@ -5986,13 +6396,16 @@ def get_graph() -> Any:
 async def run(project_path: str, config: dict) -> dict:
     """Convenience entry point — creates state from config and runs graph."""
     import_mode = config.get("import_mode", "import_all")
+    session_id = str(config.get("session_id", "") or config.get("context", {}).get("session_id", "") or "")
+    configure_w1_budget(config, session_id)
     state: ImportState = {
         "project_path": project_path,
         "workflow_id": "W1",
         "source_file_path": config.get("source_file_path", ""),
         "import_mode": import_mode,
         "prompt_profile": config.get("prompt_profile") or config.get("context", {}).get("prompt_profile", "balanced"),
-        "context": config.get("context", {}),
+        "context": {**config.get("context", {}), "session_id": session_id, "budget_policy": config.get("budget_policy")},
+        "session_id": session_id,
         "chunks": [],
         "import_run_manifest": {},
         "evidence_cards": [],
@@ -6029,6 +6442,7 @@ async def run_streaming(project_path: str, config: dict):
     """
     prompt_profile = config.get("prompt_profile") or config.get("context", {}).get("prompt_profile", "balanced")
     session_id = str(config.get("session_id", "") or config.get("context", {}).get("session_id", "") or "")
+    configure_w1_budget(config, session_id)
     if session_id:
         from sidecar.workflows.w1_run_events import append_event
         append_event(session_id, {
@@ -6058,7 +6472,7 @@ async def run_streaming(project_path: str, config: dict):
         "source_file_path": config.get("source_file_path", ""),
         "import_mode": import_mode,
         "prompt_profile": prompt_profile,
-        "context": {**config.get("context", {}), "session_id": session_id},
+        "context": {**config.get("context", {}), "session_id": session_id, "budget_policy": config.get("budget_policy")},
         "session_id": session_id,
         "chunks": [],
         "import_run_manifest": {},

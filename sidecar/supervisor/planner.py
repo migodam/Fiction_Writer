@@ -36,7 +36,20 @@ _PROPOSAL_ALLOWED_FIELDS: frozenset = frozenset({
     "confidence",
     "safety_notes",
     "prompt_policy_patch",
+    "next_action",
 })
+
+# This mirrors the supervisor registry without importing executable tools here.
+# Keeping the contract data-only prevents a planner validation call from loading
+# model clients or acquiring workflow resources.
+_REGISTERED_NEXT_ACTION_TOOLS: frozenset = frozenset({
+    "segment_manifest", "extract_window", "cross_validate_window", "rerun_window",
+    "reduce_entities", "reduce_world_entities", "minor_repair", "architect_timeline",
+    "qa_review", "judge_import", "proposal_write", "run_quality_review",
+    "run_fact_review", "run_consistency_review", "rerun_targeted_window",
+    "repair_import_artifacts", "write_proposal_package",
+})
+_NEXT_ACTION_KINDS: frozenset = frozenset({"tool", "stop", "rerun"})
 
 # ---------------------------------------------------------------------------
 # PromptPolicyPatch constants
@@ -140,6 +153,23 @@ def validate_planner_proposal(proposal: PlannerProposal) -> tuple[bool, list[str
     # --- planner_kind ---------------------------------------------------------
     if proposal.get("planner_kind") not in _VALID_PLANNER_KINDS:
         errors.append(f"unknown planner_kind: {proposal.get('planner_kind')!r}")
+
+    # --- next_action ---------------------------------------------------------
+    next_action = proposal.get("next_action")
+    if next_action is not None:
+        if not isinstance(next_action, dict):
+            errors.append("next_action: must be an object")
+        else:
+            unknown_next_action_keys = set(next_action) - {"kind", "tool", "window_id", "reason"}
+            if unknown_next_action_keys:
+                errors.append(f"next_action: unknown keys {sorted(unknown_next_action_keys)}")
+            kind = next_action.get("kind")
+            if kind not in _NEXT_ACTION_KINDS:
+                errors.append(f"next_action.kind: {kind!r} is not allowed")
+            if kind == "tool" and next_action.get("tool") not in _REGISTERED_NEXT_ACTION_TOOLS:
+                errors.append(f"next_action.tool: {next_action.get('tool')!r} is not a registered tool")
+            if kind == "rerun" and not str(next_action.get("window_id") or "").strip():
+                errors.append("next_action.window_id: rerun requires a window_id")
 
     # --- proposed_source_type -------------------------------------------------
     if proposal.get("proposed_source_type") not in _VALID_SOURCE_TYPES:
@@ -247,6 +277,34 @@ def validate_planner_proposal(proposal: PlannerProposal) -> tuple[bool, list[str
             errors.extend(f"prompt_policy_patch: {e}" for e in ppp_errors)
 
     return len(errors) == 0, errors
+
+
+def resolve_planner_next_action(
+    proposal: PlannerProposal | dict,
+    *,
+    registered_tools: set[str] | frozenset[str],
+    default_tool: str,
+    iteration: int,
+    max_iterations: int,
+    budget_exhausted: bool,
+) -> dict:
+    """Resolve a planner hint without allowing it to bypass deterministic guards."""
+    action = proposal.get("next_action") or {}
+    if not action:
+        return {"kind": "tool", "tool": default_tool, "reason": "deterministic_fallback"}
+    kind = action.get("kind")
+    if kind == "stop":
+        return {"kind": "stop", "reason": str(action.get("reason") or "planner_requested_stop")}
+    if kind == "rerun":
+        if budget_exhausted:
+            return {"kind": "tool", "tool": default_tool, "reason": "budget_exhausted"}
+        if iteration >= max_iterations:
+            return {"kind": "tool", "tool": default_tool, "reason": "rerun_bound_reached"}
+        return {"kind": "rerun", "tool": "rerun_window", "window_id": action["window_id"], "reason": "planner_requested_rerun"}
+    tool = action.get("tool")
+    if kind == "tool" and tool in registered_tools:
+        return {"kind": "tool", "tool": tool, "reason": "planner_requested_tool"}
+    return {"kind": "tool", "tool": default_tool, "reason": "unregistered_tool_fallback"}
 
 
 # ---------------------------------------------------------------------------

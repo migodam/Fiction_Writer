@@ -71,6 +71,24 @@ def test_prompt_window_splits_only_single_oversized_chapter_by_budget(tmp_path):
     assert sum(window["source_chars"] for window in windows) == len(content)
 
 
+def test_split_prompt_windows_keep_exact_source_spans_for_each_part(tmp_path):
+    paragraph = "A" * 250_000
+    raw_source = "\n\n".join([paragraph, paragraph, paragraph, paragraph])
+    state = {"project_path": str(tmp_path), "prompt_profile": "deep", "context": {}, "source_text": raw_source}
+    digest = {"content": "{}", "estimated_tokens": 1, "counts": {}}
+    span = sidecar_state.make_source_span(raw_source, 0, len(raw_source))
+
+    windows = w1_import._build_prompt_windows(
+        state,
+        [{"chunk_id": 0, "chapter_hint": "Huge", "manuscript_content": raw_source, "source_span": span}],
+        digest,
+    )
+
+    assert len(windows) > 1
+    for window in windows:
+        assert sidecar_state.reconstruct_source_span(window["source_span"], raw_source) == window["text"]
+
+
 def test_prompt_window_packs_short_chapters_toward_256k_budget(tmp_path):
     state = {"project_path": str(tmp_path), "prompt_profile": "deep", "context": {}}
     digest = {
@@ -222,9 +240,9 @@ def test_build_manuscript_orders_chapters_by_source_chunk_id(tmp_path):
         "project_path": str(tmp_path),
         "import_mode": "import_all",
         "chunks": [
-            {"chunk_id": 2, "chapter_hint": "Chapter 3"},
-            {"chunk_id": 0, "chapter_hint": "Chapter 1"},
-            {"chunk_id": 1, "chapter_hint": "Chapter 2"},
+            {"chunk_id": 2, "chapter_hint": "Chapter 3", "manuscript_content": "third"},
+            {"chunk_id": 0, "chapter_hint": "Chapter 1", "manuscript_content": "first"},
+            {"chunk_id": 1, "chapter_hint": "Chapter 2", "manuscript_content": "second"},
         ],
         "chunk_extractions": [
             {"chunk_id": 2, "manuscript_content": "third"},
@@ -273,8 +291,8 @@ def test_build_manuscript_enriches_and_dedupes_duplicate_chapter_numbers(tmp_pat
         "source_language": "zh",
         "import_mode": "import_all",
         "chunks": [
-            {"chunk_id": 10, "chapter_hint": "第十章"},
-            {"chunk_id": 9, "chapter_hint": "第十章"},
+            {"chunk_id": 10, "chapter_hint": "第十章", "manuscript_content": "第十章 韩立进入神手谷。"},
+            {"chunk_id": 9, "chapter_hint": "第十章", "manuscript_content": "第十章 墨大夫传授口诀。"},
         ],
         "chunk_extractions": [
             {"chunk_id": 10, "manuscript_content": "第十章 韩立进入神手谷。"},
@@ -1049,6 +1067,46 @@ def test_node_write_to_project_returns_compact_receipts(tmp_path, monkeypatch):
     assert "world_item" in entity_types
 
 
+def test_matched_character_merge_writes_an_accepted_update_proposal(tmp_path, monkeypatch):
+    operations: list[dict] = []
+
+    async def capture_proposal(operation, _project_path):
+        operations.append(operation)
+        return {"id": f"p_{operation['entity_id']}", "status": "pending", "confidence": operation["confidence"]}
+
+    monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", capture_proposal)
+    state = _make_write_state(
+        tmp_path,
+        entity_registry={
+            "characters": {
+                "import_alice": {
+                    "canonical_name": "Alice", "skip_create": True,
+                    "existing_project_id": "char_existing", "confidence": 0.91,
+                    "entity_merge_decision": {
+                        "contract": "EntityMergeDecision/v1",
+                        "fields": {
+                            "aliases": {"value": ["Alicia"]}, "background": {"value": "New history"},
+                            "experience": {"value": ["survived siege"]}, "traits": {"value": ["brave"]},
+                            "notes": {"value": ["evidence note"]}, "confidence": {"value": 0.91},
+                        },
+                        "conflicts": [{"field": "background", "resolution": "preserve_and_append"}],
+                    },
+                },
+            },
+            "events": {}, "world": {}, "world_detailed": {},
+        },
+    )
+
+    asyncio.run(w1_import.node_write_to_project(state))
+
+    merge = next(operation for operation in operations if operation["entity_id"] == "char_existing")
+    assert merge["op_type"] == "update"
+    assert merge["data"]["aliases"] == ["Alicia"]
+    assert merge["data"]["experience"] == ["survived siege"]
+    assert merge["data"]["traits"] == ["brave"]
+    assert merge["diagnostics"]["semantic_conflicts"]
+
+
 def test_node_write_to_project_normalizes_event_branch_to_imported_root(tmp_path, monkeypatch):
     captured_ops = []
 
@@ -1160,8 +1218,8 @@ def test_node_infer_world_settings_preserves_existing_timeline_architect_branche
     assert [branch["id"] for branch in result["timeline_branches"]] == ["branch_main", "branch_training"]
 
 
-def test_node_write_to_project_manuscript_still_written(tmp_path, monkeypatch):
-    """manuscript.json must be written even after switching to compact receipts."""
+def test_node_write_to_project_stages_manuscript_before_acceptance(tmp_path, monkeypatch):
+    """Pre-acceptance W1 manuscript output must remain staged."""
     import json
 
     async def fake_propose_write(op, _project_path):
@@ -1180,8 +1238,9 @@ def test_node_write_to_project_manuscript_still_written(tmp_path, monkeypatch):
     asyncio.run(w1_import.node_write_to_project(state))
 
     manuscript_path = tmp_path / "manuscript.json"
-    assert manuscript_path.exists(), "manuscript.json must be written"
-    manuscript = json.loads(manuscript_path.read_text(encoding="utf-8"))
+    assert not manuscript_path.exists(), "W1 must not write canonical manuscript.json before acceptance"
+    staged_path = tmp_path / "system" / "imports" / "import_compact" / "staged_manuscript_projection.json"
+    manuscript = json.loads(staged_path.read_text(encoding="utf-8"))
     assert len(manuscript["chapters"]) == 2
     assert manuscript["chapters"][0]["title"] == "Ch 1"
 
@@ -1276,7 +1335,7 @@ def test_node_write_to_project_world_containers_before_items_and_skips_people(tm
     assert next(item for item in world_items if item["name"] == "长春功")["category"] == "cultivation_method"
 
 
-def test_node_write_to_project_writes_manuscript_before_cancellable_proposals(tmp_path, monkeypatch):
+def test_node_write_to_project_stages_manuscript_before_cancellable_proposals(tmp_path, monkeypatch):
     async def cancelled_propose_write(_op, _project_path):
         raise asyncio.CancelledError()
 
@@ -1305,13 +1364,14 @@ def test_node_write_to_project_writes_manuscript_before_cancellable_proposals(tm
         raise AssertionError("Expected cancellation to propagate")
 
     manuscript_path = tmp_path / "manuscript.json"
-    assert manuscript_path.exists(), "manuscript.json must be written before proposal loop can be cancelled"
-    manuscript = json.loads(manuscript_path.read_text(encoding="utf-8"))
-    assert manuscript["chapters"][0]["manuscript_content"] == "Text survives cancellation."
+    assert not manuscript_path.exists(), "cancellation must not leave canonical manuscript content"
+    staged_path = tmp_path / "system" / "imports" / "import_compact" / "staged_manuscript_projection.json"
+    manuscript = json.loads(staged_path.read_text(encoding="utf-8"))
+    assert manuscript["chapters"][0]["content"] == "Text survives cancellation."
 
 
-def test_node_write_to_project_writes_manuscript_node_projection(tmp_path, monkeypatch):
-    """writing/manuscript/nodes.json and .md files must be written BEFORE proposal writes."""
+def test_node_write_to_project_stages_manuscript_node_projection(tmp_path, monkeypatch):
+    """Writing nodes and documents remain staged until proposal acceptance."""
     import json as _json
 
     proposal_call_count = {"n": 0}
@@ -1346,8 +1406,9 @@ def test_node_write_to_project_writes_manuscript_node_projection(tmp_path, monke
     asyncio.run(w1_import.node_write_to_project(state))
 
     nodes_path = tmp_path / "writing" / "manuscript" / "nodes.json"
-    assert nodes_path.exists(), "writing/manuscript/nodes.json must be written"
-    nodes = _json.loads(nodes_path.read_text(encoding="utf-8"))
+    assert not nodes_path.exists(), "W1 must not write canonical manuscript nodes"
+    staged_path = tmp_path / "system" / "imports" / "import_compact" / "staged_manuscript_projection.json"
+    nodes = _json.loads(staged_path.read_text(encoding="utf-8"))["nodes"]
 
     assert len(nodes) == 4
     chapter_nodes = [n for n in nodes if n["type"] == "chapter_outline"]
@@ -1371,12 +1432,7 @@ def test_node_write_to_project_writes_manuscript_node_projection(tmp_path, monke
 
     for sc_node in scene_nodes:
         md_path = tmp_path / "writing" / "manuscript" / f"{sc_node['id']}.md"
-        assert md_path.exists(), f"{sc_node['id']}.md must be written"
-        content = md_path.read_text(encoding="utf-8")
-        assert content.strip(), f"{sc_node['id']}.md must have non-empty content"
-        # Verify actual sample text is present, not only non-zero word count
-        if sc_node["linkedChapterId"] == "chap_1":
-            assert "韩立" in content, "Chapter 1 .md must contain sample prose text"
+        assert not md_path.exists(), "scene markdown must not exist before acceptance"
 
     for node in nodes:
         assert "/" not in node["id"] and "\\" not in node["id"] and " " not in node["id"], \
@@ -1511,8 +1567,8 @@ def test_node_write_to_project_characters_fully_popped(tmp_path, monkeypatch):
     )
 
 
-def test_node_write_to_project_streaming_manuscript_50_chapters(tmp_path, monkeypatch):
-    """Streaming manuscript write must produce valid JSON with correct chapter count."""
+def test_node_write_to_project_stages_50_chapter_manuscript(tmp_path, monkeypatch):
+    """Large pre-acceptance manuscript projection remains valid staged JSON."""
     import json
 
     async def fake_propose_write(op, _project_path):
@@ -1534,13 +1590,13 @@ def test_node_write_to_project_streaming_manuscript_50_chapters(tmp_path, monkey
     asyncio.run(w1_import.node_write_to_project(state))
 
     manuscript_path = tmp_path / "manuscript.json"
-    assert manuscript_path.exists()
-    manuscript = json.loads(manuscript_path.read_text(encoding="utf-8"))
+    assert not manuscript_path.exists()
+    staged_path = tmp_path / "system" / "imports" / "import_compact" / "staged_manuscript_projection.json"
+    manuscript = json.loads(staged_path.read_text(encoding="utf-8"))
     assert len(manuscript["chapters"]) == 50
     assert manuscript["chapters"][0]["title"] == "Chapter 1"
     assert manuscript["chapters"][49]["title"] == "Chapter 50"
-    assert "source_file" in manuscript
-    assert "imported_at" in manuscript
+    assert manuscript["acceptance_required"] is True
 
 
 def test_world_organizer_filters_module_contamination_and_sets_category_paths():
@@ -2180,8 +2236,8 @@ def test_supervisor_path_content_chain_integrity(tmp_path, monkeypatch):
 
 # ── F-5: nodes.json includes source_span per node ─────────────────────────────
 
-def test_manuscript_nodes_json_includes_source_span(tmp_path, monkeypatch):
-    """nodes.json written by _write_manuscript_nodes must include source_span on chapter nodes."""
+def test_staged_manuscript_nodes_include_source_span(tmp_path, monkeypatch):
+    """The staged node projection keeps chapter source provenance."""
 
     async def fake_propose_write(op, _project_path):
         return {"id": f"p_{op['entity_id']}", "confidence": op["confidence"], "status": "pending"}
@@ -2207,8 +2263,9 @@ def test_manuscript_nodes_json_includes_source_span(tmp_path, monkeypatch):
     asyncio.run(w1_import.node_write_to_project(state))
 
     nodes_path = tmp_path / "writing" / "manuscript" / "nodes.json"
-    assert nodes_path.exists(), "nodes.json must be written by node_write_to_project"
-    nodes_json = json.loads(nodes_path.read_text(encoding="utf-8"))
+    assert not nodes_path.exists(), "nodes must not be canonical before acceptance"
+    staged_path = tmp_path / "system" / "imports" / "import_compact" / "staged_manuscript_projection.json"
+    nodes_json = json.loads(staged_path.read_text(encoding="utf-8"))["nodes"]
 
     # Find the chapter_outline node (type == "chapter_outline")
     chapter_nodes = [n for n in nodes_json if n.get("type") == "chapter_outline"]
@@ -2218,9 +2275,6 @@ def test_manuscript_nodes_json_includes_source_span(tmp_path, monkeypatch):
     assert "source_span" in chapter_node, (
         f"chapter_outline node missing source_span: {chapter_node}"
     )
-    assert chapter_node["source_span"]["start"] == 100, (
-        f"Expected source_span.start=100, got {chapter_node['source_span']}"
-    )
-    assert chapter_node["source_span"]["end"] == 500, (
-        f"Expected source_span.end=500, got {chapter_node['source_span']}"
-    )
+    assert set(chapter_node["source_span"]) == {
+        "raw_source_hash", "absolute_start", "absolute_end", "substring_hash",
+    }

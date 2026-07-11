@@ -35,6 +35,7 @@ from sidecar.models.state import (
 from sidecar.workflows.w1_import import (
     _API_SEMAPHORE,
     _add_world_candidate_to_registry,
+    _ainvoke_with_budget,
     _append_unique_strings,
     _artifact_dir,
     _build_project_structure_digest,
@@ -47,6 +48,7 @@ from sidecar.workflows.w1_import import (
     _is_world_entity_candidate,
     _merge_prompt_outputs,
     _merge_text_field,
+    _normalize_character_tag,
     _normalize_world_category,
     _normalize_timeline_event_ontology,
     _now_iso,
@@ -103,7 +105,7 @@ _OUTPUT_BUDGET_SPLIT_THRESHOLD = 3_500
 def _is_budget_exhausted_error(exc: Exception) -> bool:
     """True if exc signals an API HTTP 402 / insufficient-balance error."""
     msg = str(exc).lower()
-    if "402" in msg or "insufficient balance" in msg or "insufficient_balance" in msg:
+    if "budget_exhausted" in msg or "402" in msg or "insufficient balance" in msg or "insufficient_balance" in msg:
         return True
     try:
         import openai  # type: ignore[import-not-found]
@@ -540,11 +542,14 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
     chunk_ids = window.get("chunk_ids", [0])
     chunk_id = chunk_ids[0] if chunk_ids else 0
     total = len(state.get("chunks", [])) or 1
-    # Assemble source text from state chunks (windows store metadata only, not the text)
+    # Prompt windows retain exact source_text for split windows. Reassembling from
+    # chunks would silently expand a paragraph-split window back to its parent.
     chunk_id_set = set(chunk_ids)
     all_chunks_by_id = {c.get("chunk_id"): c for c in state.get("chunks", [])}
     window_chunks = [all_chunks_by_id[cid] for cid in chunk_ids if cid in all_chunks_by_id]
-    prompt_text = "\n\n".join(str(c.get("content", c.get("text", ""))) for c in window_chunks)
+    prompt_text = str(window.get("source_text", "") or "")
+    if not prompt_text:
+        prompt_text = "\n\n".join(str(c.get("content", c.get("text", ""))) for c in window_chunks)
     if not prompt_text:
         prompt_text = str(window.get("text", "") or window.get("source_text", ""))
     # Prepend any supervisor hint injected by rerun_window (stored separately to survive chunk reassembly)
@@ -574,7 +579,7 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
     # 5-parallel extraction
     _prompts = _select_extraction_prompts(state)
     _prompt_manifest = _selected_extraction_prompt_manifest(state)
-    results = await asyncio.gather(
+    prompt_calls = [
         _invoke_window_prompt_with_activity(
             state, window_id, chapter_range, "character", llm, _prompts["character"],
             chunk_content=prompt_text, chunk_id=chunk_id,
@@ -606,8 +611,23 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
             chapter_hint=chapter_range,
             source_language_label=_src_lang_label, language_policy=_lang_policy,
         ),
-        return_exceptions=True,
-    )
+    ]
+    # A fail-closed ledger must observe each completed call before starting the
+    # next one; concurrent preflights cannot reserve max_calls safely.
+    if state.get("context", {}).get("budget_policy"):
+        results = []
+        for call in prompt_calls:
+            try:
+                results.append(await call)
+            except Exception as exc:
+                results.append(exc)
+                if _is_budget_exhausted_error(exc):
+                    for skipped in prompt_calls[len(results):]:
+                        skipped.close()
+                    break
+        results.extend([RuntimeError("budget_exhausted: skipped after ledger exhaustion")] * (len(prompt_calls) - len(results)))
+    else:
+        results = await asyncio.gather(*prompt_calls, return_exceptions=True)
 
     labels = ["character", "event", "world", "relationship", "scene"]
     outputs: list[dict] = []
@@ -873,13 +893,23 @@ async def cross_validate_window(state: ImportSupervisorState, window_id: str) ->
 
     result: dict = {}
     try:
-        async with _API_SEMAPHORE:
-            response = await llm.ainvoke([HumanMessage(content=full_prompt)])
+        response = await _ainvoke_with_budget(
+            llm,
+            [HumanMessage(content=full_prompt)],
+            session_id=_session_id(state),
+            estimated_input_tokens=_estimate_tokens(full_prompt),
+        )
         raw = response.content if isinstance(response.content, str) else str(response.content)
         result = _parse_json_response(raw)
     except Exception as exc:
         log = list(state.get("supervisor_log", []))
         log.append(f"cross_validate_window {window_id}: non-fatal error — {exc}")
+        if _is_budget_exhausted_error(exc):
+            return {
+                "supervisor_log": log,
+                "budget_exhausted": True,
+                "errors": list(state.get("errors", [])) + [f"budget_exhausted during cross-validation: {exc}"],
+            }
         return {"supervisor_log": log}
 
     missing_major_entries = result.get("missing_major_characters", [])
@@ -1008,15 +1038,15 @@ async def rerun_window(
             "\nORCHESTRATOR_PARAMETER_OVERRIDES: Treat these as soft extraction emphasis only; "
             f"do not write canonical proposals directly: {override_text}\n\n"
         )
-    new_text = hint_block + parent.get("text", "")
+    new_prompt_text = hint_block + parent.get("prompt_text", parent.get("text", ""))
     new_win = {
         **parent,
         "id": new_id,
-        "text": new_text,
-        # supervisor_hint stored separately so extract_window can prepend it after
-        # chunk reassembly (window["text"] is overwritten by chunks during extraction)
+        "prompt_text": new_prompt_text,
+        # supervisor_hint is applied at extraction time; text/source_text stay
+        # span-reconstructable source payloads.
         "supervisor_hint": hint_block,
-        "estimated_tokens": _estimate_tokens(new_text),
+        "estimated_tokens": _estimate_tokens(new_prompt_text),
         "split_reason": f"supervisor_augment_of_{window_id}",
         "output_token_budget": profile_config.get("output_token_budget", 4000),
     }
@@ -1469,18 +1499,25 @@ async def minor_repair(state: ImportSupervisorState) -> dict:
             repair_log.append(f"language_validation: stripped {latin_stripped} Latin-dominant traits for zh source")
 
     # Tag name language validation for zh source
-    tag_stripped = 0
+    tag_normalized = 0
+    tag_rejections: list[dict] = list(state.get("tag_rejections", []))
     character_tags: list[dict] = []
     if state.get("character_tags"):
         character_tags = [dict(tag) for tag in state.get("character_tags", [])]
         if source_lang == "zh":
+            normalized_tags: list[dict] = []
             for tag in character_tags:
-                if isinstance(tag, dict) and isinstance(tag.get("name", ""), str):
-                    if re.search(r"[A-Za-z]{3,}", tag.get("name", "")):
-                        tag["name"] = ""
-                        tag_stripped += 1
-        if tag_stripped:
-            repair_log.append(f"language_validation: blanked {tag_stripped} English-dominant tag names for zh source")
+                normalized, rejection = _normalize_character_tag(tag, source_lang)
+                if rejection:
+                    tag_rejections.append(rejection)
+                    continue
+                assert normalized is not None
+                if normalized.get("name") != tag.get("name"):
+                    tag_normalized += 1
+                normalized_tags.append(normalized)
+            character_tags = normalized_tags
+        if tag_normalized or tag_rejections:
+            repair_log.append(f"language_validation: translated {tag_normalized} tag names and rejected {len(tag_rejections)} unmapped tags for zh source")
 
     registry["characters"] = chars
     registry["world"] = world_map
@@ -1488,16 +1525,18 @@ async def minor_repair(state: ImportSupervisorState) -> dict:
     registry["events"] = events
 
     log = list(state.get("supervisor_log", []))
-    log.append(f"minor_repair: groupKey={groupkey_fixed}, orgs_migrated={migrated}, resequenced={resequenced}, latin_stripped={latin_stripped}, tag_stripped={tag_stripped}")
+    log.append(f"minor_repair: groupKey={groupkey_fixed}, orgs_migrated={migrated}, resequenced={resequenced}, latin_stripped={latin_stripped}, tag_normalized={tag_normalized}, tag_rejections={len(tag_rejections)}")
 
     result = {
         "entity_registry": registry,
         "minor_repair_log": repair_log,
         "supervisor_log": log,
         "current_stage": "minor_repair",
+        "tag_rejections": tag_rejections,
     }
-    if character_tags:
-        result["character_tags"] = character_tags
+    # Always write the normalized list. In zh mode this explicitly replaces a
+    # fully rejected English set with [], so stale source tags cannot survive.
+    result["character_tags"] = character_tags
     return result
 
 

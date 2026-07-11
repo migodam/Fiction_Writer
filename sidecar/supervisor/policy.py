@@ -24,7 +24,11 @@ from sidecar.models.state import (
     select_granularity_profile,
     validate_import_plan,
 )
-from sidecar.supervisor.planner import planner_proposal_to_import_plan, validate_planner_proposal
+from sidecar.supervisor.planner import (
+    planner_proposal_to_import_plan,
+    resolve_planner_next_action,
+    validate_planner_proposal,
+)
 from sidecar.supervisor.planner_llm import generate_planner_proposal_stub
 from sidecar.supervisor.prompt_policy import (
     apply_prompt_policy_patch_to_plan,
@@ -36,6 +40,7 @@ from sidecar.supervisor.tool_registry import build_tool_registry
 from sidecar.workflows.w1_import import (
     _chunk_progress,
     _write_import_artifact,
+    configure_w1_budget,
     node_split_chunks,
     node_validate_file,
 )
@@ -518,6 +523,8 @@ async def _process_window(
         )
         cv_update = await tools["cross_validate_window"](state, window_id)
         state = _merge_window_result(state, cv_update)
+        if cv_update.get("budget_exhausted"):
+            return {**state, "budget_exhausted": True}
         _emit_activity(
             state,
             phase="validating",
@@ -809,25 +816,90 @@ async def _apply_thematic_reruns(
     return _with_status(state, current_tool="judge_import", orchestrator_phase="judging", converge_status="failed")
 
 
+async def _apply_initial_planner_action(
+    state: ImportSupervisorState,
+    tools: dict,
+    action: dict,
+) -> ImportSupervisorState:
+    """Execute only planner actions that are legal before the fixed W1 pipeline.
+
+    The planner cannot jump ahead of segmentation/reduction/proposal gates. At
+    this entry point, `segment_manifest` is the sole legal tool action; a rerun
+    is legal only for an already materialized window and still uses the
+    registered `rerun_window` tool.
+    """
+    if state.get("budget_exhausted"):
+        return _with_status(state, current_tool="budget_stop", orchestrator_phase="stopped", converge_status="hard_fail")
+
+    kind = action.get("kind")
+    if kind == "tool" and action.get("tool") == "segment_manifest":
+        update = await tools["segment_manifest"](state)
+        return _record_decision(
+            {**state, **update, "current_stage": "segment_manifest"},
+            "segment_manifest", "segment_manifest", "planner-selected legal initial tool",
+            {}, {"window_count": len(update.get("prompt_windows", []))}, "proceed",
+        )
+
+    if kind == "rerun":
+        window_id = str(action.get("window_id") or "")
+        valid_window_ids = {str(window.get("id") or "") for window in state.get("prompt_windows", [])}
+        if window_id in valid_window_ids and "rerun_window" in tools:
+            update = await tools["rerun_window"](state, window_id, strategy="augment")
+            merged = _merge_window_result(state, update)
+            return _record_decision(
+                merged, "planner_action", "rerun_window", f"planner rerun for {window_id}",
+                {}, {}, "rerun", [window_id],
+            )
+        reason = "unknown_window" if window_id not in valid_window_ids else "unregistered_rerun_tool"
+    else:
+        reason = "out_of_order_tool" if kind == "tool" else "unsupported_action"
+
+    fallback = {"kind": "tool", "tool": "segment_manifest", "reason": f"{reason}_fallback"}
+    log = list(state.get("supervisor_log", []))
+    log.append(f"planner action rejected ({reason}); falling back to deterministic segment_manifest")
+    return {**state, "planner_next_action": fallback, "supervisor_log": log}
+
+
 async def run_supervisor_policy(
     state: ImportSupervisorState,
     tools: dict,
 ) -> ImportSupervisorState:
     """Execute the full supervisor policy loop. Returns final state."""
     state = _ensure_orchestrator_plan(state)
+    planner_action = resolve_planner_next_action(
+        state.get("planner_proposal") or state.get("context", {}).get("planner_proposal") or {},
+        registered_tools=set(tools),
+        default_tool="segment_manifest",
+        iteration=int(state.get("supervisor_iteration", 0) or 0),
+        max_iterations=int(state.get("max_supervisor_iterations", 0) or 0),
+        budget_exhausted=bool(state.get("budget_exhausted")),
+    )
+    state = {**state, "planner_next_action": planner_action}
+    if planner_action["kind"] == "stop":
+        return _with_status(
+            state,
+            current_tool="planner_stop",
+            orchestrator_phase="stopped",
+            converge_status="hard_fail",
+        )
+    if state.get("budget_exhausted"):
+        return _with_status(state, current_tool="budget_stop", orchestrator_phase="stopped", converge_status="hard_fail")
+    state = await _apply_initial_planner_action(state, tools, planner_action)
+    planner_consumed_segment_manifest = state.get("current_stage") == "segment_manifest"
     profile_config = state.get("profile_config") or PROFILE_CONFIGS.get(
         state.get("prompt_profile", "balanced"), PROFILE_CONFIGS["balanced"]
     )
     tool_operating_spec = state.get("tool_operating_spec", {})
 
     # ── 1. Segment manifest ──────────────────────────────────────────────────
-    state = _with_status(state, current_tool="segment_manifest", orchestrator_phase="planning", converge_status="planning")
-    seg_update = await tools["segment_manifest"](state)
-    state = {**state, **seg_update, "current_stage": "segment_manifest"}
-    state = _record_decision(
-        state, "segment_manifest", "segment_manifest", "build prompt windows",
-        {}, {"window_count": len(state.get("prompt_windows", []))}, "proceed",
-    )
+    if not planner_consumed_segment_manifest:
+        state = _with_status(state, current_tool="segment_manifest", orchestrator_phase="planning", converge_status="planning")
+        seg_update = await tools["segment_manifest"](state)
+        state = {**state, **seg_update, "current_stage": "segment_manifest"}
+        state = _record_decision(
+            state, "segment_manifest", "segment_manifest", "build prompt windows",
+            {}, {"window_count": len(state.get("prompt_windows", []))}, "proceed",
+        )
 
     # ── 2. Extract + validate each window (batches of 3) ────────────────────
     windows = list(state.get("prompt_windows", []))
@@ -987,6 +1059,7 @@ async def run_supervisor_streaming(
     if isinstance(config.get("profile_config"), dict):
         profile_config.update(config["profile_config"])
     session_id = config.get("session_id", "")
+    configure_w1_budget(config, str(session_id or ""))
 
     import_run_id = f"sup_{uuid.uuid4().hex[:10]}"
 
@@ -997,7 +1070,7 @@ async def run_supervisor_streaming(
         "import_mode": import_mode,
         "prompt_profile": profile,
         "profile_config": profile_config,
-        "context": {**config.get("context", {}), "session_id": session_id},
+        "context": {**config.get("context", {}), "session_id": session_id, "budget_policy": config.get("budget_policy")},
         "session_id": session_id,
         "chunks": [],
         "import_run_id": import_run_id,
@@ -1118,15 +1191,41 @@ async def run_supervisor_streaming(
             level="info" if state.get("import_plan_validation", {}).get("ok", True) else "error",
             message=f"Planner selected {state.get('import_granularity_profile', {}).get('profile_name', 'unknown')} granularity.",
         )
+        planner_action = resolve_planner_next_action(
+            state.get("planner_proposal") or state.get("context", {}).get("planner_proposal") or {},
+            registered_tools=set(tools),
+            default_tool="segment_manifest",
+            iteration=int(state.get("supervisor_iteration", 0) or 0),
+            max_iterations=int(state.get("max_supervisor_iterations", 0) or 0),
+            budget_exhausted=bool(state.get("budget_exhausted")),
+        )
+        state = {**state, "planner_next_action": planner_action}
+        if planner_action["kind"] == "stop":
+            state = _with_status(
+                state,
+                current_tool="planner_stop",
+                orchestrator_phase="stopped",
+                converge_status="hard_fail",
+            )
+            _emit_activity(state, phase="planning", tool="planner_stop", status="success", message="Planner requested a bounded stop.")
+            _emit(1.0, "planner_stop", state.get("errors", []))
+            return
+        if state.get("budget_exhausted"):
+            state = _with_status(state, current_tool="budget_stop", orchestrator_phase="stopped", converge_status="hard_fail")
+            _emit(1.0, "budget_stop", state.get("errors", []))
+            return
+        state = await _apply_initial_planner_action(state, tools, planner_action)
+        planner_consumed_segment_manifest = state.get("current_stage") == "segment_manifest"
         profile_config_local = state.get("profile_config") or profile_config
         tool_operating_spec_local = state.get("tool_operating_spec", {})
 
         # segment_manifest
-        state = _with_status(state, current_tool="segment_manifest", orchestrator_phase="planning", converge_status="planning")
-        _emit_activity(state, phase="planning", tool="segment_manifest", status="start", message="Writing segment manifest.")
-        seg_update = await tools["segment_manifest"](state)
-        state = {**state, **seg_update, "current_stage": "segment_manifest"}
-        _emit_activity(state, phase="planning", tool="segment_manifest", status="success", message="Segment manifest ready.")
+        if not planner_consumed_segment_manifest:
+            state = _with_status(state, current_tool="segment_manifest", orchestrator_phase="planning", converge_status="planning")
+            _emit_activity(state, phase="planning", tool="segment_manifest", status="start", message="Writing segment manifest.")
+            seg_update = await tools["segment_manifest"](state)
+            state = {**state, **seg_update, "current_stage": "segment_manifest"}
+            _emit_activity(state, phase="planning", tool="segment_manifest", status="success", message="Segment manifest ready.")
         _emit(_PROGRESS_SEGMENT_MANIFEST, "segment_manifest")
 
         # Extract windows (batches of 3, progress linearly from 0.10 → 0.65)

@@ -365,8 +365,8 @@ class TestRerunWindowAugment(unittest.TestCase):
         new_windows = result.get("prompt_windows", [])
         augmented = [w for w in new_windows if w["id"] != "pwin_parent2"]
         self.assertEqual(len(augmented), 1)
-        self.assertIn("SUPERVISOR_HINT", augmented[0].get("text", ""))
-        self.assertIn("Alice", augmented[0].get("text", ""))
+        self.assertIn("SUPERVISOR_HINT", augmented[0].get("prompt_text", ""))
+        self.assertIn("Alice", augmented[0].get("prompt_text", ""))
 
 
 # ── Test 6: max rerun cap respected ──────────────────────────────────────────
@@ -805,10 +805,10 @@ class TestMinorRepairShortLatinStrip(unittest.TestCase):
         )
 
 
-# ── Test 15: minor_repair strips English-dominant tag names for zh source ─────
+# ── Test 15: minor_repair localizes or rejects English tag names for zh ──────
 
 class TestMinorRepairTagNameStrip(unittest.TestCase):
-    def test_minor_repair_strips_english_tag_names_for_zh(self):
+    def test_minor_repair_localizes_or_rejects_english_tag_names_for_zh(self):
         state = _make_state(
             source_language="zh",
             character_tags=[
@@ -821,14 +821,9 @@ class TestMinorRepairTagNameStrip(unittest.TestCase):
         result = _run(minor_repair(state))
         tags = result.get("character_tags", [])
 
-        # English-dominant tags should be blanked
-        self.assertEqual(tags[0]["name"], "", f"Expected 'Protagonist' to be blanked, got '{tags[0]['name']}'")
-        # Chinese tags should be preserved
-        self.assertEqual(tags[1]["name"], "主角", f"Expected '主角' to be preserved, got '{tags[1]['name']}'")
-        # English-dominant tags should be blanked
-        self.assertEqual(tags[2]["name"], "", f"Expected 'Cultivation Expert' to be blanked, got '{tags[2]['name']}'")
-        # Chinese tags should be preserved
-        self.assertEqual(tags[3]["name"], "配角", f"Expected '配角' to be preserved, got '{tags[3]['name']}'")
+        self.assertEqual([tag["name"] for tag in tags], ["主角", "主角", "配角"])
+        self.assertTrue(all(tag["name"] for tag in tags))
+        self.assertEqual(result["tag_rejections"][0]["source_name"], "Cultivation Expert")
 
     def test_minor_repair_does_not_strip_tag_names_for_en_source(self):
         state = _make_state(
@@ -845,7 +840,7 @@ class TestMinorRepairTagNameStrip(unittest.TestCase):
         self.assertEqual(tags[0]["name"], "Protagonist")
         self.assertEqual(tags[1]["name"], "Antagonist")
 
-    def test_minor_repair_logs_tag_name_stripping(self):
+    def test_minor_repair_logs_tag_normalization(self):
         state = _make_state(
             source_language="zh",
             character_tags=[
@@ -856,10 +851,10 @@ class TestMinorRepairTagNameStrip(unittest.TestCase):
         result = _run(minor_repair(state))
         repair_log = result.get("minor_repair_log", [])
 
-        # Check that the repair log mentions tag name stripping
         log_text = " ".join(repair_log)
         self.assertIn("language_validation", log_text)
-        self.assertIn("English-dominant tag names", log_text)
+        self.assertIn("translated", log_text)
+        self.assertIn("rejected", log_text)
 
 
 # ── Tool registry ─────────────────────────────────────────────────────────────
@@ -1677,7 +1672,7 @@ class TestRelationshipTypeNormalization(unittest.TestCase):
                          f"Expected '解惑' preserved as sourceLabel, got {source_label!r}")
 
     def test_mentor_disciple_解惑_demoted_to_source_label(self):
-        """node_synthesize_relationships must store type='师徒关系', sourceLabel='解惑' for zh input."""
+        """Event/action labels must be excluded rather than promoted to relationship types."""
         from sidecar.workflows.w1_import import node_synthesize_relationships
 
         state = _make_state(
@@ -1736,12 +1731,7 @@ class TestRelationshipTypeNormalization(unittest.TestCase):
             result = asyncio.run(node_synthesize_relationships(state))
 
         rels = result.get("relationships", [])
-        self.assertTrue(rels, "Expected at least one relationship in output")
-        rel = rels[0]
-        self.assertEqual(rel.get("type"), "师徒关系",
-                         f"Expected type='师徒关系', got {rel.get('type')!r}")
-        self.assertEqual(rel.get("sourceLabel"), "解惑",
-                         f"Expected sourceLabel='解惑', got {rel.get('sourceLabel')!r}")
+        self.assertEqual(rels, [])
 
     def test_relationship_synthesis_injects_language_policy(self):
         """node_synthesize_relationships must pass source_language_label and language_policy to _invoke_json_prompt."""
@@ -1795,6 +1785,19 @@ class TestRelationshipTypeNormalization(unittest.TestCase):
                       "language_policy kwarg must be passed to _invoke_json_prompt")
         self.assertEqual(call_kw.get("source_language_label"), "Chinese (Simplified)",
                          f"Expected 'Chinese (Simplified)', got {call_kw.get('source_language_label')!r}")
+
+
+class TestTagRejectionOverwrite(unittest.TestCase):
+    def test_zh_all_rejected_tags_explicitly_replace_stale_tags(self):
+        state = _make_state(
+            source_language="zh",
+            character_tags=[{"id": "tag_old", "name": "Unmapped Editorial Label"}],
+        )
+
+        result = _run(minor_repair(state))
+
+        self.assertEqual(result["character_tags"], [])
+        self.assertEqual(result["tag_rejections"][0]["reason"], "unmapped_english_tag_for_chinese_source")
 
 
 if __name__ == "__main__":

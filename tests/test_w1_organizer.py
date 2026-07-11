@@ -358,6 +358,11 @@ def test_node_organize_project_filters_and_enriches():
     # Organizer categoryPath must be stored in world_detailed
     item = registry["world_detailed"]["神手谷"]
     assert "categoryPath" in item, "Organizer must enrich surviving items with categoryPath"
+    assert item["containerId"] == "world_container_locations"
+    assert result["world_containers"] == [{
+        "id": "world_container_locations", "name": "地理位置", "type": "notebook",
+        "importCategoryKey": "locations", "isDefault": False,
+    }]
     assert item["categoryPath"] == ["世界模型", "地理位置", "神手谷"], \
         f"Expected organizer path with name appended, got {item['categoryPath']}"
 
