@@ -33,6 +33,16 @@ DEFAULT_SOURCE = (
     / "凡人修仙传_前10章.txt"
 )
 DEFAULT_OUTPUT_ROOT = Path("/tmp/narrative_ide_w1_live_smoke")
+REQUIRED_IMPORT_ARTIFACTS = (
+    "manifest.json",
+    "prompt_windows.json",
+    "evidence_cards.json",
+    "cross_validation.json",
+    "timeline_architecture.json",
+    "review_report.json",
+)
+_SECRET_VALUE_PATTERN = re.compile(r"(?:sk-[A-Za-z0-9_-]{8,}|Bearer\s+[A-Za-z0-9._-]{8,})", re.IGNORECASE)
+_SECRET_FIELD_NAMES = {"api_key", "apikey", "authorization", "token", "password", "secret"}
 
 
 def _timestamp() -> str:
@@ -163,6 +173,9 @@ def _quality_probe(project_path: Path) -> dict[str, Any]:
         "review_status": review_report.get("status") if isinstance(review_report, dict) else None,
         "organizer_world_items": len(organizer.get("world_items", [])) if isinstance(organizer, dict) else 0,
         "organizer_excluded_items": len(organizer.get("excluded_items", [])) if isinstance(organizer, dict) else 0,
+        "missing_required_artifacts": [
+            name for name in REQUIRED_IMPORT_ARTIFACTS if latest is None or not (latest / name).is_file()
+        ],
     }
 
 
@@ -186,7 +199,42 @@ def _quality_probe_failures(probe: dict[str, Any]) -> list[str]:
         failures.append("empty_timeline_branches")
     if probe.get("review_status") in {"fail", "hard_fail"}:
         failures.append("review_status_failed")
+    if probe.get("missing_required_artifacts"):
+        failures.append("missing_required_artifacts")
     return failures
+
+
+def _artifact_secret_leaks(output_dir: Path) -> list[str]:
+    """Scan every generated artifact without loading or printing any real key."""
+    leaks: list[str] = []
+    for path in output_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if _SECRET_VALUE_PATTERN.search(text):
+            leaks.append(str(path.relative_to(output_dir)))
+            continue
+        try:
+            payload = json.loads(text)
+        except ValueError:
+            continue
+        stack = [payload]
+        while stack:
+            value = stack.pop()
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    is_safe_placeholder = child is None or (isinstance(child, str) and child in {"", "***", "[redacted]"})
+                    if key.lower() in _SECRET_FIELD_NAMES and not is_safe_placeholder:
+                        leaks.append(str(path.relative_to(output_dir)))
+                        stack = []
+                        break
+                    stack.append(child)
+            elif isinstance(value, list):
+                stack.extend(value)
+    return sorted(set(leaks))
 
 
 def _smoke_result_exit_code(result: dict[str, Any]) -> int:
@@ -199,7 +247,7 @@ def _smoke_result_exit_code(result: dict[str, Any]) -> int:
         or ("error" if terminal.get("current_node") == "error" or errors else "done")
     )
     converge_status = terminal.get("converge_status")
-    if status in {"error", "timeout", "budget_exhausted"}:
+    if status in {"error", "timeout", "budget_exhausted", "auth_failed"}:
         return 1
     if converge_status in {"hard_fail", "failed"}:
         return 1
@@ -229,6 +277,17 @@ async def _run_live(args: argparse.Namespace, project_path: Path, output_dir: Pa
             "extract_world": args.extract_world,
             "extract_timeline": args.extract_timeline,
         },
+        "budget_policy": {
+            "max_cost_usd": args.max_cost_usd,
+            "max_input_tokens": args.max_input_tokens,
+            "max_output_tokens": args.max_output_tokens,
+            "max_total_tokens": args.max_total_tokens,
+            "max_calls": args.max_calls,
+            "fail_on_unknown_pricing": True,
+            "fail_on_missing_usage": True,
+        },
+        "rerun_cap": 0,
+        "max_reruns": 0,
         "context": {
             "api_key": api_key,
             "model": args.model,
@@ -262,6 +321,9 @@ async def _run_live(args: argparse.Namespace, project_path: Path, output_dir: Pa
                 if "402" in errors or "budget exhausted" in errors.lower() or "insufficient" in errors.lower():
                     terminal = {"status": "budget_exhausted", "update": update}
                     break
+                if any(marker in errors.lower() for marker in ("401", "403", "unauthorized", "authentication", "invalid api key")):
+                    terminal = {"status": "auth_failed", "update": update}
+                    break
                 terminal = update
     except TimeoutError:
         terminal = {"status": "timeout", "elapsed_seconds": int(time.time() - start)}
@@ -269,10 +331,14 @@ async def _run_live(args: argparse.Namespace, project_path: Path, output_dir: Pa
         terminal = {"status": "error", "error_type": type(exc).__name__, "error": str(exc)}
 
     probe = _quality_probe(project_path)
+    secret_leaks = _artifact_secret_leaks(output_dir)
+    if secret_leaks:
+        terminal = {"status": "error", "error": "secret_leakage_detected"}
     result = {
         "elapsed_seconds": int(time.time() - start),
         "terminal": terminal,
         "quality_probe": probe,
+        "secret_leak_artifacts": secret_leaks,
     }
     _write_json(output_dir / "final_result.json", result)
     return result
@@ -286,9 +352,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--project-name", default="W1 Live Smoke 10 Chapters")
     parser.add_argument("--prompt-profile", default="deep", choices=["fast", "balanced", "deep", "custom"])
     parser.add_argument("--import-mode", default="import_all")
-    parser.add_argument("--model", default=os.environ.get("DEEPSEEK_MODEL", "deepseek-chat"))
+    parser.add_argument("--model", default="deepseek-v4-flash", choices=["deepseek-v4-flash", "deepseek-v4-pro"])
     parser.add_argument("--endpoint", default=os.environ.get("DEEPSEEK_ENDPOINT", "https://api.deepseek.com/v1"))
     parser.add_argument("--timeout-seconds", type=int, default=1800)
+    parser.add_argument("--max-cost-usd", type=float, default=3.0)
+    parser.add_argument("--max-input-tokens", type=int, default=1_000_000)
+    parser.add_argument("--max-output-tokens", type=int, default=250_000)
+    parser.add_argument("--max-total-tokens", type=int, default=1_250_000)
+    parser.add_argument("--max-calls", type=int, default=100)
     parser.add_argument("--extract-relationships", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--extract-world", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--extract-timeline", action=argparse.BooleanOptionalAction, default=True)
@@ -318,6 +389,14 @@ def main(argv: list[str] | None = None) -> int:
         "prompt_profile": args.prompt_profile,
         "model": args.model,
         "endpoint_host": re.sub(r"//.*", "//***", args.endpoint),
+        "budget": {
+            "max_cost_usd": args.max_cost_usd,
+            "max_input_tokens": args.max_input_tokens,
+            "max_output_tokens": args.max_output_tokens,
+            "max_total_tokens": args.max_total_tokens,
+            "max_calls": args.max_calls,
+        },
+        "rerun_cap": 0,
         "live_smoke_approved": os.environ.get("LIVE_SMOKE_APPROVED") == "1",
         "deepseek_api_key_set": bool(os.environ.get("DEEPSEEK_API_KEY")),
     }

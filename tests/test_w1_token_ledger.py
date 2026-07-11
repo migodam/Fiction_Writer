@@ -88,3 +88,61 @@ def test_empty_session_id_is_noop():
     ev.add_token_usage("", input_tokens=100, output_tokens=50)
     ledger = ev.session_token_ledger("")
     assert ledger == {}
+
+
+@pytest.mark.parametrize(("model", "expected_cost"), [
+    ("deepseek-v4-flash", 0.42),
+    ("provider/deepseek-v4-pro:latest", 1.305),
+])
+def test_v4_pricing_is_explicit_and_has_metadata(model, expected_cost):
+    sid = _fresh(f"pricing-{model}")
+    ev.add_token_usage(sid, input_tokens=1_000_000, output_tokens=1_000_000)
+
+    ledger = ev.session_token_ledger(sid, model=model)
+
+    assert ledger["cost_usd"] == pytest.approx(expected_cost)
+    assert ledger["pricing"]["model_match"] in {"deepseek-v4-flash", "deepseek-v4-pro"}
+    assert ledger["pricing"]["pricing_version"] == ev.PRICING_VERSION
+    assert ev.resolve_model_pricing("deepseek-v4") is None
+    assert ev.resolve_model_pricing("deepseek-v4-flashx") is None
+
+
+def test_budget_policy_fails_closed_for_unknown_model_before_call():
+    sid = _fresh("unknown-budget")
+    ev.configure_budget(sid, ev.BudgetPolicy(max_cost_usd=3), model="unknown-model")
+
+    assert ev.budget_allows_call(sid) is False
+    ledger = ev.session_token_ledger(sid, model="unknown-model")
+    assert ledger["budget_exhausted"] is True
+    assert ledger["budget_exhausted_reason"].startswith("unknown_pricing:")
+    assert ev.cancel_requested(sid) is True
+
+
+def test_budget_policy_fails_closed_when_usage_is_missing():
+    sid = _fresh("missing-usage")
+    ev.configure_budget(sid, ev.BudgetPolicy(max_cost_usd=3), model="deepseek-v4-flash")
+
+    assert ev.budget_allows_call(sid) is True
+    assert ev.record_call_usage(sid, None, 12, model="deepseek-v4-flash") is False
+    assert ev.session_token_ledger(sid, model="deepseek-v4-flash")["budget_exhausted_reason"] == "missing_usage"
+
+
+def test_crossing_budget_cancels_and_blocks_the_next_call():
+    sid = _fresh("budget-crossing")
+    ev.configure_budget(sid, ev.BudgetPolicy(max_total_tokens=100, max_calls=2), model="deepseek-v4-flash")
+
+    assert ev.budget_allows_call(sid, estimated_input_tokens=30, estimated_output_tokens=30) is True
+    assert ev.record_call_usage(sid, 60, 50, model="deepseek-v4-flash") is False
+    assert ev.cancel_requested(sid) is True
+    assert ev.budget_allows_call(sid) is False
+    ledger = ev.session_token_ledger(sid, model="deepseek-v4-flash")
+    assert ledger["budget_exhausted_reason"] == "max_total_tokens"
+    assert ledger["remaining_budget"]["total_tokens"] == 0
+
+
+def test_preflight_stops_call_that_would_cross_call_or_cost_limit():
+    sid = _fresh("budget-preflight")
+    ev.configure_budget(sid, ev.BudgetPolicy(max_cost_usd=0.01, max_calls=1), model="deepseek-v4-flash")
+
+    assert ev.budget_allows_call(sid, estimated_input_tokens=100_000) is False
+    assert ev.session_token_ledger(sid, model="deepseek-v4-flash")["budget_exhausted_reason"] == "max_cost_usd"
