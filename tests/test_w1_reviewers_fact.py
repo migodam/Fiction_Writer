@@ -81,7 +81,28 @@ class TestFactReviewer(unittest.TestCase):
         ]
         state = _make_state_with_cards(cards, proposals)
         report = reviewer.review(state)
-        self.assertLessEqual(report["token_cost_ledger"]["estimated_prompt_windows"], 2)
+        # Limits apply independently to every canonical entity, so later entities
+        # cannot be starved by the first few cards in a large import.
+        self.assertEqual(report["token_cost_ledger"]["estimated_prompt_windows"], 10)
+
+    def test_fact_aggregates_cards_and_marks_blank_evidence_unusable(self):
+        cards = [
+            _make_evidence_card("char_han", "韩立", snippet="韩立在村口遇见墨大夫。"),
+            _make_evidence_card("char_han", "韩立", snippet="墨大夫带韩立前往七玄门。"),
+            _make_evidence_card("event_gate", "", snippet="七玄门举行入门测试，韩立通过考核。"),
+            _make_evidence_card("event_gate", "", snippet=""),
+            _make_evidence_card("char_blank", "", snippet=""),
+        ]
+        proposals = [
+            _make_char_proposal("char_han", "韩立", summary="韩立在村口遇见墨大夫后前往七玄门。"),
+            {"id": "prop_event", "operations": [{"op": "create", "entityType": "timeline_event", "entityId": "event_gate", "fields": {"title": "七玄门入门测试", "description": "韩立通过七玄门入门测试"}}]},
+            _make_char_proposal("char_blank", "空白", summary="没有可用摘录"),
+        ]
+        report = self.reviewer.review(_make_state_with_cards(cards, proposals))
+        findings = {finding["finding_id"]: finding["check_name"] for finding in report["findings"]}
+        self.assertNotIn("evidence_entity_mismatch_char_han", findings)
+        self.assertNotIn("evidence_entity_mismatch_event_gate", findings)
+        self.assertEqual(findings["evidence_unusable_char_blank"], "evidence_unusable")
 
     def test_fact_pass_on_matching_evidence(self):
         card = _make_evidence_card(

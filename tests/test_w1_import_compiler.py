@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+
+import pytest
 
 from sidecar.models import state as sidecar_state
 from sidecar.prompts import w1_prompts
@@ -69,6 +72,24 @@ def test_prompt_window_splits_only_single_oversized_chapter_by_budget(tmp_path):
     assert {window["split_reason"] for window in windows} == {"single_oversized_chapter_paragraph_split"}
     assert all(window["estimated_tokens"] <= 256_000 for window in windows)
     assert sum(window["source_chars"] for window in windows) == len(content)
+
+
+def test_split_prompt_windows_keep_exact_source_spans_for_each_part(tmp_path):
+    paragraph = "A" * 250_000
+    raw_source = "\n\n".join([paragraph, paragraph, paragraph, paragraph])
+    state = {"project_path": str(tmp_path), "prompt_profile": "deep", "context": {}, "source_text": raw_source}
+    digest = {"content": "{}", "estimated_tokens": 1, "counts": {}}
+    span = sidecar_state.make_source_span(raw_source, 0, len(raw_source))
+
+    windows = w1_import._build_prompt_windows(
+        state,
+        [{"chunk_id": 0, "chapter_hint": "Huge", "manuscript_content": raw_source, "source_span": span}],
+        digest,
+    )
+
+    assert len(windows) > 1
+    for window in windows:
+        assert sidecar_state.reconstruct_source_span(window["source_span"], raw_source) == window["text"]
 
 
 def test_prompt_window_packs_short_chapters_toward_256k_budget(tmp_path):
@@ -222,9 +243,9 @@ def test_build_manuscript_orders_chapters_by_source_chunk_id(tmp_path):
         "project_path": str(tmp_path),
         "import_mode": "import_all",
         "chunks": [
-            {"chunk_id": 2, "chapter_hint": "Chapter 3"},
-            {"chunk_id": 0, "chapter_hint": "Chapter 1"},
-            {"chunk_id": 1, "chapter_hint": "Chapter 2"},
+            {"chunk_id": 2, "chapter_hint": "Chapter 3", "manuscript_content": "third"},
+            {"chunk_id": 0, "chapter_hint": "Chapter 1", "manuscript_content": "first"},
+            {"chunk_id": 1, "chapter_hint": "Chapter 2", "manuscript_content": "second"},
         ],
         "chunk_extractions": [
             {"chunk_id": 2, "manuscript_content": "third"},
@@ -273,8 +294,8 @@ def test_build_manuscript_enriches_and_dedupes_duplicate_chapter_numbers(tmp_pat
         "source_language": "zh",
         "import_mode": "import_all",
         "chunks": [
-            {"chunk_id": 10, "chapter_hint": "第十章"},
-            {"chunk_id": 9, "chapter_hint": "第十章"},
+            {"chunk_id": 10, "chapter_hint": "第十章", "manuscript_content": "第十章 韩立进入神手谷。"},
+            {"chunk_id": 9, "chapter_hint": "第十章", "manuscript_content": "第十章 墨大夫传授口诀。"},
         ],
         "chunk_extractions": [
             {"chunk_id": 10, "manuscript_content": "第十章 韩立进入神手谷。"},
@@ -454,6 +475,7 @@ def test_character_card_proposals_stay_slim_by_default(tmp_path, monkeypatch):
         }
 
     monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", fake_propose_write)
+    (tmp_path / "novel.txt").write_text("Chapter 1\nA young cultivator appears.", encoding="utf-8")
     state = {
         "project_path": str(tmp_path),
         "source_file_path": str(tmp_path / "novel.txt"),
@@ -510,6 +532,261 @@ def test_character_card_proposals_stay_slim_by_default(tmp_path, monkeypatch):
     assert data.get("secrets", []) == []
 
 
+def test_character_proposals_serialize_final_flash_experience_for_acceptance(tmp_path, monkeypatch):
+    captured_ops: list[dict] = []
+
+    async def capture_proposal(op, _project_path):
+        captured_ops.append(op)
+        return {"id": f"proposal_{op['entity_id']}", "confidence": op["confidence"]}
+
+    monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", capture_proposal)
+    state = _make_write_state(
+        tmp_path,
+        entity_registry={
+            "characters": {
+                "char_han_li": {
+                    "canonical_name": "韩立",
+                    "background": "十岁农家少年，被三叔带入七玄门考验。",
+                    "experience": [
+                        "爬崖测试差一点通过，但表现突出被留为记名弟子",
+                        {"chapter": "第四章", "fact": "被墨大夫选为炼药童子", "evidence": "evc_han_li"},
+                    ],
+                    "experiences": ["爬崖测试差一点通过，但表现突出被留为记名弟子"],
+                    "profile_field_evidence": {"experience": ["evc_han_li"]},
+                    "notes": ["[window pwin_final] 被墨大夫选为炼药童子"],
+                    "evidence_refs": ["evc_han_li"],
+                    "confidence": 1.0,
+                    "importance": "core",
+                    "tag_ids": [],
+                },
+                "char_mo_daifu": {
+                    "canonical_name": "墨大夫",
+                    "background": "七玄门供奉，收韩立和张铁为记名弟子。",
+                    "experiences": ["曾救过门主王陆性命", "住处为神手谷，专事炼药"],
+                    "profile_field_evidence": {"experience": ["evc_mo_daifu"]},
+                    "notes": ["[window pwin_final] 曾救过门主王陆性命"],
+                    "evidence_refs": ["evc_mo_daifu"],
+                    "confidence": 0.95,
+                    "importance": "major",
+                    "tag_ids": [],
+                },
+            },
+            "events": {}, "world": {}, "world_detailed": {},
+        },
+    )
+
+    asyncio.run(w1_import.node_write_to_project(state))
+
+    character_data = {
+        op["data"]["name"]: op["data"]
+        for op in captured_ops
+        if op.get("entity_type") == "character"
+    }
+    han_li = character_data["韩立"]
+    mo_daifu = character_data["墨大夫"]
+
+    # This is the accepted frontend Character.experience contract: typed rows,
+    # not the extractor's experience/experiences string aliases.
+    assert han_li["experience"] == [
+        {"id": "char_han_li_experience_1", "chapter": "", "fact": "爬崖测试差一点通过，但表现突出被留为记名弟子"},
+        {"id": "char_han_li_experience_2", "chapter": "第四章", "fact": "被墨大夫选为炼药童子", "evidence": "evc_han_li"},
+    ]
+    assert mo_daifu["experience"] == [
+        {"id": "char_mo_daifu_experience_1", "chapter": "", "fact": "曾救过门主王陆性命"},
+        {"id": "char_mo_daifu_experience_2", "chapter": "", "fact": "住处为神手谷，专事炼药"},
+    ]
+    assert han_li["profile_field_evidence"] == {"experience": ["evc_han_li"]}
+    assert mo_daifu["profile_field_evidence"] == {"experience": ["evc_mo_daifu"]}
+    for data in character_data.values():
+        assert "experiences" not in data
+        assert all(set(row).issuperset({"id", "chapter", "fact"}) for row in data["experience"])
+
+
+def test_character_proposals_backfill_latest_live_smoke_profiles_from_evidenced_window_notes(tmp_path, monkeypatch):
+    captured_ops: list[dict] = []
+    source_span = {
+        "raw_source_hash": "7b78ecafbc0cb16e3f0f9e853273aa63e562ee6c03b7e2264535b5666503a84f",
+        "absolute_start": 9,
+        "absolute_end": 74,
+        "substring_hash": "bdddc251e501701943da7213130d7d11c73b4d8f494eff28bb5ad7007beedfd2",
+    }
+
+    async def capture_proposal(op, _project_path):
+        captured_ops.append(op)
+        return {"id": f"proposal_{op['entity_id']}", "confidence": op["confidence"]}
+
+    monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", capture_proposal)
+    state = _make_write_state(
+        tmp_path,
+        entity_registry={
+            "characters": {
+                "char_de7b4872": {
+                    "canonical_name": "韩立",
+                    "aliases": ["二愣子", "韩立", "韩悝"],
+                    "summary": "十岁农家少年，皮肤黝黑，外表不起眼但早熟聪明，向往外面世界",
+                    "background": "给妹妹摘浆果，体现疼爱家人",
+                    "personality_traits": ["早熟", "聪明", "坚忍"],
+                    "role_in_story": "故事主角，通过考验进入七玄门",
+                    "notes": [
+                        "[window pwin_a97f52c6853e] 被村里人叫'二愣子'，但实际不愣。",
+                        "[window pwin_a97f52c6853e] 给妹妹摘浆果，体现疼爱家人。",
+                    ],
+                    "evidence_refs": ["evc_6ac5183598fb"],
+                    "source_span": source_span,
+                    "profile_field_evidence": {"background": ["evc_6ac5183598fb", source_span]},
+                    "confidence": 0.95,
+                    "importance": "core",
+                    "tag_ids": [],
+                },
+                "char_569a1ea1": {
+                    "canonical_name": "墨大夫",
+                    "aliases": ["墨老", "墨大夫"],
+                    "summary": "七玄门供奉，医术高超，传授韩立无名口诀，态度神秘狂热",
+                    "background": "",
+                    "personality_traits": ["面无表情", "狂热", "深藏不露"],
+                    "role_in_story": "韩立的师父，传授口诀",
+                    "notes": [
+                        "[window pwin_1baadfe3095f] 墨大夫对无名口诀极为重视，显示出异乎寻常的狂热",
+                        "Open question: 墨大夫的真实目的？为什么需要这种口诀修炼者？",
+                    ],
+                    "evidence_refs": ["evc_3e4149a1b364"],
+                    "source_span": {**source_span, "absolute_start": 10355, "absolute_end": 10423, "substring_hash": "ab4a0f2fbd4716f2b6e4ce8ad3fb86e812bc31198f59147948952b5b363f0b17"},
+                    "confidence": 0.95,
+                    "importance": "major",
+                    "tag_ids": [],
+                },
+                "char_sparse": {
+                    "canonical_name": "稀疏配角",
+                    "summary": "性格古怪的路人",
+                    "background": "",
+                    "personality_traits": ["冷漠"],
+                    "notes": ["[window pwin_sparse] 性格冷漠，给人难以亲近的感觉。"],
+                    "evidence_refs": ["evc_sparse"],
+                    "source_span": source_span,
+                    "confidence": 0.7,
+                    "importance": "supporting",
+                    "tag_ids": [],
+                },
+                "char_9c418035": {
+                    "canonical_name": "张铁",
+                    "summary": "韩立密友，修炼象甲功，承受巨大痛苦",
+                    "background": "韩立的朋友和同门",
+                    "personality_traits": ["意志坚强", "憨厚"],
+                    "notes": [
+                        "[window pwin_493dd0969609] 在无名口诀上毫无进展",
+                        "[window pwin_493dd0969609] 被墨大夫允诺另传心法",
+                    ],
+                    "evidence_refs": ["evc_67317f8af15e", "evc_b188c2a1b3d9"],
+                    "source_span": {
+                        **source_span,
+                        "absolute_start": 9115,
+                        "absolute_end": 9205,
+                        "substring_hash": "38d88ec98b23dbb54d68a3aa00d692cc6aefb6ec7aab821bd39b9c76a7efb175",
+                    },
+                    "profile_field_evidence": {"background": ["evc_67317f8af15e", source_span]},
+                    "confidence": 0.95,
+                    "importance": "supporting",
+                    "groupKey": "Supporting Cast",
+                    "tag_ids": [],
+                },
+            },
+            "events": {}, "world": {}, "world_detailed": {},
+        },
+    )
+
+    asyncio.run(w1_import.node_write_to_project(state))
+
+    character_data = {
+        op["data"]["name"]: op["data"]
+        for op in captured_ops
+        if op.get("entity_type") == "character"
+    }
+    han_li = character_data["韩立"]
+    mo_daifu = character_data["墨大夫"]
+    sparse = character_data["稀疏配角"]
+    zhang_tie = character_data["张铁"]
+
+    assert han_li["experience"] == [{
+        "id": "char_de7b4872_experience_1",
+        "chapter": "",
+        "fact": "给妹妹摘浆果",
+        "evidence": "evc_6ac5183598fb",
+    }]
+    assert mo_daifu["experience"] == [{
+        "id": "char_569a1ea1_experience_1",
+        "chapter": "",
+        "fact": "墨大夫对无名口诀极为重视",
+        "evidence": "evc_3e4149a1b364",
+    }]
+    assert mo_daifu["background"] == "七玄门供奉"
+    assert "狂热" not in mo_daifu["background"]
+    for data, evidence_ref in ((han_li, "evc_6ac5183598fb"), (mo_daifu, "evc_3e4149a1b364")):
+        assert data["experience"]
+        assert all(set(row).issuperset({"id", "chapter", "fact", "evidence"}) for row in data["experience"])
+        assert all(row["evidence"] == evidence_ref for row in data["experience"])
+        assert evidence_ref in data["profile_field_evidence"]["experience"]
+        assert data["sourceSpan"]["substring_hash"] in {
+            proof["substring_hash"]
+            for proof in data["profile_field_evidence"].get("experience", [])
+            if isinstance(proof, dict)
+        }
+    assert sparse["experience"] == []
+    assert sparse["background"] == ""
+    assert zhang_tie["experience"] == [
+        {
+            "id": "char_9c418035_experience_1",
+            "chapter": "",
+            "fact": "在无名口诀上毫无进展",
+            "evidence": "evc_67317f8af15e",
+        },
+        {
+            "id": "char_9c418035_experience_2",
+            "chapter": "",
+            "fact": "被墨大夫允诺另传心法",
+            "evidence": "evc_67317f8af15e",
+        },
+    ]
+    assert zhang_tie["background"] == "韩立的朋友和同门"
+    assert zhang_tie["profile_field_evidence"]["experience"] == [
+        "evc_67317f8af15e",
+        zhang_tie["sourceSpan"],
+    ]
+
+
+def test_character_experience_note_fallback_has_stable_ids_and_a_small_cap():
+    source_span = {
+        "raw_source_hash": "source_hash",
+        "absolute_start": 10,
+        "absolute_end": 20,
+        "substring_hash": "substring_hash",
+    }
+    experience, background, profile_field_evidence = w1_import._backfill_character_profile_at_write_boundary(
+        "char_major",
+        {
+            "canonical_name": "主角",
+            "importance": "core",
+            "summary": "农家少年",
+            "notes": [
+                "[window pwin_1] 参加入门测试。",
+                "[window pwin_1] 进入宗门。",
+                "[window pwin_1] 成为记名弟子。",
+                "[window pwin_1] 学习基础口诀。",
+            ],
+            "evidence_refs": ["evc_major"],
+            "source_span": source_span,
+        },
+    )
+
+    assert experience == [
+        {"id": "char_major_experience_1", "chapter": "", "fact": "参加入门测试。", "evidence": "evc_major"},
+        {"id": "char_major_experience_2", "chapter": "", "fact": "进入宗门。", "evidence": "evc_major"},
+        {"id": "char_major_experience_3", "chapter": "", "fact": "成为记名弟子。", "evidence": "evc_major"},
+    ]
+    assert background == "农家少年"
+    assert profile_field_evidence["experience"] == ["evc_major", source_span]
+    assert w1_import._action_or_state_note("[window pwin_1] 性格冷漠，给人难以亲近的感觉。") == ""
+
+
 def test_character_card_compaction_caps_long_running_import_fields():
     entry = {
         "summary": "\n".join(f"第{i}章新增经历，韩立继续成长并面对新的压力。" for i in range(20)),
@@ -553,6 +830,7 @@ def test_write_to_project_preserves_chapter_content_and_world_container_routing(
         return proposal
 
     monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", fake_propose_write)
+    (tmp_path / "凡人修仙传_前50章.txt").write_text("第一章正文\n第二章正文", encoding="utf-8")
     state = {
         "project_path": str(tmp_path),
         "source_file_path": str(tmp_path / "凡人修仙传_前50章.txt"),
@@ -988,6 +1266,7 @@ def test_cross_validation_prompt_and_artifact_contract_are_stable():
 
 def _make_write_state(tmp_path, *, entity_registry=None, manuscript_chapters=None):
     """Minimal state for node_write_to_project tests."""
+    (tmp_path / "novel.txt").write_text("Chapter 1\nFixture source text.", encoding="utf-8")
     return {
         "project_path": str(tmp_path),
         "source_file_path": str(tmp_path / "novel.txt"),
@@ -1047,6 +1326,46 @@ def test_node_write_to_project_returns_compact_receipts(tmp_path, monkeypatch):
     assert "character" in entity_types
     assert "timeline_event" in entity_types
     assert "world_item" in entity_types
+
+
+def test_matched_character_merge_writes_an_accepted_update_proposal(tmp_path, monkeypatch):
+    operations: list[dict] = []
+
+    async def capture_proposal(operation, _project_path):
+        operations.append(operation)
+        return {"id": f"p_{operation['entity_id']}", "status": "pending", "confidence": operation["confidence"]}
+
+    monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", capture_proposal)
+    state = _make_write_state(
+        tmp_path,
+        entity_registry={
+            "characters": {
+                "import_alice": {
+                    "canonical_name": "Alice", "skip_create": True,
+                    "existing_project_id": "char_existing", "confidence": 0.91,
+                    "entity_merge_decision": {
+                        "contract": "EntityMergeDecision/v1",
+                        "fields": {
+                            "aliases": {"value": ["Alicia"]}, "background": {"value": "New history"},
+                            "experience": {"value": ["survived siege"]}, "traits": {"value": ["brave"]},
+                            "notes": {"value": ["evidence note"]}, "confidence": {"value": 0.91},
+                        },
+                        "conflicts": [{"field": "background", "resolution": "preserve_and_append"}],
+                    },
+                },
+            },
+            "events": {}, "world": {}, "world_detailed": {},
+        },
+    )
+
+    asyncio.run(w1_import.node_write_to_project(state))
+
+    merge = next(operation for operation in operations if operation["entity_id"] == "char_existing")
+    assert merge["op_type"] == "update"
+    assert merge["data"]["aliases"] == ["Alicia"]
+    assert merge["data"]["experience"] == ["survived siege"]
+    assert merge["data"]["traits"] == ["brave"]
+    assert merge["diagnostics"]["semantic_conflicts"]
 
 
 def test_node_write_to_project_normalizes_event_branch_to_imported_root(tmp_path, monkeypatch):
@@ -1160,8 +1479,8 @@ def test_node_infer_world_settings_preserves_existing_timeline_architect_branche
     assert [branch["id"] for branch in result["timeline_branches"]] == ["branch_main", "branch_training"]
 
 
-def test_node_write_to_project_manuscript_still_written(tmp_path, monkeypatch):
-    """manuscript.json must be written even after switching to compact receipts."""
+def test_node_write_to_project_stages_manuscript_before_acceptance(tmp_path, monkeypatch):
+    """Pre-acceptance W1 manuscript output must remain staged."""
     import json
 
     async def fake_propose_write(op, _project_path):
@@ -1180,10 +1499,65 @@ def test_node_write_to_project_manuscript_still_written(tmp_path, monkeypatch):
     asyncio.run(w1_import.node_write_to_project(state))
 
     manuscript_path = tmp_path / "manuscript.json"
-    assert manuscript_path.exists(), "manuscript.json must be written"
-    manuscript = json.loads(manuscript_path.read_text(encoding="utf-8"))
+    assert not manuscript_path.exists(), "W1 must not write canonical manuscript.json before acceptance"
+    staged_path = tmp_path / "system" / "imports" / "import_compact" / "staged_manuscript_projection.json"
+    manuscript = json.loads(staged_path.read_text(encoding="utf-8"))
     assert len(manuscript["chapters"]) == 2
     assert manuscript["chapters"][0]["title"] == "Ch 1"
+
+
+def test_staged_manuscript_projection_uses_project_local_raw_source_evidence(tmp_path, monkeypatch):
+    """Acceptance must read an immutable raw-source copy within the import run."""
+    async def fake_propose_write(op, _project_path):
+        return {"id": f"p_{op['entity_id']}", "confidence": op["confidence"]}
+
+    monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", fake_propose_write)
+    original = tmp_path / "external-source.txt"
+    original_bytes = "Chapter 1\nEvidence stays byte-for-byte identical.\n".encode("utf-8")
+    original.write_bytes(original_bytes)
+    state = _make_write_state(
+        tmp_path,
+        manuscript_chapters=[
+            {"chapter_id": "chap_evidence", "title": "Chapter 1", "orderIndex": 0, "chunk_ids": [0], "manuscript_content": "Evidence stays byte-for-byte identical."},
+        ],
+    )
+    state["source_file_path"] = str(original)
+    state["source_text"] = original_bytes.decode("utf-8")
+    content = state["manuscript_chapters"][0]["manuscript_content"]
+    start = state["source_text"].index(content)
+    state["manuscript_chapters"][0]["source_span"] = sidecar_state.make_source_span(state["source_text"], start, start + len(content))
+
+    asyncio.run(w1_import.node_write_to_project(state))
+
+    run_dir = tmp_path / "system" / "imports" / "import_compact"
+    evidence_path = run_dir / "raw_source.txt"
+    projection = json.loads((run_dir / "staged_manuscript_projection.json").read_text(encoding="utf-8"))
+
+    assert evidence_path.read_bytes() == original_bytes
+    assert hashlib.sha256(evidence_path.read_bytes()).hexdigest() == hashlib.sha256(original_bytes).hexdigest()
+    assert projection["source_file_path"] == str(evidence_path)
+    assert projection["source_file_path"] != str(original)
+    assert projection["chapters"][0]["source_span"]["raw_source_hash"] == hashlib.sha256(original_bytes).hexdigest()
+
+    original.write_bytes(b"Changed source must not overwrite recorded evidence.")
+    with pytest.raises(ValueError, match="immutable"):
+        w1_import._stage_raw_source_evidence(state)
+    assert evidence_path.read_bytes() == original_bytes
+
+
+def test_staged_manuscript_projection_hard_fails_when_raw_source_is_missing(tmp_path, monkeypatch):
+    """A projection without readable raw evidence must never be staged for acceptance."""
+    async def fake_propose_write(_op, _project_path):
+        raise AssertionError("raw source validation must fail before proposal writes")
+
+    monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", fake_propose_write)
+    state = _make_write_state(tmp_path, manuscript_chapters=[])
+    (tmp_path / "novel.txt").unlink()
+
+    with pytest.raises(FileNotFoundError):
+        asyncio.run(w1_import.node_write_to_project(state))
+
+    assert not (tmp_path / "system" / "imports" / "import_compact" / "staged_manuscript_projection.json").exists()
 
 
 def test_sort_manuscript_chapters_handles_mixed_chinese_and_arabic_titles():
@@ -1276,7 +1650,7 @@ def test_node_write_to_project_world_containers_before_items_and_skips_people(tm
     assert next(item for item in world_items if item["name"] == "长春功")["category"] == "cultivation_method"
 
 
-def test_node_write_to_project_writes_manuscript_before_cancellable_proposals(tmp_path, monkeypatch):
+def test_node_write_to_project_stages_manuscript_before_cancellable_proposals(tmp_path, monkeypatch):
     async def cancelled_propose_write(_op, _project_path):
         raise asyncio.CancelledError()
 
@@ -1305,13 +1679,14 @@ def test_node_write_to_project_writes_manuscript_before_cancellable_proposals(tm
         raise AssertionError("Expected cancellation to propagate")
 
     manuscript_path = tmp_path / "manuscript.json"
-    assert manuscript_path.exists(), "manuscript.json must be written before proposal loop can be cancelled"
-    manuscript = json.loads(manuscript_path.read_text(encoding="utf-8"))
-    assert manuscript["chapters"][0]["manuscript_content"] == "Text survives cancellation."
+    assert not manuscript_path.exists(), "cancellation must not leave canonical manuscript content"
+    staged_path = tmp_path / "system" / "imports" / "import_compact" / "staged_manuscript_projection.json"
+    manuscript = json.loads(staged_path.read_text(encoding="utf-8"))
+    assert manuscript["chapters"][0]["content"] == "Text survives cancellation."
 
 
-def test_node_write_to_project_writes_manuscript_node_projection(tmp_path, monkeypatch):
-    """writing/manuscript/nodes.json and .md files must be written BEFORE proposal writes."""
+def test_node_write_to_project_stages_manuscript_node_projection(tmp_path, monkeypatch):
+    """Writing nodes and documents remain staged until proposal acceptance."""
     import json as _json
 
     proposal_call_count = {"n": 0}
@@ -1346,8 +1721,9 @@ def test_node_write_to_project_writes_manuscript_node_projection(tmp_path, monke
     asyncio.run(w1_import.node_write_to_project(state))
 
     nodes_path = tmp_path / "writing" / "manuscript" / "nodes.json"
-    assert nodes_path.exists(), "writing/manuscript/nodes.json must be written"
-    nodes = _json.loads(nodes_path.read_text(encoding="utf-8"))
+    assert not nodes_path.exists(), "W1 must not write canonical manuscript nodes"
+    staged_path = tmp_path / "system" / "imports" / "import_compact" / "staged_manuscript_projection.json"
+    nodes = _json.loads(staged_path.read_text(encoding="utf-8"))["nodes"]
 
     assert len(nodes) == 4
     chapter_nodes = [n for n in nodes if n["type"] == "chapter_outline"]
@@ -1371,12 +1747,7 @@ def test_node_write_to_project_writes_manuscript_node_projection(tmp_path, monke
 
     for sc_node in scene_nodes:
         md_path = tmp_path / "writing" / "manuscript" / f"{sc_node['id']}.md"
-        assert md_path.exists(), f"{sc_node['id']}.md must be written"
-        content = md_path.read_text(encoding="utf-8")
-        assert content.strip(), f"{sc_node['id']}.md must have non-empty content"
-        # Verify actual sample text is present, not only non-zero word count
-        if sc_node["linkedChapterId"] == "chap_1":
-            assert "韩立" in content, "Chapter 1 .md must contain sample prose text"
+        assert not md_path.exists(), "scene markdown must not exist before acceptance"
 
     for node in nodes:
         assert "/" not in node["id"] and "\\" not in node["id"] and " " not in node["id"], \
@@ -1511,8 +1882,8 @@ def test_node_write_to_project_characters_fully_popped(tmp_path, monkeypatch):
     )
 
 
-def test_node_write_to_project_streaming_manuscript_50_chapters(tmp_path, monkeypatch):
-    """Streaming manuscript write must produce valid JSON with correct chapter count."""
+def test_node_write_to_project_stages_50_chapter_manuscript(tmp_path, monkeypatch):
+    """Large pre-acceptance manuscript projection remains valid staged JSON."""
     import json
 
     async def fake_propose_write(op, _project_path):
@@ -1534,13 +1905,13 @@ def test_node_write_to_project_streaming_manuscript_50_chapters(tmp_path, monkey
     asyncio.run(w1_import.node_write_to_project(state))
 
     manuscript_path = tmp_path / "manuscript.json"
-    assert manuscript_path.exists()
-    manuscript = json.loads(manuscript_path.read_text(encoding="utf-8"))
+    assert not manuscript_path.exists()
+    staged_path = tmp_path / "system" / "imports" / "import_compact" / "staged_manuscript_projection.json"
+    manuscript = json.loads(staged_path.read_text(encoding="utf-8"))
     assert len(manuscript["chapters"]) == 50
     assert manuscript["chapters"][0]["title"] == "Chapter 1"
     assert manuscript["chapters"][49]["title"] == "Chapter 50"
-    assert "source_file" in manuscript
-    assert "imported_at" in manuscript
+    assert manuscript["acceptance_required"] is True
 
 
 def test_world_organizer_filters_module_contamination_and_sets_category_paths():
@@ -1625,7 +1996,8 @@ def test_node_review_import_includes_observability_fields(tmp_path):
 
     expected_keys = [
         "characters_extracted", "events_extracted", "world_items_extracted",
-        "relationships_extracted", "manuscript_chapters_count", "manuscript_written",
+        "observability_phase", "relationships_preproposal_count", "manuscript_chapters_preproposal_count",
+        "manuscript_staging_pending",
         "canonical_events_count", "branch_count", "duplicate_count", "topology_warning_count",
     ]
     for key in expected_keys:
@@ -1635,9 +2007,10 @@ def test_node_review_import_includes_observability_fields(tmp_path):
     assert obs["characters_extracted"] == 2   # char_a (not skip_create), char_b
     assert obs["events_extracted"] == 1       # evt_1
     assert obs["world_items_extracted"] == 2  # world_a, world_b
-    assert obs["relationships_extracted"] == 3
-    assert obs["manuscript_chapters_count"] == 2
-    assert obs["manuscript_written"] is True
+    assert obs["observability_phase"] == "pre_proposal"
+    assert obs["relationships_preproposal_count"] == 3
+    assert obs["manuscript_chapters_preproposal_count"] == 2
+    assert obs["manuscript_staging_pending"] is True
     assert obs["canonical_events_count"] == 1
     assert obs["branch_count"] == 2
     assert obs["duplicate_count"] == 2
@@ -1662,13 +2035,14 @@ def test_node_review_import_observability_skips_skip_create_characters(tmp_path)
     assert obs["characters_extracted"] == 2, "skip_create characters must be excluded from count"
 
 
-def test_node_review_import_observability_manuscript_not_written(tmp_path):
-    """manuscript_written must be False when manuscript_chapters is empty."""
+def test_node_review_import_observability_marks_empty_manuscript_as_preproposal(tmp_path):
+    """An empty review snapshot must not claim the manuscript has been written."""
     state = _make_review_state(tmp_path, manuscript_chapters=[])
     result = asyncio.run(w1_import.node_review_import(state))
     obs = result["import_review_report"]["import_observability"]
-    assert obs["manuscript_written"] is False
-    assert obs["manuscript_chapters_count"] == 0
+    assert obs["observability_phase"] == "pre_proposal"
+    assert obs["manuscript_chapters_preproposal_count"] == 0
+    assert obs["manuscript_staging_pending"] is True
 
 
 def test_node_review_import_runs_all_zero_cost_reviewers(tmp_path):
@@ -2180,8 +2554,8 @@ def test_supervisor_path_content_chain_integrity(tmp_path, monkeypatch):
 
 # ── F-5: nodes.json includes source_span per node ─────────────────────────────
 
-def test_manuscript_nodes_json_includes_source_span(tmp_path, monkeypatch):
-    """nodes.json written by _write_manuscript_nodes must include source_span on chapter nodes."""
+def test_staged_manuscript_nodes_include_source_span(tmp_path, monkeypatch):
+    """The staged node projection keeps chapter source provenance."""
 
     async def fake_propose_write(op, _project_path):
         return {"id": f"p_{op['entity_id']}", "confidence": op["confidence"], "status": "pending"}
@@ -2207,8 +2581,9 @@ def test_manuscript_nodes_json_includes_source_span(tmp_path, monkeypatch):
     asyncio.run(w1_import.node_write_to_project(state))
 
     nodes_path = tmp_path / "writing" / "manuscript" / "nodes.json"
-    assert nodes_path.exists(), "nodes.json must be written by node_write_to_project"
-    nodes_json = json.loads(nodes_path.read_text(encoding="utf-8"))
+    assert not nodes_path.exists(), "nodes must not be canonical before acceptance"
+    staged_path = tmp_path / "system" / "imports" / "import_compact" / "staged_manuscript_projection.json"
+    nodes_json = json.loads(staged_path.read_text(encoding="utf-8"))["nodes"]
 
     # Find the chapter_outline node (type == "chapter_outline")
     chapter_nodes = [n for n in nodes_json if n.get("type") == "chapter_outline"]
@@ -2218,9 +2593,6 @@ def test_manuscript_nodes_json_includes_source_span(tmp_path, monkeypatch):
     assert "source_span" in chapter_node, (
         f"chapter_outline node missing source_span: {chapter_node}"
     )
-    assert chapter_node["source_span"]["start"] == 100, (
-        f"Expected source_span.start=100, got {chapter_node['source_span']}"
-    )
-    assert chapter_node["source_span"]["end"] == 500, (
-        f"Expected source_span.end=500, got {chapter_node['source_span']}"
-    )
+    assert set(chapter_node["source_span"]) == {
+        "raw_source_hash", "absolute_start", "absolute_end", "substring_hash",
+    }

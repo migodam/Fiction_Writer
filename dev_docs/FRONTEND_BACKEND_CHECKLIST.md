@@ -114,8 +114,8 @@ When adding a new button or feature:
 | Import novel | ImportWorkflow.tsx + WorkbenchWorkspace.tsx | startImport | w1Start | w1:start | POST /workflow/w1/start | W1 Import Compiler (DeepSeek) | ✅ COMPLETE | Hybrid compiler artifacts added; prompt_profile recorded; see W1_IMPORT_COMPILER.md |
 | W1 status poll | ImportWorkflow.tsx | — | w1Status | w1:status | GET /workflow/w1/status | — | ✅ COMPLETE | Returns current_step and prompt_profile for long-import progress |
 | Cancel import | ImportWorkflow.tsx | cancelImport | w1Cancel | w1:cancel | POST /workflow/w1/cancel | — | ✅ COMPLETE | Verified by `tests/e2e/p1/import_workflow.spec.ts` on 2026-04-25 final integration |
-| Accept proposal | WorkbenchWorkspace.tsx | acceptProposal | — | — | — | — | 🔵 FRONTEND_ONLY | |
-| Reject proposal | WorkbenchWorkspace.tsx | rejectProposal | — | — | — | — | 🔵 FRONTEND_ONLY | |
+| Accept proposal package | WorkbenchWorkspace.tsx | resolveProposals | — | — | — | — | 🔵 FRONTEND_ONLY | W1 proposals, including singleton imports, remain staged and accept only as their current import package transaction. The transaction validates and consumes `stagedManuscriptProjection` into scene documents and manuscript nodes atomically. |
+| Reject proposal package | WorkbenchWorkspace.tsx | resolveProposals | — | — | — | — | 🔵 FRONTEND_ONLY | Reject is scoped to the current package; no cross-run bulk action is exposed. |
 | Spawn sidecar | main.js / WorkbenchWorkspace | — | sidecarSpawn | sidecar:spawn | — (process) | — | 🔵 FRONTEND_ONLY | |
 | Force-clear workflow lock | WorkbenchWorkspace.tsx | — | — | workflow:force-clear | — | — | 🔵 FRONTEND_ONLY | |
 
@@ -145,6 +145,14 @@ When adding a new button or feature:
 | Test provider connection | AdvancedSettingsModal.tsx | — | testProvider | settings:test-provider | — | — | ✅ COMPLETE | |
 | Toggle locale/density/theme | AdvancedSettingsModal.tsx | setLocale/setDensity | saveAppSettings | settings:save-app | — | — | ✅ COMPLETE | |
 | Create project | AdvancedSettingsModal.tsx | createProject | — | — | — | — | ✅ COMPLETE | |
+
+### Electron Runtime Security
+
+| Surface | Component File | Store Action | electronApi Method | IPC Channel | Sidecar Endpoint | AI Workflow | Status | Notes |
+|---|---|---|---|---|---|---|---|---|
+| Isolated renderer bridge | `src/electron/preload.cjs` | — | all existing named methods | named IPC allowlist | — | — | ✅ COMPLETE | `nodeIntegration: false`, `contextIsolation: true`; no renderer `ipcRenderer` escape hatch. |
+| W1 project-root status route | `electronApi.ts` | W1 polling | `w1Status` | `w1:status` | GET `/workflow/w1/status` | W1 Import Compiler | ✅ COMPLETE | Electron runtime smoke verifies that the validated project root reaches the W1 route contract. |
+| Runtime smoke coverage | `tests/electron/runtime_smoke.mjs` | — | file/settings/W1 bridge | loopback-only test fixture | — | — | ✅ COMPLETE | Runs with `npm run electron:smoke`; native OS dialog interaction is deterministic in smoke mode, so a headed/manual OS-dialog pass remains outside headless automation. |
 
 ---
 

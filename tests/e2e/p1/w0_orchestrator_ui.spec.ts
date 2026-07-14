@@ -1,4 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
+import { TEST_NARRATIVE_IDE_INVOKE_METHODS } from '../helpers/narrativeIdeBridge';
 
 type W0StatusResult = {
   status: string;
@@ -22,7 +23,7 @@ type W0StatusResult = {
 };
 
 async function injectOrchestratorMock(page: Page, statusResults: W0StatusResult[]) {
-  await page.addInitScript(({ statusResults }) => {
+  await page.addInitScript(({ statusResults, bridgeMethods }) => {
     const state = {
       statusResults,
       statusCallCount: 0,
@@ -62,11 +63,10 @@ async function injectOrchestratorMock(page: Page, statusResults: W0StatusResult[
       send: () => {},
     };
 
-    (window as any).require = (module: string) => {
-      if (module === 'electron') return { ipcRenderer: mockIpcRenderer };
-      throw new Error(`Module not found: ${module}`);
-    };
-  }, { statusResults });
+    (window as any).narrativeIDE = Object.fromEntries(
+      Object.entries(bridgeMethods).map(([method, channel]) => [method, (payload: unknown) => mockIpcRenderer.invoke(channel, payload)]),
+    );
+  }, { statusResults, bridgeMethods: TEST_NARRATIVE_IDE_INVOKE_METHODS });
 }
 
 const runningStatus: W0StatusResult = {

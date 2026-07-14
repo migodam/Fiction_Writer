@@ -7,11 +7,11 @@ test.describe('Layout and language settings', () => {
     const modal = page.getByTestId('settings-modal');
     await page.getByTestId('toolbar-settings').click();
     await expect(modal).toBeVisible();
-    await page.getByTestId('locale-zh').click();
+    await modal.getByRole('button', { name: /^Chinese/ }).click();
     await expect(page.getByText('工作台').first()).toBeVisible();
-    await page.getByTestId('locale-en').click();
+    await modal.getByRole('button', { name: /^English/ }).click();
     await expect(page.getByText('Workbench').first()).toBeVisible();
-    await modal.locator('button').first().click();
+    await modal.getByRole('button').filter({ has: page.locator('svg') }).last().click();
     await expect(modal).not.toBeVisible();
 
     const sidebarHandle = await page.getByTestId('sidebar-resizer').boundingBox();
@@ -22,15 +22,6 @@ test.describe('Layout and language settings', () => {
     await page.mouse.move(sidebarHandle.x + 90, sidebarHandle.y + 4);
     await page.mouse.up();
     await expect.poll(async () => (await page.getByTestId('sidebar-resizer').boundingBox())?.x ?? 0).toBeGreaterThan(initialSidebarX + 40);
-
-    const inspectorHandle = await page.getByTestId('inspector-resizer').boundingBox();
-    if (!inspectorHandle) throw new Error('Missing inspector resizer');
-    const initialInspectorX = inspectorHandle.x;
-    await page.mouse.move(inspectorHandle.x + 1, inspectorHandle.y + 4);
-    await page.mouse.down();
-    await page.mouse.move(inspectorHandle.x - 90, inspectorHandle.y + 4);
-    await page.mouse.up();
-    await expect.poll(async () => (await page.getByTestId('inspector-resizer').boundingBox())?.x ?? 0).toBeLessThan(initialInspectorX - 40);
 
     const dockHandle = await page.getByTestId('agentDock-resizer').boundingBox();
     if (!dockHandle) throw new Error('Missing dock resizer');

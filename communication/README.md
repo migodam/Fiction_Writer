@@ -1,6 +1,6 @@
 # Narrative IDE Communication Index
 
-Last updated: 2026-06-08  
+Last updated: 2026-07-14
 Owner: Codex / W4 QA + Communication Merge
 
 This folder is the evidence and handoff layer for Narrative IDE work. It is not the canonical product source of truth. When docs conflict, use `dev_docs/README.md` to identify the winning canonical document, then use the files here as reports, prompt packages, QA evidence, and historical context.
@@ -9,6 +9,7 @@ This folder is the evidence and handoff layer for Narrative IDE work. It is not 
 
 | Status | File | Why it matters |
 |---|---|---|
+| Current implementation truth | `2026-07-11-w1-reviewer-ready-orchestrator-report.md` | Reviewer-ready W1 outcome, final gate evidence, paid-run ledger, residual P2 risks, and Git merge sequence. |
 | Current plan | `2026-06-06-w1-next-wave-multiagent-claude-plan.md` | Single-file Claude workflow for the next investigation/repair wave; includes execution steps and hardening addendum. |
 | Current rollup | `2026-06-06-current-state-rollup.md` | Short index of current verdict, evidence, risks, and next actions. |
 | Merged evidence | `2026-06-06-communication-merged-evidence-rollup.md` | Actual compression of older 2026-05-31 to 2026-06-05 reports into durable evidence buckets. |
@@ -23,9 +24,10 @@ This folder is the evidence and handoff layer for Narrative IDE work. It is not 
 
 ## Current Verdict
 
-- Automated zero-cost gates are reported green in the 2026-06-06 QA layer.
-- True first-10-chapter external provider smoke remains gated on explicit user approval because it sends local manuscript text to an external model provider and may incur cost.
-- The next work is not another shallow patch. It is a multi-Claude investigation and implementation wave covering W1 import quality, character/relationship/command UI, world/timeline/graph algorithms, and real Electron QA.
+- Current verified baselines are 659 W1 backend tests, 230 full P0/P1 Playwright tests, Electron runtime smoke, UI lint/build, Python compileall, and diff/secret checks.
+- Final Flash artifact `/tmp/.../20260713_033431` passes every extraction and semantic gate except the now-fixed 张铁 serializer boundary. Exact production-code replay passes diagnostics with every symptom flag false.
+- Six ledger-backed Flash runs cost `$0.439420`. One Pro attempt was stopped after 12 minutes with zero settled calls/tokens/cost because provider latency made completion inside the 30-minute gate impossible.
+- The branch is a reviewer-ready merge candidate pending independent diff review and normal GitHub checks. Remaining character-thin-card, bundle-size, Electron cleanup, and Pro-latency items are documented P2/external risks.
 - Existing reports are retained as provenance. Older worker reports and prompt packages are `merged-retained`, not deleted. Do not move or archive old communication files without Lead approval.
 
 ## Status Labels

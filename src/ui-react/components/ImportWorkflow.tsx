@@ -130,6 +130,7 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
   const w1TokenLedger = useProjectStore((s) => s.w1TokenLedger);
   const w1CancelRequested = useProjectStore((s) => s.w1CancelRequested);
   const w1ConnectionWarning = useProjectStore((s) => s.w1ConnectionWarning);
+  const projectRoot = useProjectStore((s) => s.projectRoot);
   const proposals = useProjectStore((s) => s.proposals);
   const resolveProposals = useProjectStore((s) => s.resolveProposals);
   const setW1ImportMode = useProjectStore((s) => s.setW1ImportMode);
@@ -137,10 +138,12 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
   const setW1CustomProfileConfig = useProjectStore((s) => s.setW1CustomProfileConfig);
   const startImport = useProjectStore((s) => s.startImport);
   const cancelImport = useProjectStore((s) => s.cancelImport);
+  const resetImport = useProjectStore((s) => s.resetImport);
   const { t } = useI18n();
   const [consoleOpen, setConsoleOpen] = useState(true);
   const [showAllWarnings, setShowAllWarnings] = useState(false);
   const [acceptResult, setAcceptResult] = useState<{ accepted: number; remaining: number } | null>(null);
+  const [sourceFilePath, setSourceFilePath] = useState('');
 
   const updateCustomProfile = useCallback((patch: Partial<W1CustomProfileConfig>) => {
     setW1CustomProfileConfig(patch);
@@ -171,12 +174,13 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
         filters: [{ name: 'Text Files', extensions: ['txt', 'md'] }],
       });
       if (files && files.length > 0) {
-        startImport({ projectRoot: '', sourceFilePath: files[0] });
+        setSourceFilePath(files[0]);
+        void startImport({ projectRoot, sourceFilePath: files[0] });
       }
     } catch {
       // user cancelled file dialog
     }
-  }, [startImport]);
+  }, [projectRoot, startImport]);
 
   const isIdle = w1Status === 'idle' || w1Status === 'error' || w1Status === 'cancelled';
   const safeAcceptIds = (w1ImportReviewReport?.safe_accept_ids || []).filter((id) =>
@@ -207,6 +211,12 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-border bg-card p-6 shadow-xl custom-scrollbar">
         <h2 className="mb-4 text-lg font-semibold text-text">{t('import.title')}</h2>
+        <div data-testid="w1-import-entry" className="mb-4 grid gap-2 rounded-xl border border-border bg-bg-elev-1 p-3 text-xs sm:grid-cols-4">
+          <RuntimeField testId="w1-import-file" label="File" value={sourceFilePath || 'Choose a manuscript'} />
+          <RuntimeField testId="w1-import-model" label="Model" value={w1PromptProfile} />
+          <RuntimeField testId="w1-import-stage" label="Stage" value={w1CurrentStep || w1Status} />
+          <RuntimeField testId="w1-import-budget" label="Budget" value={w1TokenLedger ? `${formatTokens(w1TokenLedger.actual_total_tokens ?? 0)} tokens` : 'Awaiting usage'} />
+        </div>
 
         {/* Preset picker + extraction toggles — visible when idle */}
         {isIdle && (
@@ -531,6 +541,17 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
               >
                 {t('import.cancel')}
               </button>
+            </div>
+          </div>
+        )}
+
+        {(w1Status === 'error' || w1Status === 'cancelled') && (
+          <div data-testid="w1-recovery-card" className="mt-4 rounded-xl border border-red/30 bg-red/10 p-3 text-sm text-text">
+            <p className="font-semibold">{w1Status === 'cancelled' ? 'Import cancelled' : 'Import needs attention'}</p>
+            {w1Errors.map((error, index) => <p key={`${error}-${index}`} data-testid="w1-recovery-error-item" className="mt-1 text-xs text-red">{error}</p>)}
+            <div className="mt-3 flex gap-2">
+              {sourceFilePath && <button type="button" data-testid="w1-retry-btn" className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white" onClick={() => void startImport({ projectRoot, sourceFilePath })}>Retry import</button>}
+              <button type="button" data-testid="w1-reset-btn" className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold" onClick={resetImport}>Choose another file</button>
             </div>
           </div>
         )}

@@ -25,6 +25,7 @@ W1 import now uses a Hybrid Compiler spine for long novel imports. The runtime s
 - `CrossValidationArtifact`: `cross_validation.json`; duplicate characters/events, missing major characters, suspicious groups, contradictory aliases, event merge recommendations, and warnings.
 - `TimelineArchitectureArtifact`: `timeline_architecture.json`; branch list, canonical events, event classifications, discarded duplicates, scene beats, background references, fork/merge anchors, density policy, fork/merge-ready branch metadata, and layout hints.
 - `ImportReviewReport`: `review_report.json`; pass/warning/fail status, warnings/errors, proposal counts, safe accept ids, blocked ids, failed chunks, duplicate merges, low-confidence items, model/profile, and artifact paths.
+- `UsageLedger`: `usage_ledger.json`; authoritative non-secret provider usage for the run: actual input/output/total tokens, `actual_calls` and `api_call_count` compatibility alias, cost, model/pricing, and budget-exhaustion status. It is atomically replaced in the run artifact directory. Budget preflight returns a caller-owned reservation token that is settled or released by identity after provider I/O, so differently sized concurrent calls can complete out of order without dropping the wrong in-flight call/token/cost allowance. The legacy boolean preflight API remains task-locally bound for compatibility. Live runs fail closed when a completed provider call omits usage and `fail_on_missing_usage` is enabled.
 - `PromptPolicyDecision`: `prompt_policy_decision.json`; deterministic Orchestrator policy choice, normalized PromptPolicyPatch knobs, directive keys, and zero-cost rationale for density/topology/world-scope decisions.
 - `PromptProfile`: `fast`, `balanced`, `deep`, or `custom`; controls per-prompt text budget and is recorded in the manifest.
 
@@ -60,6 +61,14 @@ W1 normalizes world entries with a deterministic World Ontology before proposal 
 For Chinese source text, W1 preserves Chinese user-facing labels/descriptions and applies rule-based fallback mapping before trusting model categories: `门派`/`宗门`/`帮派` map to `organization`; `势力`/`阵营`/`联盟` map to `faction`; `功法`/`法术`/`术法`/`法诀` map to `cultivation_method`; `修炼体系` maps to `system`; `规则`/`法则` map to `rule`; `丹药`/`物品` map to `item`; `法器`/`宝物` map to `artifact`; `地名`/`地点` and place-like suffixes such as `堂`/`峰`/`谷`/`院` map to `location` unless explicit faction/organization context overrides them. Named organizations such as `七玄门` must be migrated out of character candidates into `world_detailed` and routed to organization/faction containers, not character proposals; person-like world entries must be skipped from world-item proposals.
 
 The World organizer stage must exclude module-owned content from World Model proposals. Relationship graphs, event timelines, single scene beats, and person/role-only entries remain owned by Relationship, Timeline, Manuscript, or Character modules. W1 import world containers use localized semantic containers such as `地理位置`, `门派组织`, `功法与术法`, `修炼境界与制度`, and `文化与习俗`; empty English starter containers are removed during package acceptance. World proposals may include compatibility fields `categoryPath` and `parentId` for hierarchy display until a full tree model is introduced.
+
+## Semantic Reconciliation Contracts
+
+Character matches produce an `EntityMergeDecision/v1` in `reducer_artifact.json`. It records field-by-field union/append/preserve actions for aliases, background, experience entries, traits, notes, confidence, physical description, speech style, and arc notes. Existing canonical fields are never silently overwritten; divergent text is retained as evidence and reported in `semantic_conflicts`.
+
+For Chinese projects, character tag names must be Chinese. Known English editorial labels are translated while retaining `sourceName` and normalization metadata; unmapped English labels are rejected into `tag_rejections`, never blanked or proposed. The Chinese relationship ontology permits only normalized semantic categories with explicit `ontologyDirection`: mentor/political links are directed, while family, romance, rivalry, sworn-bond, conflict, and alliance links are symmetric. Event/action labels such as `解惑`/`选拔` and descriptive phrases such as `冷冰冰的师兄` are evidence or notes, not relationship types.
+
+Organizer container targets are deterministic: each emitted notebook has a stable `world_container_<container_key>` ID and every world item references it through `containerId` (with `parentId` reserved for a future folder tree). A candidate can occupy one normalized category/container only; person, rank, relationship, timeline, and manuscript contamination is excluded before placement.
 
 ## Stage 5b: Content Organizer
 
@@ -146,6 +155,13 @@ The review is non-canonical: it may recommend merges, demotions, group correctio
 
 ## JSON Robustness Requirements
 Chunk prompt parsing must tolerate fenced JSON, trailing commas, and recoverable malformed model output. Failed extraction categories must write failure artifacts and must not be cached as successful empty prompt outputs.
+
+## Source Provenance And Manuscript Staging
+`SourceSpan` is the canonical W1 provenance shape: `raw_source_hash`, `absolute_start`, `absolute_end`, and `substring_hash`. `make_source_span()`, `validate_source_span()`, and `reconstruct_source_span()` validate spans against the original raw source using Python character offsets. Segment, chapter, and staged scene projections must carry valid spans; `node_build_manuscript()` derives chapter bodies only from raw source chunks, never from LLM extraction output.
+
+Before Workbench acceptance, W1 writes `staged_manuscript_projection.json` under `system/imports/<import_run_id>/`. It contains the deterministic chapter, ManuscriptNode, and scene-document payloads plus `acceptance_required: true`; W1 must not write canonical `manuscript.json`, `writing/manuscript/nodes.json`, or scene Markdown files. Chapter and scene proposals include `stagedManuscriptProjection` with the artifact path, contract version, chapter id, and scene id so the acceptance layer can apply the projection transactionally.
+
+`PlannerProposal.next_action` is a bounded optional hint. It may request a registered supervisor tool, `stop`, or a named-window `rerun`. Validation rejects unknown tools and malformed actions. `resolve_planner_next_action()` applies deterministic fallback and refuses reruns after the iteration cap or API-402 budget stop; a validated `stop` ends before supervisor tools begin. The proposal gate, validator sequence, and normal fixed pipeline remain deterministic.
 
 ## Parallel Workstream Handoff
 Future branches should treat this file and the artifact JSON files as the integration contract.

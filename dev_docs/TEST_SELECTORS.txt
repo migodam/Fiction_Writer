@@ -182,6 +182,11 @@ event-context-create-scene
 event-context-simulate
 event-context-delete
 
+context-menu-item-<commandId>
+global-context-menu
+world-folder-<containerId>
+character-custom-attribute-<action>-<attributeId>
+
 ==================================================
 7 GRAPH
 ==================================================
@@ -444,6 +449,23 @@ w1-cancel-btn            (cancel import button)
 w1-error-item            (each error list item)
 w1-success-msg           (completion success paragraph)
 w1-close-btn             (close modal button)
+w1-import-entry          (visible W1 run summary)
+w1-import-file           (selected source file)
+w1-import-model          (selected model/profile)
+w1-import-stage          (current import stage)
+w1-import-budget         (token budget/usage summary)
+w1-recovery-card         (cancelled or failed import recovery surface)
+w1-retry-btn             (retries the selected file)
+w1-reset-btn             (returns import to file selection)
+
+-- W1 product projections --
+character-experience-list
+character-experience-add
+character-custom-attributes
+character-custom-attribute-add
+manuscript-save-state
+manuscript-save-retry
+world-folder-<containerId>
 
 ==================================================
 23 ORCHESTRATOR WORKFLOW (W0)

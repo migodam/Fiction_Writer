@@ -67,11 +67,11 @@ async function injectW1ImportBatch(page: import('@playwright/test').Page) {
 }
 
 test.describe('W1 import smoke acceptance', () => {
-  test('Accept All applies same-batch dependencies and removes blank starter defaults', async ({ page }) => {
+  test('package acceptance applies same-run dependencies and removes blank starter defaults', async ({ page }) => {
     await injectW1ImportBatch(page);
     await page.getByTestId('activity-btn-workbench').click();
-    await expect(page.getByTestId('accept-all-proposals-btn')).toBeVisible();
-    await page.getByTestId('accept-all-proposals-btn').click();
+    await expect(page.getByTestId('accept-all-proposals-btn')).toHaveCount(0);
+    await page.getByTestId('accept-import-package-import-unscoped').click();
     await expect(page.getByTestId('workbench-inbox-list')).toContainText('Inbox clear');
 
     const state = await page.evaluate(() => {
@@ -98,7 +98,7 @@ test.describe('W1 import smoke acceptance', () => {
     expect(state.worldItems.map((item: any) => item.name).sort()).toEqual(['七绝堂', '长春功']);
   });
 
-  test('Accept All recovers stale W1 proposals with branch_main, duplicates, and world settings', async ({ page }) => {
+  test('package acceptance blocks stale branch, duplicate IDs, and semantic collisions atomically', async ({ page }) => {
     await page.goto('http://localhost:3000');
     await page.evaluate(({ proposals }) => {
       const store = (window as any).__narrativeStore;
@@ -211,9 +211,9 @@ test.describe('W1 import smoke acceptance', () => {
     });
 
     await page.getByTestId('activity-btn-workbench').click();
-    await expect(page.getByTestId('accept-all-proposals-btn')).toBeVisible();
-    await page.getByTestId('accept-all-proposals-btn').click();
-    await expect(page.getByTestId('workbench-inbox-list')).toContainText('Inbox clear');
+    await expect(page.getByTestId('accept-all-proposals-btn')).toHaveCount(0);
+    await page.getByTestId('accept-import-package-import-unscoped').click();
+    await expect(page.getByTestId('retry-blocked-package-import-unscoped')).toBeVisible();
 
     const state = await page.evaluate(() => {
       const s = (window as any).__narrativeStore.getState();
@@ -227,18 +227,20 @@ test.describe('W1 import smoke acceptance', () => {
       };
     });
 
-    expect(state.proposals).toEqual([]);
-    expect(state.history).toEqual(expect.arrayContaining(['p_event_stale_branch', 'p_char_depends_event', 'p_duplicate_chapter', 'p_world_settings']));
-    expect(state.events).toEqual([{ id: 'event_legacy_branch', branchId: 'branch_item' }]);
-    expect(state.characters).toEqual([{ id: 'char_han_li', name: '韩立', linkedEventIds: ['event_legacy_branch'] }]);
+    expect(state.proposals).toHaveLength(5);
+    expect(state.proposals.every((proposal: any) => proposal.status === 'pending' && proposal.lastBlockReason)).toBe(true);
+    expect(new Set(state.proposals.map((proposal: any) => proposal.lastBlockReason)).size).toBe(1);
+    expect(state.history).toEqual([]);
+    expect(state.events).toEqual([]);
+    expect(state.characters).toEqual([]);
     expect(state.chapters).toEqual([{ id: 'chap_1', title: '第一章' }]);
-    expect(state.worldSettings.worldRulesSummary).toContain('七玄门');
+    expect(state.worldSettings.worldRulesSummary).toBe('');
   });
 
   test('imported chapter detail and manuscript scene content are visible in Writing', async ({ page }) => {
     await injectW1ImportBatch(page);
     await page.getByTestId('activity-btn-workbench').click();
-    await page.getByTestId('accept-all-proposals-btn').click();
+    await page.getByTestId('accept-import-package-import-unscoped').click();
     await page.getByTestId('activity-btn-writing').click();
     await page.getByTestId('sidebar-section-writing-chapters').click();
 

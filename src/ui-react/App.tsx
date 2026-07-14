@@ -44,6 +44,7 @@ import { cn } from './utils';
 import { PaneResizeHandle } from './components/PaneResizeHandle';
 import { ContextMenu } from './components/ContextMenu';
 import { AdvancedSettingsModal } from './components/AdvancedSettingsModal';
+import { useCommandShortcuts } from './hooks/useCommandShortcuts';
 
 type CommandOption = {
   label: string;
@@ -66,6 +67,7 @@ const CommandPalette = () => {
   const { t } = useI18n();
   const [search, setSearch] = useState('');
   const navigate = useNavigate();
+  useCommandShortcuts();
 
   const activityOptions: CommandOption[] = APP_ROUTES.map((route) => ({
     label: t(`routes.${route.id}.label`, route.label),
@@ -110,21 +112,6 @@ const CommandPalette = () => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'p') {
         event.preventDefault();
         toggleCommandPalette();
-      }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
-        const active = document.activeElement;
-        const isTextField =
-          active instanceof HTMLInputElement ||
-          active instanceof HTMLTextAreaElement ||
-          (active instanceof HTMLElement && active.isContentEditable);
-        if (!isTextField) {
-          event.preventDefault();
-          if (event.shiftKey) {
-            useProjectStore.getState().redoAction();
-          } else {
-            useProjectStore.getState().undoAction();
-          }
-        }
       }
       if (event.key === 'Escape') {
         toggleCommandPalette(false);

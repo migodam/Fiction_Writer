@@ -126,7 +126,7 @@ def test_analyze_import_reports_quality_symptoms(tmp_path):
     assert metrics["timeline"]["discard_count"] == 1
     assert metrics["timeline"]["branch_density"]["branches_over_budget"]["branch_main"] == 29
     assert metrics["import_test6_symptom_flags"]["overlong_character_summaries"] is True
-    assert metrics["import_test6_symptom_flags"]["scene_beats_or_discards_present"] is True
+    assert metrics["informational_flags"]["scene_beats_or_discards_present"] is True
 
 
 def test_compare_metrics_supports_two_import_runs(tmp_path):
@@ -160,3 +160,140 @@ def test_cli_exit_codes_default_and_threshold(tmp_path, capsys):
     assert malformed_code == 2
     assert "W1 Import Diagnostics: import_a" in captured.out
     assert "does not exist" in captured.err
+
+
+def test_staged_projection_uses_receipts_without_canonical_writes(tmp_path):
+    project = tmp_path / "staged"
+    run_dir = project / "system" / "imports" / "run_staged"
+    _write_json(project / "system" / "inbox.json", [])
+    _write_json(project / "project.json", {"metadata": {"locale": "zh-CN"}})
+    _write_json(run_dir / "manifest.json", {"source_language": "zh"})
+    _write_json(run_dir / "review_report.json", {"proposal_counts": {}, "reviewer_reports": {}})
+    _write_json(run_dir / "timeline_architecture.json", {"branches": [], "canonical_events": []})
+    _write_json(
+        run_dir / "staged_manuscript_projection.json",
+        {
+            "acceptance_required": True,
+            "chapters": [{"id": f"chapter_{index}"} for index in range(10)],
+            "nodes": [
+                {"id": f"chapter_node_{index}", "type": "chapter_outline"}
+                for index in range(10)
+            ] + [
+                {"id": f"scene_node_{index}", "type": "scene_outline"}
+                for index in range(10)
+            ],
+            "scene_documents": [{"id": f"scene_{index}", "content": "正文"} for index in range(10)],
+        },
+    )
+    _write_json(run_dir / "proposal_write_receipts.json", {"proposal_counts": {"chapter": 10, "scene": 10}})
+    _write_json(run_dir / "usage_ledger.json", {"budget_status": {"exhausted": False, "remaining": {"calls": 1}}})
+
+    metrics = w1_import_diagnostics.analyze_import(w1_import_diagnostics.ImportSource(project, "run_staged"))
+
+    projection = metrics["artifact_quality"]["manuscript_projection"]
+    flags = metrics["import_test6_symptom_flags"]
+    assert projection["source"] == "staged"
+    assert (projection["chapter_count"], projection["node_count"], projection["scene_document_count"]) == (10, 20, 10)
+    assert not flags["smoke_chapter_count_not_10"]
+    assert not flags["smoke_manuscript_node_count_not_20"]
+    assert not flags["canonical_manuscript_written_before_acceptance"]
+    assert not flags["staged_projection_receipt_mismatch"]
+
+
+def test_semantic_hard_flags_use_final_proposals_and_reviewer_findings(tmp_path):
+    project = _make_project(tmp_path)
+    run_dir = project / "system" / "imports" / "import_a"
+    _write_json(project / "project.json", {"metadata": {"locale": "zh-CN"}})
+    inbox = json.loads((project / "system" / "inbox.json").read_text(encoding="utf-8"))
+    inbox.extend([
+        {"id": "duplicate", "operations": [{"entityType": "character", "fields": {"id": "char_hero_2", "name": "Hero"}}]},
+        {"id": "bad-tag", "operations": [{"entityType": "character_tag", "fields": {"name": "Main Cast"}}]},
+        {"id": "bad-relation", "operations": [{"entityType": "relationship", "fields": {"id": "rel_1", "type": "解惑", "category": "mentor_disciple"}}]},
+    ])
+    _write_json(project / "system" / "inbox.json", inbox)
+    report = json.loads((run_dir / "review_report.json").read_text(encoding="utf-8"))
+    report["reviewer_reports"] = {
+        "fact": {"findings": [{"check_name": "evidence_missing"}]},
+        "quality": {"findings": [{"check_name": "branch_over_budget"}]},
+    }
+    _write_json(run_dir / "review_report.json", report)
+    _write_json(run_dir / "usage_ledger.json", {"budget_status": {"exhausted": True, "remaining": {"calls": -1}}})
+
+    flags = w1_import_diagnostics.analyze_import(w1_import_diagnostics.ImportSource(project, "import_a"))["import_test6_symptom_flags"]
+
+    assert flags["duplicate_canonical_character_names"]
+    assert flags["unresolved_evidence_missing"]
+    assert flags["illegal_or_english_tags_present"]
+    assert flags["invalid_relationship_types_present"]
+    assert flags["branch_density_over_budget"]
+    assert flags["usage_ledger_exhausted"]
+    assert flags["usage_ledger_over_cap"]
+
+
+def test_semantic_evidence_profile_and_world_organization_gates(tmp_path):
+    project = _make_project(tmp_path)
+    run_dir = project / "system" / "imports" / "import_a"
+    inbox = json.loads((project / "system" / "inbox.json").read_text(encoding="utf-8"))
+    hero = inbox[0]["operations"][0]["fields"]
+    hero.update({
+        "role": "protagonist",
+        "notes": ["Source note establishes the hero's childhood."],
+        "background": "",
+        "experience": [],
+    })
+    inbox.append({"id": "world-misplacements", "operations": [
+        {"entityType": "world_item", "fields": {"id": "world_person", "name": "Hero", "category": "organization"}},
+        {"entityType": "world_item", "fields": {"id": "world_event", "name": "Entry test", "category": "organization"}},
+    ]})
+    _write_json(project / "system" / "inbox.json", inbox)
+    _write_json(run_dir / "timeline_architecture.json", {
+        "canonical_events": [{"title": "Entry test", "branchId": "branch_main"}],
+        "discarded_duplicates": [{"timelineClass": "discarded_duplicate"}],
+    })
+    report = json.loads((run_dir / "review_report.json").read_text(encoding="utf-8"))
+    report["reviewer_reports"] = {"fact": {"findings": [
+        {"check_name": "evidence_entity_mismatch", "severity": "high"},
+        {"check_name": "evidence_unusable", "severity": "medium"},
+    ]}}
+    _write_json(run_dir / "review_report.json", report)
+
+    metrics = w1_import_diagnostics.analyze_import(w1_import_diagnostics.ImportSource(project, "import_a"))
+    flags = metrics["import_test6_symptom_flags"]
+
+    assert flags["high_evidence_entity_mismatch"]
+    assert flags["evidence_unusable"]
+    assert flags["major_character_supported_profile_gaps"]
+    assert flags["person_as_world_organization"]
+    assert flags["event_as_world_organization"]
+    assert metrics["informational_flags"]["scene_beats_or_discards_present"]
+
+
+def test_expected_timeline_discards_are_informational_not_threshold_failures(tmp_path):
+    project = _make_project(tmp_path, event_count=2)
+    run_dir = project / "system" / "imports" / "import_a"
+    inbox = json.loads((project / "system" / "inbox.json").read_text(encoding="utf-8"))
+    inbox[0]["operations"][0]["fields"].update({"summary": "A concise hero card.", "traits": ["brave"]})
+    _write_json(project / "system" / "inbox.json", inbox)
+    _write_json(run_dir / "timeline_architecture.json", {
+        "branches": [{"id": "branch_main"}],
+        "canonical_events": [{"title": "Hero leaves home", "branchId": "branch_main", "orderIndex": 0}],
+        "discarded_duplicates": [{"timelineClass": "discarded_duplicate"}],
+    })
+    report = json.loads((run_dir / "review_report.json").read_text(encoding="utf-8"))
+    report["proposal_counts"] = {"character": 1, "timeline_event": 1}
+    _write_json(run_dir / "review_report.json", report)
+    _write_json(run_dir / "staged_manuscript_projection.json", {
+        "acceptance_required": True,
+        "chapters": [{"id": f"chapter_{index}"} for index in range(10)],
+        "nodes": [{"id": f"chapter_{index}", "type": "chapter_outline"} for index in range(10)]
+        + [{"id": f"scene_{index}", "type": "scene_outline"} for index in range(10)],
+        "scene_documents": [{"id": f"scene_{index}", "content": "正文"} for index in range(10)],
+    })
+    _write_json(run_dir / "proposal_write_receipts.json", {"proposal_counts": {"chapter": 10, "scene": 10}})
+    _write_json(run_dir / "usage_ledger.json", {"budget_status": {"exhausted": False, "remaining": {"calls": 1}}})
+
+    metrics = w1_import_diagnostics.analyze_import(w1_import_diagnostics.ImportSource(project, "import_a"))
+
+    assert metrics["informational_flags"]["scene_beats_or_discards_present"]
+    assert not any(metrics["import_test6_symptom_flags"].values())
+    assert w1_import_diagnostics.main([str(project), "--import-run-id", "import_a", "--fail-on-threshold", "--format", "json"]) == 0

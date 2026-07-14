@@ -2,8 +2,7 @@ import { test, expect } from '@playwright/test';
 
 test.describe('Manuscript workspace', () => {
     test.beforeEach(async ({ page }) => {
-        await page.goto('http://localhost:3000');
-        await page.getByTestId('activity-btn-writing').click();
+        await page.goto('http://localhost:3000/writing/manuscript');
     });
 
     test('manuscript workspace renders', async ({ page }) => {

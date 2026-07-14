@@ -10,8 +10,10 @@ import { AIPortraitModal } from './ai/AIPortraitModal';
 import { electronApi } from '../services/electronApi';
 import { TagTreePanel } from './TagTreePanel';
 import { ArchiveImpactModal } from './ArchiveImpactModal';
-import { CHARACTER_COMMANDS } from '../commands/characterCommands';
-import type { CharacterTag } from '../models/project';
+import { getCharacterContextCommands } from '../commands/characterCommands';
+import { commandClipboard } from '../commands/clipboard';
+import { toMenuItem } from '../commands/menu';
+import type { CharacterCustomAttribute, CharacterExperienceEntry, CharacterTag } from '../models/project';
 
 export const CharactersWorkspace = () => {
   const navigate = useNavigate();
@@ -276,22 +278,18 @@ export const CharactersWorkspace = () => {
                       onClick={() => navigate(`/characters/profile/${character.id}`)}
                       onContextMenu={(e) => {
                         e.preventDefault();
+                        const context = {
+                          target: { kind: 'character' as const, id: character.id },
+                          source: 'context-menu' as const,
+                          character,
+                          addCharacter,
+                          setConfirmArchiveId,
+                        };
                         openContextMenu({
                           x: e.clientX,
                           y: e.clientY,
-                          items: [
-                            {
-                              id: 'duplicate',
-                              label: t(CHARACTER_COMMANDS['character:duplicate'].labelKey, 'Duplicate'),
-                              action: () => CHARACTER_COMMANDS['character:duplicate'].execute({ character, characters, navigate, addCharacter, setConfirmArchiveId }),
-                            },
-                            {
-                              id: 'archive',
-                              label: t(CHARACTER_COMMANDS['character:archive'].labelKey, 'Archive'),
-                              action: () => CHARACTER_COMMANDS['character:archive'].execute({ character, characters, navigate, addCharacter, setConfirmArchiveId }),
-                              destructive: true,
-                            },
-                          ],
+                          returnFocus: e.currentTarget,
+                          items: getCharacterContextCommands(Boolean(commandClipboard.get('character'))).map((command) => toMenuItem(command, context)),
                         });
                       }}
                     >
@@ -431,13 +429,16 @@ const CharacterDetail = ({ character, tab, setConfirmArchiveId }: any) => {
     setRelationTargetId(others[0]?.id || '');
   }, [character]);
 
+  const updateExperience = (entries: CharacterExperienceEntry[]) => setDraft({ ...draft, experience: entries });
+  const updateCustomAttributes = (entries: CharacterCustomAttribute[]) => setDraft({ ...draft, customAttributes: entries });
+
   return (
     <div className="mx-auto max-w-6xl">
       <div className="mb-8 flex items-center justify-between">
         <div className="flex items-center gap-4">
           <div>
             <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('characters.characterDetail')}</div>
-            <div className="mt-2 text-3xl font-black text-text">{draft.name || t('characters.untitledCharacter')}</div>
+            <div className="mt-2 text-3xl font-black text-text">{t('characters.profile')}</div>
           </div>
           <div className="flex gap-2">
             <button
@@ -480,9 +481,23 @@ const CharacterDetail = ({ character, tab, setConfirmArchiveId }: any) => {
           </div>
         </div>
         <div className="flex gap-3">
-          <button type="button" className="rounded-xl border border-border px-4 py-3 text-sm text-text-2" onClick={() => navigate('/characters/relationship-graph')}>
+          <button
+            type="button"
+            data-testid="open-character-relationships-btn"
+            className="rounded-xl border border-border px-4 py-3 text-sm text-text-2"
+            onClick={() => navigate('/graph/relationships')}
+          >
             <Link2 size={14} className="mr-2 inline" />
             {t('characters.relationshipGraph')}
+          </button>
+          <button
+            type="button"
+            data-testid="open-character-timeline-btn"
+            className="rounded-xl border border-border px-4 py-3 text-sm text-text-2"
+            onClick={() => navigate(`/timeline/timeline?character=${draft.id}`)}
+          >
+            <Clock3 size={14} className="mr-2 inline" />
+            {t('characters.openGlobalTimeline')}
           </button>
           <button type="button" className="rounded-xl bg-brand px-5 py-3 text-sm font-black text-white" data-testid="inspector-save" onClick={() => { updateCharacter(draft); setLastActionStatus(t('characters.saved')); }}>
             {t('characters.saveCharacter')}
@@ -637,6 +652,10 @@ const CharacterDetail = ({ character, tab, setConfirmArchiveId }: any) => {
             <input data-testid="character-name-input" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} className="w-full bg-transparent text-5xl font-black tracking-tight outline-none" placeholder={t('characters.characterName')} />
             <textarea data-testid="character-background-input" value={draft.background} onChange={(event) => setDraft({ ...draft, background: event.target.value })} className="h-56 w-full rounded-3xl border border-border bg-bg-elev-1 p-6 font-serif text-sm leading-relaxed text-text-2 outline-none" placeholder={t('characters.characterBackground')} />
             <textarea data-testid="character-summary-input" value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} className="h-28 w-full rounded-3xl border border-border bg-bg p-5 text-sm leading-relaxed text-text-2 outline-none" placeholder={t('characters.characterSummaryPlaceholder')} />
+            <section data-testid="character-experience-list" className="rounded-3xl border border-border bg-card p-5">
+              <div className="mb-3 flex items-center justify-between text-[10px] font-black uppercase tracking-[0.18em] text-text-3"><span>Experience</span><button type="button" data-testid="character-experience-add" className="rounded border border-border px-2 py-1 text-text-2" onClick={() => updateExperience([...(draft.experience || []), { id: `experience_${Date.now()}`, chapter: '', fact: '', evidence: '' }])}>Add</button></div>
+              <div className="space-y-2">{(draft.experience || []).map((entry: CharacterExperienceEntry, index: number) => <div key={entry.id} className="grid gap-2 md:grid-cols-[100px_1fr_1fr_auto]"><input data-testid={`character-experience-chapter-${entry.id}`} value={entry.chapter} onChange={(event) => updateExperience((draft.experience || []).map((item: CharacterExperienceEntry, i: number) => i === index ? { ...item, chapter: event.target.value } : item))} placeholder="Chapter" className="rounded-xl border border-border bg-bg px-3 py-2 text-sm" /><input data-testid={`character-experience-fact-${entry.id}`} value={entry.fact} onChange={(event) => updateExperience((draft.experience || []).map((item: CharacterExperienceEntry, i: number) => i === index ? { ...item, fact: event.target.value } : item))} placeholder="Fact" className="rounded-xl border border-border bg-bg px-3 py-2 text-sm" /><input data-testid={`character-experience-evidence-${entry.id}`} value={entry.evidence || ''} onChange={(event) => updateExperience((draft.experience || []).map((item: CharacterExperienceEntry, i: number) => i === index ? { ...item, evidence: event.target.value } : item))} placeholder="Evidence" className="rounded-xl border border-border bg-bg px-3 py-2 text-sm" /><button type="button" data-testid={`character-experience-delete-${entry.id}`} className="rounded-xl border border-red/40 px-2 text-red" onClick={() => updateExperience((draft.experience || []).filter((_: CharacterExperienceEntry, i: number) => i !== index))}><Trash2 size={14} /></button></div>)}</div>
+            </section>
             <div className="grid gap-4 md:grid-cols-2">
               <input data-testid="character-traits-input" value={draft.traits || ''} onChange={(event) => setDraft({ ...draft, traits: event.target.value })} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('characters.traitsPlaceholder')} />
               <input data-testid="character-goals-input" value={draft.goals || ''} onChange={(event) => setDraft({ ...draft, goals: event.target.value })} className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none" placeholder={t('characters.goalsPlaceholder')} />
@@ -698,6 +717,10 @@ const CharacterDetail = ({ character, tab, setConfirmArchiveId }: any) => {
                 </button>
               </div>
             </div>
+            <section data-testid="character-custom-attributes" className="rounded-3xl border border-border bg-card p-5">
+              <div className="mb-3 flex items-center justify-between text-[10px] font-black uppercase tracking-[0.18em] text-text-3"><span>Custom attributes</span><button type="button" data-testid="character-custom-attribute-add" className="rounded border border-border px-2 py-1 text-text-2" onClick={() => updateCustomAttributes([...(draft.customAttributes || []), { id: `attribute_${Date.now()}`, label: '', value: '' }])}>Add</button></div>
+              <div className="space-y-2">{(draft.customAttributes || []).map((attribute: CharacterCustomAttribute, index: number) => <div key={attribute.id} className="flex gap-2"><input data-testid={`character-custom-attribute-label-${attribute.id}`} value={attribute.label} onChange={(event) => updateCustomAttributes((draft.customAttributes || []).map((item: CharacterCustomAttribute, i: number) => i === index ? { ...item, label: event.target.value } : item))} placeholder="Label" className="flex-1 rounded-xl border border-border bg-bg px-3 py-2 text-sm" /><input data-testid={`character-custom-attribute-value-${attribute.id}`} value={attribute.value} onChange={(event) => updateCustomAttributes((draft.customAttributes || []).map((item: CharacterCustomAttribute, i: number) => i === index ? { ...item, value: event.target.value } : item))} placeholder="Value" className="flex-1 rounded-xl border border-border bg-bg px-3 py-2 text-sm" /><button type="button" data-testid={`character-custom-attribute-up-${attribute.id}`} disabled={index === 0} className="rounded-xl border border-border px-2 disabled:opacity-40" onClick={() => { const next = [...(draft.customAttributes || [])]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; updateCustomAttributes(next); }}>Up</button><button type="button" data-testid={`character-custom-attribute-down-${attribute.id}`} disabled={index === (draft.customAttributes || []).length - 1} className="rounded-xl border border-border px-2 disabled:opacity-40" onClick={() => { const next = [...(draft.customAttributes || [])]; [next[index], next[index + 1]] = [next[index + 1], next[index]]; updateCustomAttributes(next); }}>Down</button><button type="button" data-testid={`character-custom-attribute-delete-${attribute.id}`} className="rounded-xl border border-red/40 px-2 text-red" onClick={() => updateCustomAttributes((draft.customAttributes || []).filter((_: CharacterCustomAttribute, i: number) => i !== index))}><Trash2 size={14} /></button></div>)}</div>
+            </section>
             <div className="rounded-3xl border border-border bg-card p-5">
               <div className="mb-4 flex items-center justify-between">
                 <div className="text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{t('characters.tagSystem')}</div>
@@ -954,6 +977,7 @@ const TagsPanel = () => {
       <div className="rounded-2xl border border-border bg-card p-4 shadow-1">
         <button
           type="button"
+          data-testid={`character-tag-select-${tagEntry.id}`}
           className="flex w-full items-center gap-3 text-left"
           onClick={() => setSelectedTagId(isSelected ? null : tagEntry.id)}
         >

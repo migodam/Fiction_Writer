@@ -8,6 +8,7 @@
  */
 
 import { test, expect, Page } from '@playwright/test';
+import { TEST_NARRATIVE_IDE_INVOKE_METHODS } from '../helpers/narrativeIdeBridge';
 
 // ── IPC mock helpers ────────────────────────────────────────────────────────
 
@@ -62,7 +63,7 @@ async function injectIpcMock(
   ];
 
   await page.addInitScript(
-    ({ pickFiles, startResult, statusResults }) => {
+    ({ pickFiles, startResult, statusResults, bridgeMethods }) => {
       const state: MockState = {
         startResult,
         statusResults,
@@ -100,15 +101,14 @@ async function injectIpcMock(
         send: () => {},
       };
 
-      // electronApi.ts calls require('electron') to get ipcRenderer
-      (window as any).require = (module: string) => {
-        if (module === 'electron') {
-          return { ipcRenderer: mockIpcRenderer };
-        }
-        throw new Error(`Module not found: ${module}`);
-      };
+      (window as any).narrativeIDE = Object.fromEntries(
+        Object.entries(bridgeMethods).map(([method, channel]) => [
+          method,
+          (payload: unknown) => mockIpcRenderer.invoke(channel, payload),
+        ]),
+      );
     },
-    { pickFiles, startResult, statusResults }
+    { pickFiles, startResult, statusResults, bridgeMethods: TEST_NARRATIVE_IDE_INVOKE_METHODS }
   );
 }
 
@@ -130,31 +130,27 @@ test.describe('W1 Import Workflow — UI structure', () => {
     await openImportModal(page);
   });
 
-  test('modal renders both mode selectors when idle', async ({ page }) => {
-    await expect(page.getByTestId('w1-mode-content-only')).toBeVisible();
-    await expect(page.getByTestId('w1-mode-import-all')).toBeVisible();
+  test('modal renders import presets when idle', async ({ page }) => {
+    await expect(page.getByTestId('import-preset-list')).toBeVisible();
+    await expect(page.getByTestId('preset-auto')).toBeVisible();
+    await expect(page.getByTestId('preset-manuscript_focused')).toBeVisible();
   });
 
-  test('import_all radio is selected by default', async ({ page }) => {
-    const importAllRadio = page.getByTestId('w1-mode-import-all').locator('input[type="radio"]');
-    await expect(importAllRadio).toBeChecked();
+  test('auto import preset is selected by default', async ({ page }) => {
+    await expect(page.getByTestId('preset-auto')).toHaveClass(/border-brand/);
   });
 
   test('file picker button is visible when idle', async ({ page }) => {
     await expect(page.getByTestId('w1-file-picker-btn')).toBeVisible();
   });
 
-  test('prompt profile selector is visible when idle', async ({ page }) => {
-    await expect(page.getByTestId('w1-prompt-profile-select')).toBeVisible();
-    await expect(page.getByTestId('w1-prompt-profile-select')).toHaveValue('balanced');
-    await expect(page.getByTestId('w1-profile-explanation')).toContainText('Validation: per-window');
+  test('prompt review panel is visible for the selected preset', async ({ page }) => {
     await expect(page.getByTestId('w1-prompt-review-panel')).toBeVisible();
   });
 
-  test('custom expert panel is visible only for custom profile', async ({ page }) => {
+  test('custom expert panel is visible only for the advanced preset', async ({ page }) => {
     await expect(page.getByTestId('w1-custom-expert-panel')).not.toBeVisible();
-    await page.getByTestId('w1-prompt-profile-select').selectOption('custom');
-    await expect(page.getByTestId('w1-profile-explanation')).toContainText('Supervisor/orchestrator');
+    await page.getByTestId('preset-advanced').click();
     await expect(page.getByTestId('w1-custom-expert-panel')).toBeVisible();
     await expect(page.getByTestId('w1-custom-quality-target')).toHaveValue('max');
     await expect(page.getByTestId('w1-custom-max-chapters-per-window')).toHaveValue('6');
@@ -177,13 +173,10 @@ test.describe('W1 Import Workflow — mode selection', () => {
     await openImportModal(page);
   });
 
-  test('switching to content-only mode checks the correct radio', async ({ page }) => {
-    const contentOnlyRadio = page.getByTestId('w1-mode-content-only').locator('input[type="radio"]');
-    await contentOnlyRadio.check();
-    await expect(contentOnlyRadio).toBeChecked();
-
-    const importAllRadio = page.getByTestId('w1-mode-import-all').locator('input[type="radio"]');
-    await expect(importAllRadio).not.toBeChecked();
+  test('selecting manuscript-focused activates content-only behavior', async ({ page }) => {
+    await page.getByTestId('preset-manuscript_focused').click();
+    await expect(page.getByTestId('preset-manuscript_focused')).toHaveClass(/border-brand/);
+    await expect(page.getByTestId('toggle-extract-relationships')).not.toBeVisible();
   });
 
   test('mode selectors are hidden while import is running', async ({ page }) => {
@@ -193,9 +186,8 @@ test.describe('W1 Import Workflow — mode selection', () => {
     // Progress bar should appear (means status changed to running)
     await expect(page.getByTestId('w1-progress-bar')).toBeVisible({ timeout: 8000 });
 
-    // Mode selectors and file picker should be hidden while running
-    await expect(page.getByTestId('w1-mode-content-only')).not.toBeVisible();
-    await expect(page.getByTestId('w1-prompt-profile-select')).not.toBeVisible();
+    // Presets and file picker should be hidden while running
+    await expect(page.getByTestId('import-preset-list')).not.toBeVisible();
     await expect(page.getByTestId('w1-file-picker-btn')).not.toBeVisible();
   });
 });
@@ -252,7 +244,7 @@ test.describe('W1 Import Workflow — running state', () => {
   });
 
   test('current step label is shown next to chunk count', async ({ page }) => {
-    await expect(page.locator('text=/process.chunks|split.chunks|write.to.project/i')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId('w1-current-step')).toBeVisible({ timeout: 10000 });
   });
 
   test('runtime orchestrator and judge fields render when status includes them', async ({ page }) => {
@@ -382,7 +374,7 @@ test.describe('W1 Import Workflow — provider credentials wiring', () => {
     // Capture what the mock receives for w1:start
     let capturedPayload: Record<string, unknown> | null = null;
 
-    await page.addInitScript(() => {
+    await page.addInitScript(({ bridgeMethods }) => {
       const mockIpcRenderer = {
         invoke: async (channel: string, payload: unknown) => {
           if (channel === 'sidecar:spawn') return { ok: true, port: 8765 };
@@ -398,16 +390,14 @@ test.describe('W1 Import Workflow — provider credentials wiring', () => {
         removeAllListeners: () => {},
         send: () => {},
       };
-      (window as any).require = (module: string) => {
-        if (module === 'electron') return { ipcRenderer: mockIpcRenderer };
-        throw new Error(`Module not found: ${module}`);
-      };
-    });
+      (window as any).narrativeIDE = Object.fromEntries(
+        Object.entries(bridgeMethods).map(([method, channel]) => [method, (payload: unknown) => mockIpcRenderer.invoke(channel, payload)]),
+      );
+    }, { bridgeMethods: TEST_NARRATIVE_IDE_INVOKE_METHODS });
 
     await page.goto('http://localhost:3000');
     await page.getByTestId('activity-btn-workbench').click();
     await page.getByTestId('open-import-btn').click();
-    await page.getByTestId('w1-prompt-profile-select').selectOption('deep');
     await page.getByTestId('w1-file-picker-btn').click();
 
     // Wait for the start call to be captured
@@ -422,11 +412,11 @@ test.describe('W1 Import Workflow — provider credentials wiring', () => {
     expect(Object.keys(capturedPayload!)).toContain('api_key');
     expect(Object.keys(capturedPayload!)).toContain('model');
     expect(Object.keys(capturedPayload!)).toContain('endpoint');
-    expect(capturedPayload!.prompt_profile).toBe('deep');
+    expect(capturedPayload!.prompt_profile).toBe('balanced');
   });
 
   test('custom expert fields affect w1:start payload', async ({ page }) => {
-    await page.addInitScript(() => {
+    await page.addInitScript(({ bridgeMethods }) => {
       const mockIpcRenderer = {
         invoke: async (channel: string, payload: unknown) => {
           if (channel === 'sidecar:spawn') return { ok: true, port: 8765 };
@@ -442,16 +432,15 @@ test.describe('W1 Import Workflow — provider credentials wiring', () => {
         removeAllListeners: () => {},
         send: () => {},
       };
-      (window as any).require = (module: string) => {
-        if (module === 'electron') return { ipcRenderer: mockIpcRenderer };
-        throw new Error(`Module not found: ${module}`);
-      };
-    });
+      (window as any).narrativeIDE = Object.fromEntries(
+        Object.entries(bridgeMethods).map(([method, channel]) => [method, (payload: unknown) => mockIpcRenderer.invoke(channel, payload)]),
+      );
+    }, { bridgeMethods: TEST_NARRATIVE_IDE_INVOKE_METHODS });
 
     await page.goto('http://localhost:3000');
     await page.getByTestId('activity-btn-workbench').click();
     await page.getByTestId('open-import-btn').click();
-    await page.getByTestId('w1-prompt-profile-select').selectOption('custom');
+    await page.getByTestId('preset-advanced').click();
     await page.getByTestId('w1-custom-quality-target').selectOption('high');
     await page.getByTestId('w1-custom-max-chapters-per-window').fill('4');
     await page.getByTestId('w1-custom-event-density').selectOption('scene_level');

@@ -1,0 +1,30 @@
+{
+  "characters": {
+    "han_window_01": {"canonical_name": "韩 立", "aliases": ["二愣子"], "background": "青牛镇少年", "notes": ["[window pwin_307f7fa3c805] 参加七玄门考验"], "evidence": [{"source_id": "chapter-01"}], "confidence": 0.96},
+    "han_window_12": {"canonical_name": "韩立", "background": "修炼无名口诀", "notes": ["[window pwin_12d26ac34f3a] 刚练成第一层"], "evidence": [{"source_id": "chapter-10"}], "confidence": 1.0},
+    "han_window_75": {"canonical_name": "韩立", "background": "十岁农家少年", "notes": ["[window pwin_75c204829b81] 离家入门"], "evidence": [{"source_id": "chapter-02"}], "confidence": 0.92},
+    "zhang_window_01": {"canonical_name": "张铁", "notes": ["[window pwin_307f7fa3c805] 同行"], "evidence": [{"source_id": "chapter-03"}], "confidence": 0.85},
+    "zhang_window_12": {"canonical_name": "张 铁", "notes": ["[window pwin_12d26ac34f3a] 修炼象甲功"], "evidence": [{"source_id": "chapter-09"}], "confidence": 0.95},
+    "mo_window_01": {"canonical_name": "墨大夫", "notes": ["[window pwin_307f7fa3c805] 收徒"], "evidence": [{"source_id": "chapter-05"}], "confidence": 0.90},
+    "mo_window_12": {"canonical_name": "墨大夫", "notes": ["[window pwin_12d26ac34f3a] 关心韩立伤势"], "evidence": [{"source_id": "chapter-09"}], "confidence": 0.95},
+    "wu_window_01": {"canonical_name": "舞岩", "notes": ["[window pwin_307f7fa3c805] 领先测试"], "evidence": [{"source_id": "chapter-04"}], "confidence": 0.83},
+    "wu_window_75": {"canonical_name": "舞岩", "notes": ["[window pwin_75c204829b81] 有表姐关系"], "evidence": [{"source_id": "chapter-05"}], "confidence": 0.90},
+    "yue_window_01": {"canonical_name": "岳堂主", "notes": ["[window pwin_307f7fa3c805] 主持考核"], "evidence": [{"source_id": "chapter-04"}], "confidence": 0.82},
+    "yue_window_75": {"canonical_name": "岳堂主", "notes": ["[window pwin_75c204829b81] 宣布结果"], "evidence": [{"source_id": "chapter-05"}], "confidence": 0.88},
+    "wang_guard_window_01": {"canonical_name": "王护法", "notes": ["[window pwin_307f7fa3c805] 接送童子"], "evidence": [{"source_id": "chapter-02"}], "confidence": 0.84},
+    "wang_guard_window_75": {"canonical_name": "王护法", "notes": ["[window pwin_75c204829b81] 遣返未过关者"], "evidence": [{"source_id": "chapter-05"}], "confidence": 0.90},
+    "wang_er_smith": {"canonical_name": "王二", "identityDisambiguator": "青牛镇铁匠", "notes": ["[window pwin_307f7fa3c805] 铁匠"], "confidence": 0.80},
+    "wang_er_apprentice": {"canonical_name": "王二", "identityDisambiguator": "神手谷药童", "notes": ["[window pwin_12d26ac34f3a] 药童"], "confidence": 0.80}
+  },
+  "events": {
+    "event_live": {"character_ids": ["han_window_01", "han_window_12", "zhang_window_01"], "characterIds": ["mo_window_01", "mo_window_12"], "participantCharacterIds": ["wu_window_01", "wu_window_75", "wang_guard_window_75"]}
+  },
+  "relationships": [
+    {"sourceId": "han_window_75", "targetId": "zhang_window_12"},
+    {"source_character_id": "mo_window_12", "target_character_id": "wang_guard_window_01"}
+  ],
+  "raw_relationships": [
+    {"source_candidate_id": "yue_window_75", "target_candidate_id": "wu_window_01"}
+  ],
+  "protected_canonical_names": ["王二"]
+}

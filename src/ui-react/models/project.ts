@@ -95,6 +95,19 @@ export interface CharacterStatusFlags {
   archived?: boolean;
 }
 
+export interface CharacterExperienceEntry {
+  id: string;
+  chapter: string;
+  fact: string;
+  evidence?: string;
+}
+
+export interface CharacterCustomAttribute {
+  id: string;
+  label: string;
+  value: string;
+}
+
 export interface Character {
   id: string;
   name: string;
@@ -110,6 +123,8 @@ export interface Character {
   secrets?: string;
   speechStyle?: string;
   arc?: string;
+  experience?: CharacterExperienceEntry[];
+  customAttributes?: CharacterCustomAttribute[];
   tagIds: string[];
   organizationIds: string[];
   linkedSceneIds: string[];
@@ -264,6 +279,7 @@ export interface WorldContainer {
   sortOrder?: number;
   description?: string;
   importCategoryKey?: string;
+  parentId?: string | null;
 }
 
 export interface WorldAttribute {

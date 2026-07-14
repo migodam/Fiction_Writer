@@ -35,6 +35,7 @@ from sidecar.models.state import (
 from sidecar.workflows.w1_import import (
     _API_SEMAPHORE,
     _add_world_candidate_to_registry,
+    _ainvoke_with_budget,
     _append_unique_strings,
     _artifact_dir,
     _build_project_structure_digest,
@@ -47,6 +48,7 @@ from sidecar.workflows.w1_import import (
     _is_world_entity_candidate,
     _merge_prompt_outputs,
     _merge_text_field,
+    _normalize_character_tag,
     _normalize_world_category,
     _normalize_timeline_event_ontology,
     _now_iso,
@@ -103,7 +105,7 @@ _OUTPUT_BUDGET_SPLIT_THRESHOLD = 3_500
 def _is_budget_exhausted_error(exc: Exception) -> bool:
     """True if exc signals an API HTTP 402 / insufficient-balance error."""
     msg = str(exc).lower()
-    if "402" in msg or "insufficient balance" in msg or "insufficient_balance" in msg:
+    if "budget_exhausted" in msg or "402" in msg or "insufficient balance" in msg or "insufficient_balance" in msg:
         return True
     try:
         import openai  # type: ignore[import-not-found]
@@ -194,7 +196,7 @@ async def _invoke_window_prompt_with_activity(
         })
         set_active_call(session_id, 1)
     try:
-        maybe_result = _invoke_json_prompt(llm, prompt_template, **kwargs)
+        maybe_result = _invoke_json_prompt(llm, prompt_template, session_id=session_id, **kwargs)
         result = await maybe_result if inspect.isawaitable(maybe_result) else maybe_result
         if session_id:
             append_event(session_id, {
@@ -540,11 +542,14 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
     chunk_ids = window.get("chunk_ids", [0])
     chunk_id = chunk_ids[0] if chunk_ids else 0
     total = len(state.get("chunks", [])) or 1
-    # Assemble source text from state chunks (windows store metadata only, not the text)
+    # Prompt windows retain exact source_text for split windows. Reassembling from
+    # chunks would silently expand a paragraph-split window back to its parent.
     chunk_id_set = set(chunk_ids)
     all_chunks_by_id = {c.get("chunk_id"): c for c in state.get("chunks", [])}
     window_chunks = [all_chunks_by_id[cid] for cid in chunk_ids if cid in all_chunks_by_id]
-    prompt_text = "\n\n".join(str(c.get("content", c.get("text", ""))) for c in window_chunks)
+    prompt_text = str(window.get("source_text", "") or "")
+    if not prompt_text:
+        prompt_text = "\n\n".join(str(c.get("content", c.get("text", ""))) for c in window_chunks)
     if not prompt_text:
         prompt_text = str(window.get("text", "") or window.get("source_text", ""))
     # Prepend any supervisor hint injected by rerun_window (stored separately to survive chunk reassembly)
@@ -574,40 +579,41 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
     # 5-parallel extraction
     _prompts = _select_extraction_prompts(state)
     _prompt_manifest = _selected_extraction_prompt_manifest(state)
-    results = await asyncio.gather(
-        _invoke_window_prompt_with_activity(
-            state, window_id, chapter_range, "character", llm, _prompts["character"],
+    prompt_specs = [
+        ("character", _prompts["character"], {}),
+        ("event", _prompts["event"], {}),
+        ("world", _prompts["world"], {}),
+        ("relationship", _prompts["relationship"], {}),
+        ("scene", W1_EXTRACT_SCENE_SUMMARIES, {"chapter_hint": chapter_range}),
+    ]
+
+    async def invoke_prompt(kind: str, prompt: str, extra: dict[str, Any]) -> Any:
+        return await _invoke_window_prompt_with_activity(
+            state, window_id, chapter_range, kind, llm, prompt,
             chunk_content=prompt_text, chunk_id=chunk_id,
             total_chunks=total, entity_registry_summary=registry_summary,
             source_language_label=_src_lang_label, language_policy=_lang_policy,
-        ),
-        _invoke_window_prompt_with_activity(
-            state, window_id, chapter_range, "event", llm, _prompts["event"],
-            chunk_content=prompt_text, chunk_id=chunk_id,
-            total_chunks=total, entity_registry_summary=registry_summary,
-            source_language_label=_src_lang_label, language_policy=_lang_policy,
-        ),
-        _invoke_window_prompt_with_activity(
-            state, window_id, chapter_range, "world", llm, _prompts["world"],
-            chunk_content=prompt_text, chunk_id=chunk_id,
-            total_chunks=total, entity_registry_summary=registry_summary,
-            source_language_label=_src_lang_label, language_policy=_lang_policy,
-        ),
-        _invoke_window_prompt_with_activity(
-            state, window_id, chapter_range, "relationship", llm, _prompts["relationship"],
-            chunk_content=prompt_text, chunk_id=chunk_id,
-            total_chunks=total, entity_registry_summary=registry_summary,
-            source_language_label=_src_lang_label, language_policy=_lang_policy,
-        ),
-        _invoke_window_prompt_with_activity(
-            state, window_id, chapter_range, "scene", llm, W1_EXTRACT_SCENE_SUMMARIES,
-            chunk_content=prompt_text, chunk_id=chunk_id,
-            total_chunks=total, entity_registry_summary=registry_summary,
-            chapter_hint=chapter_range,
-            source_language_label=_src_lang_label, language_policy=_lang_policy,
-        ),
-        return_exceptions=True,
-    )
+            **extra,
+        )
+
+    # A fail-closed ledger must observe each completed call before starting the
+    # next one; concurrent preflights cannot reserve max_calls safely. Creating
+    # each coroutine lazily also makes cancellation leave no un-awaited siblings.
+    if state.get("context", {}).get("budget_policy"):
+        results = []
+        for kind, prompt, extra in prompt_specs:
+            try:
+                results.append(await invoke_prompt(kind, prompt, extra))
+            except Exception as exc:
+                results.append(exc)
+                if _is_budget_exhausted_error(exc):
+                    break
+        results.extend([RuntimeError("budget_exhausted: skipped after ledger exhaustion")] * (len(prompt_specs) - len(results)))
+    else:
+        results = await asyncio.gather(
+            *(invoke_prompt(kind, prompt, extra) for kind, prompt, extra in prompt_specs),
+            return_exceptions=True,
+        )
 
     labels = ["character", "event", "world", "relationship", "scene"]
     outputs: list[dict] = []
@@ -873,13 +879,23 @@ async def cross_validate_window(state: ImportSupervisorState, window_id: str) ->
 
     result: dict = {}
     try:
-        async with _API_SEMAPHORE:
-            response = await llm.ainvoke([HumanMessage(content=full_prompt)])
+        response = await _ainvoke_with_budget(
+            llm,
+            [HumanMessage(content=full_prompt)],
+            session_id=_session_id(state),
+            estimated_input_tokens=_estimate_tokens(full_prompt),
+        )
         raw = response.content if isinstance(response.content, str) else str(response.content)
         result = _parse_json_response(raw)
     except Exception as exc:
         log = list(state.get("supervisor_log", []))
         log.append(f"cross_validate_window {window_id}: non-fatal error — {exc}")
+        if _is_budget_exhausted_error(exc):
+            return {
+                "supervisor_log": log,
+                "budget_exhausted": True,
+                "errors": list(state.get("errors", [])) + [f"budget_exhausted during cross-validation: {exc}"],
+            }
         return {"supervisor_log": log}
 
     missing_major_entries = result.get("missing_major_characters", [])
@@ -1008,15 +1024,15 @@ async def rerun_window(
             "\nORCHESTRATOR_PARAMETER_OVERRIDES: Treat these as soft extraction emphasis only; "
             f"do not write canonical proposals directly: {override_text}\n\n"
         )
-    new_text = hint_block + parent.get("text", "")
+    new_prompt_text = hint_block + parent.get("prompt_text", parent.get("text", ""))
     new_win = {
         **parent,
         "id": new_id,
-        "text": new_text,
-        # supervisor_hint stored separately so extract_window can prepend it after
-        # chunk reassembly (window["text"] is overwritten by chunks during extraction)
+        "prompt_text": new_prompt_text,
+        # supervisor_hint is applied at extraction time; text/source_text stay
+        # span-reconstructable source payloads.
         "supervisor_hint": hint_block,
-        "estimated_tokens": _estimate_tokens(new_text),
+        "estimated_tokens": _estimate_tokens(new_prompt_text),
         "split_reason": f"supervisor_augment_of_{window_id}",
         "output_token_budget": profile_config.get("output_token_budget", 4000),
     }
@@ -1036,13 +1052,448 @@ async def rerun_window(
 
 # ── Tool: reduce_entities ───────────────────────────────────────────────────────
 
+_CHARACTER_EVIDENCE_FIELDS = (
+    "evidence", "evidence_cards", "source_evidence", "source_span",
+    "source_spans", "provenance", "evidence_refs", "evidenceRefs",
+)
+_CHARACTER_IDENTITY_FIELDS = (
+    "identityDisambiguator", "identity_disambiguator", "identity_context",
+    "birthplace", "faction", "affiliation",
+)
+
+
+def _normalize_character_identity_name(value: Any) -> str:
+    """Normalize CJK names deterministically without treating titles as identity."""
+    text = unicodedata.normalize("NFKC", str(value or "")).strip().lower()
+    return re.sub(r"[\s\-_·・,，.。:：;；'\"“”‘’()（）\[\]{}<>《》]+", "", text)
+
+
+def _character_names(entry: dict) -> tuple[str, set[str], set[str]]:
+    canonical = _normalize_character_identity_name(entry.get("canonical_name") or entry.get("name"))
+    aliases = {
+        normalized for normalized in (
+            _normalize_character_identity_name(alias) for alias in entry.get("aliases", [])
+        ) if normalized
+    }
+    return canonical, aliases, ({canonical} if canonical else set()) | aliases
+
+
+def _character_window_keys(entry: dict) -> set[str]:
+    windows: set[str] = set()
+    for field in ("window_id", "source_window_id"):
+        value = str(entry.get(field) or "").strip()
+        if value:
+            windows.add(value)
+    for field in ("window_ids", "source_window_ids"):
+        values = entry.get(field, [])
+        if isinstance(values, list):
+            windows.update(str(value).strip() for value in values if str(value).strip())
+    for note in entry.get("notes", []):
+        if isinstance(note, str):
+            windows.update(match.strip() for match in re.findall(r"\[window\s+([^\]]+)\]", note, re.IGNORECASE))
+    return windows
+
+
+def _character_evidence_keys(entry: dict) -> set[str]:
+    """Return only provenance-shaped identity evidence, never prose similarity."""
+    keys: set[str] = set()
+    for field in _CHARACTER_EVIDENCE_FIELDS:
+        value = entry.get(field)
+        values = value if isinstance(value, list) else [value]
+        for item in values:
+            if not item:
+                continue
+            if isinstance(item, dict):
+                for key in ("source_id", "sourceId", "evidence_id", "evidenceId", "id", "substring_hash", "raw_source_hash"):
+                    token = str(item.get(key) or "").strip()
+                    if token:
+                        keys.add(f"{key}:{token}")
+            elif isinstance(item, str) and field in {"source_evidence", "provenance"}:
+                keys.add(f"{field}:{_normalize_character_identity_name(item)}")
+    return keys
+
+
+def _character_identity_conflicts(left: dict, right: dict) -> list[dict]:
+    conflicts: list[dict] = []
+    for field in _CHARACTER_IDENTITY_FIELDS:
+        left_value = _normalize_character_identity_name(left.get(field))
+        right_value = _normalize_character_identity_name(right.get(field))
+        if left_value and right_value and left_value != right_value:
+            conflicts.append({
+                "field": field,
+                "existing": left.get(field),
+                "incoming": right.get(field),
+                "resolution": "preserve_separate_candidates",
+            })
+    return conflicts
+
+
+def _character_pair_match(left: dict, right: dict) -> tuple[list[str], list[dict]]:
+    left_canonical, left_aliases, left_names = _character_names(left)
+    right_canonical, right_aliases, right_names = _character_names(right)
+    if not left_names or not right_names or not (left_names & right_names):
+        return [], []
+
+    conflicts = _character_identity_conflicts(left, right)
+    if conflicts:
+        return [], conflicts
+
+    reasons: list[str] = []
+    if left_aliases & right_names or right_aliases & left_names:
+        reasons.append("shared_alias")
+    left_evidence, right_evidence = _character_evidence_keys(left), _character_evidence_keys(right)
+    if left_evidence & right_evidence:
+        reasons.append("shared_source_evidence")
+    if _character_window_keys(left) & _character_window_keys(right):
+        reasons.append("overlapping_window")
+    left_key = _normalize_character_identity_name(left.get("dedupeKey") or left.get("dedupe_key") or left.get("identity_key"))
+    right_key = _normalize_character_identity_name(right.get("dedupeKey") or right.get("dedupe_key") or right.get("identity_key"))
+    if left_key and left_key == right_key:
+        reasons.append("shared_declared_identity_key")
+
+    if left_canonical == right_canonical:
+        # Same-name candidates are the normal cross-window case. They merge unless
+        # explicit identity evidence proves they are separate people; absence of a
+        # shared evidence-card ID is not evidence of separate identities.
+        reasons.append("same_normalized_canonical_name")
+    elif "shared_alias" not in reasons:
+        return [], []
+    return reasons, []
+
+
+def _stable_value_union(*values: Any) -> list[Any]:
+    merged: list[Any] = []
+    seen: set[str] = set()
+    for value in values:
+        items = value if isinstance(value, list) else ([value] if value not in (None, "") else [])
+        for item in items:
+            key = json.dumps(item, ensure_ascii=False, sort_keys=True, default=str)
+            if key not in seen:
+                seen.add(key)
+                merged.append(item)
+    return merged
+
+
+def _merge_character_texts(*values: Any) -> str:
+    lines: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        for line in value.splitlines():
+            cleaned = line.strip()
+            key = _normalize_character_identity_name(cleaned)
+            if cleaned and key not in seen:
+                seen.add(key)
+                lines.append(cleaned)
+    return "\n".join(lines)
+
+
+def _character_field_values(entry: dict, *fields: str) -> list[Any]:
+    """Collect scalar/list field variants without letting an empty alias mask data."""
+    return _stable_value_union(*(entry.get(field) for field in fields))
+
+
+def _character_has_evidence(entry: dict) -> bool:
+    return any(_character_field_values(entry, field) for field in _CHARACTER_EVIDENCE_FIELDS)
+
+
+def _strip_note_provenance(note: str) -> str:
+    return re.sub(r"^\s*\[(?:window|chunk)\s+[^\]]+\]\s*", "", note, flags=re.IGNORECASE).strip()
+
+
+_BACKGROUND_NOTE_HINTS = (
+    "出身", "家中", "家庭", "父", "母", "兄", "姐", "妹", "家族", "农家", "籍贯",
+    "born", "raised", "family", "father", "mother", "sibling", "village", "hometown", "origin",
+)
+_BACKGROUND_SUMMARY_HINTS = _BACKGROUND_NOTE_HINTS + (
+    "少年", "弟子", "学徒", "child", "student", "apprentice",
+)
+_EXPERIENCE_NOTE_HINTS = (
+    "参加", "通过", "成为", "拜", "习得", "修炼", "获得", "捡到", "离开", "进入", "加入", "救", "战",
+    "attend", "pass", "became", "joined", "learned", "trained", "obtained", "found", "left", "entered", "saved", "fought",
+)
+
+
+def _is_major_character(entry: dict) -> bool:
+    importance = str(entry.get("importance", "")).strip().lower()
+    role = " ".join(str(entry.get(field, "")) for field in ("role_in_story", "story_function")).lower()
+    notes = _character_field_values(entry, "notes")
+    return (
+        importance in {"protagonist", "main", "core", "major"}
+        or any(token in role for token in ("protagonist", "main character", "主角", "主人公"))
+        or len(notes) >= 4
+    )
+
+
+def _normalize_character_profile_fields(entry: dict) -> dict:
+    """Canonicalize profile variants and backfill only source-supported major fields."""
+    normalized = dict(entry)
+    experiences = _character_field_values(normalized, "experience", "experiences")
+    if experiences:
+        normalized["experience"] = experiences
+    normalized.pop("experiences", None)
+
+    traits = _character_field_values(normalized, "personality_traits", "traits")
+    if traits:
+        normalized["personality_traits"] = traits
+    normalized.pop("traits", None)
+
+    notes = _character_field_values(normalized, "notes")
+    if notes:
+        normalized["notes"] = notes
+
+    evidence_refs = _character_field_values(normalized, "evidence_refs", "evidenceRefs")
+    if evidence_refs:
+        normalized["evidence_refs"] = evidence_refs
+    normalized.pop("evidenceRefs", None)
+
+    if not _is_major_character(normalized) or not _character_has_evidence(normalized):
+        return normalized
+
+    note_texts = [
+        _strip_note_provenance(note) for note in notes
+        if isinstance(note, str) and _strip_note_provenance(note)
+    ]
+    field_evidence = dict(normalized.get("profile_field_evidence", {}))
+    evidence_for_backfill = _character_field_values(normalized, "evidence_refs", "evidence", "evidence_cards", "source_evidence", "source_span", "source_spans", "provenance")
+
+    if not str(normalized.get("background", "")).strip():
+        candidates = [note for note in note_texts if any(hint in note.lower() for hint in _BACKGROUND_NOTE_HINTS)]
+        summary = str(normalized.get("summary", "")).strip()
+        if not candidates and summary and any(hint in summary.lower() for hint in _BACKGROUND_SUMMARY_HINTS):
+            candidates = [summary]
+        if candidates:
+            normalized["background"] = _merge_character_texts(*candidates)
+            field_evidence["background"] = evidence_for_backfill
+
+    candidates = [note for note in note_texts if any(hint in note.lower() for hint in _EXPERIENCE_NOTE_HINTS)]
+    if candidates:
+        normalized["experience"] = _stable_value_union(normalized.get("experience", []), candidates)
+        field_evidence["experience"] = evidence_for_backfill
+
+    if field_evidence:
+        normalized["profile_field_evidence"] = field_evidence
+    return normalized
+
+
+def _character_quality_key(item: tuple[str, dict]) -> tuple[Any, ...]:
+    _, entry = item
+    canonical, _, _ = _character_names(entry)
+    richness = sum(bool(entry.get(field)) for field in (
+        "background", "experience", "experiences", "personality_traits", "traits", "notes", "evidence",
+    ))
+    first_seen = entry.get("first_seen_chunk", entry.get("chunk_id", 10**9))
+    try:
+        first_seen = int(first_seen)
+    except (TypeError, ValueError):
+        first_seen = 10**9
+    stable_payload = {key: value for key, value in entry.items() if key not in {"canonical_id", "id"}}
+    return (
+        -float(entry.get("confidence", 0) or 0),
+        -len(_character_evidence_keys(entry)),
+        -richness,
+        canonical,
+        first_seen,
+        min(_character_window_keys(entry), default=""),
+        _sha256_text(json.dumps(stable_payload, ensure_ascii=False, sort_keys=True, default=str)),
+    )
+
+
+def _merge_cross_window_characters(state: ImportSupervisorState) -> tuple[dict, dict]:
+    """Merge only evidence-backed intra-import character duplicates before review."""
+    registry = dict(state.get("entity_registry", {}))
+    characters = {
+        cid: dict(entry) for cid, entry in registry.get("characters", {}).items()
+        if isinstance(entry, dict)
+    }
+    ids = list(characters)
+    parents = {cid: cid for cid in ids}
+
+    def find(cid: str) -> str:
+        while parents[cid] != cid:
+            parents[cid] = parents[parents[cid]]
+            cid = parents[cid]
+        return cid
+
+    def union(left: str, right: str) -> None:
+        left_root, right_root = find(left), find(right)
+        if left_root != right_root:
+            parents[right_root] = left_root
+
+    pair_reasons: dict[tuple[str, str], list[str]] = {}
+    pair_conflicts: dict[tuple[str, str], list[dict]] = {}
+    for index, left_id in enumerate(ids):
+        for right_id in ids[index + 1:]:
+            reasons, conflicts = _character_pair_match(characters[left_id], characters[right_id])
+            if reasons:
+                pair_reasons[(left_id, right_id)] = reasons
+                union(left_id, right_id)
+            elif conflicts:
+                pair_conflicts[(left_id, right_id)] = conflicts
+
+    groups: dict[str, list[str]] = {}
+    for cid in ids:
+        groups.setdefault(find(cid), []).append(cid)
+
+    merged_characters: dict[str, dict] = {}
+    character_id_map: dict[str, str] = {}
+    duplicate_candidates: list[dict] = []
+    decisions: list[dict] = []
+    for members in groups.values():
+        ordered = sorted(((cid, characters[cid]) for cid in members), key=_character_quality_key)
+        canonical_id, canonical = ordered[0]
+        canonical_name, _, _ = _character_names(canonical)
+        stable_key = f"character:{canonical_name}"
+        merged = dict(canonical)
+        merged["stable_dedupe_key"] = stable_key
+        for _, duplicate in ordered[1:]:
+            merged["aliases"] = _stable_value_union(
+                merged.get("aliases", []), duplicate.get("canonical_name") or duplicate.get("name"), duplicate.get("aliases", []),
+            )
+            merged["background"] = _merge_character_texts(merged.get("background"), duplicate.get("background"))
+            experiences = _stable_value_union(
+                _character_field_values(merged, "experience", "experiences"),
+                _character_field_values(duplicate, "experience", "experiences"),
+            )
+            if experiences:
+                merged["experience"] = experiences
+            traits = _stable_value_union(
+                _character_field_values(merged, "personality_traits", "traits"),
+                _character_field_values(duplicate, "personality_traits", "traits"),
+            )
+            if traits:
+                merged["personality_traits"] = traits
+            merged["notes"] = _stable_value_union(merged.get("notes", []), duplicate.get("notes", []))
+            for field in _CHARACTER_EVIDENCE_FIELDS:
+                evidence = _stable_value_union(merged.get(field), duplicate.get(field))
+                if evidence:
+                    merged[field] = evidence
+            merged["confidence"] = max(float(merged.get("confidence", 0) or 0), float(duplicate.get("confidence", 0) or 0))
+        merged = _normalize_character_profile_fields(merged)
+        merged_characters[canonical_id] = merged
+        for cid in members:
+            character_id_map[cid] = canonical_id
+        if len(members) > 1:
+            merged_ids = [cid for cid, _ in ordered[1:]]
+            reasons = sorted({
+                reason for (left_id, right_id), values in pair_reasons.items()
+                if left_id in members and right_id in members for reason in values
+            })
+            decision = {
+                "contract": "EntityMergeDecision/v1",
+                "scope": "intra_import",
+                "canonical_id": canonical_id,
+                "duplicate_ids": merged_ids,
+                "stable_dedupe_key": stable_key,
+                "match_reasons": reasons,
+                "fields": {
+                    "background": {"action": "evidence_append", "value": merged.get("background", "")},
+                    "experience": {"action": "union", "value": merged.get("experience", [])},
+                    "aliases": {"action": "union", "value": merged.get("aliases", [])},
+                    "traits": {"action": "union", "value": merged.get("personality_traits", [])},
+                    "notes": {"action": "union", "value": merged.get("notes", [])},
+                    "confidence": {"action": "max", "value": merged.get("confidence", 0)},
+                    "evidence": {"action": "union", "value": merged.get("evidence", [])},
+                },
+                "conflicts": [],
+            }
+            decisions.append(decision)
+            duplicate_candidates.extend({
+                "entity_type": "character",
+                "canonical_id": canonical_id,
+                "duplicate_id": duplicate_id,
+                "stable_dedupe_key": stable_key,
+                "reason": "+".join(reasons),
+                "entity_merge_decision": decision,
+            } for duplicate_id in merged_ids)
+
+    semantic_conflicts: list[dict] = []
+    for (left_id, right_id), conflicts in pair_conflicts.items():
+        if character_id_map[left_id] != character_id_map[right_id]:
+            semantic_conflicts.append({
+                "entity_type": "character",
+                "left_id": left_id,
+                "right_id": right_id,
+                "name": characters[left_id].get("canonical_name", ""),
+                "reason": "conflicting_identity_disambiguator",
+                "conflicts": conflicts,
+                "resolution": "preserve_separate_candidates",
+            })
+    for index, left_id in enumerate(ids):
+        for right_id in ids[index + 1:]:
+            if character_id_map[left_id] == character_id_map[right_id]:
+                continue
+            left_canonical, _, _ = _character_names(characters[left_id])
+            right_canonical, _, _ = _character_names(characters[right_id])
+            if left_canonical and left_canonical == right_canonical:
+                semantic_conflicts.append({
+                    "entity_type": "character",
+                    "left_id": left_id,
+                    "right_id": right_id,
+                    "name": characters[left_id].get("canonical_name", ""),
+                    "reason": "same_normalized_name_without_identity_evidence",
+                    "resolution": "preserve_separate_candidates",
+                })
+
+    registry["characters"] = merged_characters
+    registry["intra_import_character_id_map"] = character_id_map
+    def _remap_character_id(value: Any) -> Any:
+        return character_id_map.get(str(value), value)
+
+    def _remap_character_id_list(value: Any) -> Any:
+        if not isinstance(value, list):
+            return value
+        return _stable_value_union(*(_remap_character_id(item) for item in value))
+
+    def _remap_character_references(record: dict) -> dict:
+        updated = dict(record)
+        for field in ("character_ids", "characterIds", "participantCharacterIds", "participant_character_ids"):
+            if field in updated:
+                updated[field] = _remap_character_id_list(updated[field])
+        for field in (
+            "character_id", "characterId", "sourceId", "targetId", "source_id", "target_id",
+            "sourceCharacterId", "targetCharacterId", "source_character_id", "target_character_id",
+            "source_candidate_id", "target_candidate_id",
+        ):
+            if field in updated:
+                updated[field] = _remap_character_id(updated[field])
+        return updated
+
+    events = {
+        event_id: _remap_character_references(event)
+        for event_id, event in registry.get("events", {}).items() if isinstance(event, dict)
+    }
+    registry["events"] = events
+    relationships = [
+        _remap_character_references(relationship) if isinstance(relationship, dict) else relationship
+        for relationship in state.get("relationships", [])
+    ]
+    raw_relationships = [
+        _remap_character_references(relationship) if isinstance(relationship, dict) else relationship
+        for relationship in state.get("raw_relationships", [])
+    ]
+    artifact = {
+        "duplicate_candidates": duplicate_candidates,
+        "character_merge_decisions": decisions,
+        "semantic_conflicts": semantic_conflicts,
+    }
+    return {
+        **state,
+        "entity_registry": registry,
+        "relationships": relationships,
+        "raw_relationships": raw_relationships,
+    }, artifact
+
+
 async def reduce_entities(state: ImportSupervisorState) -> dict:
-    """Reconcile entities + flag low-confidence entries. Reports missing groupKey count."""
-    result1 = await node_reconcile_entities(state)
-    merged1 = {**state, **result1}
+    """Deduplicate intra-import characters, then reconcile against canonical project data."""
+    reduced_state, intra_import_artifact = _merge_cross_window_characters(state)
+    result1 = await node_reconcile_entities(reduced_state)
+    merged1 = {**reduced_state, **result1}
     result2 = await node_resolve_low_confidence(merged1)
 
-    registry = result2.get("entity_registry") or result1.get("entity_registry") or state.get("entity_registry", {})
+    registry = result2.get("entity_registry") or result1.get("entity_registry") or reduced_state.get("entity_registry", {})
     chars = registry.get("characters", {})
 
     missing_groupkey = sum(1 for c in chars.values() if not c.get("groupKey") and not c.get("skip_create"))
@@ -1053,9 +1504,41 @@ async def reduce_entities(state: ImportSupervisorState) -> dict:
     )
 
     log = list(state.get("supervisor_log", []))
-    log.append(f"reduce_entities: {len(chars)} chars total, {missing_groupkey} missing groupKey, {org_chars} org-chars")
+    log.append(
+        f"reduce_entities: {len(chars)} chars total, {len(intra_import_artifact['duplicate_candidates'])} "
+        f"cross-window merges, {missing_groupkey} missing groupKey, {org_chars} org-chars"
+    )
 
-    updates = {**result1, **result2, "supervisor_log": log, "current_stage": "reduce_entities"}
+    reducer_artifact = dict(result1.get("reducer_artifact", {}))
+    reducer_artifact["duplicate_candidates"] = [
+        *reducer_artifact.get("duplicate_candidates", []),
+        *intra_import_artifact["duplicate_candidates"],
+    ]
+    reducer_artifact["character_merge_decisions"] = [
+        *reducer_artifact.get("character_merge_decisions", []),
+        *intra_import_artifact["character_merge_decisions"],
+    ]
+    reducer_artifact["semantic_conflicts"] = [
+        *reducer_artifact.get("semantic_conflicts", []),
+        *intra_import_artifact["semantic_conflicts"],
+    ]
+    if reduced_state.get("import_run_id"):
+        _write_import_artifact(
+            reduced_state["project_path"],
+            reduced_state["import_run_id"],
+            "reducer_artifact.json",
+            reducer_artifact,
+        )
+
+    updates = {
+        **result1,
+        **result2,
+        "relationships": result1.get("relationships", reduced_state.get("relationships", [])),
+        "raw_relationships": result1.get("raw_relationships", reduced_state.get("raw_relationships", [])),
+        "reducer_artifact": reducer_artifact,
+        "supervisor_log": log,
+        "current_stage": "reduce_entities",
+    }
     return updates
 
 
@@ -1469,18 +1952,25 @@ async def minor_repair(state: ImportSupervisorState) -> dict:
             repair_log.append(f"language_validation: stripped {latin_stripped} Latin-dominant traits for zh source")
 
     # Tag name language validation for zh source
-    tag_stripped = 0
+    tag_normalized = 0
+    tag_rejections: list[dict] = list(state.get("tag_rejections", []))
     character_tags: list[dict] = []
     if state.get("character_tags"):
         character_tags = [dict(tag) for tag in state.get("character_tags", [])]
         if source_lang == "zh":
+            normalized_tags: list[dict] = []
             for tag in character_tags:
-                if isinstance(tag, dict) and isinstance(tag.get("name", ""), str):
-                    if re.search(r"[A-Za-z]{3,}", tag.get("name", "")):
-                        tag["name"] = ""
-                        tag_stripped += 1
-        if tag_stripped:
-            repair_log.append(f"language_validation: blanked {tag_stripped} English-dominant tag names for zh source")
+                normalized, rejection = _normalize_character_tag(tag, source_lang)
+                if rejection:
+                    tag_rejections.append(rejection)
+                    continue
+                assert normalized is not None
+                if normalized.get("name") != tag.get("name"):
+                    tag_normalized += 1
+                normalized_tags.append(normalized)
+            character_tags = normalized_tags
+        if tag_normalized or tag_rejections:
+            repair_log.append(f"language_validation: translated {tag_normalized} tag names and rejected {len(tag_rejections)} unmapped tags for zh source")
 
     registry["characters"] = chars
     registry["world"] = world_map
@@ -1488,20 +1978,39 @@ async def minor_repair(state: ImportSupervisorState) -> dict:
     registry["events"] = events
 
     log = list(state.get("supervisor_log", []))
-    log.append(f"minor_repair: groupKey={groupkey_fixed}, orgs_migrated={migrated}, resequenced={resequenced}, latin_stripped={latin_stripped}, tag_stripped={tag_stripped}")
+    log.append(f"minor_repair: groupKey={groupkey_fixed}, orgs_migrated={migrated}, resequenced={resequenced}, latin_stripped={latin_stripped}, tag_normalized={tag_normalized}, tag_rejections={len(tag_rejections)}")
 
     result = {
         "entity_registry": registry,
         "minor_repair_log": repair_log,
         "supervisor_log": log,
         "current_stage": "minor_repair",
+        "tag_rejections": tag_rejections,
     }
-    if character_tags:
-        result["character_tags"] = character_tags
+    # Always write the normalized list. In zh mode this explicitly replaces a
+    # fully rejected English set with [], so stale source tags cannot survive.
+    result["character_tags"] = character_tags
     return result
 
 
 # ── Tool: proposal_write ────────────────────────────────────────────────────────
+
+def _normalize_character_profiles_for_proposal_write(entity_registry: Any) -> dict:
+    """Apply evidence-gated character profile normalization at the write boundary."""
+    registry = dict(entity_registry) if isinstance(entity_registry, dict) else {}
+    characters = registry.get("characters", {})
+    if not isinstance(characters, dict):
+        return registry
+    registry["characters"] = {
+        character_id: (
+            _normalize_character_profile_fields(character)
+            if isinstance(character, dict)
+            else character
+        )
+        for character_id, character in characters.items()
+    }
+    return registry
+
 
 async def proposal_write(state: ImportSupervisorState) -> dict:
     """Run synthesis nodes then write proposals to the project."""
@@ -1584,19 +2093,30 @@ async def proposal_write(state: ImportSupervisorState) -> dict:
                 state.get("cross_validation", {}),
             )
 
-    # Build manuscript chapters
-    manuscript_result = await node_build_manuscript(state)
-    merged = {**state, **manuscript_result}
+    try:
+        # Build manuscript chapters
+        manuscript_result = await node_build_manuscript(state)
+        merged = {**state, **manuscript_result}
 
-    # Synthesis: relationships, character_tags, world_settings
-    rel_result = await node_synthesize_relationships(merged)
-    merged = {**merged, **rel_result}
+        # Synthesis: relationships, character_tags, world_settings
+        rel_result = await node_synthesize_relationships(merged)
+        merged = {**merged, **rel_result}
 
-    tags_result = await node_classify_character_tags(merged)
-    merged = {**merged, **tags_result}
+        tags_result = await node_classify_character_tags(merged)
+        merged = {**merged, **tags_result}
 
-    world_result = await node_infer_world_settings(merged)
-    merged = {**merged, **world_result}
+        world_result = await node_infer_world_settings(merged)
+        merged = {**merged, **world_result}
+    finally:
+        from sidecar.workflows.w1_import import persist_w1_usage_ledger
+        persist_w1_usage_ledger(state)
+
+    # Synthesis can replace registry entries after reducer/minor-repair. Normalize
+    # once at the authoritative proposal boundary so the review registry and write
+    # payload retain evidence-backed character background and experience fields.
+    merged["entity_registry"] = _normalize_character_profiles_for_proposal_write(
+        merged.get("entity_registry", {})
+    )
 
     # Build a slim write_input — only the keys node_write_to_project actually reads.
     # Evict everything else (timeline_architecture, prompt_windows, supervisor_decisions,

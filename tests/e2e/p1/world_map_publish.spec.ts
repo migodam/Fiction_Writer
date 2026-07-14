@@ -9,14 +9,20 @@ test.describe('World map and publish exports', () => {
     await expect(page.getByTestId('world-map-marker')).toHaveCount(4);
 
     await page.getByTestId('world-map-marker').first().click();
-    await expect(page).toHaveURL(/\/timeline\/events\?location=/);
+    await expect(page).toHaveURL(/\/timeline\/timeline\?location=/);
 
     await page.getByTestId('activity-btn-publish').click();
     await expect(page.getByTestId('publish-preview-panel')).toContainText('#');
 
-    await page.getByTestId('publish-export-markdown').click();
-    await page.getByTestId('publish-export-html').click();
-    await expect(page.getByTestId('publish-export-history')).toContainText('.md');
-    await expect(page.getByTestId('publish-export-history')).toContainText('.html');
+    const exportHistory = page.getByTestId('publish-export-history');
+
+    await page.getByTestId('publish-format-markdown').click();
+    await page.getByTestId('publish-export-action').click();
+    await expect(exportHistory.getByTestId('publish-export-history-item-markdown')).toContainText(/\.md/);
+
+    await page.getByTestId('publish-format-html').click();
+    await page.getByTestId('publish-export-action').click();
+    await expect(exportHistory.getByTestId('publish-export-history-item-html')).toContainText(/\.html/);
+    await expect(exportHistory.getByTestId(/publish-export-history-item-(markdown|html)/)).toHaveCount(2);
   });
 });

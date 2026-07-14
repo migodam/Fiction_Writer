@@ -547,6 +547,7 @@ export const CharacterRelationshipFlow: React.FC = () => {
     openContextMenu({
       x: e.clientX,
       y: e.clientY,
+      returnFocus: e.currentTarget as HTMLElement,
       items: [
         { id: 'view', label: t('characters.viewProfile', 'View Profile'), action: () => setSelectedEntity('character', node.id) },
       ],

@@ -173,7 +173,7 @@ test('accepts package with cyclic character-event cross-references', async ({ pa
       id: 'event_cyc_b',
       title: 'Cyclic Meeting',
       participantCharacterIds: ['char_cyc_a'],
-      branchId: null,
+      branchId: 'branch_cyc_main',
       orderIndex: 0,
       locationIds: [],
       linkedSceneIds: [],

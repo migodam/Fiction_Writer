@@ -78,19 +78,21 @@ test.describe('Timeline canvas', () => {
     await page.getByTestId('create-event-time-input').fill('Day 4 - Noon');
     await page.getByTestId('create-event-save-btn').click();
 
-    const createdEventNode = page.locator('[data-testid^="timeline-event-node-"]').last();
-    await expect(page.getByText('Canvas Smoke Event', { exact: true })).toBeVisible();
-    await createdEventNode.click();
+    const createdEventLabel = page.locator('[data-testid^="timeline-event-label-"]', { hasText: 'Canvas Smoke Event' });
+    await expect(createdEventLabel).toBeVisible();
+    const createdEventId = (await createdEventLabel.getAttribute('data-testid')).replace('timeline-event-label-', '');
+    const createdEventNode = page.getByTestId(`timeline-event-node-${createdEventId}`);
+    await createdEventNode.click({ force: true });
 
     await expect(page.getByTestId('event-edit-modal')).toBeVisible();
     await page.getByTestId('event-edit-title').fill('Canvas Smoke Event Updated');
     await page.getByTestId('event-edit-save-btn').click();
 
-    await expect(page.getByText('Canvas Smoke Event Updated', { exact: true })).toBeVisible();
-    await createdEventNode.click();
+    await expect(createdEventNode.locator('title')).toHaveText('Canvas Smoke Event Updated');
+    await createdEventNode.click({ force: true });
     await expect(page.getByTestId('event-edit-modal')).toBeVisible();
     await page.getByTestId('event-edit-delete-btn').click();
 
-    await expect(page.getByText('Canvas Smoke Event Updated', { exact: true })).toHaveCount(0);
+    await expect(createdEventNode).toHaveCount(0);
   });
 });

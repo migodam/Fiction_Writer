@@ -231,6 +231,7 @@ export const GraphBoardFlow: React.FC<GraphBoardFlowProps> = ({ board }) => {
     openContextMenu({
       x: e.clientX,
       y: e.clientY,
+      returnFocus: e.currentTarget as HTMLElement,
       items: [
         {
           id: 'edit',
@@ -251,12 +252,21 @@ export const GraphBoardFlow: React.FC<GraphBoardFlowProps> = ({ board }) => {
     });
   }, [board.id, openContextMenu, t, deleteGraphNode, setNodes, setEdges]);
 
+  const onNodeDragStart = useCallback(() => {
+    useProjectStore.getState().beginUndoTransaction('Move graph node');
+  }, []);
+
+  const onNodeDragStop = useCallback(() => {
+    useProjectStore.getState().commitUndoTransaction();
+  }, []);
+
   const onEdgeContextMenu = useCallback((e: React.MouseEvent, edge: Edge) => {
     e.preventDefault();
     const edgeId = edge.id;
     openContextMenu({
       x: e.clientX,
       y: e.clientY,
+      returnFocus: e.currentTarget as HTMLElement,
       items: [
         {
           id: 'delete',
@@ -283,6 +293,8 @@ export const GraphBoardFlow: React.FC<GraphBoardFlowProps> = ({ board }) => {
         onNodeDoubleClick={onNodeDoubleClick}
         onNodeContextMenu={onNodeContextMenu}
         onEdgeContextMenu={onEdgeContextMenu}
+        onNodeDragStart={onNodeDragStart}
+        onNodeDragStop={onNodeDragStop}
         fitView
         fitViewOptions={{ padding: 0.2 }}
       >

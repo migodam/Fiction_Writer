@@ -1,6 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ExternalLink, Globe, GripVertical, Map as MapIcon, Plus, Trash2 } from 'lucide-react';
+import { Clock3, ExternalLink, Globe, GripVertical, Map as MapIcon, Plus, Trash2 } from 'lucide-react';
 import {
   DndContext,
   DragEndEvent,
@@ -17,6 +17,9 @@ import { cn } from '../utils';
 import { useI18n } from '../i18n';
 import { TagTreePanel } from './TagTreePanel';
 import type { WorldCategoryNode, WorldItem } from '../models/project';
+import { commandClipboard } from '../commands/clipboard';
+import { toMenuItem } from '../commands/menu';
+import { getWorldFolderContextCommands, getWorldItemContextCommands } from '../commands/worldContextCommands';
 
 const CONTAMINATION_CONTAINER_NAMES = new Set([
   '人物关系图', '人物关系', '关系图', '关系网络',
@@ -95,7 +98,7 @@ function DroppableCategoryHeader({
 
 export const WorldWorkspace = () => {
   const navigate = useNavigate();
-  const { sidebarSection, openContextMenu, setLastActionStatus } = useUIStore();
+  const { sidebarSection, openContextMenu, setLastActionStatus, locale } = useUIStore();
   const { t } = useI18n();
   const {
     worldContainers,
@@ -126,6 +129,9 @@ export const WorldWorkspace = () => {
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [showCategoryTree, setShowCategoryTree] = useState(true);
   const [draggingItemId, setDraggingItemId] = useState<string | null>(null);
+  const folderLabel = locale === 'zh-CN' ? '文件夹' : 'Folder';
+  const foldersLabel = locale === 'zh-CN' ? '文件夹' : 'Folders';
+  const addFolderLabel = locale === 'zh-CN' ? '添加文件夹' : 'Add Folder';
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
@@ -170,29 +176,51 @@ export const WorldWorkspace = () => {
         parentId: c.parentId !== null && hiddenRootIds.has(c.parentId) ? null : c.parentId,
       }));
   }, [worldCategories]);
+  const notebookContainers = useMemo(() => worldContainers
+    .filter((container) => !CONTAMINATION_CONTAINER_NAMES.has(container.name.trim()))
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)), [worldContainers]);
+  const notebookDepth = useCallback((containerId: string) => {
+    let depth = 0;
+    let parentId = notebookContainers.find((container) => container.id === containerId)?.parentId ?? null;
+    const visited = new Set<string>([containerId]);
+    while (parentId && !visited.has(parentId)) {
+      const parent = notebookContainers.find((container) => container.id === parentId);
+      if (!parent) break;
+      visited.add(parentId);
+      depth += 1;
+      parentId = parent.parentId ?? null;
+    }
+    return depth;
+  }, [notebookContainers]);
 
   const activeMapMarkers = useMemo(() => {
     if (!activeMap) return [];
     return worldItems.flatMap((item) => item.mapMarkers).filter((marker) => activeMap.markerIds.includes(marker.id));
   }, [activeMap, worldItems]);
 
-  const handleDragEnd = (event: DragEndEvent) => {
+  const finishDrag = (commit: boolean) => {
+    const store = useProjectStore.getState();
+    if (commit) store.commitUndoTransaction();
+    else store.rollbackUndoTransaction();
     setDraggingItemId(null);
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
-    if (!over || !active) return;
+    if (!over || !active) return finishDrag(false);
     const itemId = String(active.id);
     const overId = String(over.id);
-    if (!overId.startsWith('category-header-')) return;
+    if (!overId.startsWith('category-header-')) return finishDrag(false);
     const targetGroupName = overId.replace('category-header-', '');
 
     // Find the container whose name matches the drop target group name
     const targetContainer = worldContainers.find(
       (c) => c.name === targetGroupName || c.importCategoryKey === targetGroupName,
     );
-    if (!targetContainer) return;
+    if (!targetContainer) return finishDrag(false);
 
     const item = worldItems.find((i) => i.id === itemId);
-    if (!item || item.containerId === targetContainer.id) return;
+    if (!item || item.containerId === targetContainer.id) return finishDrag(false);
 
     const newCategory = (targetContainer as any).importCategoryKey ?? 'concept';
     const newCategoryPath = [
@@ -204,25 +232,43 @@ export const WorldWorkspace = () => {
       (c) => c.name === targetGroupName || c.id === (targetContainer as any).importCategoryKey,
     );
     moveWorldItemToCategory(itemId, newCategory, targetContainer.id, newCategoryPath, targetFolderNode?.id ?? null);
+    finishDrag(true);
   };
 
   const makeItemContextMenu = (item: WorldItem) => (e: React.MouseEvent) => {
     e.preventDefault();
+    const context = {
+      target: { kind: 'world-item' as const, id: item.id },
+      source: 'context-menu' as const,
+      item,
+      containerId: activeContainer?.id ?? item.containerId,
+      addWorldItem,
+      deleteWorldItem,
+      rename: () => {
+        setActiveItemId(item.id);
+        requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[data-testid="world-item-name-input"]')?.focus());
+      },
+      remove: () => {
+        deleteWorldItem(item.id);
+        if (activeItemId === item.id) setActiveItemId(null);
+        setLastActionStatus(t('world.itemDeleted', 'World item deleted'));
+      },
+    };
     openContextMenu({
       x: e.clientX,
       y: e.clientY,
-      items: [{
-        id: 'delete',
-        label: t('common.delete'),
-        action: () => {
-          deleteWorldItem(item.id);
-          if (activeItemId === item.id) setActiveItemId(null);
-          setLastActionStatus(t('world.itemDeleted', 'World item deleted'));
-        },
-        destructive: true,
-      }],
+      returnFocus: e.currentTarget as HTMLElement,
+      items: getWorldItemContextCommands(Boolean(commandClipboard.get<WorldItem>('world-item'))).map((command) => toMenuItem(command, context)),
     });
   };
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && draggingItemId) finishDrag(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [draggingItemId]);
 
   if (sidebarSection === 'settings') {
     return (
@@ -290,7 +336,7 @@ export const WorldWorkspace = () => {
                     <div className="flex h-[560px] items-center justify-center text-text-3">{t('world.noMapAsset', 'No map asset')}</div>
                   )}
                   {activeMapMarkers.map((marker) => (
-                    <button key={marker.id} type="button" className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/20 bg-brand px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-white shadow-2" style={{ left: `${marker.x * 100}%`, top: `${marker.y * 100}%` }} onClick={() => marker.linkedEntityId && navigate(`/timeline/timeline?location=${marker.linkedEntityId}`)}>
+                    <button key={marker.id} type="button" data-testid="world-map-marker" aria-label={`Open timeline for ${marker.label}`} className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/20 bg-brand px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-white shadow-2" style={{ left: `${marker.x * 100}%`, top: `${marker.y * 100}%` }} onClick={() => marker.linkedEntityId && navigate(`/timeline/timeline?location=${marker.linkedEntityId}`)}>
                       {marker.label}
                     </button>
                   ))}
@@ -313,8 +359,8 @@ export const WorldWorkspace = () => {
         <div className="border-b border-border bg-bg-elev-2 p-4">
           <div className="mb-3 flex items-center justify-between">
             <div>
-              <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">{t('world.entries', 'World Entries')}</div>
-              <div className="text-sm font-black text-text">{t('world.containersAndEntries', 'Containers and Entries')}</div>
+              <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">Notebook</div>
+              <div className="text-sm font-black text-text">Notebook hierarchy</div>
             </div>
             <button type="button" data-testid="create-container-btn" className="rounded-xl border border-border p-2 text-brand hover:border-brand" onClick={() => addWorldContainer({ id: `cont_${Date.now()}`, name: t('world.newContainer', 'New Container'), type: 'notebook', sortOrder: worldContainers.length, isCollapsed: false })}>
               <Plus size={16} />
@@ -322,38 +368,12 @@ export const WorldWorkspace = () => {
           </div>
         </div>
         <div className="h-full overflow-y-auto custom-scrollbar p-2" data-testid="world-container-list">
-          {worldContainers
-            .filter((container) => !CONTAMINATION_CONTAINER_NAMES.has(container.name.trim()))
+          {notebookContainers
             .map((container) => (
-            <button
+            <div
               key={container.id}
-              type="button"
-              data-testid={`world-container-${container.id}`}
               className={cn('mb-2 w-full rounded-2xl border px-4 py-4 text-left', activeContainerId === container.id ? 'border-brand bg-selected' : 'border-border bg-card')}
-              onClick={() => setActiveContainerId(container.id)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                openContextMenu({
-                  x: e.clientX,
-                  y: e.clientY,
-                  items: [
-                    {
-                      id: 'rename',
-                      label: t('world.renameContainer'),
-                      action: () => setRenamingContainerId(container.id),
-                    },
-                    {
-                      id: 'delete',
-                      label: t('world.deleteContainer'),
-                      action: () => {
-                        deleteWorldContainer(container.id);
-                        if (activeContainerId === container.id) setActiveContainerId(null);
-                      },
-                      destructive: true,
-                    },
-                  ],
-                });
-              }}
+              style={{ marginLeft: `${notebookDepth(container.id) * 12}px`, width: `calc(100% - ${notebookDepth(container.id) * 12}px)` }}
             >
               {renamingContainerId === container.id ? (
                 <input
@@ -376,10 +396,37 @@ export const WorldWorkspace = () => {
                   }}
                 />
               ) : (
-                <div className="text-sm font-black text-text">{container.name}</div>
+                <button
+                  type="button"
+                  data-testid={`world-container-${container.id}`}
+                  className="w-full text-left"
+                  onClick={() => setActiveContainerId(container.id)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    const context = {
+                      target: { kind: 'world-folder' as const, id: container.id },
+                      source: 'context-menu' as const,
+                      folder: container,
+                      addWorldContainer,
+                      setRenaming: () => setRenamingContainerId(container.id),
+                      remove: () => {
+                        deleteWorldContainer(container.id);
+                        if (activeContainerId === container.id) setActiveContainerId(null);
+                      },
+                    };
+                    openContextMenu({
+                      x: e.clientX,
+                      y: e.clientY,
+                      returnFocus: e.currentTarget,
+                      items: getWorldFolderContextCommands().map((command) => toMenuItem(command, context)),
+                    });
+                  }}
+                >
+                  <div className="text-sm font-black text-text">{container.name}</div>
+                  <div data-testid={`world-folder-${container.id}`} className="mt-2 text-xs text-text-2">{container.parentId ? folderLabel : 'Notebook'}</div>
+                </button>
               )}
-              <div className="mt-2 text-xs text-text-2">{container.type}</div>
-            </button>
+            </div>
           ))}
         </div>
       </aside>
@@ -410,7 +457,7 @@ export const WorldWorkspace = () => {
               className="flex w-full items-center justify-between px-4 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-brand-2 hover:bg-hover"
               onClick={() => setShowCategoryTree((v) => !v)}
             >
-              <span>{t('world.categories', 'Categories')}</span>
+              <span>{foldersLabel}</span>
               <Plus size={12} className={showCategoryTree ? 'rotate-45 transition-transform' : 'transition-transform'} />
             </button>
             {showCategoryTree && (
@@ -440,11 +487,11 @@ export const WorldWorkspace = () => {
                   className="mt-2 flex w-full items-center gap-1 rounded-xl border border-dashed border-border px-3 py-1.5 text-xs text-text-3 hover:border-brand hover:text-brand"
                   onClick={() => {
                     const id = `wcat_${Date.now()}`;
-                    addWorldCategory({ id, name: t('world.newCategory', 'New Category'), parentId: null, sortOrder: worldCategories.length, scope: 'world' });
+                    addWorldCategory({ id, name: locale === 'zh-CN' ? '新文件夹' : 'New Folder', parentId: null, sortOrder: worldCategories.length, scope: 'world' });
                   }}
                 >
                   <Plus size={10} />
-                  {t('world.addCategory', 'Add Category')}
+                  {addFolderLabel}
                 </button>
               </div>
             )}
@@ -453,8 +500,9 @@ export const WorldWorkspace = () => {
 
         <DndContext
           sensors={sensors}
-          onDragStart={(e: DragStartEvent) => setDraggingItemId(String(e.active.id))}
+          onDragStart={(e: DragStartEvent) => { useProjectStore.getState().beginUndoTransaction('Move world item'); setDraggingItemId(String(e.active.id)); }}
           onDragEnd={handleDragEnd}
+          onDragCancel={() => finishDrag(false)}
         >
           <div className="h-full overflow-y-auto custom-scrollbar" data-testid="world-item-list">
             {groupedItems.groups.size > 0 ? (
@@ -540,9 +588,15 @@ export const WorldWorkspace = () => {
                 ))}
               </div>
             </div>
-            <button type="button" data-testid="inspector-save" className="rounded-xl bg-brand px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-white" onClick={() => setLastActionStatus('Saved')}>
-              {t('common.save', 'Save')}
-            </button>
+            <div className="flex flex-wrap gap-3">
+              <button type="button" data-testid="open-world-timeline-btn" className="rounded-xl border border-border px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-text-2" onClick={() => navigate(`/timeline/timeline?location=${activeItem.id}`)}>
+                <Clock3 size={14} className="mr-2 inline" />
+                {t('world.openTimeline', 'Open Timeline')}
+              </button>
+              <button type="button" data-testid="inspector-save" className="rounded-xl bg-brand px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-white" onClick={() => setLastActionStatus('Saved')}>
+                {t('common.save', 'Save')}
+              </button>
+            </div>
             <div className="grid gap-6 lg:grid-cols-2">
               <LinkPanel title={t('world.linkedTimeline', 'Linked Timeline')} items={timelineEvents.filter((event) => event.linkedWorldItemIds.includes(activeItem.id) || event.locationIds.includes(activeItem.id)).map((event) => ({ id: event.id, label: event.title, onClick: () => navigate(`/timeline/timeline?event=${event.id}`) }))} />
               <LinkPanel title={t('world.linkedScenes', 'Linked Scenes')} items={scenes.filter((scene) => scene.linkedWorldItemIds.includes(activeItem.id)).map((scene) => ({ id: scene.id, label: scene.title, onClick: () => navigate(`/writing/scenes?scene=${scene.id}`) }))} />

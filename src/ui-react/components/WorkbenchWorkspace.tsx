@@ -1,14 +1,14 @@
-import React, { useRef, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { CheckCircle2, ChevronDown, ChevronRight, FileUp, Inbox, RefreshCw, ShieldAlert, Sparkles, UploadCloud, XCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { ImportWorkflow } from './ImportWorkflow';
 import { useProjectStore, useUIStore } from '../store';
 import { useI18n } from '../i18n';
-import type { Chapter, ImportJob, Proposal, ProposalPackage, Scene, TodoItem, TodoPriority, TodoStatus } from '../models/project';
-import { buildProposalPackages } from '../services/projectService';
+import type { ImportJob, Proposal, ProposalPackage, TodoItem, TodoPriority, TodoStatus } from '../models/project';
+import { buildProposalPackages, getProposalPackageKey } from '../services/projectService';
 
 export const WorkbenchWorkspace = () => {
-  const { sidebarSection, setLastActionStatus } = useUIStore();
+  const { sidebarSection } = useUIStore();
   const {
     proposals,
     proposalHistory,
@@ -20,28 +20,13 @@ export const WorkbenchWorkspace = () => {
     todos,
     resolveProposal,
     resolveProposals,
-    resolveAllProposals,
-    addImportJob,
-    updateImportJob,
-    addChapter,
-    updateChapter,
-    addScene,
-    addProposal,
     createTodo,
     updateTodo,
     deleteTodo,
     setSelectedEntity,
   } = useProjectStore();
   const { t } = useI18n();
-  const [importState, setImportState] = useState<{
-    open: boolean;
-    fileName: string;
-    sourceFormat: 'txt' | 'md' | 'docx';
-    text: string;
-    previewChapters: { title: string; scenes: { title: string; content: string }[] }[];
-    error: string | null;
-  }>({ open: false, fileName: '', sourceFormat: 'md', text: '', previewChapters: [], error: null });
-  const fileRef = useRef<HTMLInputElement | null>(null);
+  const [isImportOpen, setIsImportOpen] = useState(false);
 
   const openIssues = issues.filter((issue) => issue.status === 'open' && issue.visibility !== 'hidden');
 
@@ -68,94 +53,6 @@ export const WorkbenchWorkspace = () => {
       return next;
     });
 
-  const confirmImport = () => {
-    if (!importState.previewChapters.length) return;
-    const importId = `import_${Date.now()}`;
-    const canonicalChapterIds: string[] = [];
-    const canonicalSceneIds: string[] = [];
-    const newProposals: Proposal[] = [];
-
-    importState.previewChapters.forEach((chapterDraft, chapterIndex) => {
-      const chapterId = `chap_${Date.now()}_${chapterIndex}`;
-      canonicalChapterIds.push(chapterId);
-      const sceneIds: string[] = [];
-      const chapter: Chapter = {
-        id: chapterId,
-        title: chapterDraft.title,
-        summary: chapterDraft.scenes[0]?.content.slice(0, 120) || '',
-        goal: '',
-        notes: '',
-        sceneIds,
-        orderIndex: chapterIndex,
-        status: 'draft',
-      };
-      addChapter(chapter);
-
-      chapterDraft.scenes.forEach((sceneDraft, sceneIndex) => {
-        const sceneId = `scene_${Date.now()}_${chapterIndex}_${sceneIndex}`;
-        sceneIds.push(sceneId);
-        canonicalSceneIds.push(sceneId);
-        const scene: Scene = {
-          id: sceneId,
-          chapterId,
-          title: sceneDraft.title,
-          summary: sceneDraft.content.slice(0, 120),
-          content: sceneDraft.content,
-          orderIndex: sceneIndex,
-          povCharacterId: null,
-          linkedCharacterIds: [],
-          linkedEventIds: [],
-          linkedWorldItemIds: [],
-          status: 'draft',
-        };
-        addScene(scene);
-        newProposals.push({
-          id: `proposal_import_${sceneId}`,
-          title: `${t('workbench.importMetadataReview')}: ${sceneDraft.title}`,
-          source: 'import',
-          kind: 'import_review',
-          description: t('workbench.importMetadataDesc'),
-          targetEntityType: 'scene',
-          targetEntityId: sceneId,
-          preview: sceneDraft.content.slice(0, 240),
-          reviewPolicy: 'manual_workbench',
-          status: 'pending',
-          createdAt: new Date().toISOString(),
-        });
-      });
-
-      updateChapter({ ...chapter, sceneIds });
-    });
-
-    newProposals.forEach((proposal) => addProposal(proposal));
-    const job: ImportJob = {
-      id: importId,
-      sourceFileName: importState.fileName,
-      sourcePath: null,
-      sourceFormat: importState.sourceFormat,
-      status: 'completed',
-      stage: 'proposal_generated',
-      segmentationConfidence: importState.previewChapters.length > 1 ? 'high' : 'medium',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      taskRequestId: null,
-      taskRunId: null,
-      canonicalChapterIds,
-      canonicalSceneIds,
-      chapterCandidates: importState.previewChapters.map((chapter, index) => ({ id: `import_chapter_${index}`, title: chapter.title, summary: chapter.scenes[0]?.content.slice(0, 120) || '', confidence: 'high' })),
-      sceneCandidates: importState.previewChapters.flatMap((chapter, chapterIndex) => chapter.scenes.map((scene, sceneIndex) => ({ id: `import_scene_${chapterIndex}_${sceneIndex}`, title: scene.title, summary: scene.content.slice(0, 120), confidence: 'medium' }))),
-      proposalIds: newProposals.map((proposal) => proposal.id),
-      issueIds: [],
-      notes: [
-        t('workbench.skeletonWritten'),
-        t('workbench.inferredRouted'),
-      ],
-    };
-    addImportJob(job);
-    setImportState({ open: false, fileName: '', sourceFormat: 'md', text: '', previewChapters: [], error: null });
-    setLastActionStatus(t('workbench.importCompleted'));
-  };
-
   return (
     <div className="flex h-full bg-bg">
       <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
@@ -170,7 +67,7 @@ export const WorkbenchWorkspace = () => {
               {t('workbench.reviewCenterBody')}
             </p>
           </div>
-          <button type="button" data-testid="open-import-btn" className="rounded-2xl bg-brand px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-white" onClick={() => setImportState((current) => ({ ...current, open: true }))}>
+          <button type="button" data-testid="open-import-btn" className="rounded-2xl bg-brand px-5 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-white" onClick={() => setIsImportOpen(true)}>
             <FileUp size={14} className="mr-2 inline" />
             {t('import.title')}
           </button>
@@ -195,22 +92,10 @@ export const WorkbenchWorkspace = () => {
                     expanded={expandedPackageIds.has(pkg.id)}
                     onToggle={() => togglePackage(pkg.id)}
                     onAccept={() => resolveProposals(pkg.proposals.map((p) => p.id), 'accepted')}
+                    onReject={() => resolveProposals(pkg.proposals.map((p) => p.id), 'rejected')}
                     t={t}
                   />
                 ))}
-              </div>
-            )}
-            {proposals.length > 1 && (
-              <div className="flex justify-end mb-4">
-                <button
-                  type="button"
-                  data-testid="accept-all-proposals-btn"
-                  className="inline-flex items-center gap-2 rounded-lg bg-green px-5 py-2 text-[11px] font-black uppercase tracking-widest text-text-invert"
-                  onClick={() => resolveAllProposals('accepted')}
-                >
-                  <CheckCircle2 size={14} />
-                  {t('workbench.acceptAll', 'Accept All')} ({proposals.length})
-                </button>
               </div>
             )}
             {proposals.filter((p) => !packagedProposalIds.has(p.id)).map((proposal) => (
@@ -291,7 +176,7 @@ export const WorkbenchWorkspace = () => {
           </div>
         )}
 
-        {sidebarSection === 'imports' && <ImportsPanel importJobs={importJobs} onSelect={(id) => setSelectedEntity('import_job', id)} onOpenImport={() => setImportState((current) => ({ ...current, open: true }))} />}
+        {sidebarSection === 'imports' && <ImportsPanel importJobs={importJobs} onSelect={(id) => setSelectedEntity('import_job', id)} onOpenImport={() => setIsImportOpen(true)} />}
 
         {sidebarSection === 'runs' && (
           <div className="space-y-4" data-testid="workbench-runs-list">
@@ -354,8 +239,8 @@ export const WorkbenchWorkspace = () => {
         )}
       </div>
 
-      {importState.open && (
-        <ImportWorkflow onClose={() => setImportState((current) => ({ ...current, open: false }))} />
+      {isImportOpen && (
+        <ImportWorkflow onClose={() => setIsImportOpen(false)} />
       )}
     </div>
   );
@@ -385,7 +270,7 @@ const TasksPanel = ({
   const [newPriority, setNewPriority] = useState<TodoPriority>('medium');
   const [statusFilter, setStatusFilter] = useState<TodoStatus | 'all'>('all');
 
-  const pendingProposals = proposals.filter((p) => p.status === 'pending');
+  const pendingProposals = proposals.filter((p) => p.status === 'pending' && !getProposalPackageKey(p));
   const filteredTodos = statusFilter === 'all' ? todos : todos.filter((todo) => todo.status === statusFilter);
 
   const storyGaps = useMemo(() => {
@@ -924,12 +809,14 @@ const PackageCard = ({
   expanded,
   onToggle,
   onAccept,
+  onReject,
   t,
 }: {
   pkg: ProposalPackage;
   expanded: boolean;
   onToggle: () => void;
   onAccept: () => void;
+  onReject: () => void;
   t: (key: string, fallback?: string) => string;
 }) => {
   const isBlocked = Boolean(pkg.blockedReason);
@@ -989,15 +876,26 @@ const PackageCard = ({
               {t('workbench.retryBlockedPackage', 'Retry')}
             </button>
           ) : (
-            <button
-              type="button"
-              data-testid={`accept-import-package-${pkg.id}`}
-              className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-green px-5 py-2 text-[11px] font-black uppercase tracking-widest text-text-invert"
-              onClick={onAccept}
-            >
-              <CheckCircle2 size={14} />
-              {t('workbench.acceptPackage', 'Accept Package')}
-            </button>
+            <>
+              <button
+                type="button"
+                data-testid={`accept-import-package-${pkg.id}`}
+                className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-green px-5 py-2 text-[11px] font-black uppercase tracking-widest text-text-invert"
+                onClick={onAccept}
+              >
+                <CheckCircle2 size={14} />
+                {t('workbench.acceptPackage', 'Accept Package')}
+              </button>
+              <button
+                type="button"
+                data-testid={`reject-import-package-${pkg.id}`}
+                className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg border border-red/40 px-3 py-2 text-[11px] font-black uppercase tracking-widest text-red"
+                onClick={onReject}
+              >
+                <XCircle size={14} />
+                {t('workbench.reject', 'Reject')}
+              </button>
+            </>
           )}
         </div>
       </div>

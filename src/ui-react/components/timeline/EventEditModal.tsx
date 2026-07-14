@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { X } from 'lucide-react';
+import { BookOpen, X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useProjectStore } from '../../store';
 import { useI18n } from '../../i18n';
 import type { TimelineEvent } from '../../models/project';
@@ -27,6 +28,7 @@ const numberToImportance = (n: number): TimelineEvent['importance'] => {
 export function EventEditModal({ event, onClose }: EventEditModalProps) {
   const { updateTimelineEvent, deleteTimelineEvent } = useProjectStore();
   const { t } = useI18n();
+  const navigate = useNavigate();
   const [draft, setDraft] = useState<TimelineEvent>(event);
   const importanceNum = importanceToNumber(draft.importance);
 
@@ -134,6 +136,17 @@ export function EventEditModal({ event, onClose }: EventEditModalProps) {
           >
             {t('timeline.deleteEvent')}
           </button>
+          {event.linkedSceneIds[0] && (
+            <button
+              type="button"
+              data-testid="open-scene-btn"
+              className="rounded-xl border border-border px-4 py-2 text-xs font-black text-text-2 hover:border-brand"
+              onClick={() => navigate(`/writing/scenes?scene=${event.linkedSceneIds[0]}`)}
+            >
+              <BookOpen size={13} className="mr-2 inline" />
+              {t('event.writingStudio')}
+            </button>
+          )}
           <div className="flex-1" />
           <button
             type="button"

@@ -131,6 +131,50 @@ def test_person_name_excluded_from_world():
     assert excl["suggested_module"] == "character"
 
 
+def test_current_flash_artifact_people_and_events_are_excluded_without_losing_organizations():
+    """Regression for the 2026-07-13 Flash organizer artifact."""
+    inp = _make_input(
+        characters={
+            "char_yue": {"canonical_name": "岳堂主", "aliases": ["岳老"]},
+            "char_wang": {"name": "王门主"},
+        },
+        events=[{"title": "韩立通过入门考核"}],
+        world_candidates={
+            "马副门主": _world_candidate(category="organization", description="七玄门副门主"),
+            "王门主": _world_candidate(category="organization"),
+            "岳堂主": _world_candidate(category="organization"),
+            "七玄门内门测试": _world_candidate(category="rule"),
+            "韩立通过入门考核": _world_candidate(category="rule"),
+            "七玄门": _world_candidate(category="organization"),
+            "七绝堂": _world_candidate(category="location", description="七玄门内门分堂之一"),
+            "彩霞山": _world_candidate(category="location"),
+            "长春功": _world_candidate(category="cultivation_method"),
+            "墨玉令": _world_candidate(category="artifact"),
+        },
+    )
+    out = organize_project_content(inp)
+
+    excluded = {item["name"]: item for item in out["excluded_items"]}
+    assert excluded["马副门主"]["reason"] == "person_title"
+    assert excluded["王门主"]["reason"] == "person_title"
+    assert excluded["岳堂主"]["reason"] == "person_title"
+    assert excluded["七玄门内门测试"] == {
+        "entity_id": "world_七玄门内门测试",
+        "name": "七玄门内门测试",
+        "original_category": "rule",
+        "reason": "event_phrase",
+        "suggested_module": "timeline",
+    }
+    assert excluded["韩立通过入门考核"]["reason"] == "event_phrase"
+
+    surviving = {item["name"]: item for item in out["world_items"]}
+    assert surviving["七玄门"]["container_key"] == "organizations"
+    assert surviving["七绝堂"]["container_key"] == "locations"
+    assert surviving["彩霞山"]["container_key"] == "locations"
+    assert surviving["长春功"]["container_key"] == "cultivation_methods"
+    assert surviving["墨玉令"]["container_key"] == "items"
+
+
 # ---------------------------------------------------------------------------
 # Test 5 — relationship graph string excluded
 # ---------------------------------------------------------------------------
@@ -358,6 +402,11 @@ def test_node_organize_project_filters_and_enriches():
     # Organizer categoryPath must be stored in world_detailed
     item = registry["world_detailed"]["神手谷"]
     assert "categoryPath" in item, "Organizer must enrich surviving items with categoryPath"
+    assert item["containerId"] == "world_container_locations"
+    assert result["world_containers"] == [{
+        "id": "world_container_locations", "name": "地理位置", "type": "notebook",
+        "importCategoryKey": "locations", "isDefault": False,
+    }]
     assert item["categoryPath"] == ["世界模型", "地理位置", "神手谷"], \
         f"Expected organizer path with name appended, got {item['categoryPath']}"
 

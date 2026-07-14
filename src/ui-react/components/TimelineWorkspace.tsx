@@ -60,6 +60,8 @@ export const TimelineWorkspace = () => {
 
   const activeEvent = timelineEvents.find((entry) => entry.id === activeEventId) || null;
   const activeBranch = sortedBranches.find((b) => b.id === activeBranchId) || sortedBranches[0] || null;
+  const activeCharacterFilterName = characters.find((entry) => entry.id === characterFilter)?.name;
+  const activeLocationFilterName = worldItems.find((entry) => entry.id === locationFilter)?.name;
 
   useEffect(() => {
     const eventId = searchParams.get('event');
@@ -307,6 +309,22 @@ export const TimelineWorkspace = () => {
             <option key={location.id} value={location.id}>{location.name}</option>
           ))}
         </select>
+        {(characterFilter || locationFilter) && (
+          <div data-testid="timeline-filter-state" className="flex items-center gap-2 rounded-xl border border-brand/30 bg-brand/10 px-3 py-2 text-[11px] font-bold text-brand-2">
+            <span>{[activeCharacterFilterName, activeLocationFilterName].filter(Boolean).join(' / ')}</span>
+            <button
+              type="button"
+              aria-label={t('timeline.clearFilters', 'Clear timeline filters')}
+              className="rounded p-0.5 hover:bg-brand/15"
+              onClick={() => {
+                setCharacterFilter('');
+                setLocationFilter('');
+              }}
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="min-h-0 flex-1">

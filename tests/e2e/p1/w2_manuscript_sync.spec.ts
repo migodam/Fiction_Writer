@@ -1,4 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
+import { TEST_NARRATIVE_IDE_INVOKE_METHODS } from '../helpers/narrativeIdeBridge';
 
 type W2StatusResult = {
   status: string;
@@ -21,7 +22,7 @@ async function injectW2IpcMock(
   ];
 
   await page.addInitScript(
-    ({ startResult, statusResults }) => {
+    ({ startResult, statusResults, bridgeMethods }) => {
       (window as any).__w2StatusCallCount = 0;
 
       const mockIpcRenderer = {
@@ -44,12 +45,11 @@ async function injectW2IpcMock(
         send: () => {},
       };
 
-      (window as any).require = (module: string) => {
-        if (module === 'electron') return { ipcRenderer: mockIpcRenderer };
-        throw new Error(`Module not found: ${module}`);
-      };
+      (window as any).narrativeIDE = Object.fromEntries(
+        Object.entries(bridgeMethods).map(([method, channel]) => [method, (payload: unknown) => mockIpcRenderer.invoke(channel, payload)]),
+      );
     },
-    { startResult, statusResults },
+    { startResult, statusResults, bridgeMethods: TEST_NARRATIVE_IDE_INVOKE_METHODS },
   );
 }
 

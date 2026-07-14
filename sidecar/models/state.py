@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import hashlib
 from typing import Any, Dict, List, Literal, Optional, TypedDict
 
 
@@ -79,6 +80,64 @@ class ManuscriptChapter(_ManuscriptChapterRequired, total=False):
     notes: str
     chapterNumber: Optional[int]
     orderIndex: int
+
+
+class SourceSpan(TypedDict):
+    """Immutable provenance for a substring of the raw imported source."""
+    raw_source_hash: str
+    absolute_start: int
+    absolute_end: int
+    substring_hash: str
+
+
+def _source_span_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
+
+
+def make_source_span(raw_source: str, absolute_start: int, absolute_end: int) -> SourceSpan:
+    """Create a reconstructable source span using Python character offsets."""
+    if not isinstance(absolute_start, int) or not isinstance(absolute_end, int):
+        raise TypeError("SourceSpan offsets must be integers")
+    if absolute_start < 0 or absolute_end < absolute_start or absolute_end > len(raw_source):
+        raise ValueError("SourceSpan offsets are outside the raw source")
+    substring = raw_source[absolute_start:absolute_end]
+    return {
+        "raw_source_hash": _source_span_hash(raw_source),
+        "absolute_start": absolute_start,
+        "absolute_end": absolute_end,
+        "substring_hash": _source_span_hash(substring),
+    }
+
+
+def reconstruct_source_span(span: SourceSpan | dict, raw_source: str) -> str:
+    """Return the raw substring only after the supplied span validates."""
+    ok, errors = validate_source_span(span, raw_source)
+    if not ok:
+        raise ValueError(f"Invalid SourceSpan: {errors}")
+    return raw_source[int(span["absolute_start"]):int(span["absolute_end"])]
+
+
+def validate_source_span(span: SourceSpan | dict, raw_source: str) -> tuple[bool, list[str]]:
+    """Validate source identity, bounds, and substring identity for a SourceSpan."""
+    errors: list[str] = []
+    required = ("raw_source_hash", "absolute_start", "absolute_end", "substring_hash")
+    for key in required:
+        if key not in span:
+            errors.append(f"SourceSpan missing required key {key!r}")
+    if errors:
+        return False, errors
+    start = span.get("absolute_start")
+    end = span.get("absolute_end")
+    if not isinstance(start, int) or not isinstance(end, int):
+        errors.append("SourceSpan absolute offsets must be integers")
+    elif start < 0 or end < start or end > len(raw_source):
+        errors.append("SourceSpan absolute offsets are outside the raw source")
+    if span.get("raw_source_hash") != _source_span_hash(raw_source):
+        errors.append("SourceSpan raw_source_hash does not match the raw source")
+    if isinstance(start, int) and isinstance(end, int) and 0 <= start <= end <= len(raw_source):
+        if span.get("substring_hash") != _source_span_hash(raw_source[start:end]):
+            errors.append("SourceSpan substring_hash does not match the reconstructed substring")
+    return len(errors) == 0, errors
 
 
 class ImportCheckpoint(TypedDict):
@@ -190,6 +249,14 @@ class PlannerProposalToolOverride(TypedDict, total=False):
     rerun_allowed: bool
 
 
+class PlannerNextAction(TypedDict, total=False):
+    """A bounded planner hint; policy still owns validation and execution limits."""
+    kind: Literal["tool", "stop", "rerun"]
+    tool: str
+    window_id: str
+    reason: str
+
+
 class PlannerProposal(TypedDict, total=False):
     """Structured proposal from an LLM/RAG planner.
 
@@ -208,6 +275,7 @@ class PlannerProposal(TypedDict, total=False):
     confidence: float                                      # 0.0–1.0
     safety_notes: List[str]                                # audit only, never executed
     prompt_policy_patch: "PromptPolicyPatch"               # optional knob-only patch; validated, not yet applied
+    next_action: PlannerNextAction                           # optional bounded execution hint
 
 
 class PromptPolicyPatch(TypedDict, total=False):
@@ -430,6 +498,7 @@ class ImportState(TypedDict, total=False):
     import_run_id: str
     prompt_profile: PromptProfile
     source_language: str  # ISO 639-1 code detected from source text, e.g. "zh" or "en"
+    source_text: str  # ephemeral raw source retained during W1 for SourceSpan reconstruction
     context: dict
     chunks: List["Chunk"]
     import_run_manifest: ImportRunManifest
@@ -1189,6 +1258,7 @@ class ImportSupervisorState(TypedDict, total=False):
     source_profile: SourceProfile
     planner_proposal: PlannerProposal
     planner_proposal_validation: Dict[str, Any]
+    planner_next_action: Dict[str, Any]
 
 
 class DiffItem(TypedDict):
