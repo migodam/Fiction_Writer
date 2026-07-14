@@ -5391,6 +5391,11 @@ async def node_write_to_project(state: ImportState) -> dict:
         or container_by_key.get("locations")
         or next(iter(container_by_key.values()), "")
     )
+    valid_world_parent_ids = {
+        str(container.get("id", "")).strip()
+        for container in world_containers
+        if str(container.get("id", "")).strip()
+    }
 
     def _resolve_container_id(name: str, cat: str) -> tuple[str, str]:
         resolved_category = _normalize_world_category(name, cat)
@@ -5440,8 +5445,19 @@ async def node_write_to_project(state: ImportState) -> dict:
         detail = world_detailed.pop(name, {})  # Progressive release as we iterate
         if _is_person_like_world_entry(name, detail, category):
             continue
-        resolved_category, container_id = _resolve_container_id(name, detail.get("category", category))
-        container_id = detail.get("containerId") or container_id
+        resolved_category, resolved_container_id = _resolve_container_id(name, detail.get("category", category))
+        detail_container_id = str(detail.get("containerId") or "").strip()
+        container_id = (
+            detail_container_id
+            if detail_container_id in valid_world_parent_ids
+            else resolved_container_id
+        )
+        detail_parent_id = str(detail.get("parentId") or "").strip()
+        parent_id = (
+            detail_parent_id
+            if detail_parent_id in valid_world_parent_ids
+            else container_id
+        )
         op = {
             "op_type": "create",
             "entity_type": "world_item",
@@ -5453,7 +5469,7 @@ async def node_write_to_project(state: ImportState) -> dict:
                 "type": resolved_category,
                 "containerId": container_id,
                 "categoryPath": detail.get("categoryPath") or _world_category_path(resolved_category, name),
-                "parentId": detail.get("parentId") or container_id,
+                "parentId": parent_id,
                 "description": detail.get("description", ""),
                 "attributes": detail.get("attributes", []),
                 "importRunId": import_run_id,

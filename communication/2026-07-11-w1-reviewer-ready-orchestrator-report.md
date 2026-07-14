@@ -83,3 +83,9 @@ Import authority is now singular:
 - All historical worktrees were clean and removed. All merged local and remote branches were deleted.
 - Retained immutable tags: `backup/w1-pre-reviewer-ready-20260711` and `release/w1-reviewer-ready-20260714`.
 - Git history was preserved; no destructive reset or squash was used.
+
+## 2026-07-14 post-gate hotfix
+
+The first real Workbench package acceptance exposed a contract gap that the earlier diagnostics did not cover: Organizer items referenced `world_container_*`, but both supervisor paths dropped Organizer containers and proposal writing emitted fallback `cont_import_*` containers. The package therefore blocked on `prop_56589c5c2063` even though pre-acceptance quality flags were false.
+
+The hotfix propagates Organizer containers, validates/rebinds World parent references at the final proposal boundary, and adds hard diagnostics for dangling World references and stale package block markers. The preserved 10-chapter artifact was repaired without another provider call. Post-fix evidence: `158` related Python tests, UI build/lint, and `22/22` Workbench package Playwright tests pass; the artifact now reports all diagnostic flags false with dangling references `48 -> 0` and stale block markers `65 -> 0`.

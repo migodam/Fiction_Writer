@@ -1514,6 +1514,7 @@ class TestOrganizerInSupervisorPipeline(unittest.TestCase):
 
         async def capture_proposal_write(proposal_state):
             captured_proposal_state.update(proposal_state["entity_registry"])
+            captured_proposal_state["world_containers"] = proposal_state["world_containers"]
             return {"proposals": [], "import_review_report": {}}
 
         tools = _make_tools(segment_result={"prompt_windows": windows, "supervisor_log": []})
@@ -1528,6 +1529,11 @@ class TestOrganizerInSupervisorPipeline(unittest.TestCase):
         self.assertEqual(result["entity_registry"]["world"], expected_world)
         self.assertEqual(captured_proposal_state["world"], expected_world)
         self.assertEqual(set(captured_proposal_state["world_detailed"]), set(expected_world))
+        container_ids = {container["id"] for container in captured_proposal_state["world_containers"]}
+        referenced_container_ids = {
+            item["containerId"] for item in captured_proposal_state["world_detailed"].values()
+        }
+        self.assertEqual(referenced_container_ids, container_ids)
 
     def test_organizer_output_artifact_written(self):
         """organizer_output.json must be created when project_path + import_run_id are set."""

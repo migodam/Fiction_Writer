@@ -1063,7 +1063,7 @@ async def run_supervisor_policy(
     )
     _org_out = organize_project_content(_org_input)
     _organized_world_items = _org_out["world_items"]
-    state = {**state, "entity_registry": {
+    state = {**state, "world_containers": _org_out["world_containers"], "entity_registry": {
         **state.get("entity_registry", {}),
         # Proposal staging consumes the flat world index, so it must be rebuilt
         # from the same final organizer survivors as the detailed registry.
@@ -1426,7 +1426,7 @@ async def run_supervisor_streaming(
         )
         _org_out_s = organize_project_content(_org_input_s)
         _organized_world_items_s = _org_out_s["world_items"]
-        state = {**state, "entity_registry": {
+        state = {**state, "world_containers": _org_out_s["world_containers"], "entity_registry": {
             **state.get("entity_registry", {}),
             # Keep the streaming proposal path aligned with the organizer's
             # final survivors; node_write_to_project iterates this flat index.

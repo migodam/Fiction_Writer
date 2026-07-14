@@ -230,6 +230,62 @@ def test_semantic_hard_flags_use_final_proposals_and_reviewer_findings(tmp_path)
     assert flags["usage_ledger_over_cap"]
 
 
+def test_world_quality_rejects_dangling_container_references(tmp_path):
+    project = _make_project(tmp_path)
+    run_dir = project / "system" / "imports" / "import_a"
+    inbox = json.loads((project / "system" / "inbox.json").read_text(encoding="utf-8"))
+    inbox.extend([
+        {
+            "id": "world-container",
+            "operations": [{
+                "entityType": "world_container",
+                "entityId": "cont_import_organizations",
+                "fields": {"id": "cont_import_organizations", "importCategoryKey": "organizations"},
+            }],
+        },
+        {
+            "id": "world-item",
+            "operations": [{
+                "entityType": "world_item",
+                "entityId": "world_sect",
+                "fields": {
+                    "id": "world_sect",
+                    "name": "七玄门",
+                    "containerId": "world_container_organizations",
+                    "parentId": "world_container_organizations",
+                },
+            }],
+        },
+    ])
+    _write_json(project / "system" / "inbox.json", inbox)
+    _write_json(run_dir / "usage_ledger.json", {"budget_status": {"exhausted": False, "remaining": {"calls": 1}}})
+
+    metrics = w1_import_diagnostics.analyze_import(
+        w1_import_diagnostics.ImportSource(project, "import_a")
+    )
+
+    world_quality = metrics["artifact_quality"]["world_quality"]
+    assert world_quality["dangling_container_reference_count"] == 2
+    assert metrics["import_test6_symptom_flags"]["world_container_references_missing"]
+
+
+def test_pending_proposal_block_markers_are_threshold_failures(tmp_path):
+    project = _make_project(tmp_path)
+    run_dir = project / "system" / "imports" / "import_a"
+    inbox = json.loads((project / "system" / "inbox.json").read_text(encoding="utf-8"))
+    inbox[0]["status"] = "pending"
+    inbox[0]["lastBlockReason"] = "Import package blocked by an obsolete dependency."
+    _write_json(project / "system" / "inbox.json", inbox)
+    _write_json(run_dir / "usage_ledger.json", {"budget_status": {"exhausted": False, "remaining": {"calls": 1}}})
+
+    metrics = w1_import_diagnostics.analyze_import(
+        w1_import_diagnostics.ImportSource(project, "import_a")
+    )
+
+    assert metrics["artifact_quality"]["reviewer_repair"]["stale_block_marker_count"] == 1
+    assert metrics["import_test6_symptom_flags"]["pending_proposals_have_block_markers"]
+
+
 def test_semantic_evidence_profile_and_world_organization_gates(tmp_path):
     project = _make_project(tmp_path)
     run_dir = project / "system" / "imports" / "import_a"
