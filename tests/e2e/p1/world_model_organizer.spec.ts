@@ -64,7 +64,7 @@ async function injectOrganizerPackage(
         relationships: [],
         chapters: [],
         scenes: [],
-        worldContainers: [],
+        worldContainers: [{ id: 'wc_organizer_fixture', name: 'Organizer Fixture', type: 'notebook', isDefault: false, sortOrder: 0 }],
         worldItems: [],
         proposals,
         proposalHistory: [],
@@ -112,6 +112,7 @@ test('accepts organizer package and writes world items to store', async ({ page 
   await injectOrganizerPackage(page, [
     makeOrganizerProposal(runId, 'org_acc_wi1', 'world_item', {
       id: 'wi_changchungong',
+      containerId: 'wc_organizer_fixture',
       name: '长春功',
       category: 'cultivation_method',
       containerKey: 'cultivation_methods',
@@ -121,6 +122,7 @@ test('accepts organizer package and writes world items to store', async ({ page 
     }),
     makeOrganizerProposal(runId, 'org_acc_wi2', 'world_item', {
       id: 'wi_shenshengu',
+      containerId: 'wc_organizer_fixture',
       name: '神手谷',
       category: 'location',
       containerKey: 'locations',

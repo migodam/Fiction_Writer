@@ -3,6 +3,7 @@
  * All IPC is mocked; no sidecar or live API needed.
  */
 import { test, expect, Page } from '@playwright/test';
+import { TEST_NARRATIVE_IDE_INVOKE_METHODS } from '../helpers/narrativeIdeBridge';
 
 // ── IPC mock helper (same pattern as import_workflow.spec.ts) ────────────────
 
@@ -27,7 +28,7 @@ type StatusResult = {
 
 async function injectIpcMock(page: Page, statusResults: StatusResult[]) {
   await page.addInitScript(
-    ({ statusResults }) => {
+    ({ statusResults, bridgeMethods }) => {
       let statusCallCount = 0;
       const mockIpcRenderer = {
         invoke: async (channel: string, _payload: unknown) => {
@@ -47,12 +48,14 @@ async function injectIpcMock(page: Page, statusResults: StatusResult[]) {
         removeAllListeners: () => {},
         send: () => {},
       };
-      (window as any).require = (module: string) => {
-        if (module === 'electron') return { ipcRenderer: mockIpcRenderer };
-        throw new Error(`Module not found: ${module}`);
-      };
+      (window as any).narrativeIDE = Object.fromEntries(
+        Object.entries(bridgeMethods).map(([method, channel]) => [
+          method,
+          (payload: unknown) => mockIpcRenderer.invoke(channel, payload),
+        ]),
+      );
     },
-    { statusResults }
+    { statusResults, bridgeMethods: TEST_NARRATIVE_IDE_INVOKE_METHODS }
   );
 }
 

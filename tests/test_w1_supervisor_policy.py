@@ -1479,6 +1479,56 @@ class TestOrganizerInSupervisorPipeline(unittest.TestCase):
             "Valid world entity '七玄门' must survive after organizer pass"
         )
 
+    def test_organizer_replaces_stale_world_index_before_proposal_write(self):
+        """The final proposal state must use organizer survivors in both world indexes."""
+        from sidecar.supervisor.policy import run_supervisor_policy
+
+        windows = [_make_window("pwin_live_shape", [0])]
+        state = _make_state()
+        state["source_language"] = "zh"
+        state["prompt_windows"] = windows
+        state["entity_registry"] = {
+            "characters": {
+                "char_han": {"canonical_name": "韩立", "aliases": ["二愣子"]},
+            },
+            "events": {},
+            # This stale, LLM-typed index matches the live bypass. Proposal
+            # staging consumes it after the organizer has filtered detail.
+            "world": {
+                "马副门主": "organization",
+                "二愣子": "organization",
+                "七玄门": "organization",
+                "七绝堂": "location",
+            },
+            "world_detailed": {
+                "马副门主": {"category": "organization", "description": "七玄门副门主"},
+                "二愣子": {"category": "organization", "description": "韩立别名"},
+                "七玄门": {"category": "organization", "description": "江湖门派"},
+                "七绝堂": {"category": "location", "description": "七玄门内门分堂"},
+            },
+        }
+        captured_proposal_state: dict = {}
+
+        async def passthrough_registry(state):
+            return {"entity_registry": state.get("entity_registry", {}), "minor_repair_log": []}
+
+        async def capture_proposal_write(proposal_state):
+            captured_proposal_state.update(proposal_state["entity_registry"])
+            return {"proposals": [], "import_review_report": {}}
+
+        tools = _make_tools(segment_result={"prompt_windows": windows, "supervisor_log": []})
+        tools["reduce_entities"] = passthrough_registry
+        tools["minor_repair"] = passthrough_registry
+        tools["reduce_world_entities"] = lambda s: {"entity_registry": s.get("entity_registry", {})}
+        tools["proposal_write"] = AsyncMock(side_effect=capture_proposal_write)
+
+        result = _run(run_supervisor_policy(state, tools))
+
+        expected_world = {"七玄门": "organization", "七绝堂": "location"}
+        self.assertEqual(result["entity_registry"]["world"], expected_world)
+        self.assertEqual(captured_proposal_state["world"], expected_world)
+        self.assertEqual(set(captured_proposal_state["world_detailed"]), set(expected_world))
+
     def test_organizer_output_artifact_written(self):
         """organizer_output.json must be created when project_path + import_run_id are set."""
         import json

@@ -14,7 +14,7 @@ test.describe('Cross-page links', () => {
     await expect(page.getByText(/Saved|已保存/)).toBeVisible();
 
     await page.getByTestId('open-character-timeline-btn').click();
-    await expect(page).toHaveURL(/\/timeline\/events\?character=/);
+    await expect(page).toHaveURL(/\/timeline\/timeline\?character=/);
     await expect(page.getByTestId('timeline-canvas')).toBeVisible();
     await expect(page.getByTestId('timeline-filter-state')).toContainText('Deep Link Hero');
 
@@ -22,7 +22,7 @@ test.describe('Cross-page links', () => {
     await page.getByText('Deep Link Hero').first().click();
     await page.getByTestId('open-character-relationships-btn').click();
     await expect(page).toHaveURL(/\/graph\/relationships$/);
-    await expect(page.getByTestId('graph-canvas')).toBeVisible();
+    await expect(page.getByTestId('graph-board-flow')).toBeVisible();
   });
 
   test('world location and timeline events can deep-link into filtered timeline and writing', async ({ page }) => {
@@ -31,11 +31,11 @@ test.describe('Cross-page links', () => {
     await page.getByTestId('world-item-loc_glass_bridge').click();
     await page.getByTestId('open-world-timeline-btn').click();
 
-    await expect(page).toHaveURL(/\/timeline\/events\?location=loc_glass_bridge/);
+    await expect(page).toHaveURL(/\/timeline\/timeline\?location=loc_glass_bridge/);
     await expect(page.getByTestId('timeline-filter-state')).toContainText('Glass Bridge');
 
-    await page.getByTestId('timeline-node-event_bridge').first().click();
-    await page.getByTestId('timeline-open-scene-btn').first().click();
+    await page.getByTestId('timeline-event-node-event_bridge').first().click();
+    await page.getByTestId('open-scene-btn').first().click();
     await expect(page.getByTestId('writing-editor')).toBeVisible();
     await expect(page.locator('input[value="Glass Bridge Intercept"]')).toBeVisible();
   });

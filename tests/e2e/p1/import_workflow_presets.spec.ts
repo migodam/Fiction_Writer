@@ -7,9 +7,10 @@
  * All IPC is mocked; no sidecar or live API needed.
  */
 import { test, expect, Page } from '@playwright/test';
+import { TEST_NARRATIVE_IDE_INVOKE_METHODS } from '../helpers/narrativeIdeBridge';
 
 async function injectIpcMockWithPayloadCapture(page: Page) {
-  await page.addInitScript(() => {
+  await page.addInitScript(({ bridgeMethods }) => {
     (window as any).__lastStartPayload = null;
     const mockIpcRenderer = {
       invoke: async (channel: string, payload: unknown) => {
@@ -28,11 +29,13 @@ async function injectIpcMockWithPayloadCapture(page: Page) {
       removeAllListeners: () => {},
       send: () => {},
     };
-    (window as any).require = (module: string) => {
-      if (module === 'electron') return { ipcRenderer: mockIpcRenderer };
-      throw new Error(`Module not found: ${module}`);
-    };
-  });
+    (window as any).narrativeIDE = Object.fromEntries(
+      Object.entries(bridgeMethods).map(([method, channel]) => [
+        method,
+        (payload: unknown) => mockIpcRenderer.invoke(channel, payload),
+      ]),
+    );
+  }, { bridgeMethods: TEST_NARRATIVE_IDE_INVOKE_METHODS });
 }
 
 async function openImportModal(page: Page) {

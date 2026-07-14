@@ -122,6 +122,17 @@ def _make_project(tmp_path: Path, *, dirty: bool) -> Path:
             } if dirty else {},
         },
     )
+    _write_json(
+        import_dir / "usage_ledger.json",
+        {
+            "actual_calls": 1,
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "total_tokens": 15,
+            "cost_usd": 0.01,
+            "budget_status": {"exhausted": False, "remaining": {"calls": 9}},
+        },
+    )
     if dirty:
         _write_json(import_dir / "reviewer_repair_proposals.json", [{"id": "proposal_repair"}])
     return project

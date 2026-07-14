@@ -60,7 +60,7 @@ class ExcludedItem(TypedDict):
     entity_id: str
     name: str
     original_category: str
-    reason: str           # "module_contamination" | "person_name" | "identity_rank" | "role_rank"
+    reason: str           # "module_contamination" | "person_name" | "person_title" | "event_phrase" | "identity_rank" | "role_rank"
     suggested_module: str # "relationship" | "character" | "manuscript" | "timeline" | "none"
 
 
@@ -139,6 +139,25 @@ _ROLE_RANK_NAMES: frozenset[str] = frozenset({
     "长老", "供奉", "掌门", "副掌门",
     "执事", "内门", "外门",
 })
+
+# Person-bearing titles are not organizations.  The prefix check deliberately
+# requires a short name-like stem so named institutions such as 七绝堂 remain
+# eligible for normal world classification.
+_PERSON_TITLE_SUFFIXES: tuple[str, ...] = (
+    "副掌门", "副门主", "掌门", "门主", "堂主", "护法", "长老", "供奉",
+    "执事", "大夫", "师父", "师傅", "师兄", "师姐", "师弟", "师妹",
+)
+_PERSON_TITLE_PATTERN = re.compile(
+    rf"^[\u3400-\u9fff]{{1,3}}(?:{'|'.join(_PERSON_TITLE_SUFFIXES)})$"
+)
+
+# These phrases describe a story occurrence, not durable world lore.  Exact
+# event-registry matches provide a second deterministic route for variants
+# whose names do not contain one of these lexical markers.
+_EVENT_PHRASE_MARKERS: tuple[str, ...] = (
+    "测试", "考验", "考核", "选拔", "比试", "大会", "事件", "之战", "冲突",
+    "相遇", "离开", "加入", "拜入", "抵达", "救下", "死亡", "突破",
+)
 
 # Name terminal suffixes that strongly signal a cultivation technique
 _CULTIVATION_NAME_SUFFIXES: tuple[str, ...] = (
@@ -241,6 +260,48 @@ def _is_person_name(name: str, candidate: dict, character_names: frozenset[str])
         return True
     category_raw = str(candidate.get("category") or "").lower()
     return any(token in category_raw for token in ("person", "character", "人物", "角色", "人名"))
+
+
+def _character_names(characters: dict[str, Any]) -> frozenset[str]:
+    """Collect canonical names and aliases from the reconciled registry."""
+    names: set[str] = set()
+    for key, value in characters.items():
+        if not isinstance(value, dict):
+            continue
+        for field in ("name", "canonical_name", "canonicalName"):
+            text = str(value.get(field) or "").strip()
+            if text:
+                names.add(text)
+        aliases = value.get("aliases") or []
+        if isinstance(aliases, list):
+            names.update(str(alias).strip() for alias in aliases if str(alias).strip())
+        if not any(value.get(field) for field in ("name", "canonical_name", "canonicalName")):
+            fallback = str(key).strip()
+            if fallback:
+                names.add(fallback)
+    return frozenset(names)
+
+
+def _is_person_title(name: str) -> bool:
+    stripped = name.strip()
+    return bool(_PERSON_TITLE_PATTERN.fullmatch(stripped))
+
+
+def _event_names(events: list[dict[str, Any]]) -> frozenset[str]:
+    names: set[str] = set()
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        for field in ("name", "title", "event_name", "eventName"):
+            text = str(event.get(field) or "").strip()
+            if text:
+                names.add(text)
+    return frozenset(names)
+
+
+def _is_event_phrase(name: str, event_names: frozenset[str]) -> bool:
+    stripped = name.strip()
+    return stripped in event_names or any(marker in stripped for marker in _EVENT_PHRASE_MARKERS)
 
 
 def _is_identity_rank(name: str) -> bool:
@@ -408,12 +469,10 @@ def organize_project_content(organizer_input: OrganizerInput) -> OrganizerOutput
     characters: dict[str, Any] = organizer_input.get("characters") or {}
     warnings: list[str] = []
 
-    # Build a set of known character names for fast lookup
-    character_names: frozenset[str] = frozenset(
-        str(v.get("name") or k)
-        for k, v in characters.items()
-        if isinstance(v, dict)
-    )
+    # Reconciled registry evidence takes precedence, with narrow lexical
+    # fallbacks for title-bearing people and event/episode phrases.
+    character_names = _character_names(characters)
+    event_names = _event_names(organizer_input.get("events") or [])
 
     world_items: list[WorldItemProposal] = []
     excluded_items: list[ExcludedItem] = []
@@ -439,7 +498,18 @@ def organize_project_content(organizer_input: OrganizerInput) -> OrganizerOutput
             ))
             continue
 
-        # --- Priority 2: person name ---
+        # --- Priority 2: narrow lexical title-bearing person ---
+        if _is_person_title(name):
+            excluded_items.append(ExcludedItem(
+                entity_id=entity_id,
+                name=name,
+                original_category=raw_category,
+                reason="person_title",
+                suggested_module="character",
+            ))
+            continue
+
+        # --- Priority 3: person name ---
         if _is_person_name(name, candidate, character_names):
             excluded_items.append(ExcludedItem(
                 entity_id=entity_id,
@@ -450,7 +520,18 @@ def organize_project_content(organizer_input: OrganizerInput) -> OrganizerOutput
             ))
             continue
 
-        # --- Priority 3: identity/institutional rank ---
+        # --- Priority 4: event/episode phrase, registry-correlated or lexical ---
+        if _is_event_phrase(name, event_names):
+            excluded_items.append(ExcludedItem(
+                entity_id=entity_id,
+                name=name,
+                original_category=raw_category,
+                reason="event_phrase",
+                suggested_module="timeline",
+            ))
+            continue
+
+        # --- Priority 5: identity/institutional rank ---
         if _is_identity_rank(name):
             excluded_items.append(ExcludedItem(
                 entity_id=entity_id,
@@ -461,7 +542,7 @@ def organize_project_content(organizer_input: OrganizerInput) -> OrganizerOutput
             ))
             continue
 
-        # --- Priority 4: role/rank misrouted to cultivation_method ---
+        # --- Priority 6: role/rank misrouted to cultivation_method ---
         if _is_role_rank_misrouted(name, raw_category):
             excluded_items.append(ExcludedItem(
                 entity_id=entity_id,

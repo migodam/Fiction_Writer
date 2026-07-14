@@ -7,9 +7,9 @@ test.describe('Graph and Workbench flow', () => {
 
   test('graph can queue a sync proposal into workbench', async ({ page }) => {
     await page.getByTestId('activity-btn-graph').click();
-    await expect(page.getByTestId('graph-canvas')).toBeVisible();
+    await expect(page.getByTestId('graph-board-flow')).toBeVisible();
 
-    await page.getByTestId('graph-node-char_aria').click();
+    await page.getByTestId('graph-node-graph_char_aria').click();
     await page.getByTestId('graph-sync-selection-btn').click();
     await expect(page.getByText('Proposal queued', { exact: true })).toBeVisible();
 

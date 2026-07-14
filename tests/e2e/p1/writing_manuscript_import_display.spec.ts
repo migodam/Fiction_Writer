@@ -13,6 +13,7 @@
  */
 
 import { test, expect, Page } from '@playwright/test';
+import { TEST_NARRATIVE_IDE_INVOKE_METHODS } from '../helpers/narrativeIdeBridge';
 
 // ── Chinese chapter titles in correct numeric order ─────────────────────────
 
@@ -112,7 +113,7 @@ async function injectProjectAndIpc(page: Page) {
   const fixture = makeImportFixture();
 
   await page.addInitScript(
-    ({ project }) => {
+    ({ project, bridgeMethods }) => {
       // Pre-load the project into localStorage so openProject() picks it up
       // when getNodeRuntime() returns null (no Node.js in browser context).
       localStorage.setItem('narrative-ide-project', JSON.stringify(project));
@@ -129,12 +130,11 @@ async function injectProjectAndIpc(page: Page) {
         removeAllListeners: () => {},
         send: () => {},
       };
-      (window as any).require = (module: string) => {
-        if (module === 'electron') return { ipcRenderer: mockIpcRenderer };
-        throw new Error(`Module not found: ${module}`);
-      };
+      (window as any).narrativeIDE = Object.fromEntries(
+        Object.entries(bridgeMethods).map(([method, channel]) => [method, () => mockIpcRenderer.invoke(channel)]),
+      );
     },
-    { project: fixture }
+    { project: fixture, bridgeMethods: TEST_NARRATIVE_IDE_INVOKE_METHODS }
   );
 }
 
@@ -227,7 +227,7 @@ function makeManuscriptNodesFixture() {
 async function injectManuscriptFixture(page: Page) {
   const fixture = makeManuscriptNodesFixture();
   await page.addInitScript(
-    ({ project }) => {
+    ({ project, bridgeMethods }) => {
       localStorage.setItem('narrative-ide-project', JSON.stringify(project));
       localStorage.setItem('narrative-ide-last-path', 'memory://manuscript-node-test');
       const mockIpcRenderer = {
@@ -238,12 +238,11 @@ async function injectManuscriptFixture(page: Page) {
         },
         on: () => {}, removeAllListeners: () => {}, send: () => {},
       };
-      (window as any).require = (module: string) => {
-        if (module === 'electron') return { ipcRenderer: mockIpcRenderer };
-        throw new Error(`Module not found: ${module}`);
-      };
+      (window as any).narrativeIDE = Object.fromEntries(
+        Object.entries(bridgeMethods).map(([method, channel]) => [method, () => mockIpcRenderer.invoke(channel)]),
+      );
     },
-    { project: fixture }
+    { project: fixture, bridgeMethods: TEST_NARRATIVE_IDE_INVOKE_METHODS }
   );
 }
 
@@ -283,7 +282,7 @@ test.describe('Writing workspace — manuscript node content readability', () =>
     }
 
     await page.addInitScript(
-      ({ project, files, sampleText }) => {
+      ({ project, files, sampleText, bridgeMethods }) => {
         localStorage.setItem('narrative-ide-project', JSON.stringify(project));
         localStorage.setItem('narrative-ide-last-path', 'memory://manuscript-node-test');
         const mockIpcRenderer = {
@@ -307,14 +306,16 @@ test.describe('Writing workspace — manuscript node content readability', () =>
           join: (...parts: string[]) => parts.join('/').replace(/([^:/])\/+/g, '$1/'),
         };
         (window as any).require = (module: string) => {
-          if (module === 'electron') return { ipcRenderer: mockIpcRenderer };
           if (module === 'fs') return fakeFsModule;
           if (module === 'path') return fakePathModule;
           throw new Error(`Module not found: ${module}`);
         };
+        (window as any).narrativeIDE = Object.fromEntries(
+          Object.entries(bridgeMethods).map(([method, channel]) => [method, () => mockIpcRenderer.invoke(channel)]),
+        );
         (window as any).__e2e_sampleText = sampleText;
       },
-      { project: fixture, files: fakeFiles, sampleText: SAMPLE_TEXT }
+      { project: fixture, files: fakeFiles, sampleText: SAMPLE_TEXT, bridgeMethods: TEST_NARRATIVE_IDE_INVOKE_METHODS }
     );
 
     await page.goto('http://localhost:3000/writing/manuscript');

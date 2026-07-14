@@ -55,6 +55,9 @@ The shell also includes a persistent Agent Dock and Status Bar.
 ### Electron boundary
 - Owns native integration, app settings persistence, file system dialogs, IPC registration, and sidecar process control.
 - Must not own product logic or canonical domain behavior.
+- Renderer Node access is disabled (`nodeIntegration: false`) and the renderer runs with context isolation enabled.
+- `src/electron/preload.cjs` exposes only named bridge capabilities used by `src/ui-react/services/electronApi.ts`; it never exposes `ipcRenderer`, generic `invoke`, or generic `send` access.
+- Main-process IPC validates local project roots before filesystem/sidecar operations and keeps DB table/entity checks within the existing allowlist contract.
 
 ### React/UI boundary
 - Owns layout, rendering, local interaction flows, and route/module composition.

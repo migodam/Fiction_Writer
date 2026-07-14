@@ -61,6 +61,8 @@ Narrative IDE stores each project as a folder.
 - secrets
 - speechStyle
 - arc
+- experience[] (`id`, `chapter`, `fact`, optional `evidence`)
+- customAttributes[] (`id`, `label`, `value`), ordered for flexible profile facts
 - tagIds
 - organizationIds
 - linkedSceneIds
@@ -117,6 +119,8 @@ Narrative IDE stores each project as a folder.
 - isDefault
 - categoryPath
 - parentId
+
+`parentId` is the stable notebook/folder relationship key. UI hierarchy must use this ID rather than container display names, and each container must appear once in the projection.
 
 ### World Item
 - id

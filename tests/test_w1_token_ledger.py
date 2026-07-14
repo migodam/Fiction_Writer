@@ -1,6 +1,8 @@
 """Unit tests for w1_run_events token ledger — zero cost, no LLM calls."""
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from sidecar.workflows import w1_run_events as ev
 
@@ -124,7 +126,23 @@ def test_budget_policy_fails_closed_when_usage_is_missing():
 
     assert ev.budget_allows_call(sid) is True
     assert ev.record_call_usage(sid, None, 12, model="deepseek-v4-flash") is False
-    assert ev.session_token_ledger(sid, model="deepseek-v4-flash")["budget_exhausted_reason"] == "missing_usage"
+    ledger = ev.session_token_ledger(sid, model="deepseek-v4-flash")
+    assert ledger["budget_exhausted_reason"] == "missing_usage"
+    assert ledger["api_call_count"] == 1
+
+
+def test_authoritative_usage_ledger_has_durable_aliases_and_budget_status():
+    sid = _fresh("authoritative-usage")
+    ev.configure_budget(sid, ev.BudgetPolicy(max_calls=3), model="deepseek-v4-flash")
+    assert ev.record_call_usage(sid, 120, 45, model="deepseek-v4-flash") is True
+
+    ledger = ev.authoritative_usage_ledger(sid, "deepseek-v4-flash")
+
+    assert ledger["actual_calls"] == 1
+    assert ledger["api_call_count"] == 1
+    assert ledger["cost_usd"] is not None
+    assert ledger["model"] == "deepseek-v4-flash"
+    assert ledger["budget_status"] == {"exhausted": False, "reason": "", "remaining": ledger["budget_status"]["remaining"]}
 
 
 def test_crossing_budget_cancels_and_blocks_the_next_call():
@@ -146,3 +164,54 @@ def test_preflight_stops_call_that_would_cross_call_or_cost_limit():
 
     assert ev.budget_allows_call(sid, estimated_input_tokens=100_000) is False
     assert ev.session_token_ledger(sid, model="deepseek-v4-flash")["budget_exhausted_reason"] == "max_cost_usd"
+
+
+def test_concurrent_preflight_reservations_do_not_overspend_and_can_release():
+    sid = _fresh("concurrent-reservations")
+    ev.configure_budget(sid, ev.BudgetPolicy(max_calls=1), model="deepseek-v4-flash")
+
+    async def reserve() -> bool:
+        await asyncio.sleep(0)
+        return ev.budget_allows_call(sid, model="deepseek-v4-flash")
+
+    async def reserve_concurrently() -> tuple[bool, bool]:
+        first, second = await asyncio.gather(reserve(), reserve())
+        return first, second
+
+    first, second = asyncio.run(reserve_concurrently())
+
+    assert [first, second].count(True) == 1
+    assert ev.cancel_requested(sid) is False
+    ev.release_call_reservation(sid)
+    assert ev.budget_allows_call(sid, model="deepseek-v4-flash") is True
+
+
+def test_different_estimates_settle_in_reverse_order_by_reservation_identity():
+    sid = _fresh("reverse-settlement")
+    ev.configure_budget(sid, ev.BudgetPolicy(max_input_tokens=100, max_calls=3), model="deepseek-v4-flash")
+
+    large = ev.reserve_call_budget(sid, estimated_input_tokens=70, model="deepseek-v4-flash")
+    small = ev.reserve_call_budget(sid, estimated_input_tokens=20, model="deepseek-v4-flash")
+    assert large and small and large != small
+    assert ev.session_token_ledger(sid, model="deepseek-v4-flash")["remaining_budget"]["input_tokens"] == 10
+
+    # The smaller provider response completes first. Its token must remove the
+    # 20-token reservation, leaving the 70-token call reserved in flight.
+    assert ev.record_call_usage(
+        sid, 20, 0, model="deepseek-v4-flash", reservation_token=small,
+    ) is True
+    ledger = ev.session_token_ledger(sid, model="deepseek-v4-flash")
+    assert ledger["actual_input_tokens"] == 20
+    assert ledger["remaining_budget"]["input_tokens"] == 10
+    assert ev.reserve_call_budget(sid, estimated_input_tokens=11, model="deepseek-v4-flash") is None
+    assert ev.cancel_requested(sid) is False
+
+    fitting = ev.reserve_call_budget(sid, estimated_input_tokens=10, model="deepseek-v4-flash")
+    assert fitting
+    ev.release_call_reservation(sid, fitting)
+    assert ev.record_call_usage(
+        sid, 70, 0, model="deepseek-v4-flash", reservation_token=large,
+    ) is True
+    final = ev.session_token_ledger(sid, model="deepseek-v4-flash")
+    assert final["actual_input_tokens"] == 90
+    assert final["remaining_budget"]["input_tokens"] == 10

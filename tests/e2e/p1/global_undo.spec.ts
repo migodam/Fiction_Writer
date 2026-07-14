@@ -211,3 +211,24 @@ test('redoAction re-applies change after undoAction', async ({ page }) => {
   );
   expect(afterRedo).toBe('修改后名字');
 });
+
+test('one Cmd/Ctrl+Z reverses exactly one of two undo entries', async ({ page }) => {
+  await setupUndoScenario(page);
+
+  await page.evaluate(() => {
+    const store = (window as any).__narrativeStore;
+    store.setState({ undoStack: [], redoStack: [] });
+    const character = store.getState().characters.find((entry: any) => entry.id === 'undo_char_01');
+    store.getState().updateCharacter({ ...character, name: '第一次修改' });
+    store.getState().updateCharacter({ ...character, name: '第二次修改' });
+  });
+
+  await expect.poll(() => page.evaluate(() => (window as any).__narrativeStore.getState().undoStack.length)).toBe(2);
+  await page.keyboard.press('Control+Z');
+
+  await expect.poll(() => page.evaluate(() => ({
+    name: (window as any).__narrativeStore.getState().characters.find((entry: any) => entry.id === 'undo_char_01')?.name,
+    undoDepth: (window as any).__narrativeStore.getState().undoStack.length,
+    redoDepth: (window as any).__narrativeStore.getState().redoStack.length,
+  }))).toEqual({ name: '第一次修改', undoDepth: 1, redoDepth: 1 });
+});

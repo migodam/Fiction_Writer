@@ -40,6 +40,20 @@ _CULTIVATION_CONTAINERS: frozenset[str] = frozenset({
     "abilities",
 })
 
+_ZH_RELATIONSHIP_LABELS = frozenset({
+    "家族关系", "情感关系", "竞争关系", "师徒关系", "结拜关系", "政治关系", "对立关系", "盟友关系",
+})
+_RELATIONSHIP_ONTOLOGY_TYPES = frozenset({
+    "family", "romantic", "rivalry", "mentor_disciple", "sworn_brothers", "political", "conflict", "alliance",
+})
+_MAJOR_CHARACTER_MARKERS = frozenset({
+    "protagonist", "main", "main_character", "main character", "lead", "hero",
+    "主角", "主人公", "主要角色", "主要人物",
+})
+_ORGANIZATION_CATEGORIES = frozenset({"organization", "faction"})
+_PERSON_TITLE_PATTERN = re.compile(r"(?:门主|掌门|堂主|护法|长老|大夫|师父|师傅|师兄|师姐|师弟|师妹|父|母|叔|伯|哥|姐|弟|妹)$")
+_EVENT_ORGANIZATION_PATTERN = re.compile(r"(?:测试|考核|选拔|比试|决斗|大会|仪式|庆典|行动|战役|事件)$")
+
 
 class DiagnosticInputError(ValueError):
     pass
@@ -373,7 +387,7 @@ def _timeline_metrics(timeline: dict[str, Any], operations: list[dict[str, Any]]
     }
 
 
-def _manuscript_projection_metrics(project_path: Path) -> dict[str, Any]:
+def _canonical_manuscript_projection_metrics(project_path: Path) -> dict[str, Any]:
     nodes = _safe_list(_read_json(project_path / "writing" / "manuscript" / "nodes.json", default=[]))
     chapter_node_count = sum(
         1 for n in nodes if isinstance(n, dict) and n.get("type") == "chapter_outline"
@@ -390,8 +404,44 @@ def _manuscript_projection_metrics(project_path: Path) -> dict[str, Any]:
         if md_path.exists() and md_path.read_text(encoding="utf-8").strip():
             scene_nodes_with_content += 1
     return {
+        "node_count": len(nodes),
         "chapter_node_count": chapter_node_count,
         "scene_nodes_with_content": scene_nodes_with_content,
+    }
+
+
+def _staged_manuscript_projection_metrics(staged: dict[str, Any]) -> dict[str, Any]:
+    nodes = _safe_list(staged.get("nodes"))
+    scene_documents = _safe_list(staged.get("scene_documents"))
+    return {
+        "chapter_count": len(_safe_list(staged.get("chapters"))),
+        "node_count": len(nodes),
+        "chapter_node_count": sum(1 for node in nodes if _safe_dict(node).get("type") == "chapter_outline"),
+        "scene_nodes_with_content": sum(
+            1
+            for document in scene_documents
+            if str(_safe_dict(document).get("content") or _safe_dict(document).get("markdown") or "").strip()
+        ),
+        "scene_document_count": len(scene_documents),
+    }
+
+
+def _manuscript_projection_metrics(project_path: Path, staged: dict[str, Any]) -> dict[str, Any]:
+    canonical = _canonical_manuscript_projection_metrics(project_path)
+    canonical["chapter_count"] = int(_chapter_quality_metrics(project_path).get("total_chapter_count") or 0)
+    acceptance_required = staged.get("acceptance_required") is True
+    staged_metrics = _staged_manuscript_projection_metrics(staged) if acceptance_required else {}
+    effective = staged_metrics if acceptance_required else canonical
+    return {
+        "acceptance_required": acceptance_required,
+        "source": "staged" if acceptance_required else "canonical",
+        "chapter_count": int(effective.get("chapter_count") or 0),
+        "node_count": int(effective.get("node_count") or 0),
+        "chapter_node_count": int(effective.get("chapter_node_count") or 0),
+        "scene_nodes_with_content": int(effective.get("scene_nodes_with_content") or 0),
+        "scene_document_count": int(effective.get("scene_document_count") or 0),
+        "canonical": canonical,
+        "staged": staged_metrics,
     }
 
 
@@ -465,6 +515,203 @@ def _reviewer_repair_metrics(import_dir: Path | None, inbox: Any) -> dict[str, A
     }
 
 
+def _review_findings(review_report: dict[str, Any]) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    for report in _safe_dict(review_report.get("reviewer_reports")).values():
+        findings.extend(item for item in _safe_list(_safe_dict(report).get("findings")) if isinstance(item, dict))
+    return findings
+
+
+def _has_identity_disambiguation(character: dict[str, Any]) -> bool:
+    for key in ("identityDisambiguation", "identity_disambiguation", "identityDisambiguator", "identity_disambiguator"):
+        value = character.get(key)
+        if isinstance(value, str) and value.strip():
+            return True
+        if isinstance(value, dict) and value:
+            return True
+    return False
+
+
+def _has_content(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, dict):
+        return any(_has_content(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_has_content(item) for item in value)
+    return False
+
+
+def _is_major_character(character: dict[str, Any], recurring_character_ids: set[str]) -> bool:
+    markers = (
+        character.get("role"),
+        character.get("storyFunction"),
+        character.get("story_function"),
+        character.get("importance"),
+        character.get("importanceTier"),
+    )
+    character_id = character.get("id") or character.get("entityId")
+    return str(character_id) in recurring_character_ids or any(
+        _normalize_text(str(marker)) in {_normalize_text(value) for value in _MAJOR_CHARACTER_MARKERS}
+        for marker in markers if marker
+    )
+
+
+def _major_character_profile_gaps(characters: list[dict[str, Any]], timeline: dict[str, Any]) -> list[dict[str, Any]]:
+    gaps: list[dict[str, Any]] = []
+    canonical_events = _safe_list(timeline.get("canonical_events"))
+    participation_counts: Counter[str] = Counter()
+    for event in canonical_events:
+        fields = _safe_dict(event)
+        participant_ids = fields.get("participantCharacterIds") or fields.get("character_ids") or fields.get("characterIds")
+        participation_counts.update(str(entity_id) for entity_id in _safe_list(participant_ids) if entity_id)
+    recurring_character_ids = {
+        character_id
+        for character_id, count in participation_counts.items()
+        if count >= max(2, (len(canonical_events) + 1) // 2)
+    }
+    supporting_note_keys = ("notes", "evidence_notes", "evidenceNotes", "source_notes", "sourceNotes")
+    for character in characters:
+        if not _is_major_character(character, recurring_character_ids) or not any(_has_content(character.get(key)) for key in supporting_note_keys):
+            continue
+        missing_fields = [field for field in ("background", "experience") if not _has_content(character.get(field))]
+        if missing_fields:
+            gaps.append({
+                "id": character.get("id") or character.get("entityId"),
+                "name": character.get("name") or character.get("canonical_name"),
+                "missing_fields": missing_fields,
+            })
+    return gaps
+
+
+def _world_organization_misplacements(
+    operations: list[dict[str, Any]], characters_by_id: dict[str, dict[str, Any]], timeline: dict[str, Any],
+) -> dict[str, list[dict[str, Any]]]:
+    character_names = {
+        _normalize_text(str(character.get("name") or character.get("canonical_name") or ""))
+        for character in characters_by_id.values()
+    }
+    event_titles = {
+        _normalize_text(str(_safe_dict(event).get("title") or _safe_dict(event).get("summary") or ""))
+        for event in _safe_list(timeline.get("canonical_events"))
+    }
+    people: list[dict[str, Any]] = []
+    events: list[dict[str, Any]] = []
+    for operation in operations:
+        if _entity_type(operation) not in ("world_item", "world"):
+            continue
+        fields = _operation_fields(operation)
+        category = str(fields.get("category") or fields.get("world_category") or "").casefold()
+        container_id = str(fields.get("containerId") or fields.get("container_id") or "").casefold()
+        if category not in _ORGANIZATION_CATEGORIES and "organization" not in container_id and "faction" not in container_id:
+            continue
+        name = str(fields.get("name") or "").strip()
+        normalized_name = _normalize_text(name)
+        item = {"id": fields.get("id") or operation.get("entityId"), "name": name}
+        if normalized_name and (normalized_name in character_names or bool(_PERSON_TITLE_PATTERN.search(name))):
+            people.append(item)
+        if normalized_name and (normalized_name in event_titles or bool(_EVENT_ORGANIZATION_PATTERN.search(name))):
+            events.append(item)
+    return {"person_as_world_organization": people, "event_as_world_organization": events}
+
+
+def _semantic_quality_metrics(
+    operations: list[dict[str, Any]], review_report: dict[str, Any], source_language: str, timeline: dict[str, Any],
+) -> dict[str, Any]:
+    characters: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    characters_by_id: dict[str, dict[str, Any]] = {}
+    illegal_tags: list[str] = []
+    invalid_relationships: list[dict[str, Any]] = []
+    for operation in operations:
+        fields = _operation_fields(operation)
+        entity_type = _entity_type(operation)
+        if entity_type == "character":
+            fields = {**fields}
+            entity_id = fields.get("id") or fields.get("entityId") or operation.get("entityId") or operation.get("entity_id")
+            if entity_id:
+                fields.setdefault("id", entity_id)
+                characters_by_id[str(entity_id)] = fields
+            name = str(fields.get("name") or fields.get("canonical_name") or "").strip()
+            if name:
+                characters[_normalize_text(name)].append(fields)
+        elif entity_type == "character_tag" and source_language == "zh":
+            name = str(fields.get("name") or "").strip()
+            if name and _is_latin(name):
+                illegal_tags.append(name)
+        elif entity_type == "relationship":
+            label = str(fields.get("type") or "").strip()
+            ontology_type = str(fields.get("ontologyType") or fields.get("ontology_type") or fields.get("category") or "").strip().lower()
+            invalid = bool(ontology_type and ontology_type not in _RELATIONSHIP_ONTOLOGY_TYPES)
+            if source_language == "zh" and label and label not in _ZH_RELATIONSHIP_LABELS:
+                invalid = True
+            if invalid:
+                invalid_relationships.append({"id": fields.get("id") or operation.get("entityId"), "type": label, "ontology_type": ontology_type})
+
+    duplicate_names = []
+    for records in characters.values():
+        if len(records) > 1 and not all(_has_identity_disambiguation(record) for record in records):
+            duplicate_names.append({
+                "name": str(records[0].get("name") or records[0].get("canonical_name") or ""),
+                "entity_ids": [record.get("id") or record.get("entityId") for record in records],
+            })
+
+    findings = _review_findings(review_report)
+    finding_counts = Counter(str(finding.get("check_name") or "") for finding in findings)
+    high_evidence_entity_mismatch_count = sum(
+        1
+        for finding in findings
+        if finding.get("check_name") == "evidence_entity_mismatch" and str(finding.get("severity") or "").casefold() == "high"
+    )
+    reviewer_duplicate_names = []
+    for finding in findings:
+        if finding.get("check_name") != "character_duplicate_name":
+            continue
+        entity_refs = [str(entity_id) for entity_id in _safe_list(finding.get("entity_refs")) if entity_id]
+        records = [characters_by_id[entity_id] for entity_id in entity_refs if entity_id in characters_by_id]
+        if not records or not all(_has_identity_disambiguation(record) for record in records):
+            reviewer_duplicate_names.append({
+                "finding_id": finding.get("finding_id"),
+                "entity_ids": entity_refs,
+                "description": finding.get("description"),
+            })
+    organization_misplacements = _world_organization_misplacements(operations, characters_by_id, timeline)
+    return {
+        "duplicate_character_names": duplicate_names + reviewer_duplicate_names,
+        "unresolved_evidence_missing_count": finding_counts["evidence_missing"],
+        "high_evidence_entity_mismatch_count": high_evidence_entity_mismatch_count,
+        "evidence_unusable_count": finding_counts["evidence_unusable"],
+        "major_character_supported_profile_gaps": _major_character_profile_gaps(list(characters_by_id.values()), timeline),
+        **organization_misplacements,
+        "reviewer_branch_over_budget_count": finding_counts["branch_over_budget"],
+        "illegal_or_english_tags": sorted(set(illegal_tags)),
+        "invalid_relationships": invalid_relationships,
+        "reviewer_finding_counts": dict(sorted(finding_counts.items())),
+    }
+
+
+def _usage_ledger_metrics(ledger: Any) -> dict[str, Any]:
+    if not isinstance(ledger, dict) or not ledger:
+        return {"present": False, "exhausted": False, "over_cap": False}
+    status = _safe_dict(ledger.get("budget_status"))
+    remaining = _safe_dict(status.get("remaining"))
+    return {
+        "present": True,
+        "exhausted": status.get("exhausted") is True,
+        # Only compare against limits the artifact itself declares; diagnostics never invents a competing budget.
+        "over_cap": any(isinstance(value, (int, float)) and value < 0 for value in remaining.values()),
+        "remaining": remaining,
+    }
+
+
+def _proposal_receipt_metrics(receipts: Any) -> dict[str, Any]:
+    counts = _safe_dict(_safe_dict(receipts).get("proposal_counts"))
+    return {
+        "present": isinstance(receipts, dict) and bool(receipts),
+        "chapter_count": int(counts.get("chapter") or 0),
+        "scene_count": int(counts.get("scene") or 0),
+    }
+
+
 def _symptom_flags(metrics: dict[str, Any], review_report: dict[str, Any], inbox_count: int, artifact_quality: dict[str, Any] | None = None) -> dict[str, bool]:
     report_total = sum(int(value) for value in _safe_dict(review_report.get("proposal_counts")).values() if isinstance(value, int))
     summary = _safe_dict(metrics["summary_lengths"])
@@ -472,7 +719,6 @@ def _symptom_flags(metrics: dict[str, Any], review_report: dict[str, Any], inbox
     timeline = _safe_dict(metrics["timeline"])
     branch_density = _safe_dict(timeline.get("branch_density"))
     mainline_density = _safe_dict(timeline.get("mainline_density"))
-    scene_beat_counts = _safe_dict(timeline.get("scene_beat_discard_counts"))
     flags: dict[str, bool] = {
         "review_report_inbox_count_mismatch": bool(report_total and report_total != inbox_count),
         "overlong_character_summaries": int(summary.get("outlier_count") or 0) > 0,
@@ -480,7 +726,6 @@ def _symptom_flags(metrics: dict[str, Any], review_report: dict[str, Any], inbox
         "mixed_language_trait_sets": int(traits.get("characters_with_multilingual_trait_sets") or 0) > 0,
         "timeline_branch_over_budget": bool(branch_density.get("branches_over_budget")),
         "timeline_mainline_overdense": int(mainline_density.get("event_count") or 0) > MAINLINE_DENSITY_WARN,
-        "scene_beats_or_discards_present": int(timeline.get("discard_count") or 0) > 0 or bool(scene_beat_counts),
         "duplicate_event_clusters_present": int(timeline.get("event_duplicate_cluster_count") or 0) > 0,
     }
     if artifact_quality is not None:
@@ -488,16 +733,43 @@ def _symptom_flags(metrics: dict[str, Any], review_report: dict[str, Any], inbox
         ch = _safe_dict(artifact_quality.get("chapters"))
         tb = _safe_dict(artifact_quality.get("timeline_branches"))
         wq = _safe_dict(artifact_quality.get("world_quality"))
+        semantic = _safe_dict(artifact_quality.get("semantic_quality"))
+        usage = _safe_dict(artifact_quality.get("usage_ledger"))
+        receipts = _safe_dict(artifact_quality.get("proposal_receipts"))
         chapter_node_count = int(ms.get("chapter_node_count") or 0)
+        node_count = int(ms.get("node_count") or 0)
         scene_with_content = int(ms.get("scene_nodes_with_content") or 0)
-        flags["smoke_chapter_count_not_10"] = int(ch.get("total_chapter_count") or 0) != 10
+        flags["smoke_chapter_count_not_10"] = int(ms.get("chapter_count") or 0) != 10
         flags["manuscript_projection_missing_or_empty"] = (
-            chapter_node_count == 0 or scene_with_content < chapter_node_count
+            chapter_node_count == 0 or node_count == 0 or scene_with_content < chapter_node_count
+        )
+        flags["smoke_manuscript_node_count_not_20"] = node_count != 20
+        canonical = _safe_dict(ms.get("canonical"))
+        flags["canonical_manuscript_written_before_acceptance"] = bool(ms.get("acceptance_required")) and (
+            int(canonical.get("chapter_count") or 0) > 0 or int(canonical.get("chapter_node_count") or 0) > 0
+        )
+        flags["staged_projection_receipt_mismatch"] = bool(ms.get("acceptance_required")) and (
+            not bool(receipts.get("present"))
+            or int(receipts.get("chapter_count") or 0) != int(ms.get("chapter_count") or 0)
+            or int(receipts.get("scene_count") or 0) != int(ms.get("scene_document_count") or 0)
         )
         flags["duplicate_chapter_numbers_present"] = int(ch.get("duplicate_chapter_number_count") or 0) > 0
         flags["empty_timeline_branches_present"] = int(tb.get("empty_branch_count") or 0) > 0
         flags["world_module_contamination_present"] = int(wq.get("contamination_count") or 0) > 0
         flags["world_cultivation_misclassification_present"] = int(wq.get("cultivation_misclassification_count") or 0) > 0
+        flags["duplicate_canonical_character_names"] = bool(semantic.get("duplicate_character_names"))
+        flags["unresolved_evidence_missing"] = int(semantic.get("unresolved_evidence_missing_count") or 0) > 0
+        flags["high_evidence_entity_mismatch"] = int(semantic.get("high_evidence_entity_mismatch_count") or 0) > 0
+        flags["evidence_unusable"] = int(semantic.get("evidence_unusable_count") or 0) > 0
+        flags["major_character_supported_profile_gaps"] = bool(semantic.get("major_character_supported_profile_gaps"))
+        flags["person_as_world_organization"] = bool(semantic.get("person_as_world_organization"))
+        flags["event_as_world_organization"] = bool(semantic.get("event_as_world_organization"))
+        flags["illegal_or_english_tags_present"] = bool(semantic.get("illegal_or_english_tags"))
+        flags["invalid_relationship_types_present"] = bool(semantic.get("invalid_relationships"))
+        flags["branch_density_over_budget"] = int(semantic.get("reviewer_branch_over_budget_count") or 0) > 0
+        flags["usage_ledger_missing"] = not bool(usage.get("present"))
+        flags["usage_ledger_exhausted"] = bool(usage.get("exhausted"))
+        flags["usage_ledger_over_cap"] = bool(usage.get("over_cap"))
     return flags
 
 
@@ -514,7 +786,12 @@ def analyze_import(source: ImportSource) -> dict[str, Any]:
     review_report = _read_json(import_dir / "review_report.json", default={}) if import_dir else {}
     timeline = _read_json(import_dir / "timeline_architecture.json", default={}) if import_dir else {}
     manifest = _read_json(import_dir / "manifest.json", default={}) if import_dir else {}
+    staged_projection = _read_json(import_dir / "staged_manuscript_projection.json", default={}) if import_dir else {}
+    proposal_receipts = _read_json(import_dir / "proposal_write_receipts.json", default={}) if import_dir else {}
+    usage_ledger = _read_json(import_dir / "usage_ledger.json", default=None) if import_dir else None
     characters = _character_records(project_path, operations)
+    source_language = str(manifest.get("source_language") or _safe_dict(_read_json(project_path / "project.json", default={})).get("metadata", {}).get("locale", "")).lower()
+    source_language = "zh" if source_language.startswith("zh") else source_language
 
     metrics: dict[str, Any] = {
         "project_path": str(project_path),
@@ -552,16 +829,22 @@ def analyze_import(source: ImportSource) -> dict[str, Any]:
         },
     }
     artifact_quality: dict[str, Any] = {
-        "manuscript_projection": _manuscript_projection_metrics(project_path),
+        "manuscript_projection": _manuscript_projection_metrics(project_path, _safe_dict(staged_projection)),
         "chapters": _chapter_quality_metrics(project_path),
         "timeline_branches": _timeline_branch_quality(_safe_dict(timeline)),
         "world_quality": _world_quality_metrics(operations),
         "reviewer_repair": _reviewer_repair_metrics(import_dir, inbox),
+        "semantic_quality": _semantic_quality_metrics(operations, _safe_dict(review_report), source_language, _safe_dict(timeline)),
+        "usage_ledger": _usage_ledger_metrics(usage_ledger),
+        "proposal_receipts": _proposal_receipt_metrics(proposal_receipts),
     }
     metrics["artifact_quality"] = artifact_quality
     metrics["import_test6_symptom_flags"] = _symptom_flags(
         metrics, _safe_dict(review_report), metrics["inbox_proposal_count"], artifact_quality
     )
+    metrics["informational_flags"] = {
+        "scene_beats_or_discards_present": int(_safe_dict(metrics.get("timeline")).get("discard_count") or 0) > 0,
+    }
     return metrics
 
 

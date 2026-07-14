@@ -6,9 +6,11 @@ finishes and before proposals are written.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from contextvars import ContextVar
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 import re
+from threading import RLock
 from typing import Any
 
 _events: dict[str, list[dict[str, Any]]] = {}
@@ -18,6 +20,9 @@ _active_calls: dict[str, int] = {}
 _cancel_requested: set[str] = set()
 _token_ledger: dict[str, dict[str, int]] = {}
 _budget_ledgers: dict[str, "BudgetLedger"] = {}
+_compat_reservation_tokens: ContextVar[dict[str, tuple[str, ...]]] = ContextVar(
+    "w1_compat_reservation_tokens", default={}
+)
 
 # Per-million-token USD prices for known model name substrings (longest match wins).
 # V4 prices use cache-miss input because W1 usage does not separately report cache
@@ -102,8 +107,8 @@ class BudgetPolicy:
 class BudgetLedger:
     """Per-session actual usage and preflight budget evaluator.
 
-    The caller must invoke ``can_start_call`` before every provider call and
-    ``record_usage`` immediately after it returns. Missing usage and unknown
+    Concurrent callers own explicit tokens from ``reserve_call`` and pass them
+    to ``record_usage`` or ``release_reservation``. Missing usage and unknown
     pricing exhaust a policy by default instead of allowing an unbounded run.
     """
 
@@ -113,6 +118,9 @@ class BudgetLedger:
     actual_output_tokens: int = 0
     api_call_count: int = 0
     exhausted_reason: str = ""
+    _reservations: dict[str, tuple[int, int]] = field(default_factory=dict, repr=False)
+    _next_reservation_id: int = field(default=0, repr=False)
+    _lock: RLock = field(default_factory=RLock, repr=False)
 
     @property
     def actual_total_tokens(self) -> int:
@@ -150,72 +158,134 @@ class BudgetLedger:
                 return "max_cost_usd"
         return ""
 
-    def can_start_call(self, *, estimated_input_tokens: int = 0, estimated_output_tokens: int = 0, model: str = "") -> bool:
-        """Reserve a possible call. False means callers must cancel before it starts."""
-        if self.exhausted_reason:
-            return False
-        if model:
-            self.model = model
-        if self.policy.fail_on_unknown_pricing and self._pricing(model)[0] is None:
-            self.exhausted_reason = self._pricing(model)[1] or "unknown_pricing"
-            return False
-        reason = self._limit_reason(
-            self.actual_input_tokens + max(0, int(estimated_input_tokens or 0)),
-            self.actual_output_tokens + max(0, int(estimated_output_tokens or 0)),
-            self.api_call_count + 1,
-            model,
-        )
-        if reason:
-            self.exhausted_reason = reason
-            return False
-        return True
+    def reserve_call(self, *, estimated_input_tokens: int = 0, estimated_output_tokens: int = 0, model: str = "") -> str | None:
+        """Atomically reserve one provider call and return its settlement token."""
+        with self._lock:
+            if self.exhausted_reason:
+                return None
+            if model:
+                self.model = model
+            if self.policy.fail_on_unknown_pricing and self._pricing(model)[0] is None:
+                self.exhausted_reason = self._pricing(model)[1] or "unknown_pricing"
+                return None
+            estimated = (max(0, int(estimated_input_tokens or 0)), max(0, int(estimated_output_tokens or 0)))
+            reserved_input = sum(item[0] for item in self._reservations.values())
+            reserved_output = sum(item[1] for item in self._reservations.values())
+            reason = self._limit_reason(
+                self.actual_input_tokens + reserved_input + estimated[0],
+                self.actual_output_tokens + reserved_output + estimated[1],
+                self.api_call_count + len(self._reservations) + 1,
+                model,
+            )
+            if reason:
+                # A competing in-flight reservation can finish or fail and
+                # release capacity. Only permanently exhaust when this call
+                # would exceed the budget without that transient capacity.
+                base_reason = self._limit_reason(
+                    self.actual_input_tokens + estimated[0],
+                    self.actual_output_tokens + estimated[1],
+                    self.api_call_count + 1,
+                    model,
+                )
+                if base_reason:
+                    self.exhausted_reason = base_reason
+                return None
+            self._next_reservation_id += 1
+            token = f"reservation_{self._next_reservation_id}"
+            self._reservations[token] = estimated
+            return token
 
-    def record_usage(self, input_tokens: int | None, output_tokens: int | None, *, model: str = "") -> bool:
+    def can_start_call(self, *, estimated_input_tokens: int = 0, estimated_output_tokens: int = 0, model: str = "") -> bool:
+        """Compatibility boolean API; prefer ``reserve_call`` for concurrent I/O."""
+        return self.reserve_call(
+            estimated_input_tokens=estimated_input_tokens,
+            estimated_output_tokens=estimated_output_tokens,
+            model=model,
+        ) is not None
+
+    def release_reservation(self, reservation_token: str | None = None) -> None:
+        """Release the reservation identified by one provider caller."""
+        with self._lock:
+            token = reservation_token
+            if token is None and len(self._reservations) == 1:
+                token = next(iter(self._reservations))
+            if token:
+                self._reservations.pop(token, None)
+
+    def record_usage(
+        self,
+        input_tokens: int | None,
+        output_tokens: int | None,
+        *,
+        model: str = "",
+        reservation_token: str | None = None,
+    ) -> bool:
         """Record one completed provider call and fail closed when usage is absent."""
-        if model:
-            self.model = model
-        if self.policy.fail_on_unknown_pricing and self._pricing(model)[0] is None:
-            self.exhausted_reason = self._pricing(model)[1] or "unknown_pricing"
-            return False
-        if input_tokens is None or output_tokens is None:
-            if self.policy.fail_on_missing_usage:
-                self.exhausted_reason = "missing_usage"
+        with self._lock:
+            if model:
+                self.model = model
+            if self.policy.fail_on_unknown_pricing and self._pricing(model)[0] is None:
+                self.exhausted_reason = self._pricing(model)[1] or "unknown_pricing"
                 return False
-            input_tokens, output_tokens = input_tokens or 0, output_tokens or 0
-        self.actual_input_tokens += max(0, int(input_tokens))
-        self.actual_output_tokens += max(0, int(output_tokens))
-        self.api_call_count += 1
-        reason = self._limit_reason(self.actual_input_tokens, self.actual_output_tokens, self.api_call_count, model)
-        if reason:
-            self.exhausted_reason = reason
-            return False
-        return True
+            token = reservation_token
+            if token is None and len(self._reservations) == 1:
+                token = next(iter(self._reservations))
+            if token:
+                self._reservations.pop(token, None)
+            # The provider has returned, so this call happened even when its
+            # token metadata is absent and the run must fail closed.
+            self.api_call_count += 1
+            if input_tokens is None or output_tokens is None:
+                if self.policy.fail_on_missing_usage:
+                    self.exhausted_reason = "missing_usage"
+                    return False
+                input_tokens, output_tokens = input_tokens or 0, output_tokens or 0
+            self.actual_input_tokens += max(0, int(input_tokens))
+            self.actual_output_tokens += max(0, int(output_tokens))
+            reserved_input = sum(item[0] for item in self._reservations.values())
+            reserved_output = sum(item[1] for item in self._reservations.values())
+            reason = self._limit_reason(
+                self.actual_input_tokens + reserved_input,
+                self.actual_output_tokens + reserved_output,
+                self.api_call_count + len(self._reservations),
+                model,
+            )
+            if reason:
+                self.exhausted_reason = reason
+                return False
+            return True
 
     def remaining(self) -> dict[str, float | int | None]:
-        cost = self._cost(self.actual_input_tokens, self.actual_output_tokens)
-        return {
-            "cost_usd": None if self.policy.max_cost_usd is None or cost is None else max(0.0, round(self.policy.max_cost_usd - cost, 6)),
-            "input_tokens": None if self.policy.max_input_tokens is None else max(0, self.policy.max_input_tokens - self.actual_input_tokens),
-            "output_tokens": None if self.policy.max_output_tokens is None else max(0, self.policy.max_output_tokens - self.actual_output_tokens),
-            "total_tokens": None if self.policy.max_total_tokens is None else max(0, self.policy.max_total_tokens - self.actual_total_tokens),
-            "calls": None if self.policy.max_calls is None else max(0, self.policy.max_calls - self.api_call_count),
-        }
+        with self._lock:
+            reserved_input = sum(item[0] for item in self._reservations.values())
+            reserved_output = sum(item[1] for item in self._reservations.values())
+            effective_input = self.actual_input_tokens + reserved_input
+            effective_output = self.actual_output_tokens + reserved_output
+            cost = self._cost(effective_input, effective_output)
+            return {
+                "cost_usd": None if self.policy.max_cost_usd is None or cost is None else max(0.0, round(self.policy.max_cost_usd - cost, 6)),
+                "input_tokens": None if self.policy.max_input_tokens is None else max(0, self.policy.max_input_tokens - effective_input),
+                "output_tokens": None if self.policy.max_output_tokens is None else max(0, self.policy.max_output_tokens - effective_output),
+                "total_tokens": None if self.policy.max_total_tokens is None else max(0, self.policy.max_total_tokens - effective_input - effective_output),
+                "calls": None if self.policy.max_calls is None else max(0, self.policy.max_calls - self.api_call_count - len(self._reservations)),
+            }
 
     def snapshot(self) -> dict[str, Any]:
-        payload = {
-            "actual_input_tokens": self.actual_input_tokens,
-            "actual_output_tokens": self.actual_output_tokens,
-            "actual_total_tokens": self.actual_total_tokens,
-            "api_call_count": self.api_call_count,
-            "budget_policy": asdict(self.policy),
-            "remaining_budget": self.remaining(),
-            "budget_exhausted": bool(self.exhausted_reason),
-            "budget_exhausted_reason": self.exhausted_reason,
-        }
-        cost = self._cost(self.actual_input_tokens, self.actual_output_tokens)
-        if cost is not None:
-            payload["cost_usd"] = round(cost, 6)
-        return payload
+        with self._lock:
+            payload = {
+                "actual_input_tokens": self.actual_input_tokens,
+                "actual_output_tokens": self.actual_output_tokens,
+                "actual_total_tokens": self.actual_total_tokens,
+                "api_call_count": self.api_call_count,
+                "budget_policy": asdict(self.policy),
+                "remaining_budget": self.remaining(),
+                "budget_exhausted": bool(self.exhausted_reason),
+                "budget_exhausted_reason": self.exhausted_reason,
+            }
+            cost = self._cost(self.actual_input_tokens, self.actual_output_tokens)
+            if cost is not None:
+                payload["cost_usd"] = round(cost, 6)
+            return payload
 
 
 def ensure_session(session_id: str) -> None:
@@ -242,6 +312,10 @@ def clear_session(session_id: str) -> None:
     _token_ledger.pop(session_id, None)
     _budget_ledgers.pop(session_id, None)
     _cancel_requested.discard(session_id)
+    bound = dict(_compat_reservation_tokens.get())
+    if session_id in bound:
+        bound.pop(session_id, None)
+        _compat_reservation_tokens.set(bound)
 
 
 def set_active_call(session_id: str, delta: int) -> int:
@@ -276,23 +350,44 @@ def configure_budget(session_id: str, policy: BudgetPolicy, *, model: str = "") 
     return ledger
 
 
-def budget_allows_call(
+def _bind_compat_reservation(session_id: str, reservation_token: str) -> None:
+    bound = dict(_compat_reservation_tokens.get())
+    bound[session_id] = (*bound.get(session_id, ()), reservation_token)
+    _compat_reservation_tokens.set(bound)
+
+
+def _take_compat_reservation(session_id: str) -> str | None:
+    bound = dict(_compat_reservation_tokens.get())
+    tokens = bound.get(session_id, ())
+    if not tokens:
+        return None
+    token = tokens[-1]
+    remaining = tokens[:-1]
+    if remaining:
+        bound[session_id] = remaining
+    else:
+        bound.pop(session_id, None)
+    _compat_reservation_tokens.set(bound)
+    return token
+
+
+def reserve_call_budget(
     session_id: str,
     *,
     estimated_input_tokens: int = 0,
     estimated_output_tokens: int = 0,
     model: str = "",
-) -> bool:
-    """Pre-call integration hook. False marks cancellation before provider I/O."""
+) -> str | None:
+    """Reserve budget and return a caller-owned token; empty means unmanaged."""
     ledger = _budget_ledgers.get(session_id)
     if ledger is None:
-        return True
-    allowed = ledger.can_start_call(
+        return ""
+    token = ledger.reserve_call(
         estimated_input_tokens=estimated_input_tokens,
         estimated_output_tokens=estimated_output_tokens,
         model=model,
     )
-    if not allowed:
+    if token is None and ledger.exhausted_reason:
         mark_cancel_requested(session_id)
         append_event(session_id, {
             "level": "warning",
@@ -301,7 +396,26 @@ def budget_allows_call(
             "status": "cancelled",
             "message": f"budget_exhausted:{ledger.exhausted_reason}",
         })
-    return allowed
+    return token
+
+
+def budget_allows_call(
+    session_id: str,
+    *,
+    estimated_input_tokens: int = 0,
+    estimated_output_tokens: int = 0,
+    model: str = "",
+) -> bool:
+    """Pre-call integration hook; false can mean transient reserved capacity."""
+    token = reserve_call_budget(
+        session_id,
+        estimated_input_tokens=estimated_input_tokens,
+        estimated_output_tokens=estimated_output_tokens,
+        model=model,
+    )
+    if token:
+        _bind_compat_reservation(session_id, token)
+    return token is not None
 
 
 def record_call_usage(
@@ -310,6 +424,7 @@ def record_call_usage(
     output_tokens: int | None,
     *,
     model: str = "",
+    reservation_token: str | None = None,
 ) -> bool:
     """Post-call integration hook. False stops the next call after a crossing."""
     if not session_id:
@@ -319,7 +434,13 @@ def record_call_usage(
     if ledger is None:
         add_token_usage(session_id, int(input_tokens or 0), int(output_tokens or 0))
         return True
-    allowed = ledger.record_usage(input_tokens, output_tokens, model=model)
+    token = reservation_token if reservation_token is not None else _take_compat_reservation(session_id)
+    allowed = ledger.record_usage(
+        input_tokens,
+        output_tokens,
+        model=model,
+        reservation_token=token,
+    )
     _token_ledger[session_id] = {
         "actual_input_tokens": ledger.actual_input_tokens,
         "actual_output_tokens": ledger.actual_output_tokens,
@@ -336,6 +457,14 @@ def record_call_usage(
             "message": f"budget_exhausted:{ledger.exhausted_reason}",
         })
     return allowed
+
+
+def release_call_reservation(session_id: str, reservation_token: str | None = None) -> None:
+    """Release the reservation held by a provider call that raised before response."""
+    ledger = _budget_ledgers.get(session_id)
+    if ledger is not None:
+        token = reservation_token if reservation_token is not None else _take_compat_reservation(session_id)
+        ledger.release_reservation(token)
 
 
 def add_token_usage(session_id: str, input_tokens: int, output_tokens: int) -> None:
@@ -406,6 +535,29 @@ def session_token_ledger(session_id: str, model: str = "", estimated_input_token
                 "message": ledger["cost_unavailable_reason"],
             })
     return ledger
+
+
+def authoritative_usage_ledger(session_id: str, model: str = "") -> dict[str, Any]:
+    """Return the one non-secret, durable usage record for a W1 run."""
+    ledger = session_token_ledger(session_id, model=model)
+    return {
+        "schema_version": "w1_usage_ledger/v1",
+        "model": model,
+        "actual_input_tokens": int(ledger.get("actual_input_tokens", 0) or 0),
+        "actual_output_tokens": int(ledger.get("actual_output_tokens", 0) or 0),
+        "actual_total_tokens": int(ledger.get("actual_total_tokens", 0) or 0),
+        "actual_calls": int(ledger.get("api_call_count", 0) or 0),
+        # Keep the UI/session field as a compatibility alias for smoke tooling.
+        "api_call_count": int(ledger.get("api_call_count", 0) or 0),
+        "cost_usd": ledger.get("cost_usd"),
+        "budget_status": {
+            "exhausted": bool(ledger.get("budget_exhausted", False)),
+            "reason": str(ledger.get("budget_exhausted_reason", "") or ""),
+            "remaining": ledger.get("remaining_budget", {}),
+        },
+        "pricing": ledger.get("pricing"),
+        "pricing_version": ledger.get("pricing_version", PRICING_VERSION),
+    }
 
 
 def append_event(session_id: str, event: dict[str, Any]) -> dict[str, Any]:

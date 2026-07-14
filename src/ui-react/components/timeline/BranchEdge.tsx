@@ -1,6 +1,6 @@
 import React, { useCallback } from 'react';
 import type { TimelineBranch } from '../../models/project';
-import { buildSVGPath, cubicBezierPoint, nearestTOnCurve } from './bezierMath';
+import { buildSVGPath, cubicBezierPoint, nearestTOnCurve, offsetControlPoints } from './bezierMath';
 import type { Point } from './bezierMath';
 
 interface BranchEdgeProps {
@@ -8,7 +8,7 @@ interface BranchEdgeProps {
   controlPoints: { p0: Point; p1: Point; p2: Point; p3: Point };
   isDrawMode: boolean;
   isSelected: boolean;
-  renderMode?: 'default' | 'collapsed';
+  renderMode?: 'default' | 'collapsed' | 'parallel';
   overlapHostBranchId?: string | null;
   collapsedBranchIds?: string[];
   showStartArrow?: boolean;
@@ -53,6 +53,9 @@ export function BranchEdge({
   const strokeColor = branch.color || '#38bdf8';
   const thickness = (branch.geometry?.thickness ?? 1) * 2;
   const selectedStrokeWidth = thickness + 6;
+  const parallelControlPoints = renderMode === 'parallel'
+    ? [offsetControlPoints(controlPoints, -5), offsetControlPoints(controlPoints, 5)]
+    : [];
 
   const handleHitAreaClick = useCallback(
     (e: React.PointerEvent<SVGPathElement>) =>
@@ -102,23 +105,44 @@ export function BranchEdge({
           data-testid={`timeline-branch-selection-${branch.id}`}
         />
       )}
+      {renderMode === 'parallel' ? (
+        <g data-testid={`timeline-branch-overlap-${branch.id}`}>
+          {parallelControlPoints.map((parallelPoints, index) => (
+            <path
+              key={index}
+              d={buildSVGPath(parallelPoints)}
+              fill="none"
+              stroke={strokeColor}
+              strokeWidth={thickness}
+              opacity={isSelected ? 1 : 0.85}
+              strokeLinecap="round"
+              markerStart={showStartArrow ? 'url(#branch-arrow)' : undefined}
+              markerEnd={showEndArrow ? 'url(#branch-arrow)' : undefined}
+              pointerEvents="none"
+              style={{ cursor: isDrawMode ? 'crosshair' : 'pointer' }}
+              data-testid={`timeline-branch-overlap-path-${branch.id}-${index}`}
+            />
+          ))}
+        </g>
+      ) : (
+        <path
+          d={pathD}
+          fill="none"
+          stroke={strokeColor}
+          strokeWidth={thickness}
+          opacity={isSelected ? 1 : renderMode === 'collapsed' ? 0.92 : 0.85}
+          strokeLinecap="round"
+          markerStart={showStartArrow ? 'url(#branch-arrow)' : undefined}
+          markerEnd={showEndArrow ? 'url(#branch-arrow)' : undefined}
+          pointerEvents="none"
+          style={{ cursor: isDrawMode ? 'crosshair' : 'pointer' }}
+          data-testid={`timeline-branch-path-${branch.id}`}
+        />
+      )}
       <path
         d={pathD}
         fill="none"
-        stroke={strokeColor}
-        strokeWidth={thickness}
-        opacity={isSelected ? 1 : renderMode === 'collapsed' ? 0.92 : 0.85}
-        strokeLinecap="round"
-        markerStart={showStartArrow ? 'url(#branch-arrow)' : undefined}
-        markerEnd={showEndArrow ? 'url(#branch-arrow)' : undefined}
-        pointerEvents="none"
-        style={{ cursor: isDrawMode ? 'crosshair' : 'pointer' }}
-        data-testid={`timeline-branch-path-${branch.id}`}
-      />
-      <path
-        d={pathD}
-        fill="none"
-        stroke="transparent"
+        stroke="var(--bg, #0f0f17)"
         strokeWidth={20}
         pointerEvents="stroke"
         onClick={handleHitAreaClick}

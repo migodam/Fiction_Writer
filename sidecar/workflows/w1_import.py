@@ -19,6 +19,7 @@ import hashlib
 import json
 import math
 import re
+import tempfile
 import uuid
 from json import JSONDecodeError
 from datetime import datetime, timezone
@@ -44,9 +45,11 @@ from sidecar.utils.lock import acquire_lock, release_lock, WorkflowBusyError
 from sidecar.workflows.w1_run_events import (
     BudgetPolicy,
     add_token_usage,
-    budget_allows_call,
+    authoritative_usage_ledger,
     configure_budget,
     record_call_usage,
+    release_call_reservation,
+    reserve_call_budget,
 )
 from sidecar.prompts.w1_prompts import (
     W1_EXTRACT_CHARACTERS,
@@ -417,23 +420,35 @@ async def _ainvoke_with_budget(
 ) -> Any:
     """Run one provider call with E0 budget guards around the actual I/O."""
     model = _llm_model_name(llm)
-    if session_id and not budget_allows_call(
-        session_id,
-        estimated_input_tokens=estimated_input_tokens,
-        estimated_output_tokens=estimated_output_tokens,
-        model=model,
-    ):
-        raise RuntimeError("budget_exhausted: preflight denied provider call")
-    async with _API_SEMAPHORE:
-        response = await llm.ainvoke(messages)
+    reservation_token = ""
+    if session_id:
+        reserved = reserve_call_budget(
+            session_id,
+            estimated_input_tokens=estimated_input_tokens,
+            estimated_output_tokens=estimated_output_tokens,
+            model=model,
+        )
+        if reserved is None:
+            raise RuntimeError("budget_exhausted: preflight denied provider call")
+        reservation_token = reserved
+    try:
+        async with _API_SEMAPHORE:
+            response = await llm.ainvoke(messages)
+    except Exception:
+        if session_id:
+            release_call_reservation(session_id, reservation_token)
+        raise
     if session_id:
         usage = _extract_llm_usage(response)
-        record_call_usage(
+        if not record_call_usage(
             session_id,
             usage[0] if usage else None,
             usage[1] if usage else None,
             model=model,
-        )
+            reservation_token=reservation_token,
+        ):
+            reason = authoritative_usage_ledger(session_id, model).get("budget_status", {}).get("reason", "budget_exhausted")
+            raise RuntimeError(f"budget_exhausted: postflight denied provider response ({reason})")
     return response
 
 
@@ -573,6 +588,196 @@ def _compact_character_card(entry: dict) -> dict:
         # Import should not hallucinate deep psychology; later action workflows enrich these.
         entry[field] = []
     return entry
+
+
+_CHARACTER_FALLBACK_EXPERIENCE_LIMIT = 3
+_WINDOW_PROVENANCE_NOTE_RE = re.compile(r"^\[window\s+[^\]]+\]\s*(.+)$", re.IGNORECASE)
+_CHARACTER_ACTION_STATE_MARKERS = (
+    "参加", "进入", "离开", "通过", "未能", "成为", "收为", "收下", "选中", "传授",
+    "教授", "学习", "开始", "救", "安排", "留下", "贿赂", "说服", "答应", "介绍",
+    "摘", "带", "住", "担任", "当过", "重视", "失去", "获得", "发现", "毫无进展", "允诺",
+    "joined", "entered", "left", "became", "selected", "taught", "learned", "rescued",
+)
+_CHARACTER_IDENTITY_ROLE_MARKERS = (
+    "主角", "供奉", "师父", "师长", "弟子", "医师", "大夫", "掌柜", "铁匠", "书童",
+    "农家", "村", "出身", "来自", "父", "母", "兄", "妹", "家族", "门", "组织",
+    "protagonist", "mentor", "doctor", "apprentice", "from ", "born ",
+)
+
+
+def _serialize_character_experience(character_id: str, *values: Any) -> list[dict[str, str]]:
+    """Normalize extractor experience aliases to the frontend character-row contract."""
+    serialized: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for value in values:
+        candidates = value if isinstance(value, list) else [value]
+        for candidate in candidates:
+            if isinstance(candidate, dict):
+                fact = str(
+                    candidate.get("fact")
+                    or candidate.get("text")
+                    or candidate.get("description")
+                    or ""
+                ).strip()
+                chapter = str(candidate.get("chapter") or candidate.get("chapter_hint") or "").strip()
+                evidence = str(candidate.get("evidence") or "").strip()
+                entry_id = str(candidate.get("id") or "").strip()
+            elif isinstance(candidate, str):
+                fact, chapter, evidence, entry_id = candidate.strip(), "", "", ""
+            else:
+                continue
+            if not fact:
+                continue
+            key = (chapter, fact, evidence)
+            if key in seen:
+                continue
+            seen.add(key)
+            row = {
+                "id": entry_id or f"{character_id}_experience_{len(serialized) + 1}",
+                "chapter": chapter,
+                "fact": fact,
+            }
+            if evidence:
+                row["evidence"] = evidence
+            serialized.append(row)
+    return serialized
+
+
+def _character_evidence_refs(entry: dict, profile_field_evidence: dict) -> list[str]:
+    """Return only existing evidence-card references; spans remain provenance metadata."""
+    refs: list[str] = []
+
+    def _append(value: Any) -> None:
+        values = value if isinstance(value, list) else [value]
+        for item in values:
+            if isinstance(item, str) and item.strip() and item.strip() not in refs:
+                refs.append(item.strip())
+
+    for field in ("experience", "experiences", "background"):
+        _append(profile_field_evidence.get(field, []))
+    _append(entry.get("evidence_refs", []))
+    _append(entry.get("evidenceRefs", []))
+    return refs
+
+
+def _character_source_span(entry: dict, profile_field_evidence: dict) -> dict | None:
+    """Find a complete SourceSpan already attached to the final character profile."""
+    required = {"raw_source_hash", "absolute_start", "absolute_end", "substring_hash"}
+
+    def _valid(value: Any) -> dict | None:
+        if isinstance(value, dict) and required.issubset(value):
+            return dict(value)
+        return None
+
+    for candidate in (entry.get("source_span"), entry.get("sourceSpan")):
+        span = _valid(candidate)
+        if span:
+            return span
+    for values in profile_field_evidence.values():
+        candidates = values if isinstance(values, list) else [values]
+        for candidate in candidates:
+            span = _valid(candidate)
+            if span:
+                return span
+    return None
+
+
+def _is_supported_major_character(entry: dict) -> bool:
+    importance = str(entry.get("importance") or entry.get("importImportance") or "").strip().lower()
+    group_key = str(entry.get("groupKey") or "").strip().lower()
+    return importance in {"core", "major", "main", "protagonist"} or "main character" in group_key
+
+
+def _action_or_state_note(note: Any) -> str:
+    """Keep only source-window action/state claims; trait-only notes never become experience."""
+    if not isinstance(note, str):
+        return ""
+    match = _WINDOW_PROVENANCE_NOTE_RE.match(note.strip())
+    if not match:
+        return ""
+    fact = re.split(r"[，,；;]\s*(?:体现|显示|表明|说明|可见|显得|反映|暗示)", match.group(1).strip(), maxsplit=1)[0].strip()
+    if not fact or fact.lower().startswith("open question:"):
+        return ""
+    lowered = fact.lower()
+    return fact if any(marker.lower() in lowered for marker in _CHARACTER_ACTION_STATE_MARKERS) else ""
+
+
+def _identity_or_role_background(entry: dict) -> str:
+    """Choose a literal identity/origin/role clause rather than a personality description."""
+    candidates = [entry.get("summary", ""), entry.get("role_in_story", ""), entry.get("roleInStory", "")]
+    for value in candidates:
+        if not isinstance(value, str):
+            continue
+        for clause in re.split(r"[。.!！?？；;，,]", value):
+            cleaned = clause.strip()
+            if cleaned and any(marker.lower() in cleaned.lower() for marker in _CHARACTER_IDENTITY_ROLE_MARKERS):
+                return cleaned
+    for note in entry.get("notes", []):
+        fact = _action_or_state_note(note)
+        if fact and any(marker.lower() in fact.lower() for marker in _CHARACTER_IDENTITY_ROLE_MARKERS):
+            return fact
+    return ""
+
+
+def _append_profile_field_provenance(
+    profile_field_evidence: dict,
+    field: str,
+    evidence_ref: str,
+    source_span: dict,
+) -> dict:
+    updated = {key: list(value) if isinstance(value, list) else [value] for key, value in profile_field_evidence.items()}
+    values = updated.setdefault(field, [])
+    if evidence_ref not in values:
+        values.append(evidence_ref)
+    if source_span not in values:
+        values.append(source_span)
+    return updated
+
+
+def _backfill_character_profile_at_write_boundary(character_id: str, entry: dict) -> tuple[list[dict[str, str]], str, dict]:
+    """Recover only evidence-bound final-card facts when upstream normalization is empty."""
+    experience = _serialize_character_experience(character_id, entry.get("experience", []), entry.get("experiences", []))
+    background = str(entry.get("background") or "").strip()
+    profile_field_evidence = entry.get("profile_field_evidence")
+    profile_field_evidence = dict(profile_field_evidence) if isinstance(profile_field_evidence, dict) else {}
+
+    evidence_refs = _character_evidence_refs(entry, profile_field_evidence)
+    source_span = _character_source_span(entry, profile_field_evidence)
+    if not evidence_refs or not source_span:
+        return experience, background, profile_field_evidence
+    evidence_ref = evidence_refs[0]
+
+    if not experience:
+        fallback_facts: list[str] = []
+        for note in entry.get("notes", []):
+            fact = _action_or_state_note(note)
+            if fact and fact not in fallback_facts:
+                fallback_facts.append(fact)
+            if len(fallback_facts) >= _CHARACTER_FALLBACK_EXPERIENCE_LIMIT:
+                break
+        if fallback_facts:
+            experience = _serialize_character_experience(
+                character_id,
+                [{"fact": fact, "evidence": evidence_ref} for fact in fallback_facts],
+            )
+            profile_field_evidence = _append_profile_field_provenance(
+                profile_field_evidence,
+                "experience",
+                evidence_ref,
+                source_span,
+            )
+
+    if not background and _is_supported_major_character(entry):
+        fallback_background = _identity_or_role_background(entry)
+        if fallback_background:
+            background = fallback_background
+            profile_field_evidence = _append_profile_field_provenance(
+                profile_field_evidence,
+                "background",
+                evidence_ref,
+                source_span,
+            )
+    return experience, background, profile_field_evidence
 
 
 def _resolve_character_id(reference: Any, registry: dict) -> str | None:
@@ -1293,6 +1498,35 @@ def _artifact_dir(project_path: str | Path, import_run_id: str) -> Path:
     return Path(project_path) / "system" / "imports" / import_run_id
 
 
+_RAW_SOURCE_EVIDENCE_FILENAME = "raw_source.txt"
+
+
+def _stage_raw_source_evidence(state: ImportState) -> Path:
+    """Atomically preserve the submitted source inside its project-local import run."""
+    source_path = Path(str(state["source_file_path"]))
+    source_bytes = source_path.read_bytes()
+    evidence_path = _artifact_dir(state["project_path"], str(state.get("import_run_id", ""))) / _RAW_SOURCE_EVIDENCE_FILENAME
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    if evidence_path.exists():
+        if evidence_path.read_bytes() != source_bytes:
+            raise ValueError("Raw source evidence is immutable for an existing import run")
+        return evidence_path
+    fd, temporary_path = tempfile.mkstemp(prefix=".raw_source_", suffix=".tmp", dir=evidence_path.parent)
+    try:
+        with os.fdopen(fd, "wb") as temporary_file:
+            temporary_file.write(source_bytes)
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+        os.replace(temporary_path, evidence_path)
+    except BaseException:
+        try:
+            os.unlink(temporary_path)
+        except FileNotFoundError:
+            pass
+        raise
+    return evidence_path
+
+
 def _write_import_artifact(project_path: str | Path, import_run_id: str, filename: str, payload: dict | list) -> str:
     directory = _artifact_dir(project_path, import_run_id)
     path = directory / filename
@@ -1300,6 +1534,34 @@ def _write_import_artifact(project_path: str | Path, import_run_id: str, filenam
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     return str(path)
+
+
+def persist_w1_usage_ledger(state: ImportState) -> dict[str, Any] | None:
+    """Persist the authoritative provider-usage ledger once an import run exists."""
+    project_path = state.get("project_path")
+    import_run_id = state.get("import_run_id") or state.get("import_run_manifest", {}).get("import_run_id")
+    session_id = str(state.get("session_id") or state.get("context", {}).get("session_id") or "")
+    if not project_path or not import_run_id or not session_id:
+        return None
+    model = str(state.get("context", {}).get("model") or state.get("model") or "")
+    ledger = authoritative_usage_ledger(session_id, model)
+    directory = _artifact_dir(project_path, import_run_id)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "usage_ledger.json"
+    temporary_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with open(temporary_path, "w", encoding="utf-8") as handle:
+            json.dump(ledger, handle, ensure_ascii=False, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+    except BaseException:
+        try:
+            temporary_path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+    return ledger
 
 
 def _chunk_cache_path(project_path: str | Path, import_run_id: str, chunk_id: int) -> Path:
@@ -2460,6 +2722,385 @@ def _build_evidence_cards(state: ImportState) -> list[dict]:
                 "raw": scene,
             })
     return cards
+
+
+def _build_supervisor_evidence_cards(state: ImportState | dict) -> dict:
+    """Build final-entity cards with hash-checked, claim-local raw-source snippets."""
+    import_run_id = str(state.get("import_run_id") or "import")
+    raw_source = str(state.get("source_text", "") or "")
+    if not raw_source:
+        source_path = Path(str(state.get("source_file_path", "") or ""))
+        if source_path.is_file():
+            raw_source = source_path.read_text(encoding="utf-8")
+    raw_source_hash = _sha256_text(raw_source) if raw_source else ""
+    windows = {str(window.get("id")): window for window in state.get("prompt_windows", []) if window.get("id")}
+    manifest_segments = {
+        str(segment.get("chunk_id")): segment
+        for segment in state.get("import_run_manifest", {}).get("segments", [])
+        if isinstance(segment, dict) and segment.get("chunk_id") is not None
+    }
+    registry = state.get("entity_registry", {}) or {}
+    updated_registry = {key: dict(value) if isinstance(value, dict) else value for key, value in registry.items()}
+    cards: list[dict] = []
+
+    def _card_id(kind: str, entity_id: str, window_id: str) -> str:
+        return _stable_id("evc", import_run_id, "supervisor", kind, entity_id, window_id)
+
+    def _source_metadata(window_id: str) -> dict:
+        window = windows.get(window_id, {})
+        chunk_ids = list(window.get("chunk_ids", []))
+        segments = [manifest_segments[str(chunk_id)] for chunk_id in chunk_ids if str(chunk_id) in manifest_segments]
+        span = _validated_span(window.get("source_span"))
+        if not span and raw_source and segments:
+            segment_spans = [_validated_span(segment.get("source_span")) for segment in segments]
+            if all(segment_spans) and len(segment_spans) == len(chunk_ids):
+                span = make_source_span(
+                    raw_source,
+                    min(segment_span["absolute_start"] for segment_span in segment_spans),
+                    max(segment_span["absolute_end"] for segment_span in segment_spans),
+                )
+        return {
+            "source_prompt_window_id": window_id,
+            "source_chunk_ids": chunk_ids,
+            "source_chunk_id": chunk_ids[0] if chunk_ids else None,
+            "source_segment_ids": [segment.get("id") for segment in segments if segment.get("id")],
+            "source_segment_id": segments[0].get("id") if len(segments) == 1 else "",
+            "source_span": span or {},
+        }
+
+    def _validated_span(span: object) -> dict | None:
+        if not isinstance(span, dict) or not raw_source:
+            return None
+        try:
+            start, end = int(span["absolute_start"]), int(span["absolute_end"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        if not (0 <= start < end <= len(raw_source)):
+            return None
+        excerpt = raw_source[start:end]
+        if span.get("raw_source_hash") != raw_source_hash or span.get("substring_hash") != _sha256_text(excerpt):
+            return None
+        return {"raw_source_hash": raw_source_hash, "absolute_start": start, "absolute_end": end, "substring_hash": _sha256_text(excerpt)}
+
+    def _values(value: object) -> list[str]:
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, list):
+            return [str(item) for item in value if isinstance(item, str) and item.strip()]
+        return []
+
+    def _claim_local_source(value: dict, kind: str, span: dict) -> tuple[str, dict] | None:
+        """Return a bounded source clause, preferring explicit evidence before names."""
+        start, end = span["absolute_start"], span["absolute_end"]
+        region = raw_source[start:end]
+        explicit = [
+            *(_values(value.get("evidence"))),
+            *(_values(value.get("notes"))),
+            str(value.get("summary") or value.get("description") or ""),
+        ]
+        names = _values(value.get("aliases")) + [
+            str(value.get("canonical_name") or value.get("name") or value.get("title") or ""),
+        ]
+        anchors = [re.sub(r"^\[window [^\]]+\]\s*", "", item).strip() for item in explicit]
+        # A character card's identity is a claim in its own right. Prefer it to
+        # a generated note so the bound snippet actually identifies the card.
+        if kind == "character":
+            anchors = [*names, *anchors]
+        else:
+            anchors.extend(names)
+
+        def _anchor_position(anchor: str) -> int:
+            position = region.find(anchor)
+            if position >= 0:
+                return position
+            # Generated summaries often paraphrase a source clause. Search all
+            # meaningful contiguous fragments, not just a summary prefix, but
+            # never emit text unless one of those fragments is in raw source.
+            normalized = re.sub(r"\s+", "", anchor)
+            max_width = min(24, len(normalized))
+            for width in range(max_width, 1, -1):
+                for offset in range(len(normalized) - width + 1):
+                    fragment = normalized[offset:offset + width]
+                    if len(re.sub(r"[^\w\u4e00-\u9fff]", "", fragment)) < 2:
+                        continue
+                    position = region.find(fragment)
+                    if position >= 0:
+                        return position
+            return -1
+
+        match_start = -1
+        for anchor in anchors:
+            if len(anchor) < 2:
+                continue
+            match_start = _anchor_position(anchor)
+            if match_start >= 0:
+                break
+        if match_start < 0:
+            return None
+        absolute = start + match_start
+        left = max(start, max(raw_source.rfind(mark, start, absolute) + 1 for mark in "\n。！？.!?"))
+        right_candidates = [raw_source.find(mark, absolute, end) for mark in "\n。！？.!?"]
+        right = min((point for point in right_candidates if point >= 0), default=end)
+        if right < end:
+            right += 1
+        if right - left > 480:
+            left = max(start, absolute - 160)
+            right = min(end, absolute + 320)
+        snippet = raw_source[left:right].strip()
+        if not snippet:
+            return None
+        local_start = raw_source.find(snippet, left, right)
+        local_end = local_start + len(snippet)
+        return snippet, {
+            "raw_source_hash": raw_source_hash,
+            "absolute_start": local_start,
+            "absolute_end": local_end,
+            "substring_hash": _sha256_text(raw_source[local_start:local_end]),
+        }
+
+    def _window_ids_for_item(item: dict) -> list[str]:
+        """Resolve candidate provenance to real prompt windows without inventing spans."""
+        explicit_ids = [
+            *[str(window_id) for window_id in (item.get("source_prompt_window_ids") or [])],
+            str(item.get("source_prompt_window_id") or ""),
+        ]
+        for note in _values(item.get("notes")):
+            explicit_ids.extend(re.findall(r"\[window\s+([^\]\s]+)", note))
+        chunk_ids = {
+            str(chunk_id)
+            for chunk_id in [
+                *(item.get("source_chunk_ids") or []),
+                item.get("source_chunk_id"),
+                item.get("chunk_id"),
+                item.get("first_seen_chunk"),
+            ]
+            if chunk_id is not None and str(chunk_id)
+        }
+        resolved: list[str] = []
+        for window_id, window in windows.items():
+            if window_id in explicit_ids:
+                resolved.append(window_id)
+                continue
+            if chunk_ids & {str(chunk_id) for chunk_id in window.get("chunk_ids", [])}:
+                resolved.append(window_id)
+                continue
+            chapter_text = " ".join(
+                str(item.get(key) or "")
+                for key in ("chapter_range", "chapterRange", "time")
+            )
+            chapter_labels = re.findall(r"第[一二三四五六七八九十百千0-9]+章", chapter_text)
+            if any(label in str(window.get("chapter_range") or "") for label in chapter_labels):
+                resolved.append(window_id)
+        resolved = list(dict.fromkeys(window_id for window_id in resolved if window_id in windows))
+        if resolved:
+            return resolved
+        # Final canonicalization can predate provenance fields. Recover only
+        # cards whose note/title can be anchored in a real prompt window below.
+        return list(windows)
+
+    def _append_cards(kind: str, items: dict) -> None:
+        for entity_id, value in items.items():
+            if not isinstance(value, dict):
+                continue
+            window_ids = _window_ids_for_item(value)
+            if not window_ids:
+                continue
+            refs: list[str] = []
+            seen_substrings: set[str] = set()
+            for window_id in window_ids:
+                source = _source_metadata(window_id)
+                span = _validated_span(source.get("source_span"))
+                if not span:
+                    continue
+                claim = _claim_local_source(value, kind, span)
+                if not claim:
+                    continue
+                snippet, source_span = claim
+                substring_hash = source_span["substring_hash"]
+                if substring_hash in seen_substrings:
+                    continue
+                seen_substrings.add(substring_hash)
+                card_id = _stable_id("evc", import_run_id, "supervisor", kind, entity_id, substring_hash)
+                segment_id = next((
+                    str(segment.get("id")) for segment in manifest_segments.values()
+                    if _validated_span(segment.get("source_span"))
+                    and int(segment["source_span"]["absolute_start"]) <= source_span["absolute_start"]
+                    and source_span["absolute_end"] <= int(segment["source_span"]["absolute_end"])
+                ), "")
+                refs.append(card_id)
+                cards.append({
+                    "id": card_id,
+                    "card_id": card_id,
+                    "entity_id": str(entity_id),
+                    "entityId": str(entity_id),
+                    "kind": kind,
+                    **source,
+                    "source_segment_id": segment_id,
+                    "source_span": source_span,
+                    "snippets": [snippet],
+                    "summary": str(value.get("summary") or value.get("description") or value.get("title") or value.get("canonical_name") or ""),
+                    "candidate_names": [str(value.get("canonical_name") or value.get("name") or value.get("title") or entity_id)],
+                    "candidate_ids": [str(entity_id)],
+                    "confidence": float(value.get("confidence", 0.7) or 0.7),
+                    "uncertainty": "",
+                    "raw": value,
+                })
+            item = dict(value)
+            item["evidence_refs"] = list(dict.fromkeys(refs))
+            if refs:
+                first_card = next(card for card in cards if card["card_id"] == refs[0])
+                item["source_span"] = first_card["source_span"]
+                item["source_segment_id"] = first_card["source_segment_id"]
+                item["source_chunk_id"] = first_card["source_chunk_id"]
+            else:
+                # Final canonical objects must never carry a stale window span into proposals.
+                item.pop("source_span", None)
+                item.pop("source_segment_id", None)
+                item.pop("source_chunk_id", None)
+            items[entity_id] = item
+
+    for kind, domain in (("character", "characters"), ("event", "events"), ("world", "world_detailed")):
+        items = dict(updated_registry.get(domain, {}) or {})
+        _append_cards(kind, items)
+        updated_registry[domain] = items
+
+    raw_relationships: list[dict] = []
+    for index, relationship in enumerate(state.get("raw_relationships", []) or []):
+        if not isinstance(relationship, dict):
+            continue
+        item = dict(relationship)
+        relationship_id = str(item.get("id") or _stable_id(
+            "relationship", item.get("source_character_name", ""), item.get("target_character_name", ""), index
+        ))
+        window_ids = _window_ids_for_item(item)
+        refs: list[str] = []
+        seen_substrings: set[str] = set()
+        for window_id in window_ids:
+            source = _source_metadata(window_id)
+            span = _validated_span(source.get("source_span"))
+            if not span:
+                continue
+            claim = _claim_local_source(item, "relationship", span)
+            if not claim:
+                continue
+            snippet, source_span = claim
+            substring_hash = source_span["substring_hash"]
+            if substring_hash in seen_substrings:
+                continue
+            seen_substrings.add(substring_hash)
+            card_id = _stable_id("evc", import_run_id, "supervisor", "relationship", relationship_id, substring_hash)
+            segment_id = next((
+                str(segment.get("id")) for segment in manifest_segments.values()
+                if _validated_span(segment.get("source_span"))
+                and int(segment["source_span"]["absolute_start"]) <= source_span["absolute_start"]
+                and source_span["absolute_end"] <= int(segment["source_span"]["absolute_end"])
+            ), "")
+            refs.append(card_id)
+            cards.append({
+                "id": card_id,
+                "card_id": card_id,
+                "entity_id": relationship_id,
+                "entityId": relationship_id,
+                "kind": "relationship",
+                **source,
+                "source_segment_id": segment_id,
+                "source_span": source_span,
+                "snippets": [snippet],
+                "summary": str(item.get("description", "")),
+                "candidate_names": [str(item.get("source_character_name", "")), str(item.get("target_character_name", ""))],
+                "candidate_ids": [str(item.get("source_candidate_id", "")), str(item.get("target_candidate_id", ""))],
+                "confidence": float(item.get("confidence", 0.7) or 0.7),
+                "uncertainty": "",
+                "raw": item,
+            })
+        item["id"] = relationship_id
+        item["evidence_refs"] = list(dict.fromkeys(refs))
+        if refs:
+            first_card = next(card for card in cards if card["card_id"] == refs[0])
+            item["source_span"] = first_card["source_span"]
+            item["source_segment_id"] = first_card["source_segment_id"]
+            item["source_chunk_id"] = first_card["source_chunk_id"]
+        else:
+            item.pop("source_span", None)
+            item.pop("source_segment_id", None)
+            item.pop("source_chunk_id", None)
+        raw_relationships.append(item)
+
+    return {
+        "entity_registry": updated_registry,
+        "raw_relationships": raw_relationships,
+        "evidence_cards": cards,
+    }
+
+
+def _finalize_registry_for_proposal_staging(state: ImportState | dict) -> dict:
+    """Apply the final deterministic character remap before review and proposal staging."""
+    original_registry = state.get("entity_registry", {}) or {}
+    registry = {
+        **original_registry,
+        "characters": {
+            cid: dict(entry) for cid, entry in (original_registry.get("characters", {}) or {}).items()
+            if isinstance(entry, dict)
+        },
+        "events": {
+            eid: dict(entry) for eid, entry in (original_registry.get("events", {}) or {}).items()
+            if isinstance(entry, dict)
+        },
+    }
+    relationships = [dict(item) if isinstance(item, dict) else item for item in state.get("relationships", []) or []]
+    characters = registry["characters"]
+    character_id_map = dict(registry.get("character_id_map", {}) or {})
+    by_identity: dict[str, str] = {}
+    importance_rank = {"core": 4, "major": 3, "supporting": 2, "minor": 1}
+
+    for cid, entry in list(characters.items()):
+        identities = [
+            _normal_key(entry.get("canonical_name") or entry.get("name") or ""),
+            *[_normal_key(alias) for alias in entry.get("aliases", []) if alias],
+        ]
+        primary_id = next((by_identity[key] for key in identities if key and key in by_identity), "")
+        if not primary_id:
+            for key in identities:
+                if key:
+                    by_identity.setdefault(key, cid)
+            continue
+        primary = characters[primary_id]
+        for key in ("aliases", "notes", "open_questions", "tag_ids", "evidence_refs", "source_prompt_window_ids", "source_chunk_ids", "source_segment_ids"):
+            primary[key] = list(dict.fromkeys([*(primary.get(key) or []), *(entry.get(key) or [])]))
+        primary["aliases"] = list(dict.fromkeys([
+            *primary["aliases"], entry.get("canonical_name") or entry.get("name") or "",
+        ]))
+        primary["summary"] = _merge_text_field(primary.get("summary", ""), entry.get("summary", ""))
+        primary["confidence"] = max(float(primary.get("confidence", 0.7) or 0.7), float(entry.get("confidence", 0.7) or 0.7))
+        if importance_rank.get(str(entry.get("importance", "")), 0) > importance_rank.get(str(primary.get("importance", "")), 0):
+            primary["importance"] = entry.get("importance")
+            primary["groupKey"] = entry.get("groupKey", primary.get("groupKey", ""))
+        character_id_map[cid] = primary_id
+        del characters[cid]
+
+    def _map_character_ids(ids: list) -> list:
+        return list(dict.fromkeys([character_id_map.get(cid, cid) for cid in ids if cid]))
+
+    for event in registry["events"].values():
+        event["character_ids"] = _map_character_ids(event.get("character_ids", []))
+        event["participantCharacterIds"] = _map_character_ids(event.get("participantCharacterIds", []))
+    for relationship in relationships:
+        if isinstance(relationship, dict):
+            relationship["sourceId"] = character_id_map.get(relationship.get("sourceId", ""), relationship.get("sourceId", ""))
+            relationship["targetId"] = character_id_map.get(relationship.get("targetId", ""), relationship.get("targetId", ""))
+
+    registry["character_id_map"] = character_id_map
+    return {"entity_registry": registry, "relationships": relationships}
+
+
+def _finalize_supervisor_evidence_bindings(state: ImportState | dict) -> dict:
+    """Rebuild evidence after canonical remaps so reviewer refs resolve to final entities."""
+    if not (state.get("use_supervisor") or state.get("context", {}).get("use_supervisor")):
+        return {}
+    update = _build_supervisor_evidence_cards(state)
+    if state.get("project_path") and state.get("import_run_id"):
+        _write_import_artifact(state["project_path"], state["import_run_id"], "evidence_cards.json", update["evidence_cards"])
+    return update
 
 
 # ── LLM helper ──────────────────────────────────────────────────────────────────
@@ -4036,6 +4677,10 @@ def _reviewer_proposals_from_state(state: ImportState | dict) -> list[dict]:
                 "background": character.get("background", ""),
                 "aliases": character.get("aliases", []),
                 "importance": character.get("importance", ""),
+                "evidence_refs": character.get("evidence_refs", []),
+                "source_span": character.get("source_span"),
+                "source_segment_id": character.get("source_segment_id", ""),
+                "source_chunk_id": character.get("source_chunk_id"),
             },
         })
 
@@ -4085,12 +4730,15 @@ def _reviewer_proposals_from_state(state: ImportState | dict) -> list[dict]:
 
 
 async def node_review_import(state: ImportState) -> dict:
-    """Validate compiler outputs before proposal writes."""
-    registry = state.get("entity_registry", {})
+    """Validate pre-proposal compiler outputs; final proposal receipts are not available yet."""
+    # Review the same deterministic entity set that proposal staging will write.
+    finalized_state = {**state, **_finalize_registry_for_proposal_staging(state)}
+    finalized_state = {**finalized_state, **_finalize_supervisor_evidence_bindings(finalized_state)}
+    registry = finalized_state.get("entity_registry", {})
     reducer = state.get("reducer_artifact", {})
     timeline = state.get("timeline_architecture", {})
     warnings: list[str] = list(reducer.get("warnings", [])) + list(timeline.get("warnings", []))
-    errors: list[str] = list(state.get("errors", []))
+    errors: list[str] = list(finalized_state.get("errors", []))
     low_confidence_items: list[dict] = []
 
     for cid, character in registry.get("characters", {}).items():
@@ -4107,16 +4755,17 @@ async def node_review_import(state: ImportState) -> dict:
         if float(event.get("confidence", 0.7)) < 0.65:
             low_confidence_items.append({"entity_type": "timeline_event", "id": eid, "confidence": event.get("confidence", 0.7)})
 
-    manuscript_chapters = state.get("manuscript_chapters", [])
+    manuscript_chapters = finalized_state.get("manuscript_chapters", [])
     observability: dict = {
+        "observability_phase": "pre_proposal",
         "characters_extracted": len([c for c in registry.get("characters", {}).values() if not c.get("skip_create")]),
         "events_extracted": len(registry.get("events", {})),
         "world_items_extracted": len(registry.get("world_detailed", {})),
-        "relationships_extracted": len(state.get("relationships", [])),
-        "manuscript_chapters_count": len(manuscript_chapters),
-        "manuscript_written": bool(manuscript_chapters),
+        "relationships_preproposal_count": len(finalized_state.get("relationships", [])),
+        "manuscript_chapters_preproposal_count": len(manuscript_chapters),
+        "manuscript_staging_pending": True,
         "canonical_events_count": len(timeline.get("canonical_events", [])),
-        "branch_count": len(state.get("timeline_branches", [])),
+        "branch_count": len(finalized_state.get("timeline_branches", [])),
         "duplicate_count": len(timeline.get("discarded_duplicates", [])),
         "topology_warning_count": len(timeline.get("warnings", [])),
     }
@@ -4128,9 +4777,9 @@ async def node_review_import(state: ImportState) -> dict:
         from sidecar.supervisor.reviewers.consistency_reviewer import ConsistencyReviewer
 
         reviewer_state = {
-            **state,
-            "proposals": _reviewer_proposals_from_state(state),
-            "inbox_proposals": _reviewer_proposals_from_state(state),
+            **finalized_state,
+            "proposals": _reviewer_proposals_from_state(finalized_state),
+            "inbox_proposals": _reviewer_proposals_from_state(finalized_state),
         }
         reviewer_reports = {
             "quality": QualityReviewer().review(reviewer_state),
@@ -4178,13 +4827,20 @@ async def node_review_import(state: ImportState) -> dict:
         "low_confidence_items": low_confidence_items,
         "reviewer_reports": reviewer_reports,
     }
-    if state.get("import_run_id"):
-        _write_import_artifact(state["project_path"], state["import_run_id"], "review_report.json", report)
-    return {"import_review_report": report, "errors": errors, "progress": max(float(state.get("progress", 0.91)), 0.92)}
+    if finalized_state.get("import_run_id"):
+        _write_import_artifact(finalized_state["project_path"], finalized_state["import_run_id"], "review_report.json", report)
+    return {
+        "entity_registry": registry,
+        "relationships": finalized_state.get("relationships", []),
+        "evidence_cards": finalized_state.get("evidence_cards", state.get("evidence_cards", [])),
+        "import_review_report": report,
+        "errors": errors,
+        "progress": max(float(finalized_state.get("progress", 0.91)), 0.92),
+    }
 
 
 def _write_manuscript_json(project_path: Path, state: ImportState, manuscript_chapters: list[dict]) -> None:
-    """Persist imported manuscript text before slow proposal writes begin."""
+    """Legacy canonical manuscript writer; proposal mode stages content instead of calling this."""
     manuscript_path = project_path / "manuscript.json"
     _ms_now = datetime.now(timezone.utc).isoformat()
     with open(manuscript_path, "w", encoding="utf-8") as _ms_f:
@@ -4358,8 +5014,17 @@ def _stage_manuscript_projection(
 
 
 async def node_write_to_project(state: ImportState) -> dict:
-    """Write entities to project, push proposals, write manuscript.json, trigger W2 post_import."""
+    """Create W1 proposals, stage manuscript content, and trigger W2 post-import work."""
     import gc as _gc
+    finalized_staging = _finalize_registry_for_proposal_staging(state)
+    # Proposal writing progressively pops entities to bound memory. Preserve that
+    # long-standing mutation contract while replacing it with the final snapshot.
+    original_registry = state.get("entity_registry")
+    if isinstance(original_registry, dict):
+        original_registry.clear()
+        original_registry.update(finalized_staging["entity_registry"])
+        finalized_staging["entity_registry"] = original_registry
+    state = {**state, **finalized_staging}
     project_path = Path(state["project_path"])
     registry = state.get("entity_registry", {})
     manuscript_chapters = state.get("manuscript_chapters", [])
@@ -4369,6 +5034,8 @@ async def node_write_to_project(state: ImportState) -> dict:
     timeline_branches = state.get("timeline_branches", [])
     source_language = state.get("source_language", "en")
     import_run_id = str(state.get("import_run_id", "") or "")
+    raw_source_evidence_path = _stage_raw_source_evidence(state)
+    staged_state = {**state, "source_file_path": str(raw_source_evidence_path)}
     world_containers = list(state.get("world_containers", []))
     existing_container_keys = {
         str(container.get("importCategoryKey", "")).strip()
@@ -4401,60 +5068,13 @@ async def node_write_to_project(state: ImportState) -> dict:
                 "title": str(chapter.get("title") or "Untitled Chapter"),
                 "summary": str(chapter.get("summary") or _chapter_summary_fallback(str(chapter.get("title") or "Chapter"), content)),
                 "goal": str(chapter.get("goal") or _chapter_goal_fallback(source_language)),
-                "notes": str(chapter.get("notes") or _chapter_notes_fallback(state.get("source_file_path"), list(chapter.get("chunk_ids", [])))),
+                "notes": str(chapter.get("notes") or _chapter_notes_fallback(staged_state["source_file_path"], list(chapter.get("chunk_ids", [])))),
                 "orderIndex": index,
                 "content": content,
             },
             chapter,
         ))
-    _stage_manuscript_projection(state, preaccept_pairs, source_language)
-
-    def _dedupe_registry_characters_for_write() -> None:
-        characters = registry.get("characters", {})
-        if not isinstance(characters, dict):
-            return
-        character_id_map = registry.setdefault("character_id_map", {})
-        by_identity: dict[str, str] = {}
-        importance_rank = {"core": 4, "major": 3, "supporting": 2, "minor": 1}
-        for cid, entry in list(characters.items()):
-            identities = [
-                _normal_key(entry.get("canonical_name") or entry.get("name") or ""),
-                *[_normal_key(alias) for alias in entry.get("aliases", []) if alias],
-            ]
-            primary_id = next((by_identity[key] for key in identities if key and key in by_identity), "")
-            if not primary_id:
-                for key in identities:
-                    if key:
-                        by_identity.setdefault(key, cid)
-                continue
-            primary = characters[primary_id]
-            primary["aliases"] = list(dict.fromkeys([
-                *primary.get("aliases", []),
-                *entry.get("aliases", []),
-                entry.get("canonical_name") or entry.get("name") or "",
-            ]))
-            primary["summary"] = _merge_text_field(primary.get("summary", ""), entry.get("summary", ""))
-            primary["notes"] = list(dict.fromkeys([*primary.get("notes", []), *entry.get("notes", [])]))
-            primary["open_questions"] = list(dict.fromkeys([*primary.get("open_questions", []), *entry.get("open_questions", [])]))
-            primary["tag_ids"] = list(dict.fromkeys([*primary.get("tag_ids", []), *entry.get("tag_ids", [])]))
-            primary["confidence"] = max(float(primary.get("confidence", 0.7) or 0.7), float(entry.get("confidence", 0.7) or 0.7))
-            if importance_rank.get(str(entry.get("importance", "")), 0) > importance_rank.get(str(primary.get("importance", "")), 0):
-                primary["importance"] = entry.get("importance")
-                primary["groupKey"] = entry.get("groupKey", primary.get("groupKey", ""))
-            character_id_map[cid] = primary_id
-            del characters[cid]
-
-        def _map_character_ids(ids: list) -> list:
-            return list(dict.fromkeys([character_id_map.get(cid, cid) for cid in ids if cid]))
-
-        for event in registry.get("events", {}).values():
-            event["character_ids"] = _map_character_ids(event.get("character_ids", []))
-            event["participantCharacterIds"] = _map_character_ids(event.get("participantCharacterIds", []))
-        for relationship in relationships:
-            relationship["sourceId"] = character_id_map.get(relationship.get("sourceId", ""), relationship.get("sourceId", ""))
-            relationship["targetId"] = character_id_map.get(relationship.get("targetId", ""), relationship.get("targetId", ""))
-
-    _dedupe_registry_characters_for_write()
+    _stage_manuscript_projection(staged_state, preaccept_pairs, source_language)
 
     character_event_links: dict[str, list[str]] = {}
     for event_id, event in registry.get("events", {}).items():
@@ -4529,6 +5149,7 @@ async def node_write_to_project(state: ImportState) -> dict:
                 errors.append(f"Failed to propose character merge {cid}->{existing_id}: {str(e)}")
             continue
         entry = _compact_character_card(dict(entry))
+        experience, background, profile_field_evidence = _backfill_character_profile_at_write_boundary(cid, entry)
         op = {
             "op_type": "create",
             "entity_type": "character",
@@ -4538,13 +5159,14 @@ async def node_write_to_project(state: ImportState) -> dict:
                 "name": entry.get("canonical_name", ""),
                 "aliases": entry.get("aliases", []),
                 "summary": entry.get("summary", "") or " ".join(entry.get("notes", [])[:2]),
-                "background": entry.get("background", ""),
+                "background": background,
                 "traits": entry.get("personality_traits", []),
                 "goals": [],
                 "fears": [],
                 "secrets": [],
                 "speechStyle": "",
                 "arc": "",
+                "experience": experience,
                 "tagIds": entry.get("tag_ids", []),
                 "linkedEventIds": character_event_links.get(cid, []),
                 "roleInStory": entry.get("role_in_story", ""),
@@ -4557,9 +5179,13 @@ async def node_write_to_project(state: ImportState) -> dict:
                 "importRunId": import_run_id,
                 "importImportance": entry.get("importance", ""),
                 "importCardType": "draft",
+                "evidenceRefs": entry.get("evidence_refs", []),
+                "sourceSpan": entry.get("source_span"),
+                "sourceSegmentId": entry.get("source_segment_id", ""),
                 "enrichmentRecommended": bool(entry.get("open_questions")),
                 "importance": entry.get("importance", "supporting") or "supporting",
                 "groupKey": entry.get("groupKey", IMPORTANCE_TO_GROUP.get(entry.get("importance", ""), "")) or "",
+                **({"profile_field_evidence": profile_field_evidence} if profile_field_evidence else {}),
             },
             "source_workflow": "W1_import",
             "confidence": 0.75,
@@ -4724,6 +5350,9 @@ async def node_write_to_project(state: ImportState) -> dict:
                 "importRunId": import_run_id,
                 "mergedEventIds": entry.get("mergedEventIds", []),
                 "layoutHints": entry.get("layoutHints", {}),
+                "evidenceRefs": entry.get("evidence_refs", []),
+                "sourceSpan": entry.get("source_span"),
+                "sourceSegmentId": entry.get("source_segment_id", ""),
             },
             "source_workflow": "W1_import",
             "confidence": 0.75,
@@ -4951,7 +5580,7 @@ async def node_write_to_project(state: ImportState) -> dict:
                 "title": title,
                 "summary": summary,
                 "goal": goal,
-                "notes": f"Imported from: {state.get('source_file_path', '')}; chunks: {', '.join(map(str, mc.get('chunk_ids', [])))}",
+                "notes": f"Imported from: {staged_state['source_file_path']}; chunks: {', '.join(map(str, mc.get('chunk_ids', [])))}",
                 "orderIndex": idx,
                 "content": manuscript_content,
             },
@@ -4960,7 +5589,7 @@ async def node_write_to_project(state: ImportState) -> dict:
 
     # Stage the deterministic manuscript projection. Canonical manuscript files
     # are written only by the proposal-acceptance path, never by W1 extraction.
-    staged_manuscript_projection = _stage_manuscript_projection(state, manuscript_scene_pairs, source_language)
+    staged_manuscript_projection = _stage_manuscript_projection(staged_state, manuscript_scene_pairs, source_language)
 
     # Phase 3: chapter proposals
     for chapter_info, mc in manuscript_scene_pairs:
@@ -6474,6 +7103,7 @@ async def run_streaming(project_path: str, config: dict):
         "prompt_profile": prompt_profile,
         "context": {**config.get("context", {}), "session_id": session_id, "budget_policy": config.get("budget_policy")},
         "session_id": session_id,
+        "import_run_id": config.get("import_run_id", ""),
         "chunks": [],
         "import_run_manifest": {},
         "evidence_cards": [],

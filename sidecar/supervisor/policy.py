@@ -36,11 +36,15 @@ from sidecar.supervisor.prompt_policy import (
     prompt_policy_decision,
 )
 from sidecar.supervisor.organizer import OrganizerInput, organize_project_content
+from sidecar.supervisor.timeline_density import enforce_timeline_density
 from sidecar.supervisor.tool_registry import build_tool_registry
 from sidecar.workflows.w1_import import (
+    _build_supervisor_evidence_cards,
     _chunk_progress,
+    _merge_cross_validation_artifacts,
     _write_import_artifact,
     configure_w1_budget,
+    persist_w1_usage_ledger,
     node_split_chunks,
     node_validate_file,
 )
@@ -87,12 +91,101 @@ def _cancel_requested(state: ImportSupervisorState) -> bool:
 
 def _merge_registries(base: dict, update: dict) -> dict:
     """Union entity_registry sub-dicts. Base keys win — earlier windows are not clobbered."""
+    def _merge_entity_maps(base_items: dict, update_items: dict) -> dict:
+        merged = {**update_items, **base_items}
+        for entity_id in set(base_items) & set(update_items):
+            earlier = base_items[entity_id]
+            later = update_items[entity_id]
+            if not isinstance(earlier, dict) or not isinstance(later, dict):
+                continue
+            item = {**later, **earlier}
+            for key in ("evidence_refs", "source_prompt_window_ids", "source_chunk_ids", "source_segment_ids"):
+                item[key] = list(dict.fromkeys([
+                    *earlier.get(key, []),
+                    *later.get(key, []),
+                ]))
+            merged[entity_id] = item
+        return merged
+
     return {
-        "characters":     {**update.get("characters", {}),     **base.get("characters", {})},
-        "events":         {**update.get("events", {}),         **base.get("events", {})},
-        "world":          {**update.get("world", {}),          **base.get("world", {})},
-        "world_detailed": {**update.get("world_detailed", {}), **base.get("world_detailed", {})},
+        "characters": _merge_entity_maps(base.get("characters", {}), update.get("characters", {})),
+        "events": _merge_entity_maps(base.get("events", {}), update.get("events", {})),
+        "world": _merge_entity_maps(base.get("world", {}), update.get("world", {})),
+        "world_detailed": _merge_entity_maps(base.get("world_detailed", {}), update.get("world_detailed", {})),
     }
+
+
+def _with_window_provenance(
+    state: ImportSupervisorState,
+    result: dict,
+    window_id: str,
+) -> dict:
+    """Annotate candidates created by one prompt window without changing extraction tools."""
+    window = next((item for item in state.get("prompt_windows", []) if item.get("id") == window_id), {})
+    if not window:
+        return result
+
+    base_registry = state.get("entity_registry", {})
+    result_registry = result.get("entity_registry")
+    if not isinstance(result_registry, dict):
+        return result
+
+    annotated_registry = {key: dict(value) if isinstance(value, dict) else value for key, value in result_registry.items()}
+    for domain in ("characters", "events", "world", "world_detailed"):
+        base_items = base_registry.get(domain, {}) or {}
+        updated_items = annotated_registry.get(domain, {}) or {}
+        if not isinstance(updated_items, dict):
+            continue
+        for entity_id, value in list(updated_items.items()):
+            if not isinstance(value, dict) or base_items.get(entity_id) == value:
+                continue
+            item = dict(value)
+            item["source_prompt_window_ids"] = list(dict.fromkeys([
+                *item.get("source_prompt_window_ids", []), window_id,
+            ]))
+            item["source_chunk_ids"] = list(dict.fromkeys([
+                *item.get("source_chunk_ids", []), *window.get("chunk_ids", []),
+            ]))
+            updated_items[entity_id] = item
+
+    existing_relationship_count = len(state.get("raw_relationships", []))
+    raw_relationships = list(result.get("raw_relationships", []))
+    for relationship in raw_relationships[existing_relationship_count:]:
+        if not isinstance(relationship, dict):
+            continue
+        relationship["source_prompt_window_ids"] = list(dict.fromkeys([
+            *relationship.get("source_prompt_window_ids", []), window_id,
+        ]))
+        relationship["source_chunk_ids"] = list(dict.fromkeys([
+            *relationship.get("source_chunk_ids", []), *window.get("chunk_ids", []),
+        ]))
+
+    return {**result, "entity_registry": annotated_registry, "raw_relationships": raw_relationships}
+
+
+def _persist_supervisor_evidence_cards(state: ImportSupervisorState) -> ImportSupervisorState:
+    """Materialize non-canonical reviewer evidence before the supervisor QA pass."""
+    evidence_update = _build_supervisor_evidence_cards(state)
+    updated_state = {**state, **evidence_update}
+    project_path = updated_state.get("project_path")
+    import_run_id = updated_state.get("import_run_id")
+    if project_path and import_run_id:
+        _write_import_artifact(project_path, import_run_id, "evidence_cards.json", updated_state["evidence_cards"])
+    return updated_state
+
+
+def _prepare_reviewer_staging_state(state: ImportSupervisorState) -> ImportSupervisorState:
+    """Expose deterministic manuscript staging inputs to pre-proposal reviewers."""
+    projection = state.get("staged_manuscript_projection") or state.get("stagedManuscriptProjection") or {}
+    chapters = projection.get("chapters", []) if isinstance(projection, dict) else []
+    nodes = projection.get("nodes", []) if isinstance(projection, dict) else []
+    source = "staged_projection" if chapters else "manuscript_chapters"
+    if not chapters:
+        chapters = state.get("manuscript_chapters") or []
+    if not chapters:
+        chapters = [chunk for chunk in (state.get("chunks") or []) if isinstance(chunk, dict) and (chunk.get("content") or chunk.get("text"))]
+        source = "chunk_projection_inputs"
+    return {**state, "reviewer_staged_projection_metrics": {"phase": "preproposal", "source": source, "inputs_present": bool(chapters), "chapter_count": len(chapters), "node_count": len(nodes) if nodes else len(chapters) * 2}}
 
 
 def _merge_window_result(state: ImportSupervisorState, result: dict) -> ImportSupervisorState:
@@ -115,6 +208,9 @@ def _merge_window_result(state: ImportSupervisorState, result: dict) -> ImportSu
             state.get("entity_registry", {}), result.get("entity_registry", {})
         ),
         "raw_relationships": list(state.get("raw_relationships", [])) + list(result.get("raw_relationships", [])),
+        "cross_validation": _merge_cross_validation_artifacts(
+            state.get("cross_validation"), result.get("cross_validation"), str(state.get("import_run_id", ""))
+        ),
         "window_metrics": {**state.get("window_metrics", {}), **result.get("window_metrics", {})},
         "supervisor_decisions": new_decisions,
         "supervisor_log": new_log,
@@ -794,6 +890,7 @@ async def _apply_thematic_reruns(
         state = {**state, **repair_update, "current_stage": "minor_repair"}
         arch_update = await tools["architect_timeline"](state)
         state = {**state, **arch_update, "current_stage": "architect_timeline"}
+        state = _prepare_reviewer_staging_state(enforce_timeline_density(state))
         qa_update = await tools["qa_review"](state)
         state = {**state, **qa_update, "current_stage": "qa_review"}
         state = await _run_judge_import(state, tools)
@@ -910,11 +1007,12 @@ async def run_supervisor_policy(
         batch = windows[batch_start: batch_start + batch_size]
         tasks = [_process_window(state, tools, w["id"], profile_config, tool_operating_spec) for w in batch]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        for result in results:
+        for window, result in zip(batch, results):
             if isinstance(result, Exception):
                 errs = list(state.get("errors", [])) + [str(result)]
                 state = {**state, "errors": errs}
             else:
+                result = _with_window_provenance(state, result, str(window.get("id", "")))
                 state = _merge_window_result(state, result)
                 if result.get("budget_exhausted"):
                     state = {**state, "budget_exhausted": True}
@@ -964,9 +1062,13 @@ async def run_supervisor_policy(
         source_language=state.get("source_language", "zh"),
     )
     _org_out = organize_project_content(_org_input)
+    _organized_world_items = _org_out["world_items"]
     state = {**state, "entity_registry": {
         **state.get("entity_registry", {}),
-        "world_detailed": {item["name"]: item for item in _org_out["world_items"]},
+        # Proposal staging consumes the flat world index, so it must be rebuilt
+        # from the same final organizer survivors as the detailed registry.
+        "world": {item["name"]: item["category"] for item in _organized_world_items},
+        "world_detailed": {item["name"]: item for item in _organized_world_items},
     }}
     _project_path = state.get("project_path", "")
     _import_run_id = state.get("import_run_id", "")
@@ -981,11 +1083,13 @@ async def run_supervisor_policy(
         state, "minor_repair", "minor_repair", "deterministic repair pass",
         {}, {}, "repair",
     )
+    state = _persist_supervisor_evidence_cards(state)
 
     # ── 5. Architect timeline ────────────────────────────────────────────────
     state = _with_status(state, current_tool="architect_timeline", orchestrator_phase="architecting")
     arch_update = await tools["architect_timeline"](state)
     state = {**state, **arch_update, "current_stage": "architect_timeline"}
+    state = _prepare_reviewer_staging_state(enforce_timeline_density(state))
     state = _record_decision(
         state, "architect_timeline", "architect_timeline", "build timeline structure",
         {}, {}, "proceed",
@@ -1058,10 +1162,10 @@ async def run_supervisor_streaming(
     profile_config = dict(PROFILE_CONFIGS.get(profile, PROFILE_CONFIGS["balanced"]))
     if isinstance(config.get("profile_config"), dict):
         profile_config.update(config["profile_config"])
-    session_id = config.get("session_id", "")
+    session_id = str(config.get("session_id") or config.get("context", {}).get("session_id") or "")
     configure_w1_budget(config, str(session_id or ""))
 
-    import_run_id = f"sup_{uuid.uuid4().hex[:10]}"
+    import_run_id = str(config.get("import_run_id") or f"sup_{uuid.uuid4().hex[:10]}")
 
     state: ImportSupervisorState = {
         "project_path": project_path,
@@ -1156,6 +1260,7 @@ async def run_supervisor_streaming(
         _emit_activity(state, phase="windowing", tool="split_chunks", status="start", message="Splitting manuscript and building prompt windows.")
         split_result = await node_split_chunks(state)
         state = {**state, **split_result}
+        persist_w1_usage_ledger(state)
         total_chunks = len(state.get("chunks", []))
         _chunk_progress[project_path] = {"completed": 0, "total": total_chunks}
         _emit_activity(
@@ -1215,6 +1320,7 @@ async def run_supervisor_streaming(
             _emit(1.0, "budget_stop", state.get("errors", []))
             return
         state = await _apply_initial_planner_action(state, tools, planner_action)
+        persist_w1_usage_ledger(state)
         planner_consumed_segment_manifest = state.get("current_stage") == "segment_manifest"
         profile_config_local = state.get("profile_config") or profile_config
         tool_operating_spec_local = state.get("tool_operating_spec", {})
@@ -1226,6 +1332,7 @@ async def run_supervisor_streaming(
             seg_update = await tools["segment_manifest"](state)
             state = {**state, **seg_update, "current_stage": "segment_manifest"}
             _emit_activity(state, phase="planning", tool="segment_manifest", status="success", message="Segment manifest ready.")
+            persist_w1_usage_ledger(state)
         _emit(_PROGRESS_SEGMENT_MANIFEST, "segment_manifest")
 
         # Extract windows (batches of 3, progress linearly from 0.10 → 0.65)
@@ -1235,6 +1342,7 @@ async def run_supervisor_streaming(
         window_idx = 0
         for batch_start in range(0, len(windows_local), batch_size):
             if state.get("budget_exhausted") or _cancel_requested(state):
+                persist_w1_usage_ledger(state)
                 break
             batch = windows_local[batch_start: batch_start + batch_size]
             _emit_activity(
@@ -1277,6 +1385,7 @@ async def run_supervisor_streaming(
                 total=total_w,
             )
             if state.get("budget_exhausted") or _cancel_requested(state):
+                persist_w1_usage_ledger(state)
                 break
             progress = _PROGRESS_EXTRACT_START + (_PROGRESS_EXTRACT_END - _PROGRESS_EXTRACT_START) * (window_idx / total_w)
             _chunk_progress[project_path] = {"completed": window_idx, "total": total_w}
@@ -1284,6 +1393,7 @@ async def run_supervisor_streaming(
 
         state = {**state, "current_stage": "extract_windows"}
         if _cancel_requested(state):
+            persist_w1_usage_ledger(state)
             _emit_activity(state, phase="cancelled", tool="workflow", status="cancelled", level="warning", message="Import cancelled after extraction loop.")
             return
 
@@ -1315,9 +1425,13 @@ async def run_supervisor_streaming(
             source_language=state.get("source_language", "zh"),
         )
         _org_out_s = organize_project_content(_org_input_s)
+        _organized_world_items_s = _org_out_s["world_items"]
         state = {**state, "entity_registry": {
             **state.get("entity_registry", {}),
-            "world_detailed": {item["name"]: item for item in _org_out_s["world_items"]},
+            # Keep the streaming proposal path aligned with the organizer's
+            # final survivors; node_write_to_project iterates this flat index.
+            "world": {item["name"]: item["category"] for item in _organized_world_items_s},
+            "world_detailed": {item["name"]: item for item in _organized_world_items_s},
         }}
         _project_path_s = state.get("project_path", "")
         _import_run_id_s = state.get("import_run_id", "")
@@ -1331,6 +1445,7 @@ async def run_supervisor_streaming(
         repair_update = await tools["minor_repair"](state)
         state = {**state, **repair_update, "current_stage": "minor_repair"}
         _emit_activity(state, phase="repairing", tool="minor_repair", status="success", message="Deterministic repair complete.")
+        state = _persist_supervisor_evidence_cards(state)
         yield _PROGRESS_REDUCE_REPAIR, "reduce_repair", state.get("errors", [])
 
         # Architect
@@ -1338,6 +1453,7 @@ async def run_supervisor_streaming(
         _emit_activity(state, phase="architecting", tool="architect_timeline", status="start", message="Architecting timeline topology.")
         arch_update = await tools["architect_timeline"](state)
         state = {**state, **arch_update, "current_stage": "architect_timeline"}
+        state = _prepare_reviewer_staging_state(enforce_timeline_density(state))
         _emit_activity(state, phase="architecting", tool="architect_timeline", status="success", message="Timeline architecture complete.")
         yield _PROGRESS_ARCHITECT, "architect_timeline", state.get("errors", [])
 
@@ -1403,6 +1519,7 @@ async def run_supervisor_streaming(
         yield _emit(progress, node, errors)
 
     _ja = state.get("judge_artifact") or {}
+    persist_w1_usage_ledger(state)
     state = _with_status(
         state,
         current_tool="proposal_write",

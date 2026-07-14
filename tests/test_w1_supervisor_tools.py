@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from sidecar.models.state import PROFILE_CONFIGS, ImportSupervisorState, plan_orchestrator_targets
@@ -13,6 +15,7 @@ from sidecar.supervisor.tools import (
     extract_window,
     cross_validate_window,
     minor_repair,
+    proposal_write,
     judge_import,
     qa_review,
     reduce_entities,
@@ -427,6 +430,293 @@ class TestReduceEntities(unittest.TestCase):
         log = " ".join(result.get("supervisor_log", []))
         # char_001 is missing groupKey (char_002 has it)
         self.assertIn("1 missing groupKey", log)
+
+    def test_merges_cross_window_characters_by_evidence_alias_and_stable_key(self):
+        registry = {
+            "characters": {
+                "char_random_han_1": {
+                    "canonical_name": "韩 立",
+                    "aliases": ["小立"],
+                    "background": "出身青牛镇。",
+                    "experience": ["参加七玄门入门考验"],
+                    "personality_traits": ["谨慎"],
+                    "notes": ["[window pwin_01] 青牛镇少年"],
+                    "evidence": [{"source_id": "chapter-01", "quote": "韩立来自青牛镇"}],
+                    "first_seen_chunk": 0,
+                    "confidence": 0.82,
+                },
+                "char_random_han_2": {
+                    "canonical_name": "韩立",
+                    "aliases": ["小立", "韩二愣子"],
+                    "background": "被三叔带往七玄门。",
+                    "experiences": ["拜墨大夫为师"],
+                    "traits": ["隐忍"],
+                    "notes": ["[window pwin_02] 七玄门弟子"],
+                    "evidence": [{"source_id": "chapter-02", "quote": "韩二愣子入门"}],
+                    "first_seen_chunk": 1,
+                    "confidence": 0.91,
+                },
+                "char_random_han_3": {
+                    "canonical_name": "韩 立",
+                    "aliases": [],
+                    "background": "修炼长春功。",
+                    "experience": ["获得神秘小瓶"],
+                    "personality_traits": ["坚韧"],
+                    "notes": ["[window pwin_02] 修炼见闻"],
+                    "evidence": [{"source_id": "chapter-03", "quote": "韩立修炼长春功"}],
+                    "first_seen_chunk": 2,
+                    "confidence": 0.88,
+                },
+                "char_random_zhang_1": {
+                    "canonical_name": "张铁",
+                    "aliases": ["铁子"],
+                    "background": "韩立的同乡伙伴。",
+                    "experience": ["参与七玄门测试"],
+                    "personality_traits": ["豪爽"],
+                    "notes": ["[window pwin_01] 与韩立同行"],
+                    "evidence": [{"source_id": "chapter-01", "quote": "张铁和韩立同行"}],
+                    "first_seen_chunk": 0,
+                    "confidence": 0.79,
+                },
+                "char_random_zhang_2": {
+                    "canonical_name": "张 铁",
+                    "aliases": ["铁子", "张师兄"],
+                    "background": "被墨大夫留在神手谷。",
+                    "experiences": ["服用抽髓丸"],
+                    "traits": ["重情义"],
+                    "notes": ["[window pwin_02] 神手谷经历"],
+                    "evidence": [{"source_id": "chapter-02", "quote": "张铁留在神手谷"}],
+                    "first_seen_chunk": 1,
+                    "confidence": 0.86,
+                },
+                "char_same_name_a": {
+                    "canonical_name": "王二",
+                    "aliases": ["王二（铁匠）"],
+                    "identityDisambiguator": "青牛镇铁匠",
+                    "background": "经营铁匠铺。",
+                    "confidence": 0.8,
+                },
+                "char_same_name_b": {
+                    "canonical_name": "王二",
+                    "aliases": ["王二（药童）"],
+                    "identityDisambiguator": "神手谷药童",
+                    "background": "在神手谷做药童。",
+                    "confidence": 0.8,
+                },
+            },
+            "events": {
+                "event_1": {"character_ids": ["char_random_han_1", "char_random_zhang_1"]},
+            },
+            "world": {}, "world_detailed": {},
+        }
+        state = _make_state(
+            source_language="zh",
+            entity_registry=registry,
+            relationships=[{"sourceId": "char_random_han_3", "targetId": "char_random_zhang_2"}],
+        )
+
+        async def _fake_reconcile(s):
+            return {
+                "entity_registry": s["entity_registry"],
+                "relationships": s["relationships"],
+                "reducer_artifact": {"duplicate_candidates": [], "semantic_conflicts": []},
+            }
+
+        async def _fake_low_conf(s):
+            return {"entity_registry": s["entity_registry"]}
+
+        with (
+            patch("sidecar.supervisor.tools.node_reconcile_entities", _fake_reconcile),
+            patch("sidecar.supervisor.tools.node_resolve_low_confidence", _fake_low_conf),
+        ):
+            result = _run(reduce_entities(state))
+
+        chars = result["entity_registry"]["characters"]
+        self.assertEqual(len(chars), 4)  # Han Li, Zhang Tie, and two protected Wang Er candidates.
+        han_id, han = next((cid, entry) for cid, entry in chars.items() if entry["canonical_name"].replace(" ", "") == "韩立")
+        zhang_id, zhang = next((cid, entry) for cid, entry in chars.items() if entry["canonical_name"].replace(" ", "") == "张铁")
+        self.assertEqual(sum(entry["canonical_name"].replace(" ", "") == "韩立" for entry in chars.values()), 1)
+        self.assertEqual(sum(entry["canonical_name"].replace(" ", "") == "张铁" for entry in chars.values()), 1)
+        self.assertEqual(han["stable_dedupe_key"], "character:韩立")
+        self.assertIn("韩二愣子", han["aliases"])
+        self.assertIn("参加七玄门入门考验", han["experience"])
+        self.assertIn("拜墨大夫为师", han["experience"])
+        self.assertIn("获得神秘小瓶", han["experience"])
+        self.assertIn("谨慎", han["personality_traits"])
+        self.assertIn("隐忍", han["personality_traits"])
+        self.assertIn("坚韧", han["personality_traits"])
+        self.assertIn("出身青牛镇。", han["background"])
+        self.assertIn("修炼长春功。", han["background"])
+        self.assertEqual(han["confidence"], 0.91)
+        self.assertEqual(len(han["evidence"]), 3)
+        self.assertIn("服用抽髓丸", zhang["experience"])
+        self.assertIn("重情义", zhang["personality_traits"])
+        self.assertEqual(result["relationships"][0]["sourceId"], han_id)
+        self.assertEqual(result["relationships"][0]["targetId"], zhang_id)
+
+        artifact = result["reducer_artifact"]
+        merge_decisions = artifact["character_merge_decisions"]
+        self.assertEqual(len(merge_decisions), 2)
+        self.assertTrue(all(decision["contract"] == "EntityMergeDecision/v1" for decision in merge_decisions))
+        self.assertEqual(len(artifact["duplicate_candidates"]), 3)
+        self.assertTrue(any(
+            conflict["reason"] == "conflicting_identity_disambiguator"
+            for conflict in artifact["semantic_conflicts"]
+        ))
+
+    def test_live_smoke_fixture_dedupes_final_character_write_input_and_remaps_refs(self):
+        fixture_path = Path(__file__).parent / "fixtures" / "w1_live_smoke_character_duplicates.json"
+        fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+        registry = {
+            "characters": fixture["characters"],
+            "events": fixture["events"],
+            "world": {},
+            "world_detailed": {},
+        }
+        state = _make_state(
+            source_language="zh",
+            entity_registry=registry,
+            relationships=fixture["relationships"],
+            raw_relationships=fixture["raw_relationships"],
+        )
+
+        async def _passthrough_reconcile(s):
+            return {"entity_registry": s["entity_registry"], "relationships": s["relationships"], "raw_relationships": s["raw_relationships"], "reducer_artifact": {}}
+
+        async def _passthrough_low_confidence(s):
+            return {"entity_registry": s["entity_registry"]}
+
+        with (
+            patch("sidecar.supervisor.tools.node_reconcile_entities", _passthrough_reconcile),
+            patch("sidecar.supervisor.tools.node_resolve_low_confidence", _passthrough_low_confidence),
+        ):
+            reduced = _run(reduce_entities(state))
+
+        characters = reduced["entity_registry"]["characters"]
+        normalized_names = [entry["canonical_name"].replace(" ", "") for entry in characters.values()]
+        for name in ("韩立", "张铁", "墨大夫", "舞岩", "岳堂主", "王护法"):
+            self.assertEqual(normalized_names.count(name), 1, name)
+        self.assertEqual(normalized_names.count("王二"), 2)
+
+        id_map = reduced["entity_registry"]["intra_import_character_id_map"]
+        event = reduced["entity_registry"]["events"]["event_live"]
+        self.assertEqual(event["character_ids"], [id_map["han_window_01"], id_map["zhang_window_01"]])
+        self.assertEqual(event["characterIds"], [id_map["mo_window_01"]])
+        self.assertEqual(event["participantCharacterIds"], [id_map["wu_window_01"], id_map["wang_guard_window_75"]])
+        self.assertEqual(reduced["relationships"][0]["sourceId"], id_map["han_window_75"])
+        self.assertEqual(reduced["relationships"][1]["source_character_id"], id_map["mo_window_12"])
+        self.assertEqual(reduced["raw_relationships"][0]["source_candidate_id"], id_map["yue_window_75"])
+
+        repaired = _run(minor_repair(reduced))
+        captured_write_input: dict = {}
+
+        async def _capture_write(write_input):
+            captured_write_input.update(write_input)
+            return {"proposals": []}
+
+        with (
+            patch("sidecar.supervisor.tools.node_build_manuscript", new=AsyncMock(return_value={"manuscript_chapters": []})),
+            patch("sidecar.supervisor.tools.node_synthesize_relationships", new=AsyncMock(return_value={})),
+            patch("sidecar.supervisor.tools.node_classify_character_tags", new=AsyncMock(return_value={})),
+            patch("sidecar.supervisor.tools.node_infer_world_settings", new=AsyncMock(return_value={})),
+            patch("sidecar.supervisor.tools.node_write_to_project", new=AsyncMock(side_effect=_capture_write)),
+        ):
+            _run(proposal_write(repaired))
+
+        final_names = [
+            entry["canonical_name"].replace(" ", "")
+            for entry in captured_write_input["entity_registry"]["characters"].values()
+        ]
+        for name in ("韩立", "张铁", "墨大夫", "舞岩", "岳堂主", "王护法"):
+            self.assertEqual(final_names.count(name), 1, name)
+
+    def test_backfills_major_han_li_profile_from_real_shape_evidence_notes(self):
+        registry = {
+            "characters": {
+                "han_live": {
+                    "canonical_name": "韩立",
+                    "importance": "core",
+                    "role_in_story": "主角",
+                    "summary": "十岁农家少年，渴望走出山村，参加七玄门入门测试",
+                    "background": "",
+                    "experiences": ["参加七玄门入门测试"],
+                    "traits": ["早熟", "坚韧"],
+                    "personality_traits": ["谨慎"],
+                    "notes": [
+                        "[window pwin_326d5c912321] 被村里人唤作二愣子",
+                        "[window pwin_ffbd535630ff] 从墨大夫处习得无名口诀，体内产生凉性真气。",
+                        "[window pwin_ffbd535630ff] 通过考核成为墨大夫亲传弟子。",
+                        "[window pwin_ffbd535630ff] 家中贫苦，希望多领银子贴补家用。",
+                        "[window pwin_785dfbcaca0d] 捡到一个神秘的小瓶子",
+                    ],
+                    "evidenceRefs": ["evc_1", "evc_2"],
+                    "source_span": {"source_id": "chapter-01"},
+                    "confidence": 1.0,
+                },
+            },
+            "events": {}, "world": {}, "world_detailed": {},
+        }
+        state = _make_state(source_language="zh", entity_registry=registry)
+
+        async def _passthrough_reconcile(s):
+            return {"entity_registry": s["entity_registry"], "reducer_artifact": {}}
+
+        async def _passthrough_low_confidence(s):
+            return {"entity_registry": s["entity_registry"]}
+
+        with (
+            patch("sidecar.supervisor.tools.node_reconcile_entities", _passthrough_reconcile),
+            patch("sidecar.supervisor.tools.node_resolve_low_confidence", _passthrough_low_confidence),
+        ):
+            result = _run(reduce_entities(state))
+
+        han = result["entity_registry"]["characters"]["han_live"]
+        self.assertEqual(han["background"], "家中贫苦，希望多领银子贴补家用。")
+        self.assertEqual(han["experience"], [
+            "参加七玄门入门测试",
+            "从墨大夫处习得无名口诀，体内产生凉性真气。",
+            "通过考核成为墨大夫亲传弟子。",
+            "捡到一个神秘的小瓶子",
+        ])
+        self.assertEqual(han["personality_traits"], ["谨慎", "早熟", "坚韧"])
+        self.assertEqual(han["evidence_refs"], ["evc_1", "evc_2"])
+        self.assertNotIn("experiences", han)
+        self.assertNotIn("traits", han)
+        self.assertEqual(han["profile_field_evidence"]["background"], ["evc_1", "evc_2", {"source_id": "chapter-01"}])
+
+    def test_does_not_invent_profile_fields_from_sparse_personality_only_notes(self):
+        registry = {
+            "characters": {
+                "sparse_major": {
+                    "canonical_name": "神秘人",
+                    "importance": "major",
+                    "summary": "神秘来客",
+                    "background": "",
+                    "traits": ["沉默", "谨慎"],
+                    "notes": ["[window pwin_01] 沉默寡言，神色冷漠"],
+                    "evidence_refs": ["evc_sparse"],
+                },
+            },
+            "events": {}, "world": {}, "world_detailed": {},
+        }
+        state = _make_state(entity_registry=registry)
+
+        async def _passthrough_reconcile(s):
+            return {"entity_registry": s["entity_registry"], "reducer_artifact": {}}
+
+        async def _passthrough_low_confidence(s):
+            return {"entity_registry": s["entity_registry"]}
+
+        with (
+            patch("sidecar.supervisor.tools.node_reconcile_entities", _passthrough_reconcile),
+            patch("sidecar.supervisor.tools.node_resolve_low_confidence", _passthrough_low_confidence),
+        ):
+            result = _run(reduce_entities(state))
+
+        sparse = result["entity_registry"]["characters"]["sparse_major"]
+        self.assertEqual(sparse["background"], "")
+        self.assertFalse(sparse.get("experience"))
+        self.assertEqual(sparse["personality_traits"], ["沉默", "谨慎"])
 
 
 # ── Test 8: minor_repair sets groupKey for all chars ─────────────────────────
@@ -1382,6 +1672,63 @@ class TestProposalWriteSlimWriteInput(unittest.TestCase):
         self.assertIn("project_path", captured_state)
 
 
+# ── P1: proposal_write preserves evidence-backed character profiles ──────────
+
+class TestProposalWriteCharacterProfileBoundary(unittest.TestCase):
+    def test_final_write_input_backfills_live_smoke_han_li_profile(self):
+        """The proposal-write registry must retain source-backed profile fields."""
+        captured_write_input: dict = {}
+
+        async def _capture_write(write_input):
+            captured_write_input.update(copy.deepcopy(write_input))
+            return {"proposals": [], "errors": [], "status": "done", "progress": 1.0}
+
+        state = _make_state(
+            entity_registry={
+                "characters": {
+                    "char_4782f8fb": {
+                        "canonical_name": "韩立",
+                        "importance": "core",
+                        "role_in_story": "主角",
+                        "background": "",
+                        "experience": [],
+                        "notes": [
+                            "[window pwin_3972b2183251] 家中贫苦，希望多领银子贴补家用。",
+                            "[window pwin_6234b0db0d08] 参加七玄门入门测试后被留下作为记名弟子。",
+                            "[window pwin_6234b0db0d08] 修炼墨大夫的无名口诀产生凉性真气。",
+                        ],
+                        "evidence_refs": ["evc_han_01", "evc_han_02"],
+                        "source_span": {"source_id": "pwin_3972b2183251"},
+                        "confidence": 0.95,
+                    },
+                },
+                "events": {},
+                "world": {},
+                "world_detailed": {},
+            },
+        )
+
+        with (
+            patch("sidecar.supervisor.tools.node_build_manuscript", new=AsyncMock(return_value={"manuscript_chapters": []})),
+            patch("sidecar.supervisor.tools.node_synthesize_relationships", new=AsyncMock(return_value={})),
+            patch("sidecar.supervisor.tools.node_classify_character_tags", new=AsyncMock(return_value={})),
+            patch("sidecar.supervisor.tools.node_infer_world_settings", new=AsyncMock(return_value={})),
+            patch("sidecar.supervisor.tools.node_write_to_project", new=AsyncMock(side_effect=_capture_write)),
+        ):
+            _run(proposal_write(state))
+
+        han = captured_write_input["entity_registry"]["characters"]["char_4782f8fb"]
+        self.assertEqual(han["background"], "家中贫苦，希望多领银子贴补家用。")
+        self.assertEqual(han["experience"], [
+            "参加七玄门入门测试后被留下作为记名弟子。",
+            "修炼墨大夫的无名口诀产生凉性真气。",
+        ])
+        self.assertEqual(han["profile_field_evidence"], {
+            "background": ["evc_han_01", "evc_han_02", {"source_id": "pwin_3972b2183251"}],
+            "experience": ["evc_han_01", "evc_han_02", {"source_id": "pwin_3972b2183251"}],
+        })
+
+
 # ── Cost guard: 402 budget exhaustion detection ───────────────────────────────
 
 class TestBudgetExhausted402Detection(unittest.TestCase):
@@ -1403,6 +1750,34 @@ class TestBudgetExhausted402Detection(unittest.TestCase):
 
 
 class TestExtractWindowBudgetExhausted(unittest.TestCase):
+    @patch("sidecar.supervisor.tools._get_llm")
+    @patch("sidecar.supervisor.tools._invoke_window_prompt_with_activity")
+    def test_budgeted_cancellation_does_not_precreate_unawaited_prompt_coroutines(self, mock_activity, mock_llm):
+        """A cancelled paid call must not leave four already-created prompt coroutines behind."""
+        mock_llm.return_value = MagicMock()
+
+        async def run_cancelled_extract():
+            entered = asyncio.Event()
+
+            async def block_first_prompt(*_args, **_kwargs):
+                entered.set()
+                await asyncio.Event().wait()
+
+            mock_activity.side_effect = block_first_prompt
+            state = _make_state(
+                context={"budget_policy": {"max_calls": 5}, "model": "deepseek-v4-pro"},
+                prompt_windows=[_make_window("win_cancel", [0])],
+            )
+            task = asyncio.create_task(extract_window(state, "win_cancel"))
+            await entered.wait()
+            self.assertEqual(mock_activity.call_count, 1)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            self.assertEqual(mock_activity.call_count, 1)
+
+        asyncio.run(run_cancelled_extract())
+
     @patch("sidecar.supervisor.tools._get_llm")
     @patch("sidecar.supervisor.tools._invoke_json_prompt")
     def test_all_402_failures_set_budget_exhausted(self, mock_invoke, mock_llm):
@@ -1490,6 +1865,7 @@ class TestExtractWindowActivityEvents(unittest.TestCase):
         self.assertIn("event", labels)
         self.assertTrue(any(entry.get("status") == "start" for entry in activity))
         self.assertTrue(any(entry.get("status") == "success" for entry in activity))
+        self.assertTrue(all(call.kwargs.get("session_id") == session_id for call in mock_invoke.call_args_list))
         w1_run_events.clear_session(session_id)
 
     @patch("sidecar.supervisor.tools._get_llm")

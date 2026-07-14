@@ -18,6 +18,7 @@ import type {
 } from '../models/project';
 import { PROJECT_SCHEMA_VERSION } from '../models/project';
 import { createBlankProject, createStarterProject } from '../mock/seedProject';
+import { electronApi } from './electronApi';
 
 const STORAGE_KEY = 'narrative-ide-project';
 const LAST_PATH_KEY = 'narrative-ide-last-path';
@@ -30,6 +31,45 @@ type NodeRuntime = {
 };
 
 const getNodeRuntime = (): NodeRuntime | null => {
+  const projectFiles = electronApi.projectFiles();
+  if (projectFiles) {
+    const normalize = (value: string) => {
+      const absolute = value.startsWith('/');
+      const segments: string[] = [];
+      for (const segment of value.replace(/\\/g, '/').split('/')) {
+        if (!segment || segment === '.') continue;
+        if (segment === '..') segments.pop(); else segments.push(segment);
+      }
+      return `${absolute ? '/' : ''}${segments.join('/')}` || (absolute ? '/' : '.');
+    };
+    const pathAdapter = {
+      sep: '/',
+      join: (...parts: string[]) => normalize(parts.filter(Boolean).join('/')),
+      resolve: (...parts: string[]) => {
+        let resolved = '';
+        for (const part of parts) resolved = part.startsWith('/') ? part : `${resolved}/${part}`;
+        return normalize(resolved);
+      },
+      dirname: (value: string) => {
+        const normalized = normalize(value);
+        const index = normalized.lastIndexOf('/');
+        return index <= 0 ? '/' : normalized.slice(0, index);
+      },
+      relative: (from: string, to: string) => {
+        const left = normalize(from).split('/').filter(Boolean);
+        const right = normalize(to).split('/').filter(Boolean);
+        while (left.length && right.length && left[0] === right[0]) { left.shift(); right.shift(); }
+        return [...left.map(() => '..'), ...right].join('/');
+      },
+      isAbsolute: (value: string) => value.startsWith('/'),
+    };
+    return {
+      fs: projectFiles as unknown as typeof import('fs'),
+      path: pathAdapter as unknown as typeof import('path'),
+      process: { cwd: () => '/' } as NodeJS.Process,
+      buffer: { Buffer: { from: (value: ArrayBuffer) => new Uint8Array(value) } } as unknown as typeof import('buffer'),
+    };
+  }
   const scope = globalThis as typeof globalThis & { require?: NodeRequire; process?: NodeJS.Process };
   const loader = scope.require;
   if (!loader) {
@@ -951,15 +991,17 @@ export const projectService = {
   createProject(input: CreateProjectInput): NarrativeProject {
     const runtime = getNodeRuntime();
     const fallbackRoot = `memory://${slugify(input.name)}`;
-    const rootPath = input.rootPath || (runtime ? getDefaultProjectDir(runtime, input.name) : fallbackRoot);
+    const usingProjectBridge = Boolean(electronApi.projectFiles());
+    const rootPath = input.rootPath || (runtime && !usingProjectBridge ? getDefaultProjectDir(runtime, input.name) : fallbackRoot);
+    const storageMode = runtime && !rootPath.startsWith('memory://') ? 'nodefs' : 'memory';
     const project = migrateProject(hydrateProjectMetadata(
-      createProjectByTemplate(input.template, input.name, rootPath, input.locale, runtime ? 'nodefs' : 'memory'),
+      createProjectByTemplate(input.template, input.name, rootPath, input.locale, storageMode),
       rootPath,
-      runtime ? 'nodefs' : 'memory',
+      storageMode,
       input.locale
-    ), rootPath, runtime ? 'nodefs' : 'memory', input.locale);
+    ), rootPath, storageMode, input.locale);
 
-    if (!runtime) {
+    if (!runtime || storageMode === 'memory') {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(project));
       localStorage.setItem(LAST_PATH_KEY, project.metadata.rootPath);
       return project;
@@ -972,9 +1014,10 @@ export const projectService = {
 
   openProject(rootPath?: string | null): NarrativeProject {
     const runtime = getNodeRuntime();
-    const resolvedPath = rootPath || localStorage.getItem(LAST_PATH_KEY);
+    const usingProjectBridge = Boolean(electronApi.projectFiles());
+    const resolvedPath = rootPath || (usingProjectBridge ? null : localStorage.getItem(LAST_PATH_KEY));
 
-    if (!runtime) {
+    if (!runtime || (usingProjectBridge && !resolvedPath)) {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
         return migrateProject(JSON.parse(stored) as NarrativeProject, resolvedPath || 'memory://starter-demo-project', 'memory');
@@ -1381,40 +1424,25 @@ const proposalApplyPriority: Partial<Record<EntityKind, number>> = {
 
 const importedProposalSource = (proposal: Proposal) => proposal.source === 'import';
 
-const fallbackTimelineBranchId = (project: NarrativeProject) =>
-  project.timelineBranches.find((branch) => branch.mode === 'root')?.id
-  || project.timelineBranches[0]?.id
-  || '';
-
 const normalizeImportedProposalEntity = (
-  project: NarrativeProject,
+  _project: NarrativeProject,
   proposal: Proposal,
   entityType: EntityKind,
   entity: Record<string, unknown>,
-  referenceSets?: ReferenceSets,
+  _referenceSets?: ReferenceSets,
 ): Record<string, unknown> => {
   if (!importedProposalSource(proposal)) return entity;
-
-  const refs = referenceSets || collectReferenceSets(project);
 
   if (entityType === 'character') {
     return {
       ...entity,
-      tagIds: uniqueStrings([entity.tagIds]).filter((id) => refs.tags.has(id)),
-      linkedSceneIds: uniqueStrings([entity.linkedSceneIds]).filter((id) => refs.scenes.has(id)),
-      linkedEventIds: uniqueStrings([entity.linkedEventIds]).filter((id) => refs.events.has(id)),
-      linkedWorldItemIds: uniqueStrings([entity.linkedWorldItemIds]).filter((id) => refs.worldItems.has(id)),
+      tagIds: uniqueStrings([entity.tagIds]),
+      linkedSceneIds: uniqueStrings([entity.linkedSceneIds]),
+      linkedEventIds: uniqueStrings([entity.linkedEventIds]),
+      linkedWorldItemIds: uniqueStrings([entity.linkedWorldItemIds]),
     };
   }
-
-  if (entityType !== 'timeline_event') return entity;
-
-  const branchId = String(entity.branchId || '');
-  if (!branchId || project.timelineBranches.some((branch) => branch.id === branchId)) return entity;
-
-  const fallbackBranchId = fallbackTimelineBranchId(project);
-  if (!fallbackBranchId) return entity;
-  return { ...entity, branchId: fallbackBranchId };
+  return entity;
 };
 
 type ReferenceSets = {
@@ -1582,11 +1610,6 @@ export const buildProposalPackages = (proposals: Proposal[]): ProposalPackage[] 
   });
 
   return [...groups.entries()]
-    .filter(([key, group]) => {
-      if (group.length > 1) return true;
-      // Single-proposal reviewer/organizer packages are valid user-facing units
-      return REVIEWER_SOURCES.has(packageKeyToSource(key));
-    })
     .map(([key, group]) => {
       const source = packageKeyToSource(key);
       const testId = key.replace(/[^a-zA-Z0-9_-]+/g, '-');
@@ -1613,7 +1636,7 @@ const isFullImportPackageSelection = (
   const pendingPackageIds = project.proposals
     .filter((proposal) => (proposal.status === 'pending' || !proposal.status) && getProposalPackageKey(proposal) === packageKey)
     .map((proposal) => proposal.id);
-  return pendingPackageIds.length > 1 && pendingPackageIds.every((id) => selectedIds.has(id));
+  return pendingPackageIds.length > 0 && pendingPackageIds.every((id) => selectedIds.has(id));
 };
 
 const groupFullImportPackageSelections = (project: NarrativeProject, targets: Proposal[]) => {
@@ -1740,8 +1763,6 @@ const applyProposalBatch = (project: NarrativeProject, proposals: Proposal[]): N
     accepted.push({ ...proposal, status: 'accepted', resolvedAt: new Date().toISOString() });
   });
 
-  draft = pruneDanglingProposalReferences(draft);
-
   const acceptedIds = new Set(accepted.map((proposal) => proposal.id));
   const blockedById = new Map(blocked.map((proposal) => [proposal.id, proposal]));
   const remainingProposals = draft.proposals
@@ -1793,7 +1814,33 @@ const applyImportPackageBatches = (project: NarrativeProject, targets: Proposal[
   return nonPackageTargets.length ? applyProposalBatch(draft, nonPackageTargets) : draft;
 };
 
+const validateProposalPackageOperations = (project: NarrativeProject, proposals: Proposal[]): ProposalApplyResult & { culprit: Proposal } => {
+  const preparedProject = prepareProjectForImportApply(project, proposals);
+  const references = collectReferenceSets(preparedProject, proposals);
+  const sorted = [...proposals].sort((a, b) => {
+    const aType = getProposalOperations(a)[0]?.entityType as EntityKind | undefined;
+    const bType = getProposalOperations(b)[0]?.entityType as EntityKind | undefined;
+    return (proposalApplyPriority[aType || 'proposal'] ?? 99) - (proposalApplyPriority[bType || 'proposal'] ?? 99);
+  });
+  let draft = preparedProject;
+  for (const proposal of sorted) {
+    const result = applyProposalOperations(draft, proposal, references);
+    if (result.blockedReason) return { ...result, culprit: proposal };
+    draft = result.project;
+  }
+  return { project: draft, applied: true, blockedReason: null, culprit: proposals[0] };
+};
+
 const applyProposalPackageTransaction = (project: NarrativeProject, proposals: Proposal[]): NarrativeProject => {
+  const operationValidation = validateProposalPackageOperations(project, proposals);
+  if (operationValidation.blockedReason) {
+    return blockImportPackage(project, proposals, operationValidation.culprit, operationValidation.blockedReason);
+  }
+  const projectionValidation = validateStagedManuscriptProjections(project, proposals);
+  if (projectionValidation.blockedReason) {
+    return blockImportPackage(project, proposals, projectionValidation.culprit, projectionValidation.blockedReason);
+  }
+
   const preparedProject = prepareProjectForImportApply(project, proposals);
   const references = collectReferenceSets(preparedProject, proposals);
   const sorted = [...proposals].sort((a, b) => {
@@ -1814,7 +1861,387 @@ const applyProposalPackageTransaction = (project: NarrativeProject, proposals: P
     accepted.push({ ...proposal, status: 'accepted', resolvedAt: new Date().toISOString() });
   }
 
-  return finalizeAcceptedProposalBatch(project, pruneDanglingProposalReferences(draft), accepted);
+  const projectionResult = applyStagedManuscriptProjections(draft, proposals);
+  if (projectionResult.blockedReason) {
+    return blockImportPackage(project, proposals, projectionResult.culprit, projectionResult.blockedReason);
+  }
+
+  return finalizeAcceptedProposalBatch(project, projectionResult.project, accepted);
+};
+
+type StagedManuscriptProjectionDescriptor = {
+  artifact_path?: unknown;
+  contract_version?: unknown;
+  chapter_id?: unknown;
+  scene_id?: unknown;
+};
+
+type StagedManuscriptProjectionArtifact = {
+  contract_version?: unknown;
+  import_run_id?: unknown;
+  source_file_path?: unknown;
+  acceptance_required?: unknown;
+  chapters?: unknown;
+  nodes?: unknown;
+  scene_documents?: unknown;
+};
+
+type ProjectionApplyResult = {
+  project: NarrativeProject;
+  culprit: Proposal;
+  blockedReason: string | null;
+};
+
+const getStagedManuscriptProjectionDescriptor = (proposal: Proposal): StagedManuscriptProjectionDescriptor | null => {
+  const projection = getProposalOperations(proposal)
+    .map((operation) => operation.fields?.stagedManuscriptProjection)
+    .find((value) => value && typeof value === 'object')
+    ?? proposal.data?.stagedManuscriptProjection;
+  return projection && typeof projection === 'object' ? projection as StagedManuscriptProjectionDescriptor : null;
+};
+
+const projectionBlockedResult = (project: NarrativeProject, culprit: Proposal, blockedReason: string): ProjectionApplyResult => ({
+  project,
+  culprit,
+  blockedReason,
+});
+
+const isPathInside = (path: typeof import('path'), directory: string, filePath: string) => {
+  const relative = path.relative(directory, filePath);
+  return relative && !relative.startsWith('..') && !path.isAbsolute(relative);
+};
+
+const getImportRunIds = (proposal: Proposal) => uniqueStrings([
+  rawProposalValue(proposal, 'importRunId'),
+  rawProposalValue(proposal, 'import_run_id'),
+  rawProposalValue(proposal, 'packageId'),
+  rawProposalValue(proposal, 'importPackageId'),
+  ...getProposalOperations(proposal).map((operation) => operation.fields?.importRunId || operation.fields?.import_run_id),
+]);
+
+const projectionPairKey = (chapterId: string, sceneId: string) => `${chapterId}\u0000${sceneId}`;
+
+const sha256 = (value: string): string | null => {
+  const bridgeHash = electronApi.sha256(value);
+  if (bridgeHash) return bridgeHash;
+  const loader = (globalThis as typeof globalThis & { require?: NodeRequire }).require;
+  if (!loader) return null;
+  try {
+    return loader('crypto').createHash('sha256').update(value, 'utf8').digest('hex');
+  } catch {
+    return null;
+  }
+};
+
+const reconstructProjectionSourceSpan = (
+  sourceSpan: unknown,
+  rawSource: string,
+  sourceHash: string,
+): { content: string; error: string | null } => {
+  if (!sourceSpan || typeof sourceSpan !== 'object') return { content: '', error: 'is missing SourceSpan evidence' };
+  const span = sourceSpan as Record<string, unknown>;
+  const start = span.absolute_start;
+  const end = span.absolute_end;
+  if (
+    span.raw_source_hash !== sourceHash
+    || typeof start !== 'number'
+    || typeof end !== 'number'
+    || !Number.isInteger(start)
+    || !Number.isInteger(end)
+    || start < 0
+    || end < start
+    || end > Array.from(rawSource).length
+  ) return { content: '', error: 'has an invalid SourceSpan' };
+  // Python SourceSpan offsets count Unicode code points; JS string slicing counts UTF-16 code units.
+  const content = Array.from(rawSource).slice(start, end).join('');
+  const substringHash = sha256(content);
+  if (!substringHash || span.substring_hash !== substringHash) return { content: '', error: 'has unverifiable SourceSpan evidence' };
+  return { content, error: null };
+};
+
+const validateStagedManuscriptProjections = (project: NarrativeProject, proposals: Proposal[]): ProjectionApplyResult => {
+  const descriptors = proposals
+    .map((proposal) => ({ proposal, descriptor: getStagedManuscriptProjectionDescriptor(proposal) }))
+    .filter((entry): entry is { proposal: Proposal; descriptor: StagedManuscriptProjectionDescriptor } => Boolean(entry.descriptor));
+  if (!descriptors.length) return { project, culprit: proposals[0], blockedReason: null };
+
+  const runtime = getNodeRuntime();
+  const culprit = descriptors[0].proposal;
+  if (!runtime || project.metadata.rootPath.startsWith('memory://')) {
+    return projectionBlockedResult(project, culprit, 'Staged manuscript projection requires a local project filesystem.');
+  }
+  if (typeof runtime.fs.realpathSync !== 'function') {
+    return projectionBlockedResult(project, culprit, 'Staged manuscript projection requires realpath-capable local filesystem semantics.');
+  }
+
+  const runIds = uniqueStrings(proposals.flatMap(getImportRunIds));
+  if (runIds.length !== 1) {
+    return projectionBlockedResult(project, culprit, `Import package has conflicting or missing importRunId values: ${runIds.join(', ') || 'none'}.`);
+  }
+  const importRunId = runIds[0];
+  const projectRoot = runtime.path.resolve(project.metadata.rootPath);
+  const importsDirectory = runtime.path.resolve(projectRoot, 'system', 'imports');
+  const expectedRunDirectory = runtime.path.resolve(importsDirectory, importRunId);
+  let resolvedRunDirectory: string;
+  try {
+    resolvedRunDirectory = runtime.fs.realpathSync(expectedRunDirectory);
+  } catch {
+    return projectionBlockedResult(project, culprit, `Staged manuscript projection run directory is unavailable: ${expectedRunDirectory}`);
+  }
+  if (resolvedRunDirectory !== expectedRunDirectory || !isPathInside(runtime.path, importsDirectory, resolvedRunDirectory)) {
+    return projectionBlockedResult(project, culprit, 'Staged manuscript projection run directory resolves through a symlink or outside its import run.');
+  }
+
+  const proposalChapterIds = new Set<string>();
+  const proposalSceneToChapter = new Map<string, string>();
+  for (const proposal of proposals) {
+    for (const operation of getProposalOperations(proposal)) {
+      const entityType = operation.entityType as EntityKind | undefined;
+      if (entityType !== 'chapter' && entityType !== 'scene') continue;
+      const id = operationEntityId(proposal, operation, entityType);
+      if (entityType === 'chapter') {
+        if (proposalChapterIds.has(id)) return projectionBlockedResult(project, proposal, `Import package contains duplicate chapter target: ${id}.`);
+        proposalChapterIds.add(id);
+      } else {
+        const chapterId = operation.fields?.chapterId;
+        if (typeof chapterId !== 'string' || !chapterId) return projectionBlockedResult(project, proposal, `Scene proposal ${id} is missing its chapter reference.`);
+        if (proposalSceneToChapter.has(id)) return projectionBlockedResult(project, proposal, `Import package contains duplicate scene target: ${id}.`);
+        proposalSceneToChapter.set(id, chapterId);
+      }
+    }
+  }
+
+  const descriptorPairs = new Set<string>();
+  const artifactPairs = new Set<string>();
+  const seenArtifacts = new Set<string>();
+  for (const { proposal, descriptor } of descriptors) {
+    if (
+      descriptor.contract_version !== 'w1-staged-manuscript-v1'
+      || typeof descriptor.artifact_path !== 'string'
+      || typeof descriptor.chapter_id !== 'string'
+      || typeof descriptor.scene_id !== 'string'
+    ) return projectionBlockedResult(project, proposal, 'Invalid staged manuscript projection descriptor.');
+
+    const pair = projectionPairKey(descriptor.chapter_id, descriptor.scene_id);
+    descriptorPairs.add(pair);
+    if (proposalSceneToChapter.get(descriptor.scene_id) !== descriptor.chapter_id || !proposalChapterIds.has(descriptor.chapter_id)) {
+      return projectionBlockedResult(project, proposal, `Staged manuscript projection descriptor does not match package chapter/scene proposals: ${descriptor.chapter_id}/${descriptor.scene_id}.`);
+    }
+    if (project.scenes.some((scene) => scene.id === descriptor.scene_id) || project.chapters.some((chapter) => chapter.id === descriptor.chapter_id)) {
+      return projectionBlockedResult(project, proposal, `Staged manuscript projection may not overwrite existing chapter or scene: ${descriptor.chapter_id}/${descriptor.scene_id}.`);
+    }
+
+    const artifactPath = runtime.path.resolve(descriptor.artifact_path);
+    if (artifactPath !== runtime.path.resolve(expectedRunDirectory, 'staged_manuscript_projection.json')) {
+      return projectionBlockedResult(project, proposal, 'Staged manuscript projection path is outside the expected import run.');
+    }
+    if (seenArtifacts.has(artifactPath)) continue;
+    seenArtifacts.add(artifactPath);
+    try {
+      const resolvedArtifactPath = runtime.fs.realpathSync(artifactPath);
+      const manifestPath = runtime.path.resolve(expectedRunDirectory, 'manifest.json');
+      const resolvedManifestPath = runtime.fs.realpathSync(manifestPath);
+      if (
+        resolvedArtifactPath !== artifactPath || !isPathInside(runtime.path, resolvedRunDirectory, resolvedArtifactPath)
+        || resolvedManifestPath !== manifestPath || !isPathInside(runtime.path, resolvedRunDirectory, resolvedManifestPath)
+      ) return projectionBlockedResult(project, proposal, 'Staged manuscript projection or manifest resolves through a symlink or outside its import run.');
+
+      const manifest = JSON.parse(runtime.fs.readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
+      const artifact = JSON.parse(runtime.fs.readFileSync(artifactPath, 'utf8')) as StagedManuscriptProjectionArtifact;
+      const sourceHash = manifest.source_hash;
+      if (manifest.import_run_id !== importRunId || artifact.import_run_id !== importRunId || typeof sourceHash !== 'string' || !sourceHash) {
+        return projectionBlockedResult(project, proposal, 'Staged manuscript projection package, importRunId, or source hash does not match its manifest.');
+      }
+      if (!Array.isArray(artifact.chapters) || !Array.isArray(artifact.nodes) || !Array.isArray(artifact.scene_documents)) {
+        return projectionBlockedResult(project, proposal, 'Staged manuscript projection does not satisfy the W1 acceptance contract.');
+      }
+      if (typeof artifact.source_file_path !== 'string' || !artifact.source_file_path) {
+        return projectionBlockedResult(project, proposal, 'Staged manuscript projection requires readable raw source evidence; browser-only acceptance is blocked.');
+      }
+      const sourceEvidencePath = runtime.path.resolve(artifact.source_file_path);
+      const expectedSourceEvidencePath = runtime.path.resolve(expectedRunDirectory, 'raw_source.txt');
+      if (sourceEvidencePath !== expectedSourceEvidencePath || !runtime.fs.existsSync(sourceEvidencePath)) {
+        return projectionBlockedResult(project, proposal, 'Staged manuscript projection raw source evidence must be raw_source.txt inside its import run.');
+      }
+      const resolvedSourceEvidencePath = runtime.fs.realpathSync(sourceEvidencePath);
+      if (
+        resolvedSourceEvidencePath !== sourceEvidencePath
+        || !isPathInside(runtime.path, resolvedRunDirectory, resolvedSourceEvidencePath)
+      ) {
+        return projectionBlockedResult(project, proposal, 'Staged manuscript projection raw source evidence resolves through a symlink or outside its import run.');
+      }
+      const rawSource = runtime.fs.readFileSync(resolvedSourceEvidencePath, 'utf8');
+      if (sha256(rawSource) !== sourceHash) {
+        return projectionBlockedResult(project, proposal, 'Staged manuscript projection raw source does not match its manifest hash.');
+      }
+      const chapterIds = new Set<string>();
+      const sceneIds = new Set<string>();
+      const sourceBySceneId = new Map<string, string>();
+      for (const rawChapter of artifact.chapters) {
+        if (!rawChapter || typeof rawChapter !== 'object') return projectionBlockedResult(project, proposal, 'Staged manuscript projection contains an invalid chapter descriptor.');
+        const chapter = rawChapter as Record<string, unknown>;
+        const chapterId = chapter.chapter_id;
+        const sceneId = chapter.scene_id;
+        const sourceSpan = chapter.source_span as Record<string, unknown> | undefined;
+        if (
+          typeof chapterId !== 'string' || !chapterId || chapterIds.has(chapterId)
+          || typeof sceneId !== 'string' || !sceneId || sceneIds.has(sceneId)
+          || !sourceSpan
+        ) return projectionBlockedResult(project, proposal, `Staged manuscript projection contains an invalid, duplicate, or source-mismatched chapter descriptor: ${String(chapterId || sceneId || 'unknown')}.`);
+        const reconstructed = reconstructProjectionSourceSpan(sourceSpan, rawSource, sourceHash);
+        if (reconstructed.error) return projectionBlockedResult(project, proposal, `Staged manuscript projection chapter ${chapterId} ${reconstructed.error}.`);
+        chapterIds.add(chapterId);
+        sceneIds.add(sceneId);
+        sourceBySceneId.set(sceneId, reconstructed.content);
+        artifactPairs.add(projectionPairKey(chapterId, sceneId));
+      }
+      const documentSceneIds = new Set<string>();
+      for (const rawDocument of artifact.scene_documents) {
+        if (!rawDocument || typeof rawDocument !== 'object') return projectionBlockedResult(project, proposal, 'Staged manuscript projection contains an invalid scene document.');
+        const document = rawDocument as Record<string, unknown>;
+        const sceneId = document.scene_id;
+        const reconstructed = reconstructProjectionSourceSpan(document.source_span, rawSource, sourceHash);
+        if (
+          typeof sceneId !== 'string' || !sceneIds.has(sceneId) || documentSceneIds.has(sceneId) || typeof document.content !== 'string'
+          || reconstructed.error || document.content !== sourceBySceneId.get(sceneId) || document.content !== reconstructed.content
+        ) {
+          return projectionBlockedResult(project, proposal, `Staged manuscript projection contains an invalid or unapproved scene document: ${String(sceneId || 'unknown')}.`);
+        }
+        documentSceneIds.add(sceneId);
+      }
+      if (documentSceneIds.size !== sceneIds.size) {
+        return projectionBlockedResult(project, proposal, 'Staged manuscript projection is missing a scene document for an accepted descriptor.');
+      }
+      const nodeIds = new Set<string>();
+      for (const rawNode of artifact.nodes) {
+        if (!rawNode || typeof rawNode !== 'object') return projectionBlockedResult(project, proposal, 'Staged manuscript projection contains an invalid manuscript node.');
+        const id = (rawNode as Record<string, unknown>).id;
+        if (typeof id !== 'string' || !id || nodeIds.has(id)) return projectionBlockedResult(project, proposal, `Staged manuscript projection contains a duplicate or invalid node: ${String(id || 'unknown')}.`);
+        nodeIds.add(id);
+      }
+      for (const rawNode of artifact.nodes) {
+        const node = rawNode as Record<string, unknown>;
+        const parentId = node.parentId;
+        const linkedChapterId = node.linkedChapterId;
+        const linkedSceneId = node.linkedSceneId;
+        if (
+          (parentId !== null && (typeof parentId !== 'string' || !nodeIds.has(parentId)))
+          || (linkedChapterId !== null && (typeof linkedChapterId !== 'string' || !chapterIds.has(linkedChapterId)))
+          || (linkedSceneId !== null && (typeof linkedSceneId !== 'string' || !sceneIds.has(linkedSceneId)))
+          || (typeof linkedChapterId === 'string' && typeof linkedSceneId === 'string' && !artifactPairs.has(projectionPairKey(linkedChapterId, linkedSceneId)))
+        ) return projectionBlockedResult(project, proposal, `Staged manuscript projection contains an invalid node reference: ${String(node.id || 'unknown')}.`);
+      }
+    } catch {
+      return projectionBlockedResult(project, proposal, `Staged manuscript projection is unreadable: ${artifactPath}`);
+    }
+  }
+  if (artifactPairs.size !== descriptorPairs.size || [...artifactPairs].some((pair) => !descriptorPairs.has(pair))) {
+    return projectionBlockedResult(project, culprit, 'Staged manuscript projection chapters do not exactly match the accepted package descriptors.');
+  }
+  return { project, culprit, blockedReason: null };
+};
+
+const applyStagedManuscriptProjections = (project: NarrativeProject, proposals: Proposal[]): ProjectionApplyResult => {
+  const descriptors = proposals
+    .map((proposal) => ({ proposal, descriptor: getStagedManuscriptProjectionDescriptor(proposal) }))
+    .filter((entry): entry is { proposal: Proposal; descriptor: StagedManuscriptProjectionDescriptor } => Boolean(entry.descriptor));
+  if (!descriptors.length) return { project, culprit: proposals[0], blockedReason: null };
+
+  const runtime = getNodeRuntime();
+  const culprit = descriptors[0].proposal;
+  if (!runtime || project.metadata.rootPath.startsWith('memory://')) {
+    return projectionBlockedResult(project, culprit, 'Staged manuscript projection requires a local project filesystem.');
+  }
+
+  const projectRoot = runtime.path.resolve(project.metadata.rootPath);
+  const importsDirectory = runtime.path.resolve(projectRoot, 'system', 'imports');
+  const artifacts = new Map<string, StagedManuscriptProjectionArtifact>();
+
+  for (const { proposal, descriptor } of descriptors) {
+    if (descriptor.contract_version !== 'w1-staged-manuscript-v1' || typeof descriptor.artifact_path !== 'string') {
+      return projectionBlockedResult(project, proposal, 'Invalid staged manuscript projection descriptor.');
+    }
+    const artifactPath = runtime.path.resolve(descriptor.artifact_path);
+    if (!isPathInside(runtime.path, importsDirectory, artifactPath) || !artifactPath.endsWith('/staged_manuscript_projection.json')) {
+      return projectionBlockedResult(project, proposal, 'Staged manuscript projection path is outside the import artifact directory.');
+    }
+    if (artifacts.has(artifactPath)) continue;
+    if (!runtime.fs.existsSync(artifactPath)) {
+      return projectionBlockedResult(project, proposal, `Staged manuscript projection is unavailable: ${artifactPath}`);
+    }
+    try {
+      artifacts.set(artifactPath, JSON.parse(runtime.fs.readFileSync(artifactPath, 'utf8')) as StagedManuscriptProjectionArtifact);
+    } catch {
+      return projectionBlockedResult(project, proposal, `Staged manuscript projection is unreadable: ${artifactPath}`);
+    }
+  }
+
+  let draft = project;
+  const knownNodeIds = new Set((draft.manuscriptNodes || []).map((node) => node.id));
+  for (const artifact of artifacts.values()) {
+    if (
+      artifact.contract_version !== 'w1-staged-manuscript-v1'
+      || artifact.acceptance_required !== true
+      || !Array.isArray(artifact.chapters)
+      || !Array.isArray(artifact.nodes)
+      || !Array.isArray(artifact.scene_documents)
+    ) {
+      return projectionBlockedResult(project, culprit, 'Staged manuscript projection does not satisfy the W1 acceptance contract.');
+    }
+
+    const sceneDocuments = new Map<string, string>();
+    for (const document of artifact.scene_documents) {
+      if (!document || typeof document !== 'object') return projectionBlockedResult(project, culprit, 'Staged manuscript projection contains an invalid scene document.');
+      const sceneId = (document as Record<string, unknown>).scene_id;
+      const content = (document as Record<string, unknown>).content;
+      if (typeof sceneId !== 'string' || !sceneId || typeof content !== 'string' || sceneDocuments.has(sceneId)) {
+        return projectionBlockedResult(project, culprit, 'Staged manuscript projection contains an invalid or duplicate scene document.');
+      }
+      if (!draft.scenes.some((scene) => scene.id === sceneId)) {
+        return projectionBlockedResult(project, culprit, `Staged manuscript projection references missing scene: ${sceneId}`);
+      }
+      sceneDocuments.set(sceneId, content);
+    }
+
+    const nodes: ManuscriptNode[] = [];
+    for (const rawNode of artifact.nodes) {
+      if (!rawNode || typeof rawNode !== 'object') return projectionBlockedResult(project, culprit, 'Staged manuscript projection contains an invalid manuscript node.');
+      const node = rawNode as Record<string, unknown>;
+      const type = node.type;
+      const id = node.id;
+      const linkedChapterId = node.linkedChapterId;
+      const linkedSceneId = node.linkedSceneId;
+      if (
+        typeof id !== 'string' || !id || knownNodeIds.has(id)
+        || !['act', 'part', 'chapter_outline', 'scene_outline', 'note'].includes(String(type))
+        || (linkedChapterId !== null && (typeof linkedChapterId !== 'string' || !draft.chapters.some((chapter) => chapter.id === linkedChapterId)))
+        || (linkedSceneId !== null && (typeof linkedSceneId !== 'string' || !draft.scenes.some((scene) => scene.id === linkedSceneId)))
+      ) {
+        return projectionBlockedResult(project, culprit, `Staged manuscript projection contains an invalid or conflicting node: ${String(id || 'unknown')}.`);
+      }
+      knownNodeIds.add(id);
+      nodes.push({
+        id,
+        title: typeof node.title === 'string' ? node.title : '',
+        type: type as ManuscriptNodeType,
+        parentId: typeof node.parentId === 'string' ? node.parentId : null,
+        orderIndex: typeof node.orderIndex === 'number' ? node.orderIndex : 0,
+        linkedChapterId: linkedChapterId as string | null,
+        linkedSceneId: linkedSceneId as string | null,
+        depth: typeof node.depth === 'number' ? node.depth : 0,
+        collapsed: Boolean(node.collapsed),
+        wordCount: typeof node.wordCount === 'number' ? node.wordCount : 0,
+      });
+    }
+
+    draft = {
+      ...draft,
+      scenes: draft.scenes.map((scene) => sceneDocuments.has(scene.id) ? { ...scene, content: sceneDocuments.get(scene.id)! } : scene),
+      manuscriptNodes: [...(draft.manuscriptNodes || []), ...nodes],
+    };
+  }
+
+  return { project: draft, culprit, blockedReason: null };
 };
 
 const formatPackageBlockedReason = (proposal: Proposal, blockedReason: string) => {
@@ -1885,48 +2312,6 @@ const finalizeAcceptedProposalBatch = (
       activities: { ...draft.unreadUpdates.activities, workbench: hasUnreadInbox },
       sections: { ...draft.unreadUpdates.sections, 'workbench.inbox': hasUnreadInbox },
     },
-  };
-};
-
-const pruneDanglingProposalReferences = (project: NarrativeProject): NarrativeProject => {
-  const refs = collectReferenceSets(project);
-  const firstBranchId = project.timelineBranches[0]?.id || '';
-  const firstChapterId = project.chapters[0]?.id || '';
-  return {
-    ...project,
-    chapters: project.chapters.map((chapter) => ({
-      ...chapter,
-      sceneIds: (chapter.sceneIds || []).filter((id) => refs.scenes.has(id)),
-    })),
-    scenes: project.scenes.map((scene) => ({
-      ...scene,
-      chapterId: refs.chapters.has(scene.chapterId) ? scene.chapterId : firstChapterId,
-      linkedCharacterIds: (scene.linkedCharacterIds || []).filter((id) => refs.characters.has(id)),
-      linkedEventIds: (scene.linkedEventIds || []).filter((id) => refs.events.has(id)),
-      linkedWorldItemIds: (scene.linkedWorldItemIds || []).filter((id) => refs.worldItems.has(id)),
-    })),
-    characters: project.characters.map((character) => ({
-      ...character,
-      tagIds: (character.tagIds || []).filter((id) => refs.tags.has(id)),
-      linkedSceneIds: (character.linkedSceneIds || []).filter((id) => refs.scenes.has(id)),
-      linkedEventIds: (character.linkedEventIds || []).filter((id) => refs.events.has(id)),
-      linkedWorldItemIds: (character.linkedWorldItemIds || []).filter((id) => refs.worldItems.has(id)),
-    })),
-    timelineEvents: project.timelineEvents.map((event) => ({
-      ...event,
-      branchId: refs.branches.has(event.branchId) ? event.branchId : firstBranchId,
-      participantCharacterIds: (event.participantCharacterIds || []).filter((id) => refs.characters.has(id)),
-      linkedSceneIds: (event.linkedSceneIds || []).filter((id) => refs.scenes.has(id)),
-      linkedWorldItemIds: (event.linkedWorldItemIds || []).filter((id) => refs.worldItems.has(id)),
-      locationIds: (event.locationIds || []).filter((id) => refs.worldItems.has(id)),
-    })),
-    worldItems: project.worldItems.map((item) => ({
-      ...item,
-      linkedCharacterIds: (item.linkedCharacterIds || []).filter((id) => refs.characters.has(id)),
-      linkedEventIds: (item.linkedEventIds || []).filter((id) => refs.events.has(id)),
-      linkedSceneIds: (item.linkedSceneIds || []).filter((id) => refs.scenes.has(id)),
-    })),
-    relationships: project.relationships.filter((rel) => refs.characters.has(rel.sourceId) && refs.characters.has(rel.targetId)),
   };
 };
 
@@ -2022,46 +2407,75 @@ const findImportedCharacterDuplicate = (
   });
 };
 
-const richerText = (left: unknown, right: unknown) => {
-  const a = String(left || '').trim();
-  const b = String(right || '').trim();
-  return b.length > a.length ? b : a;
+const mergeDecisionPayloadFields: Record<string, string[]> = {
+  aliases: ['aliases'],
+  background: ['background'],
+  experience: ['experience'],
+  experiences: ['experiences'],
+  traits: ['traits', 'personality_traits'],
+  personalityTraits: ['personality_traits', 'traits'],
+  notes: ['notes'],
+  physicalDescription: ['physical_description'],
+  speechStyle: ['speech_style'],
+  arcNotes: ['arc_notes'],
+  importConfidence: ['confidence'],
 };
 
-const importanceRank: Record<string, number> = {
-  core: 4,
-  major: 3,
-  supporting: 2,
-  minor: 1,
-  ungrouped: 0,
-};
+const mergeValuesEqual = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
 
-const mergeImportedCharacterEntity = (
-  existing: Record<string, unknown>,
-  incoming: Record<string, unknown>,
-) => {
-  const existingImportance = String(existing.importance || existing.importImportance || 'ungrouped');
-  const incomingImportance = String(incoming.importance || incoming.importImportance || 'ungrouped');
-  const importance = importanceRank[incomingImportance] > importanceRank[existingImportance] ? incomingImportance : existingImportance;
-  return {
-    ...existing,
-    aliases: uniqueStrings([existing.aliases, incoming.aliases, incoming.name]).filter((alias) => normalizeIdentityKey(alias) !== normalizeIdentityKey(existing.name)),
-    summary: richerText(existing.summary, incoming.summary),
-    background: richerText(existing.background, incoming.background),
-    traits: uniqueStrings([existing.traits, incoming.traits]),
-    tagIds: uniqueStrings([existing.tagIds, incoming.tagIds]),
-    organizationIds: uniqueStrings([existing.organizationIds, incoming.organizationIds]),
-    linkedSceneIds: uniqueStrings([existing.linkedSceneIds, incoming.linkedSceneIds]),
-    linkedEventIds: uniqueStrings([existing.linkedEventIds, incoming.linkedEventIds]),
-    linkedWorldItemIds: uniqueStrings([existing.linkedWorldItemIds, incoming.linkedWorldItemIds]),
-    roleInStory: richerText(existing.roleInStory, incoming.roleInStory),
-    physicalDescription: richerText(existing.physicalDescription, incoming.physicalDescription),
-    notes: uniqueStrings([existing.notes, incoming.notes]),
-    importConfidence: Math.max(Number(existing.importConfidence || 0), Number(incoming.importConfidence || 0)),
-    importance,
-    importImportance: importance,
-    enrichmentRecommended: Boolean(existing.enrichmentRecommended || incoming.enrichmentRecommended),
-  };
+const validateEntityMergeDecision = (
+  existing: Record<string, unknown> | undefined,
+  fields: Record<string, unknown>,
+): string | null => {
+  const mergeEvidence = fields.mergeEvidence;
+  if (!mergeEvidence || typeof mergeEvidence !== 'object') return 'Imported character update is missing EntityMergeDecision/v1.';
+  const evidence = mergeEvidence as Record<string, unknown>;
+  const decision = evidence.entityMergeDecision;
+  if (!decision || typeof decision !== 'object') return 'Imported character merge evidence is missing EntityMergeDecision/v1.';
+  const merge = decision as Record<string, unknown>;
+  if (merge.contract !== 'EntityMergeDecision/v1' || merge.existing_id !== existing?.id || !merge.fields || typeof merge.fields !== 'object') {
+    return `Imported character merge evidence does not validate for canonical character ${String(existing?.id || 'unknown')}.`;
+  }
+  if (typeof merge.import_id !== 'string' || !merge.import_id || evidence.importCharacterId !== merge.import_id) {
+    return 'Imported character merge evidence has a missing or mismatched import character ID.';
+  }
+  if (evidence.semanticConflicts !== undefined && !Array.isArray(evidence.semanticConflicts)) {
+    return 'Imported character merge evidence has invalid semantic conflict diagnostics.';
+  }
+  if (fields.id !== existing?.id) {
+    return `Imported character merge update targets a mismatched canonical character ID ${String(fields.id || 'unknown')}.`;
+  }
+
+  const decisionFields = merge.fields as Record<string, unknown>;
+  const permittedMetadata = new Set(['id', 'mergeEvidence', 'importRunId', 'import_run_id']);
+  for (const [field, value] of Object.entries(fields)) {
+    if (permittedMetadata.has(field)) continue;
+    const decisionFieldName = mergeDecisionPayloadFields[field]?.find((name) => Object.prototype.hasOwnProperty.call(decisionFields, name));
+    const decisionField = decisionFieldName ? decisionFields[decisionFieldName] as Record<string, unknown> : null;
+    if (!decisionField || typeof decisionField !== 'object') {
+      return `Imported character merge update contains undeclared field ${field}.`;
+    }
+    if (!['union', 'preserve_existing', 'evidence_append', 'max'].includes(String(decisionField.action)) || !Object.prototype.hasOwnProperty.call(decisionField, 'value')) {
+      return `Imported character merge decision has an invalid action for field ${field}.`;
+    }
+    if (!mergeValuesEqual(value, decisionField.value)) {
+      return `Imported character merge update value for ${field} does not match EntityMergeDecision/v1.`;
+    }
+    const existingField = field === 'importConfidence' ? (existing?.importConfidence ?? existing?.confidence ?? 0) : existing?.[field];
+    if (decisionField.action === 'preserve_existing' && !mergeValuesEqual(decisionField.value, existingField)) {
+      return `Imported character merge decision is stale for preserved field ${field}.`;
+    }
+    if (decisionField.action === 'union' && Array.isArray(existingField) && (!Array.isArray(decisionField.value) || existingField.some((entry) => !(decisionField.value as unknown[]).some((candidate) => mergeValuesEqual(candidate, entry))))) {
+      return `Imported character merge decision is stale for union field ${field}.`;
+    }
+    if (decisionField.action === 'evidence_append' && typeof existingField === 'string' && existingField && (typeof decisionField.value !== 'string' || !decisionField.value.startsWith(existingField))) {
+      return `Imported character merge decision is stale for appended field ${field}.`;
+    }
+    if (decisionField.action === 'max' && typeof existingField === 'number' && (typeof decisionField.value !== 'number' || decisionField.value < existingField)) {
+      return `Imported character merge decision is stale for maximum field ${field}.`;
+    }
+  }
+  return null;
 };
 
 const applyProposalOperation = (
@@ -2098,29 +2512,19 @@ const applyProposalOperation = (
   const nextEntity = normalizeImportedProposalEntity(project, proposal, entityType, rawNextEntity, referenceSets);
 
   if (operation.op === 'create' && existing && importedProposalSource(proposal)) {
-    return { project, applied: true, blockedReason: null };
+    return { project, applied: false, blockedReason: `Cannot create duplicate ${entityType} ${id}; imported create must be reconciled as an explicit update.` };
   }
 
   if (operation.op === 'create' && entityType === 'character' && importedProposalSource(proposal)) {
     const duplicate = findImportedCharacterDuplicate(records, id, nextEntity);
     if (duplicate) {
-      const merged = normalizeImportedProposalEntity(
-        project,
-        proposal,
-        entityType,
-        mergeImportedCharacterEntity(duplicate, nextEntity),
-        referenceSets,
-      );
-      const validationError = validateProposalEntityReferences(project, entityType, merged, referenceSets);
-      if (validationError) {
-        return { project, applied: false, blockedReason: validationError };
-      }
-      return {
-        project: { ...project, [collectionKey]: records.map((entry) => entry.id === duplicate.id ? merged : entry) } as NarrativeProject,
-        applied: true,
-        blockedReason: null,
-      };
+      return { project, applied: false, blockedReason: `Imported character ${id} conflicts with canonical character ${duplicate.id} by name or alias; submit an explicit update with EntityMergeDecision/v1.` };
     }
+  }
+
+  if (operation.op === 'update' && entityType === 'character' && importedProposalSource(proposal)) {
+    const mergeDecisionError = validateEntityMergeDecision(existing, fields);
+    if (mergeDecisionError) return { project, applied: false, blockedReason: mergeDecisionError };
   }
 
   const validationError = validateProposalEntityReferences(project, entityType, nextEntity, referenceSets);
@@ -2185,7 +2589,7 @@ const buildProposalEntity = (
     case 'character_tag':
       return { id, name: title, color: '#f59e0b', description: '', characterIds: [], ...fields };
     case 'timeline_event':
-      return { id, title, summary: '', branchId: project.timelineBranches[0]?.id || '', orderIndex: project.timelineEvents.length, locationIds: [], participantCharacterIds: [], linkedSceneIds: [], linkedWorldItemIds: [], tags: [], ...fields };
+      return { id, title, summary: '', branchId: importedProposalSource(proposal) ? '' : project.timelineBranches[0]?.id || '', orderIndex: project.timelineEvents.length, locationIds: [], participantCharacterIds: [], linkedSceneIds: [], linkedWorldItemIds: [], tags: [], ...fields };
     case 'timeline_branch':
       return { id, name: title, description: '', color: '#f59e0b', sortOrder: project.timelineBranches.length, collapsed: false, mode: project.timelineBranches.length ? 'independent' : 'root', ...fields };
     case 'relationship':
@@ -2196,13 +2600,13 @@ const buildProposalEntity = (
       return { id, title, summary: '', goal: '', notes: '', sceneIds: [], orderIndex: project.chapters.length, status: 'draft', ...chapterFields };
     }
     case 'scene':
-      return { id, chapterId: project.chapters[0]?.id || '', title, summary: '', content: '', orderIndex: project.scenes.length, povCharacterId: null, linkedCharacterIds: [], linkedEventIds: [], linkedWorldItemIds: [], status: 'draft', ...fields };
+      return { id, chapterId: importedProposalSource(proposal) ? '' : project.chapters[0]?.id || '', title, summary: '', content: '', orderIndex: project.scenes.length, povCharacterId: null, linkedCharacterIds: [], linkedEventIds: [], linkedWorldItemIds: [], status: 'draft', ...fields };
     case 'world_container':
       return { id, name: title, type: 'notebook', isDefault: false, sortOrder: project.worldContainers.length, ...fields };
     case 'world_item': {
       const worldItemFields = { ...fields };
       if (worldItemFields.containerId == null) delete worldItemFields.containerId;
-      return { id, containerId: project.worldContainers[0]?.id || '', type: 'note', name: title, description: '', attributes: [], linkedCharacterIds: [], linkedEventIds: [], linkedSceneIds: [], mapMarkers: [], ...worldItemFields };
+      return { id, containerId: importedProposalSource(proposal) ? '' : project.worldContainers[0]?.id || '', type: 'note', name: title, description: '', attributes: [], linkedCharacterIds: [], linkedEventIds: [], linkedSceneIds: [], mapMarkers: [], ...worldItemFields };
     }
     default:
       return { id, ...fields };
@@ -2224,13 +2628,15 @@ const validateProposalEntityReferences = (
   const fail = (label: string, ids: string[]) => ids.length ? `${entityType} ${entity.id} references missing ${label}: ${ids.join(', ')}` : null;
 
   if (entityType === 'timeline_event') {
-    if (entity.branchId && !branches.has(String(entity.branchId))) return `${entityType} ${entity.id} references missing branch: ${String(entity.branchId)}`;
+    if (typeof entity.branchId !== 'string' || !entity.branchId) return `${entityType} ${entity.id} is missing required branchId.`;
+    if (!branches.has(entity.branchId)) return `${entityType} ${entity.id} references missing branch: ${entity.branchId}`;
     return fail('characters', missingIds(entity.participantCharacterIds, characters))
       || fail('scenes', missingIds(entity.linkedSceneIds, scenes))
       || fail('world items', [...missingIds(entity.locationIds, worldItems), ...missingIds(entity.linkedWorldItemIds, worldItems)]);
   }
   if (entityType === 'scene') {
-    if (entity.chapterId && !chapters.has(String(entity.chapterId))) return `${entityType} ${entity.id} references missing chapter: ${String(entity.chapterId)}`;
+    if (typeof entity.chapterId !== 'string' || !entity.chapterId) return `${entityType} ${entity.id} is missing required chapterId.`;
+    if (!chapters.has(entity.chapterId)) return `${entityType} ${entity.id} references missing chapter: ${entity.chapterId}`;
     if (entity.povCharacterId && !characters.has(String(entity.povCharacterId))) return `${entityType} ${entity.id} references missing POV character: ${String(entity.povCharacterId)}`;
     return fail('characters', missingIds(entity.linkedCharacterIds, characters))
       || fail('events', missingIds(entity.linkedEventIds, events))
@@ -2247,7 +2653,8 @@ const validateProposalEntityReferences = (
     return fail('characters', [String(entity.sourceId || ''), String(entity.targetId || '')].filter((id) => id && !characters.has(id)));
   }
   if (entityType === 'world_item') {
-    if (entity.containerId && !containers.has(String(entity.containerId))) return `${entityType} ${entity.id} references missing container: ${String(entity.containerId)}`;
+    if (typeof entity.containerId !== 'string' || !entity.containerId) return `${entityType} ${entity.id} is missing required containerId.`;
+    if (!containers.has(entity.containerId)) return `${entityType} ${entity.id} references missing container: ${entity.containerId}`;
     return fail('characters', missingIds(entity.linkedCharacterIds, characters))
       || fail('events', missingIds(entity.linkedEventIds, events))
       || fail('scenes', missingIds(entity.linkedSceneIds, scenes));

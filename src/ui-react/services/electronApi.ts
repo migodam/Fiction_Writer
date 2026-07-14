@@ -8,6 +8,19 @@ export interface ProviderConnectionResult {
   message: string;
 }
 
+export interface ProjectFileBridge {
+  existsSync(path: string): boolean;
+  readFileSync(path: string, encoding?: 'utf8'): string | Uint8Array;
+  writeFileSync(path: string, data: string, encoding?: 'utf8'): void;
+  writeFileSync(path: string, data: Uint8Array): void;
+  mkdirSync(path: string): void;
+  readdirSync(path: string): string[];
+  unlinkSync(path: string): void;
+  realpathSync(path: string): string;
+  copyFileSync(source: string, destination: string): void;
+  renameSync(source: string, destination: string): void;
+}
+
 export interface W3StartPayload {
   projectRoot: string;
   scene_id: string;
@@ -383,28 +396,159 @@ export interface OrchestratorStatusResult {
   errors?: string[];
 }
 
-const getIpcRenderer = () => {
-  const scope = globalThis as typeof globalThis & { require?: NodeRequire };
-  const loader = scope.require;
-  if (!loader) {
-    return null;
-  }
+type PreloadBridge = Record<string, (...args: any[]) => any>;
 
-  try {
-    return loader('electron').ipcRenderer as {
-      invoke: (channel: string, payload?: unknown) => Promise<unknown>;
-      send: (channel: string, payload?: unknown) => void;
-      on: (channel: string, listener: (...args: unknown[]) => void) => void;
-      removeAllListeners: (channel: string) => void;
-    };
-  } catch {
-    return null;
+const getPreloadBridge = () => (globalThis as typeof globalThis & { narrativeIDE?: PreloadBridge }).narrativeIDE;
+
+const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+const bytesToBase64 = (bytes: Uint8Array) => {
+  let result = '';
+  for (let index = 0; index < bytes.length; index += 3) {
+    const first = bytes[index];
+    const second = bytes[index + 1];
+    const third = bytes[index + 2];
+    result += BASE64_ALPHABET[first >> 2];
+    result += BASE64_ALPHABET[((first & 0x03) << 4) | ((second ?? 0) >> 4)];
+    result += second === undefined ? '=' : BASE64_ALPHABET[((second & 0x0f) << 2) | ((third ?? 0) >> 6)];
+    result += third === undefined ? '=' : BASE64_ALPHABET[third & 0x3f];
   }
+  return result;
+};
+
+const base64ToBytes = (value: string) => {
+  if (value.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
+    throw new Error('Invalid project file base64 data');
+  }
+  const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
+  const bytes = new Uint8Array((value.length / 4) * 3 - padding);
+  let offset = 0;
+  for (let index = 0; index < value.length; index += 4) {
+    const first = BASE64_ALPHABET.indexOf(value[index]);
+    const second = BASE64_ALPHABET.indexOf(value[index + 1]);
+    const third = value[index + 2] === '=' ? 0 : BASE64_ALPHABET.indexOf(value[index + 2]);
+    const fourth = value[index + 3] === '=' ? 0 : BASE64_ALPHABET.indexOf(value[index + 3]);
+    bytes[offset++] = (first << 2) | (second >> 4);
+    if (offset < bytes.length) bytes[offset++] = ((second & 0x0f) << 4) | (third >> 2);
+    if (offset < bytes.length) bytes[offset++] = ((third & 0x03) << 6) | fourth;
+  }
+  return bytes;
+};
+
+const invokeMethods: Record<string, string> = {
+  'dialog:pick-directory': 'pickDirectory',
+  'settings:load-app': 'loadAppSettings',
+  'settings:save-app': 'saveAppSettings',
+  'dialog:pick-files': 'pickFiles',
+  'settings:test-provider': 'testProviderConnection',
+  'ai:chat': 'aiChat',
+  'ai:generate-image': 'aiGenerateImage',
+  'portrait:save': 'portraitSave',
+  'portrait:upload': 'portraitUpload',
+  'db:open': 'dbOpen',
+  'db:close': 'dbClose',
+  'db:upsert': 'dbUpsert',
+  'db:getAll': 'dbGetAll',
+  'db:delete': 'dbDelete',
+  'db:search': 'dbSearch',
+  'w3:start': 'w3Start',
+  'w3:select': 'w3Select',
+  'w3:status': 'w3Status',
+  'w1:start': 'w1Start',
+  'w1:cancel': 'w1Cancel',
+  'w1:status': 'w1Status',
+  'w1:console': 'w1Console',
+  'w1:set_breakpoint': 'w1SetBreakpoint',
+  'w1:resume': 'w1Resume',
+  'w1:rewind': 'w1Rewind',
+  'prompts:list': 'fetchPrompts',
+  'sidecar:spawn': 'sidecarSpawn',
+  'w2:start': 'w2Start',
+  'w2:status': 'w2Status',
+  'w4:start': 'w4Start',
+  'w4:status': 'w4Status',
+  'w5:start': 'w5Start',
+  'w5:status': 'w5Status',
+  'w6:start': 'w6Start',
+  'w6:status': 'w6Status',
+  'metadata:ingest': 'metadataIngest',
+  'metadata:status': 'metadataStatus',
+  'orchestrator:start': 'orchestratorStart',
+  'orchestrator:status': 'orchestratorStatus',
+  'orchestrator:grant': 'orchestratorGrant',
+  'orchestrator:deny': 'orchestratorDeny',
+};
+
+const getIpcRenderer = () => {
+  const bridge = getPreloadBridge();
+  if (!bridge) return null;
+
+  const subscriptions = new Map<string, Array<() => void>>();
+  const subscribe = (channel: string, listener: (...args: unknown[]) => void) => {
+    let unsubscribe: (() => void) | undefined;
+    if (channel === 'w3:progress') {
+      unsubscribe = bridge.onW3Progress((payload: unknown) => listener(undefined, payload));
+    } else if (channel.startsWith('ai:chunk:')) {
+      unsubscribe = bridge.onAIChunk(channel.slice('ai:chunk:'.length), (payload: unknown) => listener(undefined, payload));
+    } else if (channel.startsWith('ai:done:')) {
+      unsubscribe = bridge.onAIDone(channel.slice('ai:done:'.length), () => listener(undefined));
+    } else if (channel.startsWith('ai:error:')) {
+      unsubscribe = bridge.onAIError(channel.slice('ai:error:'.length), (payload: unknown) => listener(undefined, payload));
+    }
+    if (unsubscribe) subscriptions.set(channel, [...(subscriptions.get(channel) ?? []), unsubscribe]);
+  };
+
+  return {
+    invoke: (channel: string, payload?: unknown) => {
+      const method = invokeMethods[channel];
+      if (!method || !bridge[method]) return Promise.reject(new Error(`Unsupported Electron IPC channel: ${channel}`));
+      return Promise.resolve(bridge[method](payload));
+    },
+    send: (channel: string, payload?: unknown) => {
+      if (channel === 'ai:stream-start') bridge.aiStreamStart(payload);
+      if (channel === 'ai:stream-cancel') bridge.aiStreamCancel(payload);
+    },
+    on: subscribe,
+    removeAllListeners: (channel: string) => {
+      for (const unsubscribe of subscriptions.get(channel) ?? []) unsubscribe();
+      subscriptions.delete(channel);
+    },
+  };
 };
 
 export const electronApi = {
   isAvailable(): boolean {
     return Boolean(getIpcRenderer());
+  },
+
+  sha256(value: string): string | null {
+    const bridge = getPreloadBridge();
+    return bridge && typeof bridge.sha256 === 'function' ? String(bridge.sha256(value)) : null;
+  },
+
+  projectFiles(): ProjectFileBridge | null {
+    const bridge = getPreloadBridge();
+    if (!bridge || !['projectFileExists', 'projectFileRead', 'projectFileWrite', 'projectFileMkdir', 'projectFileReaddir', 'projectFileUnlink', 'projectFileRealpath', 'projectFileCopy', 'projectFileRename'].every((key) => typeof bridge[key] === 'function')) {
+      return null;
+    }
+    return {
+      existsSync: (path) => Boolean(bridge.projectFileExists({ path })),
+      readFileSync: (path: string, encoding?: 'utf8') => {
+        if (encoding === 'utf8') return String(bridge.projectFileRead({ path, encoding: 'utf8' }));
+        return base64ToBytes(String(bridge.projectFileRead({ path, encoding: 'base64' })));
+      },
+      writeFileSync: (path: string, data: string | Uint8Array, encoding?: 'utf8') => {
+        const binary = data instanceof Uint8Array;
+        if (!binary && encoding !== undefined && encoding !== 'utf8') throw new Error('Unsupported project file encoding');
+        bridge.projectFileWrite({ path, data: binary ? bytesToBase64(data) : data, encoding: binary ? 'base64' : 'utf8' });
+      },
+      mkdirSync: (path) => { bridge.projectFileMkdir({ path }); },
+      readdirSync: (path) => bridge.projectFileReaddir({ path }) as string[],
+      unlinkSync: (path) => { bridge.projectFileUnlink({ path }); },
+      realpathSync: (path) => String(bridge.projectFileRealpath({ path })),
+      copyFileSync: (source, destination) => { bridge.projectFileCopy({ path: source, destination }); },
+      renameSync: (source, destination) => { bridge.projectFileRename({ path: source, destination }); },
+    };
   },
 
   async pickDirectory(mode: 'create' | 'open'): Promise<PickDirectoryResult> {

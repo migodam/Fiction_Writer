@@ -103,10 +103,10 @@ test('world category tree renders with 3-level categories', async ({ page }) => 
   // Tree is visible by default.
   await expect(page.getByTestId('world-category-tree')).toBeVisible();
 
-  // Each category node (button inside renderNodeContent) is visible.
-  for (const cat of worldCategories) {
-    await expect(page.getByTestId(`world-category-node-${cat.id}`)).toBeVisible();
-  }
+  // The virtual World root is hidden in the Folder UI; its children are promoted.
+  await expect(page.getByTestId('world-category-node-wcat_root')).not.toBeVisible();
+  await expect(page.getByTestId('world-category-node-wcat_loc')).toBeVisible();
+  await expect(page.getByTestId('world-category-node-wcat_city')).toBeVisible();
 });
 
 // ─── Test 5: World category cycle prevention ──────────────────────────────────

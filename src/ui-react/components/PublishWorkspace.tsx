@@ -100,8 +100,8 @@ export const PublishWorkspace = () => {
           <label className="block">
             <div className="mb-2 text-[10px] font-black uppercase tracking-[0.2em] text-text-3">{t('publish.format', 'Format')}</div>
             <div className="grid grid-cols-2 gap-3">
-              <button type="button" className={`rounded-xl border px-4 py-3 text-sm ${format === 'markdown' ? 'border-brand bg-active text-text' : 'border-border text-text-2'}`} onClick={() => setFormat('markdown')}><FileText size={16} className="mr-2 inline" />Markdown</button>
-              <button type="button" className={`rounded-xl border px-4 py-3 text-sm ${format === 'html' ? 'border-brand bg-active text-text' : 'border-border text-text-2'}`} onClick={() => setFormat('html')}><Globe2 size={16} className="mr-2 inline" />HTML</button>
+              <button type="button" className={`rounded-xl border px-4 py-3 text-sm ${format === 'markdown' ? 'border-brand bg-active text-text' : 'border-border text-text-2'}`} onClick={() => setFormat('markdown')} data-testid="publish-format-markdown"><FileText size={16} className="mr-2 inline" />Markdown</button>
+              <button type="button" className={`rounded-xl border px-4 py-3 text-sm ${format === 'html' ? 'border-brand bg-active text-text' : 'border-border text-text-2'}`} onClick={() => setFormat('html')} data-testid="publish-format-html"><Globe2 size={16} className="mr-2 inline" />HTML</button>
             </div>
           </label>
 
@@ -145,7 +145,7 @@ export const PublishWorkspace = () => {
           <div className="mb-4 text-[10px] font-black uppercase tracking-[0.25em] text-text-3">{t('publish.generatedExports', 'Generated Exports')}</div>
           <div className="space-y-3">
             {exports.length > 0 ? exports.map((artifact) => (
-              <div key={artifact.id} className="rounded-xl border border-border bg-bg p-3">
+              <div key={artifact.id} className="rounded-xl border border-border bg-bg p-3" data-testid={`publish-export-history-item-${artifact.format}`}>
                 <div className="text-sm font-bold text-text">{artifact.fileName}</div>
                 <div className="mt-1 text-[11px] text-text-3">{artifact.path || 'In-memory preview'}</div>
                 <div className="mt-1 text-[10px] uppercase tracking-[0.18em] text-text-3">{artifact.scope} {artifact.chapterIds?.length ? `/${artifact.chapterIds.length} chapters` : ''}</div>

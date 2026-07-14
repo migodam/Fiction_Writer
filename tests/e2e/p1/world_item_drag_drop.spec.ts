@@ -51,8 +51,10 @@ async function injectFixture(page: import('@playwright/test').Page) {
       const store = (window as any).__narrativeStore;
       if (!store) throw new Error('__narrativeStore not exposed');
       store.setState((s: any) => ({
-        worldContainers: [...s.worldContainers, ...containers],
-        worldItems: [...s.worldItems, ...items],
+      worldContainers: [...s.worldContainers, ...containers],
+      worldItems: [...s.worldItems, ...items],
+      undoStack: [],
+      redoStack: [],
       }));
     },
     { containers: FIXTURE_CONTAINERS, items: FIXTURE_ITEMS },
@@ -90,8 +92,17 @@ test('moveWorldItemToCategory store action moves item to new container', async (
 });
 
 // Test 2: moveWorldItemToCategory is undoable
-test('moveWorldItemToCategory is undoable via undoAction', async ({ page }) => {
+test('moveWorldItemToCategory retains references and is one undo transaction', async ({ page }) => {
   await injectFixture(page);
+
+  await page.evaluate(() => {
+    const store = (window as any).__narrativeStore;
+    store.setState((state: any) => ({
+      characters: [...state.characters, { id: 'wi_ref_char', linkedWorldItemIds: ['wi_xjg'] }],
+      timelineEvents: [...state.timelineEvents, { id: 'wi_ref_event', locationIds: ['wi_xjg'], linkedWorldItemIds: ['wi_xjg'] }],
+      scenes: [...state.scenes, { id: 'wi_ref_scene', linkedWorldItemIds: ['wi_xjg'] }],
+    }));
+  });
 
   await page.evaluate(() => {
     (window as any).__narrativeStore.getState().moveWorldItemToCategory(
@@ -100,6 +111,22 @@ test('moveWorldItemToCategory is undoable via undoAction', async ({ page }) => {
       'wc_methods',
       ['世界模型', '功法与术法', '项甲功'],
     );
+  });
+
+  await expect.poll(() => page.evaluate(() => (window as any).__narrativeStore.getState().undoStack.length)).toBe(1);
+  await expect.poll(() => page.evaluate(() => {
+    const state = (window as any).__narrativeStore.getState();
+    return {
+      count: state.worldItems.filter((item: any) => item.id === 'wi_xjg').length,
+      character: state.characters.find((item: any) => item.id === 'wi_ref_char').linkedWorldItemIds,
+      event: state.timelineEvents.find((item: any) => item.id === 'wi_ref_event'),
+      scene: state.scenes.find((item: any) => item.id === 'wi_ref_scene').linkedWorldItemIds,
+    };
+  })).toEqual({
+    count: 1,
+    character: ['wi_xjg'],
+    event: { id: 'wi_ref_event', locationIds: ['wi_xjg'], linkedWorldItemIds: ['wi_xjg'] },
+    scene: ['wi_xjg'],
   });
 
   await page.evaluate(async () => {
@@ -111,6 +138,7 @@ test('moveWorldItemToCategory is undoable via undoAction', async ({ page }) => {
   });
   expect(restored.containerId).toBe('wc_rules');
   expect(restored.categoryPath[1]).toBe('修炼境界与制度');
+  await expect.poll(() => page.evaluate(() => (window as any).__narrativeStore.getState().undoStack.length)).toBe(0);
 });
 
 // Test 3: World item rows show drag handle in DOM

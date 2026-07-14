@@ -13,6 +13,7 @@
     "build": "npm run ui:build",
     "preview": "vite preview",
     "electron:dev": "node scripts/electron-dev.mjs",
+    "electron:smoke": "node tests/electron/runtime_smoke.mjs",
     "test:e2e": "npx playwright test --config tests/playwright.config.ts",
     "sidecar:test": "sidecar/.venv/bin/python -m pytest",
     "postinstall": "electron-rebuild",

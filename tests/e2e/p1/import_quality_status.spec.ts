@@ -6,6 +6,7 @@
  * import_workflow.spec.ts. Helpers are local to keep the file self-contained.
  */
 import { expect, test, type Page } from '@playwright/test';
+import { TEST_NARRATIVE_IDE_INVOKE_METHODS } from '../helpers/narrativeIdeBridge';
 
 // ── IPC mock helpers (same pattern as import_workflow.spec.ts) ────────────────
 
@@ -28,7 +29,7 @@ interface MockState {
 
 async function injectIpcMock(page: Page, statusResults: StatusResult[]) {
   await page.addInitScript(
-    ({ startResult, statusResults }) => {
+    ({ startResult, statusResults, bridgeMethods }) => {
       const state: MockState = { startResult, statusResults, statusCallCount: 0 };
       (window as any).__mockIpcState = state;
 
@@ -53,14 +54,17 @@ async function injectIpcMock(page: Page, statusResults: StatusResult[]) {
         send: () => {},
       };
 
-      (window as any).require = (module: string) => {
-        if (module === 'electron') return { ipcRenderer: mockIpcRenderer };
-        throw new Error(`Module not found: ${module}`);
-      };
+      (window as any).narrativeIDE = Object.fromEntries(
+        Object.entries(bridgeMethods).map(([method, channel]) => [
+          method,
+          () => mockIpcRenderer.invoke(channel),
+        ]),
+      );
     },
     {
       startResult: { session_id: 'mock-quality-001', status: 'started' },
       statusResults,
+      bridgeMethods: TEST_NARRATIVE_IDE_INVOKE_METHODS,
     },
   );
 }

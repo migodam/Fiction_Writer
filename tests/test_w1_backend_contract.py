@@ -67,6 +67,8 @@ def test_import_all_chapter_body_comes_from_raw_source_not_llm_output(tmp_path):
 
 def test_preaccept_import_stages_manuscript_without_canonical_writes(tmp_path, monkeypatch):
     raw_source = "Chapter 1\nCanonical manuscript prose."
+    source_path = tmp_path / "novel.txt"
+    source_path.write_text(raw_source, encoding="utf-8")
     span = make_source_span(raw_source, 0, len(raw_source))
     staged_chapter = {
         "chapter_id": "chap_import_1",
@@ -84,7 +86,7 @@ def test_preaccept_import_stages_manuscript_without_canonical_writes(tmp_path, m
     monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", capture_proposal)
     state = {
         "project_path": str(tmp_path),
-        "source_file_path": str(tmp_path / "novel.txt"),
+        "source_file_path": str(source_path),
         "source_text": raw_source,
         "import_run_id": "import_contract",
         "source_language": "en",
@@ -180,7 +182,7 @@ def test_planner_rerun_executes_registered_tool_and_out_of_order_tool_falls_back
     assert fallback["planner_next_action"]["reason"] == "out_of_order_tool_fallback"
 
 
-def test_budget_policy_records_missing_usage_and_blocks_the_next_provider_call():
+def test_budget_policy_missing_usage_fails_the_completed_provider_call_closed():
     session_id = "f1-budget-missing-usage"
     w1_run_events.clear_session(session_id)
     w1_import.configure_w1_budget(
@@ -194,11 +196,36 @@ def test_budget_policy_records_missing_usage_and_blocks_the_next_provider_call()
 
     llm = MagicMock(model_name="deepseek-v4-flash")
     llm.ainvoke = AsyncMock(return_value=Response())
-    asyncio.run(w1_import._ainvoke_with_budget(llm, [], session_id=session_id))
     try:
         asyncio.run(w1_import._ainvoke_with_budget(llm, [], session_id=session_id))
-        assert False, "exhausted budget must block the next call"
+        assert False, "missing provider usage must fail the completed call"
     except RuntimeError as exc:
-        assert "preflight" in str(exc)
+        assert "missing_usage" in str(exc)
     assert llm.ainvoke.await_count == 1
+    w1_run_events.clear_session(session_id)
+
+
+def test_usage_ledger_artifact_is_authoritative_and_non_secret(tmp_path):
+    session_id = "f1-usage-artifact"
+    w1_run_events.clear_session(session_id)
+    w1_import.configure_w1_budget(
+        {"budget_policy": {"max_calls": 3}, "context": {"model": "deepseek-v4-flash"}}, session_id,
+    )
+    assert w1_run_events.record_call_usage(session_id, 321, 123, model="deepseek-v4-flash")
+
+    ledger = w1_import.persist_w1_usage_ledger({
+        "project_path": str(tmp_path),
+        "import_run_id": "run_usage",
+        "session_id": session_id,
+        "context": {"model": "deepseek-v4-flash"},
+    })
+
+    artifact = json.loads((tmp_path / "system" / "imports" / "run_usage" / "usage_ledger.json").read_text(encoding="utf-8"))
+    assert artifact == ledger
+    assert artifact["actual_input_tokens"] == 321
+    assert artifact["actual_output_tokens"] == 123
+    assert artifact["actual_calls"] == artifact["api_call_count"] == 1
+    assert artifact["budget_status"]["exhausted"] is False
+    assert "api_key" not in json.dumps(artifact).lower()
+    assert not list((tmp_path / "system" / "imports" / "run_usage").glob(".usage_ledger.json.*.tmp"))
     w1_run_events.clear_session(session_id)

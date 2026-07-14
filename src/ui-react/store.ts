@@ -109,8 +109,16 @@ interface W1RuntimeStatus {
 }
 
 type PanelKind = 'sidebar' | 'inspector' | 'agentDock' | 'writingOutline' | 'writingContext';
-type ContextMenuItem = { id: string; label: string; action: () => void; destructive?: boolean };
-type ContextMenuState = { x: number; y: number; items: ContextMenuItem[] } | null;
+export type ContextMenuItem = {
+  id: string;
+  label: string;
+  action: () => void | Promise<void>;
+  destructive?: boolean;
+  disabled?: boolean;
+  disabledReason?: string;
+  shortcut?: string;
+};
+export type ContextMenuState = { x: number; y: number; items: ContextMenuItem[]; returnFocus?: HTMLElement | null } | null;
 
 interface UIState {
   currentActivity: string;
@@ -273,6 +281,7 @@ interface ProjectState {
   addWorldItem: (item: WorldItem) => void;
   updateWorldItem: (item: WorldItem) => void;
   deleteWorldItem: (id: string) => void;
+  moveWorldItem: (id: string, containerId: string) => void;
   moveWorldItemToCategory: (itemId: string, newCategory: string, newContainerId: string, newCategoryPath: string[], newCategoryId?: string | null, newParentId?: string | null) => void;
   updateWorldSettings: (settings: WorldSettings) => void;
   createWorldMap: (map: WorldMapDocument) => void;
@@ -475,6 +484,125 @@ interface UndoEntry {
   label: string;
   snapshot: ProjectDataSnapshot;
 }
+
+type WorldItemReferenceCleanup = Pick<ProjectDataSnapshot,
+  'worldItems' | 'worldMaps' | 'characters' | 'timelineEvents' | 'scenes' | 'scripts' | 'storyboards' | 'graphBoards'
+>;
+
+type CharacterReferenceCleanup = Pick<ProjectDataSnapshot,
+  'characters' | 'characterTags' | 'relationships' | 'timelineEvents' | 'scenes' | 'worldItems' | 'scripts' | 'storyboards' | 'graphBoards'
+>;
+
+const removeCharacterReferences = (state: ProjectState, deletedCharacterId: string): CharacterReferenceCleanup => {
+  const deletedRelationshipIds = new Set(
+    state.relationships
+      .filter((relationship) => relationship.sourceId === deletedCharacterId || relationship.targetId === deletedCharacterId)
+      .map((relationship) => relationship.id),
+  );
+
+  return {
+    characters: state.characters
+      .filter((character) => character.id !== deletedCharacterId)
+      .map((character) => ({
+        ...character,
+        relationshipIds: (character.relationshipIds ?? []).filter((relationshipId) => !deletedRelationshipIds.has(relationshipId)),
+      })),
+    characterTags: state.characterTags.map((tag) => ({
+      ...tag,
+      characterIds: tag.characterIds.filter((characterId) => characterId !== deletedCharacterId),
+    })),
+    relationships: state.relationships.filter((relationship) => !deletedRelationshipIds.has(relationship.id)),
+    timelineEvents: state.timelineEvents.map((event) => ({
+      ...event,
+      participantCharacterIds: (event.participantCharacterIds ?? []).filter((characterId) => characterId !== deletedCharacterId),
+    })),
+    scenes: state.scenes.map((scene) => ({
+      ...scene,
+      povCharacterId: scene.povCharacterId === deletedCharacterId ? null : scene.povCharacterId,
+      linkedCharacterIds: (scene.linkedCharacterIds ?? []).filter((characterId) => characterId !== deletedCharacterId),
+    })),
+    worldItems: state.worldItems.map((item) => ({
+      ...item,
+      linkedCharacterIds: (item.linkedCharacterIds ?? []).filter((characterId) => characterId !== deletedCharacterId),
+    })),
+    scripts: state.scripts.map((script) => ({
+      ...script,
+      linkedCharacterIds: (script.linkedCharacterIds ?? []).filter((characterId) => characterId !== deletedCharacterId),
+    })),
+    storyboards: state.storyboards.map((storyboard) => ({
+      ...storyboard,
+      shots: storyboard.shots.map((shot) => ({
+        ...shot,
+        linkedCharacterIds: (shot.linkedCharacterIds ?? []).filter((characterId) => characterId !== deletedCharacterId),
+      })),
+    })),
+    graphBoards: state.graphBoards.map((board) => ({
+      ...board,
+      nodes: board.nodes.map((node) =>
+        node.linkedEntityId === deletedCharacterId && (node.linkedEntityType === 'character' || node.kind === 'character_ref')
+          ? { ...node, linkedEntityId: null, linkedEntityType: null }
+          : node,
+      ),
+    })),
+  };
+};
+
+const removeWorldItemReferences = (state: ProjectState, deletedItemIds: Set<string>): WorldItemReferenceCleanup => {
+  const deletedMarkerIds = new Set(
+    state.worldItems
+      .filter((item) => deletedItemIds.has(item.id))
+      .flatMap((item) => item.mapMarkers.map((marker) => marker.id)),
+  );
+
+  return {
+    worldItems: state.worldItems
+      .filter((item) => !deletedItemIds.has(item.id))
+      .map((item) => ({
+        ...item,
+        mapMarkers: item.mapMarkers.map((marker) =>
+          marker.linkedEntityId && deletedItemIds.has(marker.linkedEntityId)
+            ? { ...marker, linkedEntityId: null }
+            : marker,
+        ),
+      })),
+    worldMaps: state.worldMaps.map((map) => ({
+      ...map,
+      markerIds: map.markerIds.filter((markerId) => !deletedMarkerIds.has(markerId)),
+    })),
+    characters: state.characters.map((character) => ({
+      ...character,
+      linkedWorldItemIds: character.linkedWorldItemIds.filter((itemId) => !deletedItemIds.has(itemId)),
+    })),
+    timelineEvents: state.timelineEvents.map((event) => ({
+      ...event,
+      locationIds: event.locationIds.filter((itemId) => !deletedItemIds.has(itemId)),
+      linkedWorldItemIds: event.linkedWorldItemIds.filter((itemId) => !deletedItemIds.has(itemId)),
+    })),
+    scenes: state.scenes.map((scene) => ({
+      ...scene,
+      linkedWorldItemIds: scene.linkedWorldItemIds.filter((itemId) => !deletedItemIds.has(itemId)),
+    })),
+    scripts: state.scripts.map((script) => ({
+      ...script,
+      linkedWorldItemIds: script.linkedWorldItemIds.filter((itemId) => !deletedItemIds.has(itemId)),
+    })),
+    storyboards: state.storyboards.map((storyboard) => ({
+      ...storyboard,
+      shots: storyboard.shots.map((shot) => ({
+        ...shot,
+        linkedWorldItemIds: shot.linkedWorldItemIds.filter((itemId) => !deletedItemIds.has(itemId)),
+      })),
+    })),
+    graphBoards: state.graphBoards.map((board) => ({
+      ...board,
+      nodes: board.nodes.map((node) =>
+        node.linkedEntityType === 'world_item' && node.linkedEntityId && deletedItemIds.has(node.linkedEntityId)
+          ? { ...node, linkedEntityId: null, linkedEntityType: null }
+          : node,
+      ),
+    })),
+  };
+};
 
 const now = () => new Date().toISOString();
 const defaultProject = createStarterProject();
@@ -981,9 +1109,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     if (!pendingUndoTransaction) return;
     const current = extractSnapshot(get());
     const prev = pendingUndoTransaction.snapshot;
-    const changed =
-      current.timelineBranches !== prev.timelineBranches ||
-      current.timelineEvents !== prev.timelineEvents;
+    // Selection is intentionally absent from ProjectDataSnapshot: one gesture commits once.
+    const changed = Object.keys(current).some((key) => current[key as keyof ProjectDataSnapshot] !== prev[key as keyof ProjectDataSnapshot]);
     if (!changed) {
       set({ pendingUndoTransaction: null });
       return;
@@ -1061,21 +1188,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
   deleteCharacter: (id) => {
     get().captureUndoSnapshot('Delete character');
-    set((state) => withDirtyState({
-      characters: state.characters
-        .filter((entry) => entry.id !== id)
-        .map((entry) => ({
-          ...entry,
-          relationshipIds: (entry.relationshipIds ?? []).filter(
-            (rid) => !state.relationships.some(
-              (rel) => rel.id === rid && (rel.sourceId === id || rel.targetId === id)
-            )
-          ),
-        })),
-      relationships: state.relationships.filter(
-        (entry) => entry.sourceId !== id && entry.targetId !== id
-      ),
-    }));
+    set((state) => withDirtyState(removeCharacterReferences(state, id)));
     const { projectRoot } = get();
     if (projectRoot) {
       electronApi.dbDelete(projectRoot, 'characters', id).catch(() => {});
@@ -1087,15 +1200,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       archivedIds: Array.from(new Set([...state.archivedIds, id])),
     }));
   },
-  hardDeleteCharacter: (id) => {
-    const state = get();
-    const hasRefs =
-      state.relationships.some((r) => r.sourceId === id || r.targetId === id) ||
-      state.timelineEvents.some((e) => (e.participantCharacterIds ?? []).includes(id)) ||
-      state.scenes.some((s) => (s.linkedCharacterIds ?? []).includes(id));
-    if (hasRefs) return;
-    get().deleteCharacter(id);
-  },
+  hardDeleteCharacter: (id) => get().deleteCharacter(id),
   addCharacterTag: (tag) => { get().captureUndoSnapshot('Add tag'); set((state) => withDirtyState({ characterTags: [...state.characterTags, tag] })); },
   updateCharacterTag: (tag) => { get().captureUndoSnapshot('Edit tag'); set((state) => withDirtyState({ characterTags: state.characterTags.map((entry) => entry.id === tag.id ? tag : entry) })); },
   deleteCharacterTag: (tagId) => { get().captureUndoSnapshot('Delete tag'); set((state) => withDirtyState({ characterTags: state.characterTags.filter((tag) => tag.id !== tagId), characters: state.characters.map((character) => ({ ...character, tagIds: character.tagIds.filter((id) => id !== tagId) })) })); },
@@ -1385,10 +1490,43 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   updateStoryboard: (storyboard) => set((state) => withDirtyState({ storyboards: state.storyboards.map((entry) => entry.id === storyboard.id ? storyboard : entry) })),
   addWorldContainer: (container) => { get().captureUndoSnapshot('Add container'); set((state) => withDirtyState({ worldContainers: [...state.worldContainers, container] })); },
   updateWorldContainer: (container) => { get().captureUndoSnapshot('Edit container'); set((state) => withDirtyState({ worldContainers: state.worldContainers.map((entry) => entry.id === container.id ? container : entry) })); },
-  deleteWorldContainer: (id) => { get().captureUndoSnapshot('Delete container'); set((state) => withDirtyState({ worldContainers: state.worldContainers.filter((entry) => entry.id !== id), worldItems: state.worldItems.filter((entry) => entry.containerId !== id) })); },
+  deleteWorldContainer: (id) => {
+    get().captureUndoSnapshot('Delete container');
+    set((state) => {
+      const deletedContainerIds = new Set([id]);
+      let addedContainer = true;
+      while (addedContainer) {
+        addedContainer = false;
+        for (const container of state.worldContainers) {
+          if (container.parentId && deletedContainerIds.has(container.parentId) && !deletedContainerIds.has(container.id)) {
+            deletedContainerIds.add(container.id);
+            addedContainer = true;
+          }
+        }
+      }
+      const deletedItemIds = new Set(
+        state.worldItems
+          .filter((item) => deletedContainerIds.has(item.containerId))
+          .map((item) => item.id),
+      );
+      return withDirtyState({
+        worldContainers: state.worldContainers.filter((container) => !deletedContainerIds.has(container.id)),
+        ...removeWorldItemReferences(state, deletedItemIds),
+      });
+    });
+  },
   addWorldItem: (item) => { get().captureUndoSnapshot('Add world item'); set((state) => withDirtyState({ worldItems: [...state.worldItems, item] })); },
   updateWorldItem: (item) => { get().captureUndoSnapshot('Edit world item'); set((state) => withDirtyState({ worldItems: state.worldItems.map((entry) => entry.id === item.id ? item : entry) })); },
-  deleteWorldItem: (id) => { get().captureUndoSnapshot('Delete world item'); set((state) => withDirtyState({ worldItems: state.worldItems.filter((entry) => entry.id !== id) })); },
+  deleteWorldItem: (id) => {
+    get().captureUndoSnapshot('Delete world item');
+    set((state) => withDirtyState(removeWorldItemReferences(state, new Set([id]))));
+  },
+  moveWorldItem: (id, containerId) => {
+    if (!get().pendingUndoTransaction) get().captureUndoSnapshot('Move world item');
+    set((state) => withDirtyState({
+      worldItems: state.worldItems.map((item) => item.id === id ? { ...item, containerId } : item),
+    }));
+  },
   moveWorldItemToCategory: (itemId, newCategory, newContainerId, newCategoryPath, newCategoryId?, newParentId?) => {
     if (!get().pendingUndoTransaction) get().captureUndoSnapshot('Move world item');
     set((state) => withDirtyState({
@@ -1414,7 +1552,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   deleteGraphBoard: (boardId) => { get().captureUndoSnapshot('Delete board'); set((state) => { const nextBoards = state.graphBoards.filter((entry) => entry.id !== boardId); return withDirtyState({ graphBoards: nextBoards, activeGraphBoardId: nextBoards[0]?.id || null }); }); },
   setActiveGraphBoard: (boardId) => set((state) => withDirtyState({ activeGraphBoardId: boardId, currentProject: state.currentProject ? { ...cloneProject(state), uiState: { ...cloneProject(state).uiState, view: { ...cloneProject(state).uiState.view, activeGraphBoardId: boardId } } } : state.currentProject })),
   addGraphNode: (boardId, node) => { get().captureUndoSnapshot('Add node'); set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, nodes: [...board.nodes, node], selectedNodeIds: [node.id] } : board) })); },
-  updateGraphNode: (boardId, node) => { get().captureUndoSnapshot('Edit node'); set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, nodes: board.nodes.map((entry) => entry.id === node.id ? node : entry) } : board) })); },
+  updateGraphNode: (boardId, node) => { if (!get().pendingUndoTransaction) get().captureUndoSnapshot('Edit node'); set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, nodes: board.nodes.map((entry) => entry.id === node.id ? node : entry) } : board) })); },
   addGraphEdge: (boardId, edge) => { get().captureUndoSnapshot('Add edge'); set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, edges: [...board.edges, edge] } : board) })); },
   deleteGraphNode: (boardId, nodeId) => { get().captureUndoSnapshot('Delete node'); set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, nodes: board.nodes.filter((n) => n.id !== nodeId), edges: board.edges.filter((e) => e.sourceId !== nodeId && e.targetId !== nodeId), selectedNodeIds: board.selectedNodeIds.filter((id) => id !== nodeId) } : board) })); },
   deleteGraphEdge: (boardId, edgeId) => { get().captureUndoSnapshot('Delete edge'); set((state) => withDirtyState({ graphBoards: state.graphBoards.map((board) => board.id === boardId ? { ...board, edges: board.edges.filter((e) => e.id !== edgeId) } : board) })); },
@@ -1960,7 +2098,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     let lastTokenTotal = 0;
     let lastTokenProgressAt = pollStartedAt;
     let lastActivityProgressAt = pollStartedAt;
-    while (true) {
+    const shouldContinuePolling = () => get().w1Status !== 'cancelled';
+    while (shouldContinuePolling()) {
       await new Promise(r => setTimeout(r, W1_POLL_INTERVAL_MS));
       const { w1Status: cur } = get();
       if (cur === 'cancelled') return;

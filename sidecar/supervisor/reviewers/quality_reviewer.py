@@ -411,6 +411,9 @@ class QualityReviewer(BaseReviewer):
 
     def _check_manuscript_empty(self, state: dict, findings: list) -> None:
         chapters = state.get("manuscript_chapters")
+        staged = state.get("reviewer_staged_projection_metrics") or {}
+        if staged.get("inputs_present") and int(staged.get("chapter_count") or 0) > 0:
+            return
         if chapters is None or chapters == []:
             findings.append(self._finding(
                 "manuscript_empty",

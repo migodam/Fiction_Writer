@@ -5,6 +5,7 @@ import { useI18n } from '../i18n';
 import { cn } from '../utils';
 import { NarrativeEditor } from './editor';
 import type { ManuscriptNode, ManuscriptNodeType } from '../models/project';
+import { commandClipboard } from '../commands/clipboard';
 
 const NODE_TYPE_COLORS: Record<ManuscriptNodeType, string> = {
   act: 'bg-purple-100 text-purple-700',
@@ -58,6 +59,7 @@ export const ManuscriptWorkspace: React.FC = () => {
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
   const [editorContent, setEditorContent] = useState('');
   const [wordCount, setWordCount] = useState(0);
+  const [editorState, setEditorState] = useState<'loading' | 'saved' | 'dirty' | 'saving' | 'failed'>('saved');
   const [addNodeForm, setAddNodeForm] = useState<AddNodeFormState | null>(null);
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
@@ -81,11 +83,13 @@ export const ManuscriptWorkspace: React.FC = () => {
       setWordCount(0);
       return;
     }
+    setEditorState('loading');
     let cancelled = false;
     loadManuscriptNodeContent(projectRoot, selectedNodeId).then((content) => {
       if (!cancelled) {
         setEditorContent(content);
         setWordCount(countWords(content));
+        setEditorState('saved');
       }
     });
     return () => { cancelled = true; };
@@ -95,11 +99,18 @@ export const ManuscriptWorkspace: React.FC = () => {
     (html: string) => {
       setEditorContent(html);
       setWordCount(countWords(html));
+      setEditorState('dirty');
       if (!selectedNodeId) return;
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = setTimeout(() => {
-        saveManuscriptNodeContent(projectRoot, selectedNodeId, html);
-        updateManuscriptNode(selectedNodeId, { wordCount: countWords(html) });
+      saveTimerRef.current = setTimeout(async () => {
+        setEditorState('saving');
+        try {
+          await saveManuscriptNodeContent(projectRoot, selectedNodeId, html);
+          updateManuscriptNode(selectedNodeId, { wordCount: countWords(html) });
+          setEditorState('saved');
+        } catch {
+          setEditorState('failed');
+        }
       }, 1000);
     },
     [selectedNodeId, projectRoot, saveManuscriptNodeContent, updateManuscriptNode]
@@ -158,7 +169,24 @@ export const ManuscriptWorkspace: React.FC = () => {
     openContextMenu({
       x: e.clientX,
       y: e.clientY,
+      returnFocus: e.currentTarget as HTMLElement,
       items: [
+        {
+          id: 'copy', label: 'Copy', shortcut: 'Ctrl+C', action: () => commandClipboard.set('manuscript-node', 'copy', node),
+        },
+        {
+          id: 'cut', label: 'Cut', shortcut: 'Ctrl+X', action: () => commandClipboard.set('manuscript-node', 'cut', node),
+        },
+        {
+          id: 'paste', label: 'Paste', shortcut: 'Ctrl+V', disabled: !commandClipboard.get<ManuscriptNode>('manuscript-node'), disabledReason: 'Copy a manuscript item first', action: () => {
+            const entry = commandClipboard.get<ManuscriptNode>('manuscript-node');
+            if (!entry) return;
+            const { id: _sourceId, ...copy } = entry.value;
+            addManuscriptNode({ ...copy, title: `${entry.value.title} (copy)`, parentId: node.id, orderIndex: getChildren(sortedNodes, node.id).length, depth: node.depth + 1 });
+            if (entry.operation === 'cut') deleteManuscriptNode(entry.value.id);
+            commandClipboard.clear();
+          },
+        },
         {
           id: 'add-child',
           label: t('manuscript.addChild'),
@@ -198,7 +226,8 @@ export const ManuscriptWorkspace: React.FC = () => {
         <div
           className={cn(
             'group flex items-center gap-1 px-2 py-1.5 rounded-md cursor-pointer select-none',
-            isSelected ? 'bg-active text-text' : 'text-text-2 hover:bg-hover'
+            isSelected ? 'bg-active text-text' : 'text-text-2 hover:bg-hover',
+            (node.type === 'chapter_outline' || node.type === 'scene_outline') && 'border-l-2 border-brand/50 bg-brand/5'
           )}
           style={{ paddingLeft: `${node.depth * 16 + 8}px` }}
           data-testid={`manuscript-node-${node.id}`}
@@ -306,6 +335,7 @@ export const ManuscriptWorkspace: React.FC = () => {
           >
             <input
               autoFocus
+              data-testid="manuscript-node-title-input"
               className="w-full rounded border border-border bg-bg px-2 py-1 text-[12px] text-text outline-none focus:border-brand"
               placeholder={t('manuscript.addNode')}
               value={addNodeForm.title}
@@ -327,6 +357,7 @@ export const ManuscriptWorkspace: React.FC = () => {
               </select>
               <button
                 type="submit"
+                data-testid="manuscript-node-confirm-btn"
                 className="rounded border border-brand px-2 py-1 text-[11px] text-brand hover:bg-brand hover:text-white"
               >
                 {t('manuscript.addNode')}
@@ -364,6 +395,9 @@ export const ManuscriptWorkspace: React.FC = () => {
               <span className="text-[13px] font-semibold text-text truncate">
                 {sortedNodes.find((n) => n.id === selectedNodeId)?.title || ''}
               </span>
+              <span data-testid="manuscript-save-state" className={cn('ml-auto text-[11px]', editorState === 'failed' ? 'text-red' : editorState === 'dirty' ? 'text-amber' : 'text-text-3')}>
+                {editorState}
+              </span>
               <span
                 data-testid="manuscript-editor-wordcount"
                 className="text-[11px] text-text-2 shrink-0 ml-4"
@@ -379,6 +413,7 @@ export const ManuscriptWorkspace: React.FC = () => {
                 onUpdate={handleEditorUpdate}
                 placeholder={t('manuscript.emptyEditor')}
               />
+              {editorState === 'failed' && <button type="button" data-testid="manuscript-save-retry" className="mt-3 rounded-lg border border-red/40 px-3 py-1.5 text-xs text-red" onClick={() => handleEditorUpdate(editorContent)}>Retry save</button>}
             </div>
           </>
         ) : (

@@ -378,20 +378,46 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
   const branchRenderEntries = useMemo(() => {
     return sortedBranches
       .map((branch) => {
-        const controlPoints = branchCPMap.get(branch.id);
-        if (!controlPoints) return null;
+        const storedControlPoints = branchCPMap.get(branch.id);
+        if (!storedControlPoints) return null;
+
+        const endAnchor = resolveBranchEndAnchor(branch);
+        // Store propagation operates on canonical layout coordinates. Labels may
+        // receive a deterministic spacing adjustment in this canvas, so render
+        // attached handles from the same visible event positions to avoid a
+        // branch endpoint lagging behind its anchor node.
+        const controlPoints = {
+          ...storedControlPoints,
+          p0: branch.startAnchor ? eventPositions.get(branch.startAnchor.eventId) ?? storedControlPoints.p0 : storedControlPoints.p0,
+          p3: endAnchor ? eventPositions.get(endAnchor.eventId) ?? storedControlPoints.p3 : storedControlPoints.p3,
+        };
+        const overlapHostBranchId =
+          branch.startAnchor?.branchId &&
+          branch.startAnchor.branchId === endAnchor?.branchId &&
+          branch.parentBranchId === branch.startAnchor.branchId
+            ? branch.startAnchor.branchId
+            : null;
+        const overlapHost = overlapHostBranchId
+          ? sortedBranches.find((entry) => entry.id === overlapHostBranchId)
+          : null;
+        const sharesHostGeometry = Boolean(
+          overlapHost &&
+          Math.abs((branch.geometry?.laneOffset ?? 0) - (overlapHost.geometry?.laneOffset ?? 0)) < 0.01 &&
+          Math.abs((branch.geometry?.bend ?? 0.25) - (overlapHost.geometry?.bend ?? 0.25)) < 0.01,
+        );
 
         return {
           branch,
           controlPoints,
           memberBranchIds: [branch.id],
-          renderMode: 'default' as const,
+          renderMode: sharesHostGeometry ? 'parallel' as const : 'default' as const,
+          overlapHostBranchId: sharesHostGeometry ? overlapHostBranchId : null,
           showStartArrow: false,
           showEndArrow: true,
         };
       })
       .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
-  }, [branchCPMap, sortedBranches]);
+  }, [branchCPMap, eventPositions, sortedBranches]);
 
   const renderedBranchIds = useMemo(
     () => new Set(branchRenderEntries.map((entry) => entry.branch.id)),
@@ -863,19 +889,47 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
     };
 
     const onUp = () => {
-      commitUndoTransaction();
-      // Propagate shared anchor positions to ALL attached branches
-      if (branchDragState) {
-        const anchorEventId = branchDragState.handle === 'start'
-          ? branchDragState.origStartAnchor?.eventId
-          : branchDragState.origEndAnchor?.eventId;
-        if (anchorEventId) {
-          const evt = events.find(e => e.id === anchorEventId);
-          if (evt?.position) {
-            updateTimelineEventPosition(evt.id, evt.position);
+      // A host endpoint may carry several fork/merge anchors. Preserve its drag
+      // delta for those event anchors before committing the one drag transaction.
+      const completedDrag = branchDragStateRef.current;
+      if (completedDrag) {
+        const currentBranch = useProjectStore.getState().timelineBranches
+          .find((entry) => entry.id === completedDrag.branchId);
+        const originalPoint = completedDrag.handle === 'start'
+          ? completedDrag.origStartPos
+          : completedDrag.origEndPos;
+        const currentPoint = completedDrag.handle === 'start'
+          ? currentBranch?.anchorStartPos
+          : currentBranch?.anchorEndPos;
+
+        if (currentPoint) {
+          const delta = {
+            x: currentPoint.x - originalPoint.x,
+            y: currentPoint.y - originalPoint.y,
+          };
+          const sharedAnchorEvents = events.filter((event) =>
+            event.branchId === completedDrag.branchId &&
+            (event.sharedBranchIds || []).some((sharedBranchId) => {
+              const sharedBranch = branches.find((entry) => entry.id === sharedBranchId);
+              const anchor = completedDrag.handle === 'start'
+                ? sharedBranch?.startAnchor
+                : sharedBranch ? resolveBranchEndAnchor(sharedBranch) : null;
+              return anchor?.branchId === completedDrag.branchId && anchor.eventId === event.id;
+            }),
+          );
+
+          for (const event of sharedAnchorEvents) {
+            const position = eventPositions.get(event.id);
+            if (position) {
+              updateTimelineEventPosition(event.id, {
+                x: position.x + delta.x,
+                y: position.y + delta.y,
+              });
+            }
           }
         }
       }
+      commitUndoTransaction();
       branchDragStateRef.current = null;
       setBranchDragState(null);
       setMode('idle');
@@ -908,7 +962,7 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
       window.removeEventListener('keydown', onKeyDown);
       cancelUndoTransaction();
     };
-  }, [mode, branchDragState, branches, branchCPMap, zoom, panX, panY, setTimelineBranchAnchors, setTimelineBranchGeometry, findNearestSnapTarget, events, updateTimelineEventPosition, commitUndoTransaction, cancelUndoTransaction]);
+  }, [mode, branchDragState, branches, branchCPMap, zoom, panX, panY, setTimelineBranchAnchors, setTimelineBranchGeometry, findNearestSnapTarget, events, eventPositions, updateTimelineEventPosition, commitUndoTransaction, cancelUndoTransaction]);
 
   // Branch handle pointer-down
   const handleBranchHandlePointerDown = useCallback(
@@ -1169,15 +1223,20 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
   useEffect(() => {
     if (!branchContextMenu) return;
 
-    const closeMenu = () => setBranchContextMenu(null);
+    const closeMenu = (event: MouseEvent) => {
+      const target = event.target as Element | null;
+      if (target?.closest('[data-testid="timeline-branch-context-menu"]')) return;
+      setBranchContextMenu(null);
+    };
+    const closeMenuOnKeyDown = () => setBranchContextMenu(null);
     window.addEventListener('click', closeMenu);
     window.addEventListener('contextmenu', closeMenu);
-    window.addEventListener('keydown', closeMenu);
+    window.addEventListener('keydown', closeMenuOnKeyDown);
 
     return () => {
       window.removeEventListener('click', closeMenu);
       window.removeEventListener('contextmenu', closeMenu);
-      window.removeEventListener('keydown', closeMenu);
+      window.removeEventListener('keydown', closeMenuOnKeyDown);
     };
   }, [branchContextMenu]);
 
@@ -1260,7 +1319,7 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
                 isDrawMode={drawModeBranchId === entry.branch.id}
                 isSelected={selectedBranchId === entry.branch.id}
                 renderMode={entry.renderMode}
-                overlapHostBranchId={null}
+                overlapHostBranchId={entry.overlapHostBranchId}
                 collapsedBranchIds={entry.memberBranchIds}
                 showStartArrow={entry.showStartArrow}
                 showEndArrow={entry.showEndArrow}
