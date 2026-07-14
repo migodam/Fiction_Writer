@@ -128,6 +128,10 @@ state["entity_registry"]["world_detailed"] = {
 ## Inbox Package Acceptance
 W1 import proposals are grouped by `importRunId` into package-level Workbench cards. Accepting a package applies all same-run chapter, scene, branch, event, character, relationship, world-container, and world-item proposals as one transaction. The transaction pre-registers same-package IDs as valid references, applies operations by dependency priority, and rolls back the whole package if any blocking edge remains.
 
+Before the package is exposed to Workbench, `sidecar/shared/proposal_graph.py` compiles its typed reference graph. Timeline Architect is the only event-identity authority; proposal writing must not run a second fuzzy event-dedupe pass. The compiler registers same-package `create` producers plus typed canonical IDs, derives loser-to-survivor event remaps from `mergedEventIds`, rewrites every supported scalar/list/nested reference, and records all rewrites or dropped optional backlinks in `proposal_graph.json`.
+
+Required structural edges include event-to-branch, scene-to-chapter, relationship endpoints, and world-item-to-container. Missing required edges, duplicate producers, or required-edge cycles make the package non-atomic and remove the whole staged run before review. Optional backlinks may be remapped or dropped with diagnostics. Tarjan SCC analysis permits backlink cycles such as character-to-event-to-character; Kahn ordering over the SCC condensation graph produces a deterministic proposal order. The React acceptance layer repeats defensive closure validation and only same-package `create` operations may provide new IDs; updates never masquerade as producers.
+
 Package-level blocked reasons must name the culprit proposal and blocking edge, for example a missing event, missing branch, schema mismatch, duplicate merge, or unsupported operation. Previously blocked packages remain retryable so a user can accept again after code/data fixes without manually clearing stale `lastBlockReason`.
 
 ## Character Card Requirements

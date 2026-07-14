@@ -1760,7 +1760,10 @@ def _load_existing_project_snapshot(project_path: str | Path) -> dict:
     world_dir = entities / "world"
     snapshot = {
         "characters": _read_json_files(entities / "characters"),
-        "character_tags": _safe_read_json(entities / "character_tags.json", []),
+        "character_tags": _safe_read_json(
+            entities / "character-tags.json",
+            _safe_read_json(entities / "character_tags.json", []),
+        ),
         "relationships": _safe_read_json(entities / "relationships.json", []),
         "world_items": [
             item for item in _read_json_files(world_dir)
@@ -1778,6 +1781,28 @@ def _load_existing_project_snapshot(project_path: str | Path) -> dict:
         if not isinstance(value, list):
             snapshot[key] = []
     return snapshot
+
+
+def _proposal_graph_existing_ids(snapshot: dict) -> dict[str, set[str]]:
+    """Project snapshot IDs accepted by the proposal reference compiler."""
+    collection_types = {
+        "characters": "character",
+        "character_tags": "character_tag",
+        "timeline_events": "timeline_event",
+        "timeline_branches": "timeline_branch",
+        "world_items": "world_item",
+        "world_containers": "world_container",
+        "chapters": "chapter",
+        "scenes": "scene",
+    }
+    return {
+        entity_type: {
+            str(item.get("id") or item.get("canonical_id") or "").strip()
+            for item in snapshot.get(collection, [])
+            if isinstance(item, dict) and str(item.get("id") or item.get("canonical_id") or "").strip()
+        }
+        for collection, entity_type in collection_types.items()
+    }
 
 
 def _clip_text(value: Any, limit: int = 240) -> str:
@@ -5076,8 +5101,17 @@ async def node_write_to_project(state: ImportState) -> dict:
         ))
     _stage_manuscript_projection(staged_state, preaccept_pairs, source_language)
 
+    # Timeline Architect is the sole authority for canonical event identity.
+    # Build every reverse link from that finalized set before any proposal is
+    # emitted; proposal writing must never run a second identity/dedupe pass.
+    canonical_events = {
+        str(event_id): dict(event)
+        for event_id, event in (registry.get("events", {}) or {}).items()
+        if str(event_id).strip() and isinstance(event, dict)
+    }
+    registry["events"] = canonical_events
     character_event_links: dict[str, list[str]] = {}
-    for event_id, event in registry.get("events", {}).items():
+    for event_id, event in canonical_events.items():
         for cid in event.get("character_ids", []):
             character_event_links.setdefault(cid, [])
             if event_id not in character_event_links[cid]:
@@ -5288,33 +5322,15 @@ async def node_write_to_project(state: ImportState) -> dict:
             return branch_id
         return str(default_branch_id or next(iter(valid_branch_ids), "")).strip()
 
-    # Deduplicate events by title before writing proposals.
-    # Pop events from registry so the payload dicts are GC-eligible after dedup.
-    def _is_duplicate_event(title: str, seen_titles: list[str]) -> bool:
-        norm = re.sub(r'\s+', '', title).lower()
-        for s in seen_titles:
-            if difflib.SequenceMatcher(None, norm, s).ratio() > 0.80:
-                return True
-        return False
-
-    seen_event_title_norms: list[str] = []
-    deduped_events: dict[str, dict] = {}
+    # Timeline Architect already reduced candidates into canonical events and
+    # recorded every merge. Re-deduping here used to discard IDs without a
+    # remap, leaving character.linkedEventIds dangling in the review package.
     events_snapshot = registry.pop("events", {})
-    for eid, entry in events_snapshot.items():
-        title = entry.get("title", "")
-        title_key = re.sub(r'\s+', '', title).lower()
-        if not title_key:
-            continue
-        if title_key in seen_event_title_norms or _is_duplicate_event(title_key, seen_event_title_norms):
-            continue
-        seen_event_title_norms.append(title_key)
-        deduped_events[eid] = entry
-    del events_snapshot
 
     # Keep Timeline Architect's branch-local orderIndex when present. Falling
     # back to temporal hints preserves legacy behavior for older checkpoints.
     sorted_events = sorted(
-        deduped_events.items(),
+        events_snapshot.items(),
         key=lambda kv: (
             _proposal_event_branch_id(kv[1]),
             int(kv[1].get("orderIndex", 10_000) or 0),
@@ -5370,7 +5386,7 @@ async def node_write_to_project(state: ImportState) -> dict:
             })
         except Exception as e:
             errors.append(f"Failed to propose event {eid}: {str(e)}")
-    del deduped_events, sorted_events
+    del events_snapshot, sorted_events
     _gc.collect()
     print(f"[proposal_write] events done ({len(receipts)} receipts)", flush=True)
 
@@ -5694,6 +5710,30 @@ async def node_write_to_project(state: ImportState) -> dict:
         except Exception as e:
             errors.append(f"Failed to propose manuscript scene for chapter '{chapter_info['title']}': {str(e)}")
     print(f"[proposal_write] all entity groups done — {len(receipts)} total receipts", flush=True)
+
+    # Compile the complete import package as a typed reference graph before it
+    # becomes reviewable. Optional backlinks are remapped/dropped explicitly;
+    # unresolved structural edges fail closed and remove the whole staged run.
+    if import_run_id:
+        from sidecar.shared.proposal_graph import compile_import_run_package
+
+        graph_result = compile_import_run_package(
+            project_path,
+            import_run_id,
+            _proposal_graph_existing_ids(_load_existing_project_snapshot(project_path)),
+            remove_invalid_package=True,
+        )
+        if not graph_result["atomic"]:
+            errors.append(
+                "Proposal graph compilation failed; staged package removed: "
+                + json.dumps(graph_result["blockingErrors"], ensure_ascii=False, sort_keys=True)
+            )
+            receipts.clear()
+        elif graph_result["droppedRefs"]:
+            print(
+                f"[proposal_write] graph compiler normalized {len(graph_result['droppedRefs'])} optional dangling reference(s)",
+                flush=True,
+            )
 
     # Build review_report counts and ID lists from compact receipts.
     safe_types = {"character_tag", "timeline_branch", "world_container", "chapter", "scene"}

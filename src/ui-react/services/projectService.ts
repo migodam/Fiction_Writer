@@ -1515,6 +1515,10 @@ export const getProposalPackageKey = (proposal: Proposal): string | null =>
 
 const ID_FIELDS: Record<string, string> = {
   branchId: 'branch',
+  parentBranchId: 'parent branch',
+  forkEventId: 'fork event',
+  mergeEventId: 'merge event',
+  mergeTargetBranchId: 'merge target branch',
   chapterId: 'chapter',
   povCharacterId: 'character',
   containerId: 'container',
@@ -1530,6 +1534,7 @@ const ID_LIST_FIELDS: Record<string, string> = {
   locationIds: 'location',
   sceneIds: 'scene',
   tagIds: 'tag',
+  sharedBranchIds: 'shared branch',
 };
 
 const extractIdRefs = (fields: Record<string, unknown>): Array<{ id: string; label: string }> => {
@@ -1544,6 +1549,13 @@ const extractIdRefs = (fields: Record<string, unknown>): Array<{ id: string; lab
       vals.forEach((v) => typeof v === 'string' && v && refs.push({ id: v, label }));
     }
   });
+  for (const anchorKey of ['startAnchor', 'endAnchor']) {
+    const anchor = fields[anchorKey];
+    if (anchor && typeof anchor === 'object') {
+      const eventId = (anchor as Record<string, unknown>).eventId;
+      if (typeof eventId === 'string' && eventId) refs.push({ id: eventId, label: `${anchorKey} event` });
+    }
+  }
   return refs;
 };
 
@@ -1681,7 +1693,7 @@ const collectReferenceSets = (project: NarrativeProject, proposals: Proposal[] =
   proposals.forEach((proposal) => {
     getProposalOperations(proposal).forEach((operation) => {
       const entityType = operation.entityType as EntityKind | undefined;
-      if (!entityType || operation.op === 'delete') return;
+      if (!entityType || operation.op !== 'create') return;
       adders[entityType]?.add(operationEntityId(proposal, operation, entityType));
     });
   });
@@ -2632,7 +2644,23 @@ const validateProposalEntityReferences = (
     if (!branches.has(entity.branchId)) return `${entityType} ${entity.id} references missing branch: ${entity.branchId}`;
     return fail('characters', missingIds(entity.participantCharacterIds, characters))
       || fail('scenes', missingIds(entity.linkedSceneIds, scenes))
+      || fail('shared branches', missingIds(entity.sharedBranchIds, branches))
       || fail('world items', [...missingIds(entity.locationIds, worldItems), ...missingIds(entity.linkedWorldItemIds, worldItems)]);
+  }
+  if (entityType === 'timeline_branch') {
+    const missingParent = entity.parentBranchId && !branches.has(String(entity.parentBranchId))
+      ? [String(entity.parentBranchId)] : [];
+    const missingMergeTarget = entity.mergeTargetBranchId && !branches.has(String(entity.mergeTargetBranchId))
+      ? [String(entity.mergeTargetBranchId)] : [];
+    const eventIds = [
+      entity.forkEventId,
+      entity.mergeEventId,
+      (entity.startAnchor as Record<string, unknown> | null | undefined)?.eventId,
+      (entity.endAnchor as Record<string, unknown> | null | undefined)?.eventId,
+    ].filter(Boolean).map(String);
+    return fail('parent branches', missingParent)
+      || fail('merge target branches', missingMergeTarget)
+      || fail('anchor events', eventIds.filter((id) => !events.has(id)));
   }
   if (entityType === 'scene') {
     if (typeof entity.chapterId !== 'string' || !entity.chapterId) return `${entityType} ${entity.id} is missing required chapterId.`;
@@ -2650,11 +2678,15 @@ const validateProposalEntityReferences = (
       || fail('world items', missingIds(entity.linkedWorldItemIds, worldItems));
   }
   if (entityType === 'relationship') {
+    if (!entity.sourceId || !entity.targetId) return `${entityType} ${entity.id} is missing required sourceId or targetId.`;
     return fail('characters', [String(entity.sourceId || ''), String(entity.targetId || '')].filter((id) => id && !characters.has(id)));
   }
   if (entityType === 'world_item') {
     if (typeof entity.containerId !== 'string' || !entity.containerId) return `${entityType} ${entity.id} is missing required containerId.`;
     if (!containers.has(entity.containerId)) return `${entityType} ${entity.id} references missing container: ${entity.containerId}`;
+    if (entity.parentId && !containers.has(String(entity.parentId)) && !worldItems.has(String(entity.parentId))) {
+      return `${entityType} ${entity.id} references missing parent: ${String(entity.parentId)}`;
+    }
     return fail('characters', missingIds(entity.linkedCharacterIds, characters))
       || fail('events', missingIds(entity.linkedEventIds, events))
       || fail('scenes', missingIds(entity.linkedSceneIds, scenes));

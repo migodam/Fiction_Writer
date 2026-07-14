@@ -63,6 +63,10 @@ def _make_project(tmp_path: Path, *, import_run_id: str = "import_a", event_coun
         [{"id": "tag_main", "name": "Main Cast", "characterIds": ["char_existing"]}],
     )
     _write_json(
+        project / "entities" / "timeline" / "branches.json",
+        [{"id": "branch_main", "name": "Main"}, {"id": "branch_side", "name": "Side"}],
+    )
+    _write_json(
         run_dir / "manifest.json",
         {
             "import_run_id": import_run_id,
@@ -353,3 +357,28 @@ def test_expected_timeline_discards_are_informational_not_threshold_failures(tmp
     assert metrics["informational_flags"]["scene_beats_or_discards_present"]
     assert not any(metrics["import_test6_symptom_flags"].values())
     assert w1_import_diagnostics.main([str(project), "--import-run-id", "import_a", "--fail-on-threshold", "--format", "json"]) == 0
+
+
+def test_proposal_reference_closure_is_typed_and_package_scoped(tmp_path):
+    project = _make_project(tmp_path)
+    _write_json(project / "entities" / "timeline" / "event_existing.json", {"id": "event_existing"})
+    inbox = json.loads((project / "system" / "inbox.json").read_text(encoding="utf-8"))
+    inbox.extend([
+        {"id": "pkg_ok", "operations": [
+            {"op": "create", "entityType": "character", "entityId": "char_new", "fields": {"id": "char_new", "eventIds": ["event_new"], "linkedEventIds": ["event_existing"]}},
+            {"op": "create", "entityType": "timeline_event", "entityId": "event_new", "fields": {"id": "event_new", "participantCharacterIds": ["char_new"]}},
+            {"op": "create", "entityType": "world_container", "entityId": "container_ok", "fields": {"id": "container_ok"}},
+            {"op": "create", "entityType": "world_item", "entityId": "world_parent", "fields": {"id": "world_parent", "containerId": "container_ok"}},
+            {"op": "create", "entityType": "world_item", "entityId": "world_child", "fields": {"id": "world_child", "containerId": "container_ok", "parentId": "world_parent"}},
+        ]},
+        {"id": "pkg_bad", "operations": [
+            {"op": "update", "entityType": "scene", "entityId": "scene_old", "fields": {"chapterId": "chapter_missing", "linkedEventIds": ["event_missing"]}},
+            {"op": "create", "entityType": "world_item", "entityId": "world_new", "fields": {"id": "world_new", "containerId": "container_missing"}},
+        ]},
+    ])
+    _write_json(project / "system" / "inbox.json", inbox)
+    metrics = w1_import_diagnostics.analyze_import(w1_import_diagnostics.ImportSource(project, "import_a"))
+    closure = metrics["artifact_quality"]["proposal_reference_closure"]
+    assert closure["reference_counts_by_target_type"]["event"] >= 2
+    assert closure["dangling_reference_count"] == 3
+    assert metrics["import_test6_symptom_flags"]["dangling_proposal_references"]
