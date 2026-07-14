@@ -27,7 +27,7 @@ This folder is the evidence and handoff layer for Narrative IDE work. It is not 
 - Current verified baselines are 659 W1 backend tests, 230 full P0/P1 Playwright tests, Electron runtime smoke, UI lint/build, Python compileall, and diff/secret checks.
 - Final Flash artifact `/tmp/.../20260713_033431` passes every extraction and semantic gate except the now-fixed 张铁 serializer boundary. Exact production-code replay passes diagnostics with every symptom flag false.
 - Six ledger-backed Flash runs cost `$0.439420`. One Pro attempt was stopped after 12 minutes with zero settled calls/tokens/cost because provider latency made completion inside the 30-minute gate impossible.
-- The branch is a reviewer-ready merge candidate pending independent diff review and normal GitHub checks. Remaining character-thin-card, bundle-size, Electron cleanup, and Pro-latency items are documented P2/external risks.
+- W1 is merged to canonical `main` through PR #2. All merged branches/worktrees were removed after ancestor and clean-worktree verification; only `main` plus the backup/release tags remain. Character-thin-card, bundle-size, Electron cleanup, and Pro-latency items are documented P2/external risks.
 - Existing reports are retained as provenance. Older worker reports and prompt packages are `merged-retained`, not deleted. Do not move or archive old communication files without Lead approval.
 
 ## Status Labels

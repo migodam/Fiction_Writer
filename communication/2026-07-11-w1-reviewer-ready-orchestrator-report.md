@@ -2,9 +2,9 @@
 
 **Updated:** 2026-07-14
 
-**Branch:** `codex/w1-reviewer-ready`
+**Branch:** `main`
 
-**Verdict:** Reviewer-ready merge candidate. No known P0/P1 remains. The production-code replay of the final Flash artifact passes every diagnostic threshold; V4 Pro was attempted once but waived as an external latency gate after producing no settled call, token, or charge in 12 minutes.
+**Verdict:** Reviewer-ready and merged through PR #2. No known P0/P1 remains. The production-code replay of the final Flash artifact passes every diagnostic threshold; V4 Pro was attempted once but waived as an external latency gate after producing no settled call, token, or charge in 12 minutes.
 
 ## Product outcome
 
@@ -74,12 +74,12 @@ Import authority is now singular:
 - Cancellation propagates between extraction stages and is bounded by the runner's outer process timeout; a provider SDK that ignores task cancellation can still require that forced process termination.
 - `tests/e2e/p1/backlog_gaps.spec.ts` was intentionally replaced by `backlog_story_gaps.spec.ts`, which keeps the two behaviors while adding a deterministic fixture and route assertion.
 
-## Merge gate
+## Git closure
 
-The independent diff reviewer returned no P0/P1 finding. The code is ready to stage, then:
-
-1. Stage the complete reviewer-ready scope and run the secret/diff checks once more.
-2. Commit with conventional prefixes on `codex/w1-reviewer-ready`.
-3. Push the branch and open the integration PR.
-4. Merge into `main` only after GitHub checks pass.
-5. Tag the reviewer-ready release, verify every old branch tip is an ancestor of `main`, then remove merged worktrees/branches without rewriting history.
+- Reviewer-ready implementation commit: `f2d18e5`.
+- Integration PR: [#2](https://github.com/migodam/Fiction_Writer/pull/2), merged with commit `48bd705`.
+- Canonical branch: `main`; local and remote checks resolve to the same merge commit before this documentation follow-up.
+- Every historical local/remote branch tip and detached worktree commit was verified as an ancestor of `origin/main` before cleanup.
+- All historical worktrees were clean and removed. All merged local and remote branches were deleted.
+- Retained immutable tags: `backup/w1-pre-reviewer-ready-20260711` and `release/w1-reviewer-ready-20260714`.
+- Git history was preserved; no destructive reset or squash was used.
