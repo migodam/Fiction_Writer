@@ -1264,6 +1264,17 @@ def test_cross_validation_prompt_and_artifact_contract_are_stable():
 
 # ── node_write_to_project compact receipts and manuscript ─────────────────────
 
+
+def test_existing_project_snapshot_reads_canonical_character_tag_path(tmp_path):
+    tags_path = tmp_path / "entities" / "character-tags.json"
+    tags_path.parent.mkdir(parents=True)
+    tags_path.write_text('[{"id":"tag_existing","name":"Existing"}]', encoding="utf-8")
+
+    snapshot = w1_import._load_existing_project_snapshot(tmp_path)
+
+    assert snapshot["character_tags"] == [{"id": "tag_existing", "name": "Existing"}]
+    assert w1_import._proposal_graph_existing_ids(snapshot)["character_tag"] == {"tag_existing"}
+
 def _make_write_state(tmp_path, *, entity_registry=None, manuscript_chapters=None):
     """Minimal state for node_write_to_project tests."""
     (tmp_path / "novel.txt").write_text("Chapter 1\nFixture source text.", encoding="utf-8")
@@ -1406,6 +1417,58 @@ def test_node_write_to_project_normalizes_event_branch_to_imported_root(tmp_path
     event_op = next(op for op in captured_ops if op["entity_type"] == "timeline_event")
     assert event_op["data"]["branchId"] == "branch_item"
     assert event_op["depends_on"] == ["branch_item"]
+
+
+def test_node_write_to_project_uses_timeline_architect_event_ids_for_character_links(tmp_path, monkeypatch):
+    captured_ops = []
+
+    async def fake_propose_write(op, _project_path):
+        captured_ops.append(op)
+        return {"id": f"p_{op['entity_id']}", "confidence": op["confidence"], "status": "pending"}
+
+    monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", fake_propose_write)
+    state = _make_write_state(
+        tmp_path,
+        entity_registry={
+            "characters": {
+                "char_han": {
+                    "canonical_name": "韩立", "confidence": 0.9,
+                    "importance": "core", "aliases": [], "tag_ids": [],
+                },
+            },
+            # These are already the canonical Timeline Architect results. The
+            # writer must not perform another fuzzy-title dedupe pass.
+            "events": {
+                "event_disciple_confirmed": {
+                    "title": "韩立被确认为墨大夫亲传弟子",
+                    "description": "身份得到确认。",
+                    "confidence": 0.9,
+                    "branchId": "branch_main",
+                    "orderIndex": 0,
+                    "character_ids": ["char_han"],
+                },
+                "event_disciple_became": {
+                    "title": "韩立成为墨大夫亲传弟子",
+                    "description": "关系进入新的阶段。",
+                    "confidence": 0.9,
+                    "branchId": "branch_main",
+                    "orderIndex": 1,
+                    "character_ids": ["char_han"],
+                },
+            },
+            "world": {},
+            "world_detailed": {},
+        },
+    )
+
+    asyncio.run(w1_import.node_write_to_project(state))
+
+    emitted_event_ids = {
+        op["entity_id"] for op in captured_ops if op["entity_type"] == "timeline_event"
+    }
+    character = next(op for op in captured_ops if op["entity_type"] == "character")
+    assert emitted_event_ids == {"event_disciple_confirmed", "event_disciple_became"}
+    assert set(character["data"]["linkedEventIds"]) == emitted_event_ids
 
 
 def test_node_write_to_project_dedupes_duplicate_character_names_before_proposals(tmp_path, monkeypatch):

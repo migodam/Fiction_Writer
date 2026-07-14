@@ -518,6 +518,100 @@ def _world_quality_metrics(operations: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+_PROPOSAL_REFERENCE_FIELDS = {
+    "character": (("linkedEventIds", "event"), ("eventIds", "event"), ("tagIds", "tag"), ("linkedSceneIds", "scene"), ("linkedWorldItemIds", "world_item")),
+    "timeline_event": (("participantCharacterIds", "character"), ("character_ids", "character"), ("branchId", "branch"), ("linkedSceneIds", "scene"), ("linkedWorldItemIds", "world_item"), ("locationIds", "world_item"), ("sharedBranchIds", "branch")),
+    "timeline_branch": (("parentBranchId", "branch"), ("forkEventId", "event"), ("mergeEventId", "event"), ("mergeTargetBranchId", "branch")),
+    "relationship": (("sourceId", "character"), ("targetId", "character"), ("sourceCharacterId", "character"), ("targetCharacterId", "character")),
+    "scene": (("chapterId", "chapter"), ("linkedCharacterIds", "character"), ("povCharacterId", "character"), ("linkedEventIds", "event"), ("linkedWorldItemIds", "world_item")),
+    "chapter": (("sceneIds", "scene"),),
+    "world_item": (("containerId", "world_container"), ("parentId", "world_parent"), ("linkedCharacterIds", "character"), ("linkedEventIds", "event"), ("linkedSceneIds", "scene")),
+    "character_tag": (("characterIds", "character"),),
+}
+
+
+def _proposal_reference_closure_metrics(project_path: Path, inbox: Any, timeline: dict[str, Any] | None = None) -> dict[str, Any]:
+    canonical: dict[str, set[str]] = defaultdict(set)
+    for path in project_path.glob("**/*.json"):
+        if "/system/imports/" in str(path):
+            continue
+        payload = _read_json(path, default=None)
+        relative = path.relative_to(project_path).as_posix()
+        file_type = None
+        if relative in {"entities/character-tags.json", "entities/character_tags.json"}:
+            file_type = "tag"
+        elif relative.startswith("entities/characters/"):
+            file_type = "character"
+        elif relative == "entities/timeline/branches.json":
+            file_type = "branch"
+        elif relative.startswith("entities/timeline/"):
+            file_type = "event"
+        elif relative.startswith("writing/chapters/"):
+            file_type = "chapter"
+        elif relative.startswith("writing/scenes/") and relative.endswith(".meta.json"):
+            file_type = "scene"
+        elif relative == "entities/world/containers.json":
+            file_type = "world_container"
+        elif relative.startswith("entities/world/") and Path(relative).name not in {
+            "categories.json", "containers.json", "maps.json", "settings.json",
+        }:
+            file_type = "world_item"
+        if file_type:
+            for record in payload if isinstance(payload, list) else [payload]:
+                if isinstance(record, dict) and record.get("id"):
+                    canonical[file_type].add(str(record["id"]))
+        for record in (payload if isinstance(payload, list) else [payload]):
+            if isinstance(record, dict) and record.get("id") and record.get("entityType"):
+                canonical[str(record["entityType"])].add(str(record["id"]))
+    # Import artifacts describe intended output, not accepted canonical state.
+    # Treating their IDs as canonical would hide precisely the case where an
+    # artifact entity was omitted from the proposal package.
+    proposals = inbox if isinstance(inbox, list) else _safe_list(_safe_dict(inbox).get("items") or _safe_dict(inbox).get("proposals"))
+    creates: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+    references = []
+    for proposal in proposals:
+        proposal_dict = _safe_dict(proposal)
+        for operation in _safe_list(_safe_dict(proposal).get("operations")):
+            if not isinstance(operation, dict):
+                continue
+            entity_type = _entity_type(operation)
+            fields = _operation_fields(operation)
+            package_id = str(
+                proposal_dict.get("importRunId")
+                or proposal_dict.get("packageId")
+                or fields.get("importRunId")
+                or fields.get("import_run_id")
+                or "__inbox__"
+            )
+            entity_id = fields.get("id") or operation.get("entityId") or operation.get("entity_id")
+            if str(operation.get("op") or "create").lower() == "create" and entity_id:
+                creates[package_id][entity_type].add(str(entity_id))
+            for field_name, target_type in _PROPOSAL_REFERENCE_FIELDS.get(entity_type, ()):
+                values = fields.get(field_name)
+                values = values if isinstance(values, list) else [values]
+                for target_id in values:
+                    if target_id:
+                        references.append({"source_type": entity_type, "source_id": str(entity_id or ""), "field": field_name, "target_type": target_type, "target_id": str(target_id), "package_id": package_id})
+            if entity_type == "timeline_branch":
+                for anchor_name in ("startAnchor", "endAnchor"):
+                    anchor = fields.get(anchor_name)
+                    target_id = anchor.get("eventId") if isinstance(anchor, dict) else None
+                    if target_id:
+                        references.append({"source_type": entity_type, "source_id": str(entity_id or ""), "field": f"{anchor_name}.eventId", "target_type": "event", "target_id": str(target_id), "package_id": package_id})
+    def target_ids(ref: dict[str, str]) -> set[str]:
+        aliases = {
+            "event": {"event", "timeline_event"},
+            "branch": {"branch", "timeline_branch"},
+            "tag": {"tag", "character_tag"},
+            "world_parent": {"world_container", "world_item"},
+        }
+        types = aliases.get(ref["target_type"], {ref["target_type"]})
+        return set().union(*(canonical.get(entity_type, set()) | creates[ref["package_id"]].get(entity_type, set()) for entity_type in types))
+
+    dangling = [ref for ref in references if ref["target_id"] not in target_ids(ref)]
+    return {"reference_count": len(references), "dangling_reference_count": len(dangling), "reference_counts_by_target_type": dict(sorted(Counter(ref["target_type"] for ref in references).items())), "dangling_references": dangling[:50]}
+
+
 def _reviewer_repair_metrics(import_dir: Path | None, inbox: Any) -> dict[str, Any]:
     repair_present = bool(import_dir and (import_dir / "reviewer_repair_proposals.json").exists())
     proposals = inbox if isinstance(inbox, list) else _safe_list(
@@ -784,6 +878,7 @@ def _symptom_flags(metrics: dict[str, Any], review_report: dict[str, Any], inbox
         flags["world_module_contamination_present"] = int(wq.get("contamination_count") or 0) > 0
         flags["world_cultivation_misclassification_present"] = int(wq.get("cultivation_misclassification_count") or 0) > 0
         flags["world_container_references_missing"] = int(wq.get("dangling_container_reference_count") or 0) > 0
+        flags["dangling_proposal_references"] = int(_safe_dict(artifact_quality.get("proposal_reference_closure")).get("dangling_reference_count") or 0) > 0
         flags["pending_proposals_have_block_markers"] = int(reviewer_repair.get("stale_block_marker_count") or 0) > 0
         flags["duplicate_canonical_character_names"] = bool(semantic.get("duplicate_character_names"))
         flags["unresolved_evidence_missing"] = int(semantic.get("unresolved_evidence_missing_count") or 0) > 0
@@ -861,6 +956,7 @@ def analyze_import(source: ImportSource) -> dict[str, Any]:
         "chapters": _chapter_quality_metrics(project_path),
         "timeline_branches": _timeline_branch_quality(_safe_dict(timeline)),
         "world_quality": _world_quality_metrics(operations),
+        "proposal_reference_closure": _proposal_reference_closure_metrics(project_path, inbox, _safe_dict(timeline)),
         "reviewer_repair": _reviewer_repair_metrics(import_dir, inbox),
         "semantic_quality": _semantic_quality_metrics(operations, _safe_dict(review_report), source_language, _safe_dict(timeline)),
         "usage_ledger": _usage_ledger_metrics(usage_ledger),

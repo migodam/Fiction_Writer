@@ -493,11 +493,52 @@ test.describe('Workbench import package accept', () => {
     expect(state.proposals[0].lastBlockReason).toContain('references missing branch: branch_missing');
   });
 
+  test('does not treat a same-package update as the creator of a missing referenced entity', async ({ page }) => {
+    const packageId = 'pkg_update_is_not_creator';
+    const character = makePackageProposal(packageId, 'update_ref_character', 'character', {
+      id: 'char_update_ref', name: 'Must roll back', aliases: [], tagIds: [],
+      organizationIds: [], linkedSceneIds: [], linkedEventIds: ['event_not_canonical'],
+      linkedWorldItemIds: [], statusFlags: {},
+    });
+    const eventUpdate = makePackageProposal(packageId, 'update_ref_event', 'timeline_event', {
+      id: 'event_not_canonical', title: 'Missing canonical event', branchId: 'branch_missing',
+      orderIndex: 0, locationIds: [], participantCharacterIds: [], linkedSceneIds: [],
+      linkedWorldItemIds: [], tags: [],
+    });
+    eventUpdate.proposedOperations[0].op = 'update';
+    await injectImportPackage(page, [character, eventUpdate]);
+
+    await page.getByTestId(`accept-import-package-${packageTestId(packageId)}`).click();
+    const state = await page.evaluate(() => (window as any).__narrativeStore.getState());
+    expect(state.characters).toEqual([]);
+    expect(state.timelineEvents).toEqual([]);
+    expect(state.proposals[0].lastBlockReason).toContain('event_not_canonical');
+  });
+
+  test('validates imported branch topology anchors as package references', async ({ page }) => {
+    const packageId = 'pkg_branch_topology_missing_anchor';
+    await injectImportPackage(page, [
+      makePackageProposal(packageId, 'topology_root', 'timeline_branch', {
+        id: 'branch_topology_root', name: 'Root', mode: 'root', sortOrder: 0,
+      }),
+      makePackageProposal(packageId, 'topology_fork', 'timeline_branch', {
+        id: 'branch_topology_fork', name: 'Fork', mode: 'forked', sortOrder: 1,
+        parentBranchId: 'branch_topology_root', forkEventId: 'event_missing_anchor',
+      }),
+    ]);
+
+    await page.getByTestId(`accept-import-package-${packageTestId(packageId)}`).click();
+    const state = await page.evaluate(() => (window as any).__narrativeStore.getState());
+    expect(state.timelineBranches).toEqual([]);
+    expect(state.proposals[0].lastBlockReason).toContain('event_missing_anchor');
+  });
+
   test('blocks import creates with missing required branch, chapter, or container IDs instead of defaulting them', async ({ page }) => {
     const cases = [
       { entityType: 'timeline_event', id: 'event_no_branch', fields: { id: 'event_no_branch', title: 'No branch', orderIndex: 0, locationIds: [], participantCharacterIds: [], linkedSceneIds: [], linkedWorldItemIds: [], tags: [] }, reason: 'missing required branchId' },
       { entityType: 'scene', id: 'scene_no_chapter', fields: { id: 'scene_no_chapter', title: 'No chapter', content: '', orderIndex: 0, povCharacterId: null, linkedCharacterIds: [], linkedEventIds: [], linkedWorldItemIds: [], status: 'draft' }, reason: 'missing required chapterId' },
       { entityType: 'world_item', id: 'world_no_container', fields: { id: 'world_no_container', name: 'No container', type: 'note', description: '', attributes: [], linkedCharacterIds: [], linkedEventIds: [], linkedSceneIds: [] }, reason: 'missing required containerId' },
+      { entityType: 'relationship', id: 'relationship_no_target', fields: { id: 'relationship_no_target', sourceId: '', targetId: '', type: 'related' }, reason: 'missing required sourceId or targetId' },
     ];
 
     for (const entry of cases) {
