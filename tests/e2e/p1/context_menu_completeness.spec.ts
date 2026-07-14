@@ -33,31 +33,55 @@ async function openWorldFixture(page: import("@playwright/test").Page) {
   await page.getByTestId("world-container-ctx_folder").click();
 }
 
-test("character context menu exposes complete commands and explains unavailable actions", async ({
-  page,
-}) => {
+test("character context menu exposes supported commands", async ({ page }) => {
   await page.goto("/characters/list");
   await page.getByTestId("character-card-char_aria").click({ button: "right" });
 
   for (const id of [
-    "character-new",
+    "character-open-profile",
+    "character-duplicate",
     "character-copy",
-    "character-cut",
     "character-paste",
-    "character-rename",
-    "character-move",
-    "character-merge",
+    "character-open-relationship-graph",
     "character-archive",
-    "character-delete",
   ]) {
     await expect(page.getByTestId(`context-menu-item-${id}`)).toBeVisible();
   }
   await expect(
-    page.getByTestId("context-menu-item-character-merge"),
+    page.getByTestId("context-menu-item-character-paste"),
   ).toBeDisabled();
   await expect(
-    page.getByTestId("context-menu-item-character-merge"),
-  ).toHaveAttribute("title", /not available/i);
+    page.getByTestId("context-menu-item-character-paste"),
+  ).toHaveAttribute("title", /copy a character/i);
+});
+
+test("context menu follows the active language and light theme", async ({
+  page,
+}) => {
+  await page.goto("/characters/list");
+  const modal = page.getByTestId("settings-modal");
+  await page.getByTestId("toolbar-settings").click();
+  await modal.getByRole("button", { name: /^Chinese/ }).click();
+  await page.getByTestId("settings-tab-appearance").click();
+  await modal.getByRole("button", { name: /^浅色主题/ }).click();
+  await modal
+    .getByRole("button")
+    .filter({ has: page.locator("svg") })
+    .last()
+    .click();
+
+  await page
+    .getByTestId("character-card-char_aria")
+    .click({ button: "right" });
+  const menu = page.getByTestId("global-context-menu");
+  await expect(menu).toContainText("打开人物档案");
+  await expect(menu).toContainText("创建人物副本");
+  await expect(menu).toContainText("打开关系图");
+  await expect(menu).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await expect(page.getByTestId("context-menu-item-character-paste")).toHaveAttribute(
+    "title",
+    "请先复制一个人物",
+  );
 });
 
 test("hard delete character clears every cross-module reference and one undo restores them", async ({
@@ -353,7 +377,7 @@ test("character impact modal blocks hard delete for world, tag, and graph refere
   await expect(page.getByTestId("hard-delete-confirm-btn")).toHaveCount(0);
 });
 
-test("world item context menu supports copy and paste and reports disabled move", async ({
+test("world item context menu supports supported copy and paste actions", async ({
   page,
 }) => {
   await openWorldFixture(page);
@@ -361,13 +385,13 @@ test("world item context menu supports copy and paste and reports disabled move"
   await item.click({ button: "right" });
 
   for (const id of [
-    "world-item-new",
+    "world-item-open",
+    "world-item-edit",
+    "world-item-duplicate",
     "world-item-copy",
     "world-item-cut",
     "world-item-paste",
     "world-item-rename",
-    "world-item-move",
-    "world-item-merge",
     "world-item-delete",
   ]) {
     await expect(page.getByTestId(`context-menu-item-${id}`)).toBeVisible();
@@ -385,13 +409,6 @@ test("world item context menu supports copy and paste and reports disabled move"
   await expect(page.getByTestId("world-item-list")).toContainText(
     "Context Item (copy)",
   );
-  await item.click({ button: "right" });
-  await expect(
-    page.getByTestId("context-menu-item-world-item-move"),
-  ).toBeDisabled();
-  await expect(
-    page.getByTestId("context-menu-item-world-item-move"),
-  ).toHaveAttribute("title", /drag the item/i);
 });
 
 test("world folder menu is complete and world UI uses folder language", async ({
@@ -403,12 +420,8 @@ test("world folder menu is complete and world UI uses folder language", async ({
 
   for (const id of [
     "world-folder-new",
-    "world-folder-copy",
-    "world-folder-cut",
     "world-folder-paste",
     "world-folder-rename",
-    "world-folder-move",
-    "world-folder-merge",
     "world-folder-delete",
   ]) {
     await expect(page.getByTestId(`context-menu-item-${id}`)).toBeVisible();
@@ -416,9 +429,6 @@ test("world folder menu is complete and world UI uses folder language", async ({
   await expect(
     page.getByTestId("context-menu-item-world-folder-paste"),
   ).toBeDisabled();
-  await expect(
-    page.getByTestId("context-menu-item-world-folder-paste"),
-  ).toHaveAttribute("title", /not available/i);
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("global-context-menu")).toBeHidden();
   await expect(page.locator("body")).not.toContainText("Categories");

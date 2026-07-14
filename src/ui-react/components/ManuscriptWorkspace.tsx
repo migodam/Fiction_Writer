@@ -1,26 +1,32 @@
-import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { ChevronRight, ChevronDown, Plus, FileText } from 'lucide-react';
-import { useProjectStore, useUIStore } from '../store';
-import { useI18n } from '../i18n';
-import { cn } from '../utils';
-import { NarrativeEditor } from './editor';
-import type { ManuscriptNode, ManuscriptNodeType } from '../models/project';
-import { commandClipboard } from '../commands/clipboard';
+import React, {
+  useState,
+  useMemo,
+  useEffect,
+  useRef,
+  useCallback,
+} from "react";
+import { ChevronRight, ChevronDown, Plus, FileText } from "lucide-react";
+import { useProjectStore, useUIStore } from "../store";
+import { useI18n } from "../i18n";
+import { cn } from "../utils";
+import { NarrativeEditor } from "./editor";
+import type { ManuscriptNode, ManuscriptNodeType } from "../models/project";
+import { commandClipboard } from "../commands/clipboard";
 
 const NODE_TYPE_COLORS: Record<ManuscriptNodeType, string> = {
-  act: 'bg-purple-100 text-purple-700',
-  part: 'bg-blue-100 text-blue-700',
-  chapter_outline: 'bg-amber-100 text-amber-700',
-  scene_outline: 'bg-green-100 text-green-700',
-  note: 'bg-gray-100 text-gray-600',
+  act: "bg-purple-100 text-purple-700",
+  part: "bg-blue-100 text-blue-700",
+  chapter_outline: "bg-amber-100 text-amber-700",
+  scene_outline: "bg-green-100 text-green-700",
+  note: "bg-gray-100 text-gray-600",
 };
 
 const NODE_TYPE_ORDER: ManuscriptNodeType[] = [
-  'act',
-  'part',
-  'chapter_outline',
-  'scene_outline',
-  'note',
+  "act",
+  "part",
+  "chapter_outline",
+  "scene_outline",
+  "note",
 ];
 
 function buildTree(nodes: ManuscriptNode[]): ManuscriptNode[] {
@@ -30,7 +36,10 @@ function buildTree(nodes: ManuscriptNode[]): ManuscriptNode[] {
   });
 }
 
-function getChildren(nodes: ManuscriptNode[], parentId: string | null): ManuscriptNode[] {
+function getChildren(
+  nodes: ManuscriptNode[],
+  parentId: string | null,
+): ManuscriptNode[] {
   return nodes
     .filter((n) => n.parentId === parentId)
     .sort((a, b) => a.orderIndex - b.orderIndex);
@@ -57,15 +66,20 @@ export const ManuscriptWorkspace: React.FC = () => {
 
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
-  const [editorContent, setEditorContent] = useState('');
+  const [editorContent, setEditorContent] = useState("");
   const [wordCount, setWordCount] = useState(0);
-  const [editorState, setEditorState] = useState<'loading' | 'saved' | 'dirty' | 'saving' | 'failed'>('saved');
+  const [editorState, setEditorState] = useState<
+    "loading" | "saved" | "dirty" | "saving" | "failed"
+  >("saved");
   const [addNodeForm, setAddNodeForm] = useState<AddNodeFormState | null>(null);
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
-  const [editingTitle, setEditingTitle] = useState('');
+  const [editingTitle, setEditingTitle] = useState("");
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const sortedNodes = useMemo(() => buildTree(manuscriptNodes), [manuscriptNodes]);
+  const sortedNodes = useMemo(
+    () => buildTree(manuscriptNodes),
+    [manuscriptNodes],
+  );
 
   // Cleanup debounce timer on unmount
   useEffect(() => {
@@ -79,41 +93,48 @@ export const ManuscriptWorkspace: React.FC = () => {
   // Load content when selected node changes
   useEffect(() => {
     if (!selectedNodeId) {
-      setEditorContent('');
+      setEditorContent("");
       setWordCount(0);
       return;
     }
-    setEditorState('loading');
+    setEditorState("loading");
     let cancelled = false;
     loadManuscriptNodeContent(projectRoot, selectedNodeId).then((content) => {
       if (!cancelled) {
         setEditorContent(content);
         setWordCount(countWords(content));
-        setEditorState('saved');
+        setEditorState("saved");
       }
     });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [selectedNodeId, projectRoot, loadManuscriptNodeContent]);
 
   const handleEditorUpdate = useCallback(
     (html: string) => {
       setEditorContent(html);
       setWordCount(countWords(html));
-      setEditorState('dirty');
+      setEditorState("dirty");
       if (!selectedNodeId) return;
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       saveTimerRef.current = setTimeout(async () => {
-        setEditorState('saving');
+        setEditorState("saving");
         try {
           await saveManuscriptNodeContent(projectRoot, selectedNodeId, html);
           updateManuscriptNode(selectedNodeId, { wordCount: countWords(html) });
-          setEditorState('saved');
+          setEditorState("saved");
         } catch {
-          setEditorState('failed');
+          setEditorState("failed");
         }
       }, 1000);
     },
-    [selectedNodeId, projectRoot, saveManuscriptNodeContent, updateManuscriptNode]
+    [
+      selectedNodeId,
+      projectRoot,
+      saveManuscriptNodeContent,
+      updateManuscriptNode,
+    ],
   );
 
   const toggleCollapse = (id: string) => {
@@ -132,7 +153,9 @@ export const ManuscriptWorkspace: React.FC = () => {
   const handleAddNodeSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!addNodeForm || !addNodeForm.title.trim()) return;
-    const siblings = sortedNodes.filter((n) => n.parentId === addNodeForm.parentId);
+    const siblings = sortedNodes.filter(
+      (n) => n.parentId === addNodeForm.parentId,
+    );
     const depth = addNodeForm.parentId
       ? (sortedNodes.find((n) => n.id === addNodeForm.parentId)?.depth ?? 0) + 1
       : 0;
@@ -161,7 +184,7 @@ export const ManuscriptWorkspace: React.FC = () => {
       updateManuscriptNode(id, { title: editingTitle.trim() });
     }
     setEditingNodeId(null);
-    setEditingTitle('');
+    setEditingTitle("");
   };
 
   const handleContextMenu = (e: React.MouseEvent, node: ManuscriptNode) => {
@@ -172,37 +195,88 @@ export const ManuscriptWorkspace: React.FC = () => {
       returnFocus: e.currentTarget as HTMLElement,
       items: [
         {
-          id: 'copy', label: 'Copy', shortcut: 'Ctrl+C', action: () => commandClipboard.set('manuscript-node', 'copy', node),
+          id: "add-child",
+          label: t("contextMenu.manuscript.addChild", "Add Child"),
+          action: () =>
+            setAddNodeForm({
+              parentId: node.id,
+              title: "",
+              type: "scene_outline",
+            }),
         },
         {
-          id: 'cut', label: 'Cut', shortcut: 'Ctrl+X', action: () => commandClipboard.set('manuscript-node', 'cut', node),
+          id: "manuscript-add-sibling",
+          label: t("contextMenu.manuscript.addSibling", "Add Sibling"),
+          action: () =>
+            setAddNodeForm({
+              parentId: node.parentId,
+              title: "",
+              type: node.type,
+            }),
         },
         {
-          id: 'paste', label: 'Paste', shortcut: 'Ctrl+V', disabled: !commandClipboard.get<ManuscriptNode>('manuscript-node'), disabledReason: 'Copy a manuscript item first', action: () => {
-            const entry = commandClipboard.get<ManuscriptNode>('manuscript-node');
+          id: "manuscript-duplicate",
+          label: t("contextMenu.duplicate", "Duplicate"),
+          action: () => {
+            const duplicate = addManuscriptNode({
+              ...node,
+              title: `${node.title} (copy)`,
+              parentId: node.parentId,
+              orderIndex: getChildren(sortedNodes, node.parentId).length,
+            });
+            setSelectedNodeId(duplicate.id);
+          },
+        },
+        {
+          id: "manuscript-open-editor",
+          label: t("contextMenu.manuscript.openEditor", "Open Editor"),
+          action: () => setSelectedNodeId(node.id),
+        },
+        {
+          id: "copy",
+          label: t("contextMenu.copy", "Copy"),
+          shortcut: "Ctrl+C",
+          action: () => commandClipboard.set("manuscript-node", "copy", node),
+        },
+        {
+          id: "cut",
+          label: t("contextMenu.cut", "Cut"),
+          shortcut: "Ctrl+X",
+          action: () => commandClipboard.set("manuscript-node", "cut", node),
+        },
+        {
+          id: "paste",
+          label: t("contextMenu.paste", "Paste"),
+          shortcut: "Ctrl+V",
+          disabled: !commandClipboard.get<ManuscriptNode>("manuscript-node"),
+          disabledReason: t(
+            "contextMenu.manuscript.pasteUnavailable",
+            "Copy a manuscript item first",
+          ),
+          action: () => {
+            const entry =
+              commandClipboard.get<ManuscriptNode>("manuscript-node");
             if (!entry) return;
             const { id: _sourceId, ...copy } = entry.value;
-            addManuscriptNode({ ...copy, title: `${entry.value.title} (copy)`, parentId: node.id, orderIndex: getChildren(sortedNodes, node.id).length, depth: node.depth + 1 });
-            if (entry.operation === 'cut') deleteManuscriptNode(entry.value.id);
+            addManuscriptNode({
+              ...copy,
+              title: `${entry.value.title} (copy)`,
+              parentId: node.id,
+              orderIndex: getChildren(sortedNodes, node.id).length,
+              depth: node.depth + 1,
+            });
+            if (entry.operation === "cut") deleteManuscriptNode(entry.value.id);
             commandClipboard.clear();
           },
         },
         {
-          id: 'add-child',
-          label: t('manuscript.addChild'),
-          action: () => {
-            setAddNodeForm({ parentId: node.id, title: '', type: 'scene_outline' });
-            closeContextMenu();
-          },
-        },
-        {
-          id: 'edit-title',
-          label: t('manuscript.editTitle'),
+          id: "edit-title",
+          label: t("contextMenu.rename", "Rename"),
           action: () => startEditTitle(node),
         },
         {
-          id: 'delete',
-          label: t('manuscript.delete'),
+          id: "delete",
+          label: t("contextMenu.delete", "Delete"),
           destructive: true,
           action: () => {
             deleteManuscriptNode(node.id);
@@ -225,9 +299,11 @@ export const ManuscriptWorkspace: React.FC = () => {
       <div key={node.id}>
         <div
           className={cn(
-            'group flex items-center gap-1 px-2 py-1.5 rounded-md cursor-pointer select-none',
-            isSelected ? 'bg-active text-text' : 'text-text-2 hover:bg-hover',
-            (node.type === 'chapter_outline' || node.type === 'scene_outline') && 'border-l-2 border-brand/50 bg-brand/5'
+            "group flex items-center gap-1 px-2 py-1.5 rounded-md cursor-pointer select-none",
+            isSelected ? "bg-active text-text" : "text-text-2 hover:bg-hover",
+            (node.type === "chapter_outline" ||
+              node.type === "scene_outline") &&
+              "border-l-2 border-brand/50 bg-brand/5",
           )}
           style={{ paddingLeft: `${node.depth * 16 + 8}px` }}
           data-testid={`manuscript-node-${node.id}`}
@@ -265,20 +341,25 @@ export const ManuscriptWorkspace: React.FC = () => {
               onChange={(e) => setEditingTitle(e.target.value)}
               onBlur={() => commitEditTitle(node.id)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') commitEditTitle(node.id);
-                if (e.key === 'Escape') { setEditingNodeId(null); setEditingTitle(''); }
+                if (e.key === "Enter") commitEditTitle(node.id);
+                if (e.key === "Escape") {
+                  setEditingNodeId(null);
+                  setEditingTitle("");
+                }
               }}
               onClick={(e) => e.stopPropagation()}
             />
           ) : (
-            <span className="flex-1 truncate text-[12px] font-medium">{node.title}</span>
+            <span className="flex-1 truncate text-[12px] font-medium">
+              {node.title}
+            </span>
           )}
 
           {/* Type badge */}
           <span
             className={cn(
-              'shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase',
-              NODE_TYPE_COLORS[node.type]
+              "shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase",
+              NODE_TYPE_COLORS[node.type],
             )}
           >
             {t(`manuscript.nodeType.${node.type}`)}
@@ -294,9 +375,7 @@ export const ManuscriptWorkspace: React.FC = () => {
 
         {/* Children */}
         {hasChildren && !isCollapsed && (
-          <div>
-            {children.map((child) => renderNode(child))}
-          </div>
+          <div>{children.map((child) => renderNode(child))}</div>
         )}
       </div>
     );
@@ -305,23 +384,30 @@ export const ManuscriptWorkspace: React.FC = () => {
   const rootNodes = getChildren(sortedNodes, null);
 
   return (
-    <div className="flex h-full overflow-hidden bg-bg" data-testid="manuscript-workspace">
+    <div
+      className="flex h-full overflow-hidden bg-bg"
+      data-testid="manuscript-workspace"
+    >
       {/* Left pane — Outline tree */}
       <aside className="w-72 border-r border-border bg-bg-elev-1 flex flex-col overflow-hidden shrink-0">
         {/* Toolbar */}
         <div className="border-b border-border bg-bg-elev-2 px-4 py-3 flex items-center justify-between shrink-0">
           <div>
             <div className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-2">
-              {t('manuscript.title')}
+              {t("manuscript.title")}
             </div>
-            <div className="text-sm font-black text-text">{t('manuscript.outline')}</div>
+            <div className="text-sm font-black text-text">
+              {t("manuscript.outline")}
+            </div>
           </div>
           <button
             type="button"
             data-testid="manuscript-add-node-btn"
             className="rounded-xl border border-border p-2 text-brand hover:border-brand"
-            onClick={() => setAddNodeForm({ parentId: null, title: '', type: 'act' })}
-            title={t('manuscript.addNode')}
+            onClick={() =>
+              setAddNodeForm({ parentId: null, title: "", type: "act" })
+            }
+            title={t("manuscript.addNode")}
           >
             <Plus size={14} />
           </button>
@@ -337,16 +423,21 @@ export const ManuscriptWorkspace: React.FC = () => {
               autoFocus
               data-testid="manuscript-node-title-input"
               className="w-full rounded border border-border bg-bg px-2 py-1 text-[12px] text-text outline-none focus:border-brand"
-              placeholder={t('manuscript.addNode')}
+              placeholder={t("manuscript.addNode")}
               value={addNodeForm.title}
-              onChange={(e) => setAddNodeForm({ ...addNodeForm, title: e.target.value })}
+              onChange={(e) =>
+                setAddNodeForm({ ...addNodeForm, title: e.target.value })
+              }
             />
             <div className="flex items-center gap-2">
               <select
                 className="flex-1 rounded border border-border bg-bg px-1 py-1 text-[11px] text-text outline-none"
                 value={addNodeForm.type}
                 onChange={(e) =>
-                  setAddNodeForm({ ...addNodeForm, type: e.target.value as ManuscriptNodeType })
+                  setAddNodeForm({
+                    ...addNodeForm,
+                    type: e.target.value as ManuscriptNodeType,
+                  })
                 }
               >
                 {NODE_TYPE_ORDER.map((type) => (
@@ -360,7 +451,7 @@ export const ManuscriptWorkspace: React.FC = () => {
                 data-testid="manuscript-node-confirm-btn"
                 className="rounded border border-brand px-2 py-1 text-[11px] text-brand hover:bg-brand hover:text-white"
               >
-                {t('manuscript.addNode')}
+                {t("manuscript.addNode")}
               </button>
               <button
                 type="button"
@@ -378,7 +469,7 @@ export const ManuscriptWorkspace: React.FC = () => {
           {rootNodes.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full px-4 py-12 text-center">
               <FileText size={28} className="text-text-2 mb-2 opacity-40" />
-              <p className="text-[12px] text-text-2">{t('manuscript.empty')}</p>
+              <p className="text-[12px] text-text-2">{t("manuscript.empty")}</p>
             </div>
           ) : (
             rootNodes.map((node) => renderNode(node))
@@ -387,22 +478,35 @@ export const ManuscriptWorkspace: React.FC = () => {
       </aside>
 
       {/* Right pane — Editor */}
-      <div className="flex-1 flex flex-col overflow-hidden" data-testid="manuscript-editor">
+      <div
+        className="flex-1 flex flex-col overflow-hidden"
+        data-testid="manuscript-editor"
+      >
         {selectedNodeId ? (
           <>
             {/* Editor header */}
             <div className="border-b border-border bg-bg-elev-2 px-6 py-3 flex items-center justify-between shrink-0">
               <span className="text-[13px] font-semibold text-text truncate">
-                {sortedNodes.find((n) => n.id === selectedNodeId)?.title || ''}
+                {sortedNodes.find((n) => n.id === selectedNodeId)?.title || ""}
               </span>
-              <span data-testid="manuscript-save-state" className={cn('ml-auto text-[11px]', editorState === 'failed' ? 'text-red' : editorState === 'dirty' ? 'text-amber' : 'text-text-3')}>
+              <span
+                data-testid="manuscript-save-state"
+                className={cn(
+                  "ml-auto text-[11px]",
+                  editorState === "failed"
+                    ? "text-red"
+                    : editorState === "dirty"
+                      ? "text-amber"
+                      : "text-text-3",
+                )}
+              >
                 {editorState}
               </span>
               <span
                 data-testid="manuscript-editor-wordcount"
                 className="text-[11px] text-text-2 shrink-0 ml-4"
               >
-                {wordCount.toLocaleString()} {t('manuscript.wordCount')}
+                {wordCount.toLocaleString()} {t("manuscript.wordCount")}
               </span>
             </div>
             {/* Editor body */}
@@ -411,15 +515,26 @@ export const ManuscriptWorkspace: React.FC = () => {
                 key={selectedNodeId}
                 content={editorContent}
                 onUpdate={handleEditorUpdate}
-                placeholder={t('manuscript.emptyEditor')}
+                placeholder={t("manuscript.emptyEditor")}
               />
-              {editorState === 'failed' && <button type="button" data-testid="manuscript-save-retry" className="mt-3 rounded-lg border border-red/40 px-3 py-1.5 text-xs text-red" onClick={() => handleEditorUpdate(editorContent)}>Retry save</button>}
+              {editorState === "failed" && (
+                <button
+                  type="button"
+                  data-testid="manuscript-save-retry"
+                  className="mt-3 rounded-lg border border-red/40 px-3 py-1.5 text-xs text-red"
+                  onClick={() => handleEditorUpdate(editorContent)}
+                >
+                  Retry save
+                </button>
+              )}
             </div>
           </>
         ) : (
           <div className="flex flex-col items-center justify-center h-full px-8 text-center">
             <FileText size={40} className="text-text-2 mb-3 opacity-30" />
-            <p className="text-[14px] text-text-2">{t('manuscript.emptyEditor')}</p>
+            <p className="text-[14px] text-text-2">
+              {t("manuscript.emptyEditor")}
+            </p>
           </div>
         )}
       </div>
@@ -428,8 +543,11 @@ export const ManuscriptWorkspace: React.FC = () => {
 };
 
 function stripHtml(content: string): string {
-  if (content.includes('<')) {
-    return content.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  if (content.includes("<")) {
+    return content
+      .replace(/<[^>]*>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
   }
   return content;
 }

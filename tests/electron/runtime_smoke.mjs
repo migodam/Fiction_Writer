@@ -19,7 +19,34 @@ const startedAt = process.hrtime.bigint();
 const resources = { app: undefined, vite: undefined };
 let cleanupPromise;
 
-const server = http.createServer((_request, response) => {
+let providerModelsRequest;
+const server = http.createServer((request, response) => {
+  if (request.url === '/v1/models') {
+    providerModelsRequest = { method: request.method, authorization: request.headers.authorization };
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ data: [{ id: 'model-a' }, { id: 'model-b' }] }));
+    return;
+  }
+  if (request.url === '/v1/unauthorized/models') {
+    response.writeHead(401, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ error: { message: 'invalid key' } }));
+    return;
+  }
+  if (request.url === '/v1/rate-limited/models') {
+    response.writeHead(429, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ error: { message: 'retry later' } }));
+    return;
+  }
+  if (request.url === '/v1/server-error/models') {
+    response.writeHead(503, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ error: { message: 'unavailable' } }));
+    return;
+  }
+  if (request.url === '/v1/invalid/models') {
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ unexpected: true }));
+    return;
+  }
   response.writeHead(200, { 'content-type': 'text/html' });
   response.end(fixture);
 });
@@ -185,7 +212,7 @@ async function main() {
     });
     await runStage('fixture-page.ready', 15_000, () => page.waitForSelector('#target', { timeout: 15_000 }));
 
-  const runtime = await runStage('fixture-page.bridge-evaluate', 45_000, () => page.evaluate(async ({ expectedProjectRoot, untrustedProjectRoot }) => {
+  const runtime = await runStage('fixture-page.bridge-evaluate', 45_000, () => page.evaluate(async ({ expectedProjectRoot, untrustedProjectRoot, providerEndpoint, directModelsEndpoint, unauthorizedProviderEndpoint, rateLimitedProviderEndpoint, serverErrorProviderEndpoint, invalidProviderEndpoint }) => {
     const bridge = window.narrativeIDE;
     const files = await bridge.pickFiles({ multiple: false, filters: [{ name: 'Text', extensions: ['txt'] }] });
     const directory = await bridge.pickDirectory({ mode: 'open' });
@@ -210,6 +237,14 @@ async function main() {
     }
     const saved = await bridge.saveAppSettings({ locale: 'en', density: 'compact' });
     const loaded = await bridge.loadAppSettings();
+    const providerConnection = await bridge.testProviderConnection({ provider: 'smoke-provider', endpoint: providerEndpoint, apiKey: 'smoke-secret-key' });
+    const providerDirectModels = await bridge.testProviderConnection({ provider: 'smoke-provider', endpoint: directModelsEndpoint, apiKey: 'smoke-secret-key' });
+    const providerUnauthorized = await bridge.testProviderConnection({ provider: 'smoke-provider', endpoint: unauthorizedProviderEndpoint, apiKey: 'smoke-secret-key' });
+    const providerRateLimited = await bridge.testProviderConnection({ provider: 'smoke-provider', endpoint: rateLimitedProviderEndpoint, apiKey: 'smoke-secret-key' });
+    const providerServerError = await bridge.testProviderConnection({ provider: 'smoke-provider', endpoint: serverErrorProviderEndpoint, apiKey: 'smoke-secret-key' });
+    const providerInvalidResponse = await bridge.testProviderConnection({ provider: 'smoke-provider', endpoint: invalidProviderEndpoint, apiKey: 'smoke-secret-key' });
+    const providerUnsafeEndpoint = await bridge.testProviderConnection({ provider: 'smoke-provider', endpoint: 'https://169.254.169.254/v1', apiKey: 'smoke-secret-key' });
+    const providerInvalidEndpoint = await bridge.testProviderConnection({ provider: 'smoke-provider', endpoint: 'http://example.com/v1', apiKey: 'smoke-secret-key' });
     const w1 = await bridge.w1Status({ projectRoot: expectedProjectRoot, session_id: 'w1 smoke/&?' });
     let unauthorizedError = '';
     try {
@@ -222,6 +257,14 @@ async function main() {
       directory,
       saved,
       loaded,
+      providerConnection,
+      providerDirectModels,
+      providerUnauthorized,
+      providerRateLimited,
+      providerServerError,
+      providerInvalidResponse,
+      providerUnsafeEndpoint,
+      providerInvalidEndpoint,
       w1,
       unauthorizedError,
       bridgeFileContents,
@@ -231,12 +274,28 @@ async function main() {
       bridgeKeys: Object.keys(bridge),
       sha256: bridge.sha256('abc'),
     };
-  }, { expectedProjectRoot: projectRoot, untrustedProjectRoot: unauthorizedRoot }));
+  }, { expectedProjectRoot: projectRoot, untrustedProjectRoot: unauthorizedRoot, providerEndpoint: `http://127.0.0.1:${address.port}/v1`, directModelsEndpoint: `http://127.0.0.1:${address.port}/v1/models`, unauthorizedProviderEndpoint: `http://127.0.0.1:${address.port}/v1/unauthorized`, rateLimitedProviderEndpoint: `http://127.0.0.1:${address.port}/v1/rate-limited`, serverErrorProviderEndpoint: `http://127.0.0.1:${address.port}/v1/server-error`, invalidProviderEndpoint: `http://127.0.0.1:${address.port}/v1/invalid` }));
 
   assert.deepEqual(runtime.files, { canceled: false, paths: [canonicalPortraitSourcePath] });
   assert.deepEqual(runtime.directory, { canceled: false, path: canonicalProjectRoot });
   assert.equal(runtime.saved.locale, 'en');
   assert.equal(runtime.loaded.density, 'compact');
+  assert.deepEqual(runtime.providerConnection, { ok: true, code: 'connected', message: 'Connection verified.', httpStatus: 200, latencyMs: runtime.providerConnection.latencyMs, modelCount: 2 });
+  assert.equal(typeof runtime.providerConnection.latencyMs, 'number');
+  assert.equal(runtime.providerDirectModels.code, 'connected');
+  assert.equal(runtime.providerUnauthorized.code, 'authentication_failed');
+  assert.equal(runtime.providerUnauthorized.httpStatus, 401);
+  assert.equal(runtime.providerRateLimited.code, 'rate_limited');
+  assert.equal(runtime.providerRateLimited.httpStatus, 429);
+  assert.equal(runtime.providerRateLimited.retryable, true);
+  assert.equal(runtime.providerServerError.code, 'server_error');
+  assert.equal(runtime.providerServerError.httpStatus, 503);
+  assert.equal(runtime.providerServerError.retryable, true);
+  assert.equal(runtime.providerInvalidResponse.code, 'invalid_response');
+  assert.equal(runtime.providerUnsafeEndpoint.code, 'unsafe_endpoint');
+  assert.equal(runtime.providerInvalidEndpoint.code, 'invalid_endpoint');
+  assert.equal(JSON.stringify(runtime.providerConnection).includes('smoke-secret-key'), false);
+  assert.deepEqual(providerModelsRequest, { method: 'GET', authorization: 'Bearer smoke-secret-key' });
   assert.equal(runtime.w1.status, 'runtime-smoke');
   assert.equal(runtime.w1.projectRoot, canonicalProjectRoot);
   assert.match(runtime.w1.path, /^\/workflow\/w1\/status\?session_id=w1%20smoke%2F%26%3F$/);

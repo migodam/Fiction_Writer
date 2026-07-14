@@ -1,8 +1,8 @@
-import type { Character } from '../models/project';
-import { commandClipboard } from './clipboard';
-import type { AppCommand, CommandContext } from './types';
+import type { Character } from "../models/project";
+import { commandClipboard } from "./clipboard";
+import type { AppCommand, CommandContext } from "./types";
 
-export type CharacterCommandId = 'character:duplicate' | 'character:archive';
+export type CharacterCommandId = "character:duplicate" | "character:archive";
 
 export interface CharacterCommandContext {
   character: Character;
@@ -19,10 +19,13 @@ export interface CharacterCommandSpec {
   execute: (ctx: CharacterCommandContext) => void;
 }
 
-export const CHARACTER_COMMANDS: Record<CharacterCommandId, CharacterCommandSpec> = {
-  'character:duplicate': {
-    id: 'character:duplicate',
-    labelKey: 'characters.duplicateCharacter',
+export const CHARACTER_COMMANDS: Record<
+  CharacterCommandId,
+  CharacterCommandSpec
+> = {
+  "character:duplicate": {
+    id: "character:duplicate",
+    labelKey: "characters.duplicateCharacter",
     execute: (ctx) => {
       const newId = `char_${Date.now()}`;
       ctx.addCharacter({
@@ -36,9 +39,9 @@ export const CHARACTER_COMMANDS: Record<CharacterCommandId, CharacterCommandSpec
       ctx.navigate(`/characters/profile/${newId}`);
     },
   },
-  'character:archive': {
-    id: 'character:archive',
-    labelKey: 'characters.archiveCharacter',
+  "character:archive": {
+    id: "character:archive",
+    labelKey: "characters.archiveCharacter",
     destructive: true,
     execute: (ctx) => ctx.setConfirmArchiveId(ctx.character.id),
   },
@@ -48,6 +51,7 @@ export interface CharacterMenuContext extends CommandContext {
   character: Character;
   addCharacter: (character: Character) => void;
   setConfirmArchiveId: (id: string) => void;
+  navigate: (path: string) => void;
 }
 
 const duplicateCharacter = (character: Character): Character => ({
@@ -60,72 +64,68 @@ const duplicateCharacter = (character: Character): Character => ({
 });
 
 /** Shared command contract for character cards and future keyboard bindings. */
-export const getCharacterContextCommands = (canPaste: boolean): AppCommand<CharacterMenuContext>[] => [
+export const getCharacterContextCommands = (
+  canPaste: boolean,
+): AppCommand<CharacterMenuContext>[] => [
   {
-    id: 'character-new',
-    label: 'New',
-    disabled: true,
-    disabledReason: 'Use the New Character button to choose the character type',
-    execute: () => undefined,
+    id: "character-open-profile",
+    label: {
+      key: "contextMenu.character.openProfile",
+      fallback: "Open Profile",
+    },
+    execute: ({ character, navigate }) =>
+      navigate(`/characters/profile/${character.id}`),
   },
   {
-    id: 'character-copy',
-    label: 'Copy',
-    shortcut: 'Ctrl+C',
-    execute: ({ character }) => commandClipboard.set('character', 'copy', character),
+    id: "character-duplicate",
+    label: { key: "contextMenu.character.duplicate", fallback: "Duplicate" },
+    execute: ({ character, addCharacter, navigate }) => {
+      const duplicate = duplicateCharacter(character);
+      addCharacter(duplicate);
+      navigate(`/characters/profile/${duplicate.id}`);
+    },
   },
   {
-    id: 'character-cut',
-    label: 'Cut',
-    shortcut: 'Ctrl+X',
-    disabled: true,
-    disabledReason: 'Cut is unavailable because characters can have linked records',
-    execute: () => undefined,
+    id: "character-copy",
+    label: { key: "contextMenu.copy", fallback: "Copy" },
+    shortcut: "Ctrl+C",
+    execute: ({ character }) =>
+      commandClipboard.set("character", "copy", character),
   },
   {
-    id: 'character-paste',
-    label: 'Paste',
-    shortcut: 'Ctrl+V',
+    id: "character-paste",
+    label: { key: "contextMenu.paste", fallback: "Paste" },
+    shortcut: "Ctrl+V",
     disabled: !canPaste,
-    disabledReason: canPaste ? undefined : 'Copy a character first',
+    disabledReason: canPaste
+      ? undefined
+      : {
+          key: "contextMenu.character.pasteUnavailable",
+          fallback: "Copy a character first",
+        },
     execute: ({ addCharacter }) => {
-      const entry = commandClipboard.get<Character>('character');
+      const entry = commandClipboard.get<Character>("character");
       if (!entry) return;
       addCharacter(duplicateCharacter(entry.value));
       commandClipboard.clear();
     },
   },
   {
-    id: 'character-rename',
-    label: 'Rename',
-    disabled: true,
-    disabledReason: 'Rename characters in the profile editor',
-    execute: () => undefined,
+    id: "character-open-relationship-graph",
+    label: {
+      key: "contextMenu.character.openRelationshipGraph",
+      fallback: "Open Relationship Graph",
+    },
+    execute: ({ character, navigate }) =>
+      navigate(
+        `/characters/relationship-graph?characterId=${encodeURIComponent(character.id)}`,
+      ),
   },
   {
-    id: 'character-move',
-    label: 'Move',
-    disabled: true,
-    disabledReason: 'Drag a character to an importance group to move it',
-    execute: () => undefined,
-  },
-  {
-    id: 'character-merge',
-    label: 'Merge',
-    disabled: true,
-    disabledReason: 'Character merge is not available yet',
-    execute: () => undefined,
-  },
-  {
-    id: 'character-archive',
-    label: 'Archive',
+    id: "character-archive",
+    label: { key: "contextMenu.archive", fallback: "Archive" },
     destructive: true,
-    execute: ({ character, setConfirmArchiveId }) => setConfirmArchiveId(character.id),
-  },
-  {
-    id: 'character-delete',
-    label: 'Delete',
-    destructive: true,
-    execute: ({ character, setConfirmArchiveId }) => setConfirmArchiveId(character.id),
+    execute: ({ character, setConfirmArchiveId }) =>
+      setConfirmArchiveId(character.id),
   },
 ];

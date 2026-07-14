@@ -12,7 +12,7 @@ This is the status source of truth for W0-W7. Use `FRONTEND_BACKEND_CHECKLIST.md
 | Workflow | Purpose | Backend status | UI status | Current status | Integration source | Open gaps |
 |---|---|---|---|---|---|---|
 | W0 Orchestrator | Multi-step workflow planner/executor | Verified in sidecar | Agents workspace control surface present for goal entry, status, permissions, and results | `active` | `FRONTEND_BACKEND_CHECKLIST.md` | Needs live sidecar/provider regression after WS-01/WS-03 integration rebase |
-| W1 Import | Novel/file import into proposals and project structure | Verified and actively used | Import modal and polling flow present | `active` | `FRONTEND_BACKEND_CHECKLIST.md` | Quality still being tuned for chunking/entity completeness |
+| W1 Import | Novel/file import into proposals and project structure | Verified and actively used | Import modal exposes a stage rail, current action, merged chronological execution stream, extraction counts, API calls, tokens, cost, and idle/budget stop states | `active` | `FRONTEND_BACKEND_CHECKLIST.md` | Quality still being tuned for chunking/entity completeness |
 | W2 Manuscript Sync | Sync writing content back into canonical/project data proposals | Verified in backend | Writing Chapters trigger with status/result path to Workbench Inbox | `active` | `FRONTEND_BACKEND_CHECKLIST.md` | Proposal acceptance safety remains owned by Workbench |
 | W3 Writing Assistant | Continue/rewrite/expand/improve-dialogue flows | Verified and wired | Available in writing flows | `active` | `FRONTEND_BACKEND_CHECKLIST.md` | Occasional preamble text still needs prompt hardening |
 | W4 Consistency Check | Detect contradictions and consistency issues | Verified and wired | Audit button and polling present | `active` | `FRONTEND_BACKEND_CHECKLIST.md` | Issue review/queue-fix closure still lighter than target product loop |
@@ -37,3 +37,8 @@ This is the status source of truth for W0-W7. Use `FRONTEND_BACKEND_CHECKLIST.md
 - User path: compose goal -> start W0 -> watch plan/progress/status -> grant or deny permission if the sidecar returns `waiting_permission` -> read completion or error card.
 - Status source: Zustand orchestrator state backed by `orchestrator:start`, `orchestrator:status`, `orchestrator:grant`, and `orchestrator:deny`.
 - 2026-04-24 WS-02 scoped W0 fix: child workflows that return `done`/`completed` directly from their start endpoint are marked completed immediately instead of being polled into a false timeout/failure.
+
+## W1 UI Observability Notes
+- Activity events and chunk logs are merged by timestamp into one stable execution stream; the UI no longer renders two competing reverse-ordered lists.
+- The running surface separates the current action from historical output and keeps stage, extraction counts, API concurrency, token/cost usage, elapsed time, idle warnings, and budget exhaustion visible.
+- The idle surface uses compact presets plus an explicit extraction scope instead of a long single-column setup form.

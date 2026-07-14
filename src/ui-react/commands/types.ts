@@ -1,4 +1,11 @@
-export type CommandTargetKind = 'character' | 'world-item' | 'world-folder' | 'manuscript-node' | 'timeline-event' | 'graph-node' | 'graph-edge';
+export type CommandTargetKind =
+  | "character"
+  | "world-item"
+  | "world-folder"
+  | "manuscript-node"
+  | "timeline-event"
+  | "graph-node"
+  | "graph-edge";
 
 export interface CommandTarget {
   kind: CommandTargetKind;
@@ -8,21 +15,26 @@ export interface CommandTarget {
 export interface CommandContext {
   target: CommandTarget;
   selection?: { type: string | null; id: string | null };
-  source?: 'context-menu' | 'keyboard' | 'drag';
+  source?: "context-menu" | "keyboard" | "drag";
+}
+
+export interface CommandText {
+  key: string;
+  fallback: string;
 }
 
 export interface AppCommand<TContext extends CommandContext = CommandContext> {
   id: string;
-  label: string;
+  label: CommandText;
   shortcut?: string;
   destructive?: boolean;
   disabled?: boolean;
-  disabledReason?: string;
+  disabledReason?: CommandText;
   execute: (context: TContext) => void | Promise<void>;
 }
 
 export interface ClipboardEntry<T = unknown> {
   kind: CommandTargetKind;
-  operation: 'copy' | 'cut';
+  operation: "copy" | "cut";
   value: T;
 }

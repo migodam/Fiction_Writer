@@ -14,12 +14,12 @@
     /* ===== Narrative IDE Dark Tokens (Design System v1) ===== */
 
     /* Surfaces */
-    --bg: #0B0F14;
-    --bg-elev-1: #0F1620;
-    --bg-elev-2: #121B26;
-    --panel: #0F1620;
+    --bg: #0b0f14;
+    --bg-elev-1: #0f1620;
+    --bg-elev-2: #121b26;
+    --panel: #0f1620;
     --card: #101826;
-    --card-2: #0E1520;
+    --card-2: #0e1520;
 
     /* Lines */
     --border: rgba(255, 255, 255, 0.08);
@@ -28,18 +28,18 @@
 
     /* Text */
     --text: rgba(255, 255, 255, 0.92);
-    --text-2: rgba(255, 255, 255, 0.70);
+    --text-2: rgba(255, 255, 255, 0.7);
     --text-3: rgba(255, 255, 255, 0.52);
-    --text-invert: #0B0F14;
+    --text-invert: #0b0f14;
 
     /* Brand / Accents */
     --brand: #c98328;
     --brand-2: #f2c879;
-    --blue: #3B82F6;
-    --green: #22C55E;
-    --red: #EF4444;
-    --amber: #F59E0B;
-    --cyan: #06B6D4;
+    --blue: #3b82f6;
+    --green: #22c55e;
+    --red: #ef4444;
+    --amber: #f59e0b;
+    --cyan: #06b6d4;
 
     /* States */
     --focus: rgba(124, 58, 237, 0.55);
@@ -80,7 +80,9 @@
     overflow: hidden;
     color: var(--text);
     background: var(--bg);
-    font-family: "Segoe UI Variable Display", "Bahnschrift", "Aptos", "Trebuchet MS", sans-serif;
+    font-family:
+      "Segoe UI Variable Display", "Bahnschrift", "Aptos", "Trebuchet MS",
+      sans-serif;
   }
 
   .density-compact {
@@ -157,16 +159,90 @@
 }
 
 /* TipTap prose-like headings */
-.tiptap h1 { font-size: 2rem; font-weight: 900; margin-bottom: 0.5em; }
-.tiptap h2 { font-size: 1.5rem; font-weight: 800; margin-bottom: 0.4em; }
-.tiptap h3 { font-size: 1.25rem; font-weight: 700; margin-bottom: 0.3em; }
-.tiptap ul, .tiptap ol { padding-left: 1.5rem; margin-bottom: 0.75em; }
-.tiptap ul { list-style-type: disc; }
-.tiptap ol { list-style-type: decimal; }
-.tiptap hr { border-color: var(--border, #e2e8f0); margin: 1.5em 0; }
-.tiptap p { margin-bottom: 0.75em; }
+.tiptap h1 {
+  font-size: 2rem;
+  font-weight: 900;
+  margin-bottom: 0.5em;
+}
+.tiptap h2 {
+  font-size: 1.5rem;
+  font-weight: 800;
+  margin-bottom: 0.4em;
+}
+.tiptap h3 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin-bottom: 0.3em;
+}
+.tiptap ul,
+.tiptap ol {
+  padding-left: 1.5rem;
+  margin-bottom: 0.75em;
+}
+.tiptap ul {
+  list-style-type: disc;
+}
+.tiptap ol {
+  list-style-type: decimal;
+}
+.tiptap hr {
+  border-color: var(--border, #e2e8f0);
+  margin: 1.5em 0;
+}
+.tiptap p {
+  margin-bottom: 0.75em;
+}
 
 @layer components {
+  .context-menu {
+    border: 1px solid var(--border-2);
+    border-radius: var(--r-sm);
+    padding: 4px;
+    background: var(--bg-elev-2);
+    box-shadow: var(--shadow-2);
+  }
+
+  .context-menu__item {
+    display: flex;
+    width: 100%;
+    min-height: 36px;
+    align-items: center;
+    justify-content: space-between;
+    border: 0;
+    border-radius: var(--r-xs);
+    padding: 8px 12px;
+    color: var(--text);
+    background: transparent;
+    text-align: left;
+    font-size: 14px;
+    transition:
+      background 120ms ease,
+      color 120ms ease;
+  }
+
+  .context-menu__item:hover,
+  .context-menu__item--active {
+    background: var(--hover);
+  }
+  .context-menu__item--destructive {
+    color: var(--red);
+  }
+  .context-menu__item--destructive:hover,
+  .context-menu__item--destructive.context-menu__item--active {
+    background: color-mix(in srgb, var(--red) 12%, transparent);
+  }
+  .context-menu__item--disabled {
+    cursor: not-allowed;
+    color: var(--text-3);
+  }
+  .context-menu__item--disabled:hover {
+    background: transparent;
+  }
+  .context-menu__meta {
+    margin-left: 12px;
+    color: var(--text-3);
+    font-size: 12px;
+  }
 
   /* ===== Layout containers ===== */
   .ide-surface {
@@ -202,7 +278,9 @@
     cursor: pointer;
     margin-bottom: 6px;
     border-radius: var(--r-sm);
-    transition: background 160ms ease, border-color 160ms ease;
+    transition:
+      background 160ms ease,
+      border-color 160ms ease;
     background: transparent;
     border: 1px solid transparent;
   }
@@ -236,7 +314,10 @@
     border: 1px solid var(--border);
     background: transparent;
     color: var(--text);
-    transition: background 160ms ease, border-color 160ms ease, transform 80ms ease;
+    transition:
+      background 160ms ease,
+      border-color 160ms ease,
+      transform 80ms ease;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -410,14 +491,22 @@
   }
 
   .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: linear-gradient(180deg, rgba(242, 200, 121, 0.35), rgba(201, 131, 40, 0.6));
+    background: linear-gradient(
+      180deg,
+      rgba(242, 200, 121, 0.35),
+      rgba(201, 131, 40, 0.6)
+    );
     border-radius: 999px;
     border: 2px solid transparent;
     background-clip: padding-box;
   }
 
   .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-    background: linear-gradient(180deg, rgba(242, 200, 121, 0.5), rgba(201, 131, 40, 0.8));
+    background: linear-gradient(
+      180deg,
+      rgba(242, 200, 121, 0.5),
+      rgba(201, 131, 40, 0.8)
+    );
     background-clip: padding-box;
   }
 }

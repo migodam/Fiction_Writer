@@ -454,6 +454,14 @@ w1-import-file           (selected source file)
 w1-import-model          (selected model/profile)
 w1-import-stage          (current import stage)
 w1-import-budget         (token budget/usage summary)
+w1-stage-rail            (segment-to-proposal stage progression)
+w1-current-activity-card (current W1 action, separate from history)
+w1-current-activity-message
+w1-import-observability  (API/token/elapsed summary)
+w1-extraction-counts     (live character/event/world/relationship totals)
+w1-token-cost-card       (input/output tokens and estimated cost)
+import-console           (unified chronological activity + chunk stream)
+console-log-list         (merged execution stream entries)
 w1-recovery-card         (cancelled or failed import recovery surface)
 w1-retry-btn             (retries the selected file)
 w1-reset-btn             (returns import to file selection)
@@ -466,6 +474,11 @@ character-custom-attribute-add
 manuscript-save-state
 manuscript-save-retry
 world-folder-<containerId>
+
+-- Provider settings --
+settings-provider-test
+settings-provider-test-status
+settings-provider-activate
 
 ==================================================
 23 ORCHESTRATOR WORKFLOW (W0)

@@ -10,6 +10,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import electron from 'electron';
 import { chatCompletion, streamCompletion, generateImage } from './services/aiService.js';
+import { testProviderConnection } from './services/providerConnectionService.js';
 import { ALLOWED_TABLES, openDb, closeDb, closeAllDbs, upsertEntity, getAllEntities, deleteEntity, migrateFromJson, indexEntity, searchEntities } from './db.js';
 
 const { app, BrowserWindow, dialog, ipcMain } = electron;
@@ -719,10 +720,7 @@ ipcMain.handle('dialog:pick-files', async (event, payload) => {
   return { canceled: result.canceled, paths };
 });
 
-ipcMain.handle('settings:test-provider', async (_event, payload = {}) => ({
-  ok: Boolean(payload?.endpoint && payload?.provider),
-  message: payload?.endpoint && payload?.provider ? 'connected_placeholder' : 'missing_endpoint_or_provider',
-}));
+ipcMain.handle('settings:test-provider', async (_event, payload = {}) => testProviderConnection(payload));
 
 // Map of active stream abort controllers
 const streamControllers = new Map();

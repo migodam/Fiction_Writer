@@ -142,7 +142,7 @@ When adding a new button or feature:
 |---|---|---|---|---|---|---|---|---|
 | Load app settings | AdvancedSettingsModal.tsx | loadAppSettings | loadAppSettings | settings:load-app | — | — | ✅ COMPLETE | |
 | Save app settings | AdvancedSettingsModal.tsx | saveAppSettings | saveAppSettings | settings:save-app | — | — | ✅ COMPLETE | |
-| Test provider connection | AdvancedSettingsModal.tsx | — | testProvider | settings:test-provider | — | — | ✅ COMPLETE | |
+| Test provider connection | AdvancedSettingsModal.tsx | — | testProviderConnection | settings:test-provider | Direct provider `GET /models` | — | ✅ COMPLETE | Main-process request uses Bearer auth, HTTPS/loopback validation, public-address DNS checks with the connection pinned to the validated address, 8s timeout, model-catalog validation, and typed auth/rate-limit/server/TLS/network failures. Electron smoke verifies the bridge without exposing the key. |
 | Toggle locale/density/theme | AdvancedSettingsModal.tsx | setLocale/setDensity | saveAppSettings | settings:save-app | — | — | ✅ COMPLETE | |
 | Create project | AdvancedSettingsModal.tsx | createProject | — | — | — | — | ✅ COMPLETE | |
 

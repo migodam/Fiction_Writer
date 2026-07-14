@@ -295,6 +295,15 @@ Auto-aggregation:
 - Character page shows linked timeline events (from participants match) in a subpanel.
 - Character page shows linked relationships in a subpanel.
 
+Shared context-menu behavior:
+- Menus use theme tokens and immediately follow dark/light theme changes.
+- Labels and disabled reasons are resolved through the current locale.
+- Character commands: open profile, duplicate, copy/paste, open relationship graph, archive.
+- World commands: open/edit, duplicate, copy/cut/paste, rename, new folder, delete.
+- Manuscript commands: add child/sibling, duplicate, open editor, copy/cut/paste, rename, delete.
+- Disabled commands remain visible with a reason; destructive commands require a second confirmation.
+- Arrow keys, Home/End, Enter/Space, and Escape are supported, and focus returns to the source object.
+
 --------------------------------------------------
 7.2 Timeline (Workspace)
 Layout:
