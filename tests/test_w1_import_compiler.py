@@ -1650,6 +1650,41 @@ def test_node_write_to_project_world_containers_before_items_and_skips_people(tm
     assert next(item for item in world_items if item["name"] == "长春功")["category"] == "cultivation_method"
 
 
+def test_node_write_to_project_rebinds_stale_world_container_references(tmp_path, monkeypatch):
+    captured_ops = []
+
+    async def fake_propose_write(op, _project_path):
+        captured_ops.append(op)
+        return {"id": f"p_{op['entity_id']}", "confidence": op["confidence"], "status": "pending"}
+
+    monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", fake_propose_write)
+    state = _make_write_state(
+        tmp_path,
+        entity_registry={
+            "characters": {},
+            "events": {},
+            "world": {"七玄门": "organization"},
+            "world_detailed": {
+                "七玄门": {
+                    "category": "organization",
+                    "containerId": "world_container_organizations",
+                    "parentId": "world_container_organizations",
+                },
+            },
+        },
+    )
+    state["world_containers"] = w1_import._default_world_container_specs("zh")
+    asyncio.run(w1_import.node_write_to_project(state))
+
+    container_ids = {
+        op["entity_id"] for op in captured_ops if op["entity_type"] == "world_container"
+    }
+    item_op = next(op for op in captured_ops if op["entity_type"] == "world_item")
+    assert item_op["data"]["containerId"] == "cont_import_organizations"
+    assert item_op["data"]["parentId"] == "cont_import_organizations"
+    assert set(item_op["depends_on"]).issubset(container_ids)
+
+
 def test_node_write_to_project_stages_manuscript_before_cancellable_proposals(tmp_path, monkeypatch):
     async def cancelled_propose_write(_op, _project_path):
         raise asyncio.CancelledError()

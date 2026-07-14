@@ -484,6 +484,12 @@ def _timeline_branch_quality(timeline: dict[str, Any]) -> dict[str, Any]:
 def _world_quality_metrics(operations: list[dict[str, Any]]) -> dict[str, Any]:
     contamination_count = 0
     misclassification_count = 0
+    container_ids = {
+        str(_operation_fields(op).get("id") or op.get("entityId") or op.get("entity_id"))
+        for op in operations
+        if _entity_type(op) == "world_container"
+    }
+    dangling_container_references: list[dict[str, str]] = []
     for op in operations:
         if _entity_type(op) not in ("world_item", "world"):
             continue
@@ -495,9 +501,20 @@ def _world_quality_metrics(operations: list[dict[str, Any]]) -> dict[str, Any]:
             contamination_count += 1
             if container_key in _CULTIVATION_CONTAINERS:
                 misclassification_count += 1
+        for field_name in ("containerId", "parentId"):
+            referenced_id = str(fields.get(field_name) or "").strip()
+            if referenced_id and referenced_id not in container_ids:
+                dangling_container_references.append({
+                    "item_id": str(fields.get("id") or op.get("entityId") or op.get("entity_id") or ""),
+                    "name": name,
+                    "field": field_name,
+                    "referenced_id": referenced_id,
+                })
     return {
         "contamination_count": contamination_count,
         "cultivation_misclassification_count": misclassification_count,
+        "dangling_container_reference_count": len(dangling_container_references),
+        "dangling_container_references": dangling_container_references[:20],
     }
 
 
@@ -509,9 +526,17 @@ def _reviewer_repair_metrics(import_dir: Path | None, inbox: Any) -> dict[str, A
     blocked_count = sum(
         1 for p in proposals if isinstance(p, dict) and p.get("status") == "blocked"
     )
+    stale_block_marker_count = sum(
+        1
+        for p in proposals
+        if isinstance(p, dict)
+        and p.get("status") in (None, "pending")
+        and bool(p.get("lastBlockReason"))
+    )
     return {
         "reviewer_repair_artifacts_present": repair_present,
         "blocked_proposal_count": blocked_count,
+        "stale_block_marker_count": stale_block_marker_count,
     }
 
 
@@ -736,6 +761,7 @@ def _symptom_flags(metrics: dict[str, Any], review_report: dict[str, Any], inbox
         semantic = _safe_dict(artifact_quality.get("semantic_quality"))
         usage = _safe_dict(artifact_quality.get("usage_ledger"))
         receipts = _safe_dict(artifact_quality.get("proposal_receipts"))
+        reviewer_repair = _safe_dict(artifact_quality.get("reviewer_repair"))
         chapter_node_count = int(ms.get("chapter_node_count") or 0)
         node_count = int(ms.get("node_count") or 0)
         scene_with_content = int(ms.get("scene_nodes_with_content") or 0)
@@ -757,6 +783,8 @@ def _symptom_flags(metrics: dict[str, Any], review_report: dict[str, Any], inbox
         flags["empty_timeline_branches_present"] = int(tb.get("empty_branch_count") or 0) > 0
         flags["world_module_contamination_present"] = int(wq.get("contamination_count") or 0) > 0
         flags["world_cultivation_misclassification_present"] = int(wq.get("cultivation_misclassification_count") or 0) > 0
+        flags["world_container_references_missing"] = int(wq.get("dangling_container_reference_count") or 0) > 0
+        flags["pending_proposals_have_block_markers"] = int(reviewer_repair.get("stale_block_marker_count") or 0) > 0
         flags["duplicate_canonical_character_names"] = bool(semantic.get("duplicate_character_names"))
         flags["unresolved_evidence_missing"] = int(semantic.get("unresolved_evidence_missing_count") or 0) > 0
         flags["high_evidence_entity_mismatch"] = int(semantic.get("high_evidence_entity_mismatch_count") or 0) > 0
