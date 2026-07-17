@@ -1,0 +1,270 @@
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor
+import sqlite3
+import hashlib
+import json
+
+import pytest
+
+from sidecar.runtime.agent_runtime import LeaseLostError, RuntimeStore, SecretValueError
+
+
+@pytest.fixture
+def runtime(tmp_path):
+    store = RuntimeStore(tmp_path)
+    store.initialize()
+    return store
+
+
+def test_schema_uses_project_wal_database(runtime, tmp_path):
+    expected = tmp_path / "system" / "runtime" / "agent_runtime.db"
+    assert runtime.database_path == expected
+    assert expected.exists()
+
+    with sqlite3.connect(expected) as connection:
+        assert connection.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    assert runtime.pragma("foreign_keys") == 1
+    assert {
+        "agent_runs",
+        "agent_attempts",
+        "run_leases",
+        "run_events",
+        "tool_calls",
+        "artifact_receipts",
+        "human_decisions",
+        "outbox",
+        "schema_migrations",
+    } <= tables
+
+
+def test_concurrent_events_receive_monotonic_sequences(runtime):
+    run = runtime.create_run(workflow_id="W0")
+    attempt = runtime.create_attempt(run["run_id"])
+    lease = runtime.acquire_lease(attempt["attempt_id"], "worker-a", ttl_seconds=30)
+
+    def append(index: int):
+        return runtime.append_event(
+            attempt["attempt_id"],
+            "progress",
+            {"index": index},
+            owner_id="worker-a",
+            fence_token=lease["fence_token"],
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        events = list(executor.map(append, range(24)))
+
+    assert sorted(event["sequence"] for event in events) == list(range(1, 25))
+    assert [event["sequence"] for event in runtime.list_events(attempt["attempt_id"], after_sequence=20)] == [21, 22, 23, 24]
+
+
+def test_expired_lease_can_be_fenced_by_a_new_worker(runtime):
+    attempt = runtime.create_attempt(runtime.create_run(workflow_id="W1")["run_id"])
+    first = runtime.acquire_lease(attempt["attempt_id"], "worker-a", ttl_seconds=1, now=10)
+    assert runtime.expire_leases(now=12) == [attempt["attempt_id"]]
+
+    second = runtime.acquire_lease(attempt["attempt_id"], "worker-b", ttl_seconds=10, now=12)
+    assert second["fence_token"] == first["fence_token"] + 1
+
+
+def test_expired_running_attempt_is_interrupted_before_recovery_is_reported(runtime):
+    attempt = runtime.create_attempt(runtime.create_run(workflow_id="W1")["run_id"])
+    runtime.acquire_lease(attempt["attempt_id"], "worker-a", ttl_seconds=1, now=10)
+
+    recoverable = runtime.scan_recoverable_attempts(now=12)
+
+    assert recoverable[0]["status"] == "interrupted"
+    assert runtime.get_attempt(attempt["attempt_id"])["status"] == "interrupted"
+    assert runtime.set_attempt_status(attempt["attempt_id"], "running")["status"] == "running"
+
+
+def test_restart_interrupts_running_attempts_and_expires_all_leases(runtime):
+    attempt = runtime.create_attempt(runtime.create_run(workflow_id="W0")["run_id"])
+    runtime.acquire_lease(attempt["attempt_id"], "worker-a", ttl_seconds=30)
+
+    runtime.invalidate_leases_for_restart()
+
+    assert runtime.get_attempt(attempt["attempt_id"])["status"] == "interrupted"
+    assert runtime.expire_leases() == [attempt["attempt_id"]]
+
+
+def test_restart_reconciles_unfinished_provider_intents_as_unknown_outcome(runtime):
+    attempt = runtime.create_attempt(runtime.create_run(workflow_id="W1")["run_id"])
+    runtime.acquire_lease(attempt["attempt_id"], "paid-worker", ttl_seconds=30)
+    for index in range(5):
+        call = runtime.record_tool_intent(attempt["attempt_id"], "provider.call", {"index": index})
+        runtime.record_tool_result(call["tool_call_id"], {"ok": True})
+    pending = runtime.record_tool_intent(attempt["attempt_id"], "provider.call", {"index": 5})
+
+    runtime.invalidate_leases_for_restart()
+
+    assert runtime.get_attempt(attempt["attempt_id"])["status"] == "interrupted"
+    calls = runtime.list_tool_calls(attempt["attempt_id"])
+    assert sum(call["status"] == "result" for call in calls) == 5
+    assert [call["status"] for call in calls if call["tool_call_id"] == pending["tool_call_id"]] == ["unknown_outcome"]
+    assert calls[-1]["unknown_reason"] == "runtime_interrupted"
+    assert runtime.list_unknown_call_summaries(attempt["attempt_id"])[0]["decision_state"] == "pending"
+
+    runtime.invalidate_leases_for_restart()
+    assert len(runtime.list_tool_calls(attempt["attempt_id"])) == 6
+    assert len(runtime.list_unknown_call_summaries(attempt["attempt_id"])) == 1
+
+
+def test_stale_fencing_token_is_rejected(runtime):
+    attempt = runtime.create_attempt(runtime.create_run(workflow_id="W1")["run_id"])
+    old = runtime.acquire_lease(attempt["attempt_id"], "worker-a", ttl_seconds=1, now=10)
+    current = runtime.acquire_lease(attempt["attempt_id"], "worker-b", ttl_seconds=10, now=12)
+
+    with pytest.raises(LeaseLostError):
+        runtime.append_event(attempt["attempt_id"], "progress", {}, owner_id="worker-a", fence_token=old["fence_token"], now=12)
+
+    assert runtime.append_event(attempt["attempt_id"], "progress", {}, owner_id="worker-b", fence_token=current["fence_token"], now=12)["sequence"] == 1
+
+
+def test_repeated_human_decisions_are_idempotent(runtime):
+    attempt = runtime.create_attempt(runtime.create_run(workflow_id="W0")["run_id"])
+    initial = runtime.record_human_decision(attempt["attempt_id"], "approve-plan", "approved", {"by": "mia"})
+    repeated = runtime.record_human_decision(attempt["attempt_id"], "approve-plan", "approved", {"by": "mia"})
+
+    assert repeated == initial
+    with pytest.raises(ValueError, match="decision_key_conflict"):
+        runtime.record_human_decision(
+            attempt["attempt_id"], "approve-plan", "approved", {"by": "other"}
+        )
+    assert len(runtime.list_human_decisions(attempt["attempt_id"])) == 1
+
+
+def test_tool_unknown_outcome_is_durable(runtime):
+    attempt = runtime.create_attempt(runtime.create_run(workflow_id="W2")["run_id"])
+    call = runtime.record_tool_intent(attempt["attempt_id"], "filesystem.write", {"path": "draft.md"})
+    unknown = runtime.record_tool_unknown_outcome(call["tool_call_id"], "sidecar restarted")
+
+    assert unknown["status"] == "unknown_outcome"
+    assert unknown["unknown_reason"] == "sidecar restarted"
+
+
+def test_secrets_are_rejected_in_identifiers_and_redacted_in_payloads(runtime):
+    with pytest.raises(SecretValueError):
+        runtime.create_run(workflow_id="W0", cache_key="sk-this-is-a-secret")
+
+    attempt = runtime.create_attempt(runtime.create_run(workflow_id="W0")["run_id"])
+    call = runtime.record_tool_intent(attempt["attempt_id"], "remote.call", {"api_key": "super-secret", "note": "safe"})
+    assert call["intent_payload"] == {"api_key": "[REDACTED]", "note": "safe"}
+    with sqlite3.connect(runtime.database_path) as connection:
+        persisted = connection.execute("SELECT intent_payload_json FROM tool_calls WHERE tool_call_id = ?", (call["tool_call_id"],)).fetchone()[0]
+    assert "super-secret" not in persisted
+
+
+def test_reopen_preserves_runs_receipts_and_recoverable_attempts(tmp_path):
+    first = RuntimeStore(tmp_path)
+    run = first.create_run(workflow_id="W3", thread_id="thread-1")
+    attempt = first.create_attempt(run["run_id"], checkpoint_id="checkpoint-1")
+    receipt = first.record_artifact_receipt(attempt["attempt_id"], "proposal", "artifacts/proposal.json", "abc123")
+
+    reopened = RuntimeStore(tmp_path)
+    assert reopened.get_run(run["run_id"])["thread_id"] == "thread-1"
+    assert reopened.list_artifact_receipts(attempt["attempt_id"])[0] == receipt
+    assert [item["attempt_id"] for item in reopened.scan_recoverable_attempts()] == [attempt["attempt_id"]]
+
+
+def test_concurrent_runtime_initialization_is_migration_safe(tmp_path):
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        stores = list(executor.map(lambda _: RuntimeStore(tmp_path), range(16)))
+
+    assert all(store.database_path.exists() for store in stores)
+    with sqlite3.connect(stores[0].database_path) as connection:
+        versions = {row[0] for row in connection.execute("SELECT version FROM schema_migrations")}
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(agent_runs)")}
+    assert {1, 2} <= versions
+    assert "config_json" in columns
+
+
+def test_concurrent_v2_migration_is_transactional_and_idempotent(tmp_path):
+    store = RuntimeStore(tmp_path)
+    with sqlite3.connect(store.database_path) as connection:
+        connection.execute("ALTER TABLE agent_runs DROP COLUMN config_json")
+        connection.execute("DELETE FROM schema_migrations WHERE version >= 2")
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        stores = list(executor.map(lambda _: RuntimeStore(tmp_path), range(16)))
+
+    with sqlite3.connect(stores[0].database_path) as connection:
+        versions = {row[0] for row in connection.execute("SELECT version FROM schema_migrations")}
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(agent_runs)")}
+    assert {1, 2, 3} <= versions
+    assert "config_json" in columns
+
+
+def test_checkpoint_metadata_is_ordered_and_never_persists_state_blobs(runtime):
+    attempt = runtime.create_attempt(runtime.create_run(workflow_id="W1")["run_id"])
+    runtime.record_checkpoint_metadata(
+        attempt["attempt_id"], "checkpoint-2", node="process_chunks", sequence=2,
+        parent_checkpoint_id="checkpoint-1", metadata={"summary": "two chunks", "state": {"api_key": "sk-secret"}},
+    )
+    runtime.record_checkpoint_metadata(attempt["attempt_id"], "checkpoint-1", node="split_chunks", sequence=1, metadata={"diff": {"chunks": 1}})
+
+    checkpoints = runtime.list_checkpoint_metadata(attempt["attempt_id"])
+    assert [item["checkpoint_id"] for item in checkpoints] == ["checkpoint-1", "checkpoint-2"]
+    assert checkpoints[1]["metadata"] == {"state": {"api_key": "[REDACTED]"}, "summary": "two chunks"}
+
+
+def test_resource_lease_is_single_writer_and_stale_fence_cannot_release(runtime):
+    first = runtime.acquire_resource_lease("project:story.json", "worker-a", ttl_seconds=1, now=10)
+    with pytest.raises(LeaseLostError):
+        runtime.acquire_resource_lease("project:story.json", "worker-b", ttl_seconds=10, now=10)
+
+    second = runtime.acquire_resource_lease("project:story.json", "worker-b", ttl_seconds=10, now=12)
+    assert second["fence_token"] == first["fence_token"] + 1
+    with pytest.raises(LeaseLostError):
+        runtime.release_resource_lease("project:story.json", "worker-a", first["fence_token"])
+    runtime.release_resource_lease("project:story.json", "worker-b", second["fence_token"])
+
+
+def test_resource_lease_concurrent_acquire_has_one_winner(runtime):
+    def acquire(index: int) -> str:
+        try:
+            runtime.acquire_resource_lease("project:canonical-write", f"worker-{index}", ttl_seconds=30)
+            return "won"
+        except LeaseLostError:
+            return "lost"
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(acquire, range(8)))
+
+    assert results.count("won") == 1
+    assert results.count("lost") == 7
+
+
+def test_recoverable_source_compatibility_is_recomputed_from_disk(tmp_path):
+    source = tmp_path / "source.txt"
+    source.write_text("unchanged", encoding="utf-8")
+    store = RuntimeStore(tmp_path)
+    run = store.create_run(workflow_id="W1", config={
+        "source_file_path": str(source), "source_hash": hashlib.sha256(source.read_bytes()).hexdigest(),
+    })
+    attempt_id = store.create_attempt(run["run_id"])["attempt_id"]
+
+    assert store.scan_recoverable_attempts()[0]["source_compatible"] is True
+    source.write_text("modified", encoding="utf-8")
+    assert store.scan_recoverable_attempts()[0]["source_compatible"] is False
+    source.unlink()
+    assert store.scan_recoverable_attempts()[0]["source_compatible"] is False
+
+
+def test_recoverable_remaining_cost_uses_durable_usage_ledger(tmp_path):
+    source = tmp_path / "source.txt"
+    source.write_text("source", encoding="utf-8")
+    store = RuntimeStore(tmp_path)
+    run = store.create_run(workflow_id="W1", lineage_id="lineage-cost", config={
+        "source_file_path": str(source), "source_hash": hashlib.sha256(source.read_bytes()).hexdigest(),
+        "budget_config": {"max_cost_usd": 3.0},
+    })
+    attempt = store.create_attempt(run["run_id"])
+    ledger_path = tmp_path / "system" / "imports" / "lineage-cost" / "attempts" / attempt["attempt_id"] / "usage_ledger.json"
+    ledger_path.parent.mkdir(parents=True)
+    ledger_path.write_text(json.dumps({"cost_usd": 0.75}), encoding="utf-8")
+
+    remaining = store.scan_recoverable_attempts()[0]["remaining_cost"]
+    assert remaining == {"max_cost_usd": 3.0, "spent_cost_usd": 0.75, "remaining_cost_usd": 2.25, "unknown_spend": False, "remaining_chunks": 0}

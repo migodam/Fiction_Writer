@@ -12,13 +12,13 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from pathlib import Path
 from typing import Any
 
 import os
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, END
 
 from sidecar.models.state import ConsistencyState, ConsistencyIssue
@@ -30,6 +30,7 @@ from sidecar.prompts.w4_prompts import (
     W4_WORLD_RULE_CHECK,
     W4_ITEM_TRACKER,
 )
+from sidecar.runtime.checkpointer import aclose_checkpointer, close_checkpointer, create_sqlite_checkpointer
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -320,13 +321,45 @@ def route_output(state: ConsistencyState) -> str:
 
 # ── Graph construction ────────────────────────────────────────────────────────
 
-_graph = None
+_GRAPH_CACHE: dict[tuple[str, int], Any] = {}
+_PROJECT_CHECKPOINTERS: dict[str, Any] = {}
 
 
-def get_graph():
-    global _graph
-    if _graph is not None:
-        return _graph
+def _canonical_project_path(project_path: str | Path) -> Path:
+    return Path(project_path).expanduser().resolve()
+
+
+def _project_checkpointer(project_path: Path) -> Any:
+    project_key = str(project_path)
+    if project_key not in _PROJECT_CHECKPOINTERS:
+        database_path = project_path / "system" / "runtime" / "langgraph_checkpoints.db"
+        database_path.parent.mkdir(parents=True, exist_ok=True)
+        _PROJECT_CHECKPOINTERS[project_key] = create_sqlite_checkpointer(database_path)
+    return _PROJECT_CHECKPOINTERS[project_key]
+
+
+def close_project_checkpointer(project_path: str | Path) -> None:
+    """Release the cached durable saver when a project runtime shuts down."""
+    project_key = str(_canonical_project_path(project_path))
+    for cache_key in [key for key in _GRAPH_CACHE if key[0] == project_key]:
+        _GRAPH_CACHE.pop(cache_key)
+    saver = _PROJECT_CHECKPOINTERS.pop(project_key, None)
+    close_checkpointer(saver)
+
+
+async def close_project_checkpointer_async(project_path: str | Path) -> None:
+    project_key = str(_canonical_project_path(project_path))
+    for cache_key in [key for key in _GRAPH_CACHE if key[0] == project_key]:
+        _GRAPH_CACHE.pop(cache_key)
+    await aclose_checkpointer(_PROJECT_CHECKPOINTERS.pop(project_key, None))
+
+
+def get_graph(project_path: str | Path, *, checkpointer: Any | None = None) -> Any:
+    canonical_path = _canonical_project_path(project_path)
+    saver = checkpointer if checkpointer is not None else _project_checkpointer(canonical_path)
+    cache_key = (str(canonical_path), id(saver))
+    if cache_key in _GRAPH_CACHE:
+        return _GRAPH_CACHE[cache_key]
 
     builder = StateGraph(ConsistencyState)
 
@@ -379,13 +412,14 @@ def get_graph():
     builder.add_edge("generate_fix_proposals", "release_lock")
     builder.add_edge("release_lock", END)
 
-    memory = MemorySaver()
-    _graph = builder.compile(checkpointer=memory)
-    return _graph
+    graph = builder.compile(checkpointer=saver)
+    _GRAPH_CACHE[cache_key] = graph
+    return graph
 
 
 async def run(project_path: str, config: dict) -> dict:
     """Entry point for W4. config must include scope, target_id, and optionally context."""
+    project_path = str(_canonical_project_path(project_path))
     initial_state: ConsistencyState = {
         "project_path": project_path,
         "workflow_id": "W4",
@@ -400,6 +434,6 @@ async def run(project_path: str, config: dict) -> dict:
         "status": "running",
     }
     thread_id = config.get("thread_id", f"w4-{uuid.uuid4().hex[:8]}")
-    graph = get_graph()
+    graph = get_graph(project_path)
     result = await graph.ainvoke(initial_state, {"configurable": {"thread_id": thread_id}})
     return dict(result)

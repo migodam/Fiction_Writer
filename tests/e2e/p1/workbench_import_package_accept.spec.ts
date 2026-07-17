@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test';
+import { createHash } from 'node:crypto';
 
 const now = () => '2026-05-31T00:00:00.000Z';
+const sha256 = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex');
 
 const packageTestId = (packageId: string) => `import-${packageId}`;
 const sourceSpan = (sourceHash: string, content: string, start = 0, end = Array.from(content).length, substringHash = sourceHash) => ({
@@ -46,6 +48,26 @@ const makeStagedProjectionPackage = (packageId: string, artifactPath: string, ch
     stagedManuscriptProjection: { artifact_path: artifactPath, contract_version: 'w1-staged-manuscript-v1', chapter_id: chapterId, scene_id: sceneId },
   }),
 ];
+
+const makeArtifactRefProjectionPackage = (packageId: string, artifactPath: string, artifactSha256: string, attemptId = 'attempt_01', chapterId = 'chap_projection', sceneId = 'scene_projection') => {
+  const relativePath = `system/imports/${packageId}/attempts/${attemptId}/staged_manuscript_projection.json`;
+  const artifactRef = {
+    relativePath,
+    sha256: artifactSha256,
+    contractVersion: 'w1-staged-manuscript-v2',
+    lineageId: packageId,
+    attemptId,
+  };
+  return makeStagedProjectionPackage(packageId, artifactPath, chapterId, sceneId).map((proposal) => {
+    proposal.proposedOperations[0].fields!.stagedManuscriptProjection = {
+      artifactRef,
+      contract_version: 'w1-staged-manuscript-v2',
+      chapter_id: chapterId,
+      scene_id: sceneId,
+    };
+    return proposal;
+  });
+};
 
 const makeProjection = (packageId: string, sourceHash: string, chapterId = 'chap_projection', sceneId = 'scene_projection') => ({
   contract_version: 'w1-staged-manuscript-v1',
@@ -98,41 +120,63 @@ async function installProjectionFilesystem(
   sourceTextOverride?: string,
   sourcePathOverride?: string,
   escapedSourcePath?: string,
+  artifactSourcePathOverride?: string,
 ) {
   const manifestPath = artifactPath.replace(/staged_manuscript_projection\.json$/, 'manifest.json');
   const runDirectory = artifactPath.replace(/\/staged_manuscript_projection\.json$/, '');
   const sourcePath = sourcePathOverride ?? `${runDirectory}/raw_source.txt`;
   const sourceText = sourceTextOverride ?? String(((projection.scene_documents as Array<Record<string, unknown>> | undefined)?.[0]?.content) || '');
-  const sourceHash = String(((projection.chapters as Array<Record<string, unknown>> | undefined)?.[0]?.source_span as Record<string, unknown> | undefined)?.raw_source_hash || '');
-  const projectionPayload = { ...projection, source_file_path: sourcePath };
+  const fixtureHash = String(((projection.chapters as Array<Record<string, unknown>> | undefined)?.[0]?.source_span as Record<string, unknown> | undefined)?.raw_source_hash || '');
+  const shouldNormalizeHashes = manifest.source_hash === fixtureHash;
+  const sourceHash = shouldNormalizeHashes ? sha256(sourceText) : fixtureHash;
+  const projectionPayload = JSON.parse(JSON.stringify({ ...projection, source_file_path: artifactSourcePathOverride ?? sourcePath })) as Record<string, any>;
+  const manifestPayload = { ...manifest };
+  if (shouldNormalizeHashes) {
+    manifestPayload.source_hash = sourceHash;
+    const normalizeSpan = (span: Record<string, unknown> | undefined) => {
+      if (!span) return;
+      const start = Number(span.absolute_start ?? 0);
+      const end = Number(span.absolute_end ?? Array.from(sourceText).length);
+      const content = Array.from(sourceText).slice(start, end).join('');
+      span.raw_source_hash = sourceHash;
+      span.substring_hash = sha256(content);
+    };
+    for (const chapter of projectionPayload.chapters ?? []) normalizeSpan(chapter.source_span);
+    for (const document of projectionPayload.scene_documents ?? []) normalizeSpan(document.source_span);
+  }
   await page.addInitScript(
-    ({ artifactPath, manifestPath, runDirectory, projectionPayload, manifest, escapedArtifactPath, sourcePath, escapedSourcePath, sourceText, sourceHash }) => {
-      (window as any).require = (moduleName: string) => {
-        if (moduleName === 'fs') return {
-          existsSync: (path: string) => path === artifactPath || path === manifestPath || path === runDirectory || path === sourcePath,
-          realpathSync: (path: string) => path === artifactPath && escapedArtifactPath
-            ? escapedArtifactPath
-            : path === sourcePath && escapedSourcePath ? escapedSourcePath : path,
-          readFileSync: (path: string) => path === artifactPath ? JSON.stringify(projectionPayload) : path === manifestPath ? JSON.stringify(manifest) : path === sourcePath ? sourceText : '',
-        };
-        if (moduleName === 'crypto') return {
-          createHash: () => {
-            let value = '';
-            return {
-              update: (next: string) => { value += next; return { digest: () => value === sourceText ? sourceHash : `hash:${value}` }; },
-            };
-          },
-        };
-        if (moduleName === 'path') return {
-          resolve: (...parts: string[]) => parts.join('/').replace(/\/+/g, '/'),
-          relative: (from: string, to: string) => to.startsWith(from) ? to.slice(from.length).replace(/^\/+/, '') : '../outside',
-          isAbsolute: (path: string) => path.startsWith('/'),
-        };
-        if (moduleName === 'process' || moduleName === 'buffer') return {};
-        throw new Error(`Unexpected module: ${moduleName}`);
+    ({ artifactPath, manifestPath, runDirectory, projectionPayload, manifestPayload, escapedArtifactPath, sourcePath, escapedSourcePath, sourceText, sourceHash }) => {
+      const files = new Map<string, string>([
+        [artifactPath, JSON.stringify(projectionPayload)],
+        [manifestPath, JSON.stringify(manifestPayload)],
+        [sourcePath, sourceText],
+      ]);
+      const directories = new Set([runDirectory]);
+      const writes: string[] = [];
+      const directChildren = (directory: string) => {
+        const prefix = `${directory}/`;
+        return Array.from(new Set([...directories, ...files.keys()]
+          .filter((path) => path.startsWith(prefix))
+          .map((path) => path.slice(prefix.length).split('/')[0])
+          .filter(Boolean)));
+      };
+      (window as any).__projectionFs = { files, directories, writes };
+      delete (window as any).require;
+      (window as any).narrativeIDE = {
+        projectFileExists: ({ path }: any) => files.has(path) || directories.has(path),
+        projectFileRead: ({ path }: any) => files.get(path) ?? '',
+        projectFileWrite: ({ path, data }: any) => { files.set(path, String(data)); writes.push(path); },
+        projectFileMkdir: ({ path }: any) => { directories.add(path); },
+        projectFileReaddir: ({ path }: any) => directChildren(path),
+        projectFileUnlink: ({ path }: any) => { files.delete(path); },
+        projectFileRealpath: ({ path }: any) => path === artifactPath && escapedArtifactPath
+          ? escapedArtifactPath
+          : path === sourcePath && escapedSourcePath ? escapedSourcePath : path,
+        projectFileCopy: ({ path }: any) => { throw new Error(`Unexpected copy: ${path}`); },
+        projectFileRename: ({ path, destination }: any) => { files.set(destination, files.get(path) ?? ''); files.delete(path); writes.push(destination); },
       };
     },
-    { artifactPath, manifestPath, runDirectory, projectionPayload, manifest, escapedArtifactPath, sourcePath, escapedSourcePath, sourceText, sourceHash },
+    { artifactPath, manifestPath, runDirectory, projectionPayload, manifestPayload, escapedArtifactPath, sourcePath, escapedSourcePath, sourceText, sourceHash },
   );
 }
 
@@ -167,23 +211,217 @@ test.describe('Workbench import package accept', () => {
     ]);
     await page.evaluate(() => {
       const store = (window as any).__narrativeStore;
+      const starterChapter = { id: 'chap_1784040375337', title: 'Chapter 1', summary: '', goal: '', notes: '', sceneIds: ['scene_1784040375344'], orderIndex: 0, status: 'draft' };
+      const starterScene = { id: 'scene_1784040375344', chapterId: starterChapter.id, title: 'Scene 1', summary: '', content: '', orderIndex: 0, povCharacterId: null, linkedCharacterIds: [], linkedEventIds: [], linkedWorldItemIds: [], status: 'draft' };
+      const fs = (window as any).__projectionFs;
+      fs.files.set('/project/writing/chapters/chap_1784040375337.json', JSON.stringify(starterChapter));
+      fs.files.set('/project/writing/scenes/scene_1784040375344.md', '');
+      fs.files.set('/project/writing/scenes/scene_1784040375344.meta.json', JSON.stringify({ ...starterScene, content: undefined }));
+      fs.files.set('/project/unrelated/keep.txt', 'keep');
+      fs.directories.add('/project/writing/chapters');
+      fs.directories.add('/project/writing/scenes');
       store.setState((state: any) => ({
         ...state,
         projectRoot: '/project',
-        currentProject: { ...state.currentProject, metadata: { ...state.currentProject.metadata, rootPath: '/project', storageMode: 'nodefs' } },
+        chapters: [starterChapter],
+        scenes: [starterScene],
+        currentProject: {
+          ...state.currentProject,
+          chapters: [starterChapter],
+          scenes: [starterScene],
+          metadata: { ...state.currentProject.metadata, rootPath: '/project', storageMode: 'nodefs', template: 'blank' },
+        },
       }));
     });
 
     await page.getByTestId(`accept-import-package-${packageTestId(packageId)}`).click();
     const state = await page.evaluate(() => {
       const s = (window as any).__narrativeStore.getState();
+      const fs = (window as any).__projectionFs;
       return {
         sceneContent: s.scenes.find((scene: any) => scene.id === 'scene_projection')?.content,
+        chapterIds: s.chapters.map((chapter: any) => chapter.id),
+        sceneIds: s.scenes.map((scene: any) => scene.id),
         manuscriptNodes: s.manuscriptNodes.map((node: any) => node.id),
+        persistedStarterFiles: [
+          fs.files.has('/project/writing/chapters/chap_1784040375337.json'),
+          fs.files.has('/project/writing/scenes/scene_1784040375344.md'),
+          fs.files.has('/project/writing/scenes/scene_1784040375344.meta.json'),
+        ],
+        unrelated: fs.files.get('/project/unrelated/keep.txt'),
       };
     });
     expect(state.sceneContent).toBe('Projection-owned manuscript content.');
+    expect(state.chapterIds).toEqual(['chap_projection']);
+    expect(state.sceneIds).toEqual(['scene_projection']);
     expect(state.manuscriptNodes).toEqual(expect.arrayContaining(['mn_chap_projection', 'mn_scene_projection']));
+    expect(state.persistedStarterFiles).toEqual([false, false, false]);
+    expect(state.unrelated).toBe('keep');
+  });
+
+  test('accepts a relocated project artifact reference without trusting its former /tmp path', async ({ page }) => {
+    const packageId = 'pkg_relocated_projection';
+    const attemptId = 'attempt_relocated_02';
+    const artifactPath = `/project/system/imports/${packageId}/attempts/${attemptId}/staged_manuscript_projection.json`;
+    const sourceHash = 'source_hash_relocated';
+    const projection = makeProjection(packageId, sourceHash);
+    await installProjectionFilesystem(page, artifactPath, projection, { import_run_id: packageId, source_hash: sourceHash });
+    await page.goto('http://localhost:3000');
+    const artifactHash = await page.evaluate((path) => (window as any).__projectionFs.files.get(path), artifactPath);
+    await injectImportPackage(page, makeArtifactRefProjectionPackage(packageId, artifactPath, sha256(artifactHash), attemptId));
+    await page.evaluate(() => {
+      const store = (window as any).__narrativeStore;
+      store.setState((state: any) => ({ ...state, projectRoot: '/project', currentProject: { ...state.currentProject, metadata: { ...state.currentProject.metadata, rootPath: '/project', storageMode: 'nodefs' } } }));
+    });
+
+    await page.getByTestId(`accept-import-package-${packageTestId(packageId)}`).click();
+    const state = await page.evaluate(() => (window as any).__narrativeStore.getState());
+    expect(state.scenes.find((scene: any) => scene.id === 'scene_projection')?.content).toBe('Projection-owned manuscript content.');
+    expect(state.proposals).toEqual([]);
+  });
+
+  test('rejects an ArtifactRef traversal before mutating the package', async ({ page }) => {
+    const packageId = 'pkg_artifact_ref_traversal';
+    const attemptId = 'attempt_traversal_03';
+    const artifactPath = `/project/system/imports/${packageId}/attempts/${attemptId}/staged_manuscript_projection.json`;
+    const sourceHash = 'source_hash_traversal';
+    await installProjectionFilesystem(page, artifactPath, makeProjection(packageId, sourceHash), { import_run_id: packageId, source_hash: sourceHash });
+    const projection = makeProjection(packageId, sourceHash);
+    const proposals = makeArtifactRefProjectionPackage(packageId, artifactPath, `hash:${JSON.stringify({ ...projection, source_file_path: `/project/system/imports/${packageId}/attempts/${attemptId}/raw_source.txt` })}`, attemptId);
+    (proposals[0].proposedOperations[0].fields!.stagedManuscriptProjection as any).artifactRef.relativePath = '../outside.json';
+    await injectImportPackage(page, proposals);
+    await page.evaluate(() => {
+      const store = (window as any).__narrativeStore;
+      store.setState((state: any) => ({ ...state, projectRoot: '/project', currentProject: { ...state.currentProject, metadata: { ...state.currentProject.metadata, rootPath: '/project', storageMode: 'nodefs' } } }));
+    });
+
+    await page.getByTestId(`accept-import-package-${packageTestId(packageId)}`).click();
+    const state = await page.evaluate(() => (window as any).__narrativeStore.getState());
+    expect(state.chapters).toEqual([]);
+    expect(state.proposals[0].lastBlockReason).toContain('ArtifactRef');
+  });
+
+  test('repairs a blocked stale legacy package without accepting proposals, then accepts explicitly', async ({ page }) => {
+    const packageId = 'pkg_legacy_repair';
+    const currentArtifactPath = `/project/system/imports/${packageId}/staged_manuscript_projection.json`;
+    const oldArtifactPath = `/tmp/old-project/system/imports/${packageId}/staged_manuscript_projection.json`;
+    const oldSourcePath = `/tmp/old-project/system/imports/${packageId}/raw_source.txt`;
+    const sourceHash = 'source_hash_legacy_repair';
+    const projection = makeProjection(packageId, sourceHash);
+    await installProjectionFilesystem(page, currentArtifactPath, projection, { import_run_id: packageId, source_hash: sourceHash }, undefined, undefined, undefined, undefined, oldSourcePath);
+    const legacyProposals = makeStagedProjectionPackage(packageId, oldArtifactPath) as any[];
+    legacyProposals.forEach((proposal) => {
+      proposal.operations = proposal.proposedOperations;
+      delete proposal.proposedOperations;
+    });
+    await injectImportPackage(page, legacyProposals);
+    await page.evaluate(() => {
+      const store = (window as any).__narrativeStore;
+      store.setState((state: any) => ({ ...state, projectRoot: '/project', currentProject: { ...state.currentProject, metadata: { ...state.currentProject.metadata, rootPath: '/project', storageMode: 'nodefs' } } }));
+    });
+
+    await page.getByTestId(`accept-import-package-${packageTestId(packageId)}`).click();
+    const blocked = await page.evaluate(() => {
+      const state = (window as any).__narrativeStore.getState();
+      return {
+        chapters: state.chapters,
+        scenes: state.scenes,
+        proposals: state.proposals.map((proposal: any) => ({ id: proposal.id, reason: proposal.lastBlockReason })),
+        history: state.proposalHistory,
+      };
+    });
+    expect(blocked.chapters).toEqual([]);
+    expect(blocked.scenes).toEqual([]);
+    expect(blocked.proposals).toHaveLength(2);
+    expect(blocked.proposals.every((proposal: any) => proposal.reason)).toBe(true);
+    expect(blocked.history).toEqual([]);
+
+    await page.getByTestId(`repair-blocked-package-${packageTestId(packageId)}`).click();
+    const repaired = await page.evaluate(({ packageId }) => {
+      const store = (window as any).__narrativeStore;
+      const state = store.getState();
+      store.getState().repairImportPackage(state.proposals.map((proposal: any) => proposal.id));
+      const repeated = store.getState();
+      return {
+        chapters: repeated.chapters,
+        scenes: repeated.scenes,
+        proposals: repeated.proposals.map((proposal: any) => ({ id: proposal.id, reason: proposal.lastBlockReason })),
+        history: repeated.proposalHistory,
+        transactions: [...(window as any).__projectionFs.files.keys()].filter((path: string) => path.includes(`/system/transactions/repair-package-${packageId}`)),
+      };
+    }, { packageId });
+    expect(repaired.chapters).toEqual([]);
+    expect(repaired.scenes).toEqual([]);
+    expect(repaired.proposals).toHaveLength(2);
+    expect(repaired.proposals.every((proposal: any) => !proposal.reason)).toBe(true);
+    expect(repaired.history).toEqual([]);
+    expect(repaired.transactions.length).toBeGreaterThan(0);
+    const repairedDescriptors = await page.evaluate(() => {
+      const proposals = (window as any).__narrativeStore.getState().proposals;
+      return proposals.flatMap((proposal: any) => [
+        ...(proposal.operations || []),
+        ...(proposal.proposedOperations || []),
+      ]).map((operation: any) => operation.fields?.stagedManuscriptProjection).filter(Boolean);
+    });
+    expect(repairedDescriptors).toHaveLength(2);
+    expect(repairedDescriptors.every((descriptor: any) => !Object.prototype.hasOwnProperty.call(descriptor, 'artifact_path'))).toBe(true);
+    expect(repairedDescriptors.every((descriptor: any) => descriptor.artifactRef?.contractVersion === 'w1-staged-manuscript-v2')).toBe(true);
+
+    await page.getByTestId(`accept-import-package-${packageTestId(packageId)}`).click();
+    const result = await page.evaluate(({ currentArtifactPath, packageId }) => {
+      const state = (window as any).__narrativeStore.getState();
+      const fs = (window as any).__projectionFs;
+      const artifact = JSON.parse(fs.files.get(currentArtifactPath));
+      return {
+        content: state.scenes.find((scene: any) => scene.id === 'scene_projection')?.content,
+        sourceRef: artifact.source_ref,
+        hasLegacyPath: Object.prototype.hasOwnProperty.call(artifact, 'source_file_path'),
+        transactions: [...fs.files.keys()].filter((path: string) => path.includes(`/system/transactions/repair-package-${packageId}`)),
+      };
+    }, { currentArtifactPath, packageId });
+    expect(result.content).toBe('Projection-owned manuscript content.');
+    expect(result.hasLegacyPath).toBe(false);
+    expect(result.sourceRef).toEqual(expect.objectContaining({ relativePath: `system/imports/${packageId}/raw_source.txt`, attemptId: 'legacy' }));
+    expect(result.transactions.length).toBeGreaterThan(0);
+  });
+
+  test('failed legacy repair writes no receipt and leaves the projection artifact unchanged', async ({ page }) => {
+    const packageId = 'pkg_legacy_repair_failure';
+    const currentArtifactPath = `/project/system/imports/${packageId}/staged_manuscript_projection.json`;
+    const oldArtifactPath = `/tmp/old-project/system/imports/${packageId}/staged_manuscript_projection.json`;
+    const sourceHash = 'source_hash_legacy_failure';
+    const projection = makeProjection(packageId, sourceHash);
+    await installProjectionFilesystem(page, currentArtifactPath, projection, { import_run_id: packageId, source_hash: 'wrong_manifest_hash' }, undefined, undefined, undefined, undefined, '/tmp/old/raw_source.txt');
+    await injectImportPackage(page, makeStagedProjectionPackage(packageId, oldArtifactPath));
+    await page.evaluate(() => {
+      const store = (window as any).__narrativeStore;
+      store.setState((state: any) => ({ ...state, projectRoot: '/project', currentProject: { ...state.currentProject, metadata: { ...state.currentProject.metadata, rootPath: '/project', storageMode: 'nodefs' } } }));
+    });
+    const before = await page.evaluate((path) => (window as any).__projectionFs.files.get(path), currentArtifactPath);
+
+    await page.getByTestId(`accept-import-package-${packageTestId(packageId)}`).click();
+    const result = await page.evaluate((path) => {
+      const fs = (window as any).__projectionFs;
+      return { after: fs.files.get(path), writes: fs.writes, files: [...fs.files.keys()] };
+    }, currentArtifactPath);
+    expect(result.after).toBe(before);
+    expect(result.writes).toEqual([]);
+    expect(result.files.some((path: string) => path.endsWith('.receipt.json'))).toBe(false);
+  });
+
+  test('accepts an 89-proposal package once and leaves a repeated accept inert', async ({ page }) => {
+    const packageId = 'pkg_eighty_nine';
+    const proposals = Array.from({ length: 89 }, (_, index) => makePackageProposal(packageId, `proposal_${index}`, 'character', {
+      id: `char_${index}`, name: `Imported ${index}`, summary: '', background: '', aliases: [], birthdayText: '',
+      tagIds: [], organizationIds: [], linkedSceneIds: [], linkedEventIds: [], linkedWorldItemIds: [], statusFlags: {},
+    }));
+    await injectImportPackage(page, proposals);
+    await page.getByTestId(`accept-import-package-${packageTestId(packageId)}`).click();
+    await page.evaluate((ids) => (window as any).__narrativeStore.getState().resolveProposals(ids, 'accepted'), proposals.map((proposal) => proposal.id));
+    const state = await page.evaluate(() => (window as any).__narrativeStore.getState());
+    expect(state.characters).toHaveLength(89);
+    expect(state.proposalHistory).toHaveLength(89);
+    expect(state.proposals).toEqual([]);
   });
 
   test('rolls back an import package when its staged manuscript projection is invalid', async ({ page }) => {
@@ -216,7 +454,7 @@ test.describe('Workbench import package accept', () => {
     });
 
     await page.getByTestId(`accept-import-package-${packageTestId(packageId)}`).click();
-    await expect(page.getByTestId(`retry-blocked-package-${packageTestId(packageId)}`)).toBeVisible();
+    await expect(page.getByTestId(`repair-blocked-package-${packageTestId(packageId)}`)).toBeVisible();
     const state = await page.evaluate(() => {
       const s = (window as any).__narrativeStore.getState();
       return { chapters: s.chapters, scenes: s.scenes, manuscriptNodes: s.manuscriptNodes };
@@ -617,7 +855,10 @@ test.describe('Workbench import package accept', () => {
       proposal.proposedOperations[0].fields = { id: 'char_canonical', background: staleDecision.fields.background.value, mergeEvidence: staleEvidence, importRunId: proposal.importRunId };
       store.setState((state: any) => ({ ...state, proposals: [proposal] }));
     }, { staleDecision, staleEvidence });
-    await page.getByTestId(`retry-blocked-package-${packageTestId(packageId)}`).click();
+    await page.evaluate(() => {
+      const store = (window as any).__narrativeStore;
+      return store.getState().resolveProposals(store.getState().proposals.map((proposal: any) => proposal.id), 'accepted');
+    });
     state = await page.evaluate(() => (window as any).__narrativeStore.getState());
     expect(state.characters[0].background).toBe('Current history.');
     expect(state.proposals[0].lastBlockReason).toContain('stale for preserved field background');
@@ -924,6 +1165,6 @@ test.describe('Workbench import package accept', () => {
     await expect(packageReason).toContainText('char_reason_missing');
     await expect(packageReason).toContainText('Reason:');
 
-    await expect(page.getByTestId(`retry-blocked-package-${packageTestId(packageId)}`)).toBeVisible();
+    await expect(page.getByTestId(`repair-blocked-package-${packageTestId(packageId)}`)).toBeVisible();
   });
 });

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from pathlib import Path
 from typing import Any, List, Optional
 
 from fastapi import APIRouter
@@ -82,7 +83,7 @@ async def _run_orchestrator(session_id: str, initial_state: dict, thread_id: str
     from sidecar.workflows.w0_orchestrator import get_graph
     from langgraph.errors import GraphInterrupt
     config = {"configurable": {"thread_id": thread_id}}
-    graph = get_graph()
+    graph = get_graph(initial_state["project_path"])
     try:
         result = await graph.ainvoke(initial_state, config)
         _update_session_from_result(session_id, result)
@@ -111,7 +112,7 @@ async def _resume_orchestrator(session_id: str, thread_id: str) -> None:
     from langgraph.types import Command
     from langgraph.errors import GraphInterrupt
     config = {"configurable": {"thread_id": thread_id}}
-    graph = get_graph()
+    graph = get_graph(_sessions[session_id]["project_path"])
     _sessions[session_id]["status"] = "executing"
     try:
         result = await graph.ainvoke(Command(resume=True), config)
@@ -141,6 +142,7 @@ async def start_orchestrator(body: OrchestratorStartPayload) -> OrchestratorStar
     """Start an Orchestrator run."""
     session_id = str(uuid.uuid4())
     thread_id = f"w0-{session_id}"
+    project_path = str(Path(body.project_path).expanduser().resolve())
     _sessions[session_id] = {
         "status": "planning",
         "progress": 0.0,
@@ -148,10 +150,11 @@ async def start_orchestrator(body: OrchestratorStartPayload) -> OrchestratorStar
         "current_step": 0,
         "pending_permission": None,
         "thread_id": thread_id,
+        "project_path": project_path,
         "errors": [],
     }
     initial_state: dict = {
-        "project_path": body.project_path,
+        "project_path": project_path,
         "workflow_id": "W0",
         "goal": body.goal,
         "plan": [],

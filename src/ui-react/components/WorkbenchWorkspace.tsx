@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { CheckCircle2, ChevronDown, ChevronRight, FileUp, Inbox, RefreshCw, ShieldAlert, Sparkles, UploadCloud, XCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { ImportWorkflow } from './ImportWorkflow';
@@ -20,6 +20,7 @@ export const WorkbenchWorkspace = () => {
     todos,
     resolveProposal,
     resolveProposals,
+    repairImportPackage,
     createTodo,
     updateTodo,
     deleteTodo,
@@ -46,12 +47,30 @@ export const WorkbenchWorkspace = () => {
     [proposalPackages],
   );
   const [expandedPackageIds, setExpandedPackageIds] = useState<Set<string>>(new Set());
+  const [repairingPackageIds, setRepairingPackageIds] = useState<Set<string>>(new Set());
+  const repairingPackageIdsRef = useRef(new Set<string>());
   const togglePackage = (id: string) =>
     setExpandedPackageIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) { next.delete(id); } else { next.add(id); }
       return next;
     });
+  const repairPackage = async (pkg: ProposalPackage) => {
+    if (repairingPackageIdsRef.current.has(pkg.id)) return;
+    repairingPackageIdsRef.current.add(pkg.id);
+    setRepairingPackageIds((current) => new Set(current).add(pkg.id));
+    try {
+      await Promise.resolve();
+      await repairImportPackage(pkg.proposals.map((proposal) => proposal.id));
+    } finally {
+      repairingPackageIdsRef.current.delete(pkg.id);
+      setRepairingPackageIds((current) => {
+        const next = new Set(current);
+        next.delete(pkg.id);
+        return next;
+      });
+    }
+  };
 
   return (
     <div className="flex h-full bg-bg">
@@ -92,7 +111,9 @@ export const WorkbenchWorkspace = () => {
                     expanded={expandedPackageIds.has(pkg.id)}
                     onToggle={() => togglePackage(pkg.id)}
                     onAccept={() => resolveProposals(pkg.proposals.map((p) => p.id), 'accepted')}
+                    onRepair={() => repairPackage(pkg)}
                     onReject={() => resolveProposals(pkg.proposals.map((p) => p.id), 'rejected')}
+                    isRepairing={repairingPackageIds.has(pkg.id)}
                     t={t}
                   />
                 ))}
@@ -809,14 +830,18 @@ const PackageCard = ({
   expanded,
   onToggle,
   onAccept,
+  onRepair,
   onReject,
+  isRepairing,
   t,
 }: {
   pkg: ProposalPackage;
   expanded: boolean;
   onToggle: () => void;
   onAccept: () => void;
+  onRepair: () => void;
   onReject: () => void;
+  isRepairing: boolean;
   t: (key: string, fallback?: string) => string;
 }) => {
   const isBlocked = Boolean(pkg.blockedReason);
@@ -868,12 +893,13 @@ const PackageCard = ({
           {isBlocked ? (
             <button
               type="button"
-              data-testid={`retry-blocked-package-${pkg.id}`}
-              className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-amber px-5 py-2 text-[11px] font-black uppercase tracking-widest text-text-invert"
-              onClick={onAccept}
+              data-testid={`repair-blocked-package-${pkg.id}`}
+              disabled={isRepairing}
+              className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-amber px-5 py-2 text-[11px] font-black uppercase tracking-widest text-text-invert disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={onRepair}
             >
               <RefreshCw size={14} />
-              {t('workbench.retryBlockedPackage', 'Retry')}
+              {isRepairing ? t('workbench.repairingPackage', 'Repairing') : t('workbench.repairBlockedPackage', 'Repair')}
             </button>
           ) : (
             <>

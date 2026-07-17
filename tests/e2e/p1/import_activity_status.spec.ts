@@ -56,10 +56,11 @@ async function injectIpcMock(
     status: StatusResult;
     activityEntries?: ActivityEntry[];
     chunkEntries?: ChunkEntry[];
+    repeatConsoleEntries?: boolean;
   },
 ) {
   await page.addInitScript(
-    ({ status, activityEntries, chunkEntries, bridgeMethods }) => {
+    ({ status, activityEntries, chunkEntries, repeatConsoleEntries, bridgeMethods }) => {
       const state = {
         status,
         activityEntries,
@@ -85,8 +86,8 @@ async function injectIpcMock(
             const first = s.consoleCallCount === 0;
             s.consoleCallCount += 1;
             return {
-              entries: first ? s.chunkEntries : [],
-              activity_entries: first ? s.activityEntries : [],
+              entries: first || repeatConsoleEntries ? s.chunkEntries : [],
+              activity_entries: first || repeatConsoleEntries ? s.activityEntries : [],
               paused: false,
               breakpoint_chunk: null,
             };
@@ -110,6 +111,7 @@ async function injectIpcMock(
       status: opts.status,
       activityEntries: opts.activityEntries ?? [],
       chunkEntries: opts.chunkEntries ?? [],
+      repeatConsoleEntries: opts.repeatConsoleEntries ?? false,
       bridgeMethods: TEST_NARRATIVE_IDE_INVOKE_METHODS,
     },
   );
@@ -370,8 +372,11 @@ test.describe("W1 import activity observability", () => {
     await openImportModal(page);
     await startImport(page);
 
-    const orderedTestIds = await page
-      .getByTestId("console-log-list")
+    const timeline = page.getByTestId("console-log-list");
+    await expect(timeline.getByTestId("console-activity-21")).toBeVisible();
+    await expect(timeline.getByTestId("console-chunk-21")).toBeVisible();
+    await expect(timeline.getByTestId("console-activity-22")).toBeVisible();
+    const orderedTestIds = await timeline
       .locator("[data-testid]")
       .evaluateAll((nodes) =>
         nodes.map((node) => node.getAttribute("data-testid")),
@@ -382,5 +387,22 @@ test.describe("W1 import activity observability", () => {
     expect(orderedTestIds.indexOf("console-chunk-21")).toBeLessThan(
       orderedTestIds.indexOf("console-activity-22"),
     );
+  });
+
+  test("hydrates the initial console feed immediately and dedupes repeated entries", async ({ page }) => {
+    await injectIpcMock(page, {
+      status: { status: "running", progress: 0, errors: [], completed_chunks: 0, total_chunks: 1, current_step: "extracting" },
+      activityEntries: [{ ...WINDOW_ACTIVITY, id: 30, timestamp: "2026-05-28T00:00:02Z" }],
+      chunkEntries: [{ chunk_id: 30, total_chunks: 1, step: "extracting", new_characters: 0, updated_characters: 0, new_events: 0, new_world: 0, duration_ms: 1, excerpt: "First feed.", errors: [], timestamp: "2026-05-28T00:00:02Z" }],
+      repeatConsoleEntries: true,
+    });
+    await openImportModal(page);
+    await page.getByTestId("w1-file-picker-btn").click();
+    const timeline = page.getByTestId("console-log-list");
+    await expect(timeline.getByTestId("console-activity-30")).toBeVisible({ timeout: 1_000 });
+    await expect(timeline.getByTestId("console-chunk-30")).toBeVisible({ timeout: 1_000 });
+    await page.waitForTimeout(3_200);
+    await expect(timeline.getByTestId("console-activity-30")).toHaveCount(1);
+    await expect(timeline.getByTestId("console-chunk-30")).toHaveCount(1);
   });
 });

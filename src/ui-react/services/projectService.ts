@@ -1,5 +1,6 @@
 import type {
   CreateProjectInput,
+  ArtifactRef,
   DependencyEdge,
   EntityKind,
   ExportArtifact,
@@ -19,6 +20,7 @@ import type {
 import { PROJECT_SCHEMA_VERSION } from '../models/project';
 import { createBlankProject, createStarterProject } from '../mock/seedProject';
 import { electronApi } from './electronApi';
+import { commitProjectTransaction, recoverProjectTransactions, sha256Text } from './projectTransaction';
 
 const STORAGE_KEY = 'narrative-ide-project';
 const LAST_PATH_KEY = 'narrative-ide-last-path';
@@ -961,6 +963,87 @@ const serializeProjectToFolder = (
   });
 };
 
+const jsonText = (payload: unknown) => JSON.stringify(payload, null, 2);
+
+const packageCanonicalSnapshot = (project: NarrativeProject) => {
+  const files = new Map<string, string>();
+  files.set('project.json', jsonText({
+    metadata: project.metadata,
+    counts: {
+      characters: project.characters.length, timelineBranches: project.timelineBranches.length,
+      timelineEvents: project.timelineEvents.length, scenes: project.scenes.length,
+      worldItems: project.worldItems.length, scripts: project.scripts.length,
+      storyboards: project.storyboards.length, importJobs: project.importJobs.length,
+      proposals: project.proposals.length, exports: project.exports.length,
+    },
+  }));
+  project.characters.forEach((item) => files.set(`entities/characters/${item.id}.json`, jsonText(item)));
+  files.set('entities/character-tags.json', jsonText(project.characterTags));
+  files.set('entities/candidates.json', jsonText(project.candidates));
+  files.set('entities/relationships.json', jsonText(project.relationships));
+  files.set('entities/timeline/branches.json', jsonText(project.timelineBranches));
+  project.timelineEvents.forEach((item) => files.set(`entities/timeline/${item.id}.json`, jsonText(item)));
+  files.set('entities/world/containers.json', jsonText(project.worldContainers));
+  files.set('entities/world/settings.json', jsonText(project.worldSettings));
+  files.set('entities/world/maps.json', jsonText(project.worldMaps));
+  files.set('entities/world/categories.json', jsonText(project.worldCategories ?? []));
+  project.worldItems.forEach((item) => files.set(`entities/world/${item.id}.json`, jsonText(item)));
+  project.chapters.forEach((item) => files.set(`writing/chapters/${item.id}.json`, jsonText(item)));
+  project.scenes.forEach((item) => {
+    files.set(`writing/scenes/${item.id}.md`, item.content);
+    files.set(`writing/scenes/${item.id}.meta.json`, jsonText({ ...item, content: undefined }));
+  });
+  files.set('writing/manuscript/nodes.json', jsonText(project.manuscriptNodes || []));
+  files.set('system/inbox.json', jsonText(project.proposals));
+  files.set('system/history.json', jsonText(project.proposalHistory));
+  files.set('system/issues.json', jsonText(project.issues));
+  files.set('system/index-cache.json', jsonText({ unreadUpdates: project.unreadUpdates, archivedIds: project.archivedIds }));
+  return files;
+};
+
+const ownedWritingTombstones = (
+  fs: typeof import('fs'),
+  rootPath: string,
+  snapshot: Map<string, string>,
+) => {
+  const namespaces = [
+    { relativeDirectory: 'writing/chapters', pattern: /^([^/]+)\.json$/ },
+    { relativeDirectory: 'writing/scenes', pattern: /^([^/]+)\.(?:md|meta\.json)$/ },
+  ];
+  const tombstones = new Set<string>();
+  for (const { relativeDirectory, pattern } of namespaces) {
+    const directory = `${rootPath}/${relativeDirectory}`;
+    if (!fs.existsSync(directory)) continue;
+    for (const fileName of fs.readdirSync(directory)) {
+      if (!pattern.test(fileName)) continue;
+      const relativePath = `${relativeDirectory}/${fileName}`;
+      if (!snapshot.has(relativePath)) tombstones.add(relativePath);
+    }
+  }
+  return tombstones;
+};
+
+const durablyCommitAcceptedImportPackage = async (before: NarrativeProject, after: NarrativeProject, proposals: Proposal[]): Promise<void> => {
+  const runtime = getNodeRuntime();
+  if (!runtime || after.metadata.rootPath.startsWith('memory://')) return;
+  const runIds = uniqueStrings(proposals.flatMap(getImportRunIds));
+  if (runIds.length !== 1 || !isSafeArtifactSegment(runIds[0])) throw new Error('Import package cannot be assigned a durable transaction id.');
+  const beforeFiles = packageCanonicalSnapshot(before);
+  const afterFiles = packageCanonicalSnapshot(after);
+  const rootPath = runtime.path.resolve(after.metadata.rootPath);
+  const targets: Parameters<typeof commitProjectTransaction>[3] = Array.from(new Set([...beforeFiles.keys(), ...afterFiles.keys()]))
+    .filter((relativePath) => beforeFiles.get(relativePath) !== afterFiles.get(relativePath))
+    .map((relativePath) => {
+      const postimage = afterFiles.get(relativePath);
+      return postimage === undefined ? { relativePath, delete: true as const } : { relativePath, postimage };
+    });
+  for (const relativePath of ownedWritingTombstones(runtime.fs, rootPath, afterFiles)) {
+    if (!targets.some((target) => target.relativePath === relativePath)) targets.push({ relativePath, delete: true });
+  }
+  if (!targets.length) return;
+  await commitProjectTransaction(runtime.fs, rootPath, `package-${runIds[0]}`, targets);
+};
+
 const hydrateProjectMetadata = (
   project: NarrativeProject,
   rootPath: string,
@@ -1012,7 +1095,7 @@ export const projectService = {
     return project;
   },
 
-  openProject(rootPath?: string | null): NarrativeProject {
+  async openProject(rootPath?: string | null): Promise<NarrativeProject> {
     const runtime = getNodeRuntime();
     const usingProjectBridge = Boolean(electronApi.projectFiles());
     const resolvedPath = rootPath || (usingProjectBridge ? null : localStorage.getItem(LAST_PATH_KEY));
@@ -1037,6 +1120,8 @@ export const projectService = {
       });
       return project;
     }
+
+    await recoverProjectTransactions(runtime.fs, runtime.path.resolve(resolvedPath));
 
     const projectIndex = JSON.parse(runtime.fs.readFileSync(runtime.path.join(resolvedPath, 'project.json'), 'utf8'));
     const entitiesDir = runtime.path.join(resolvedPath, 'entities');
@@ -1371,14 +1456,38 @@ export const projectService = {
     return withHistory;
   },
 
-  resolveProposals(project: NarrativeProject, proposalIds: string[], nextStatus: Proposal['status']): NarrativeProject {
+  async resolveProposals(project: NarrativeProject, proposalIds: string[], nextStatus: Proposal['status']): Promise<NarrativeProject> {
     const idSet = new Set(proposalIds);
     const targets = project.proposals.filter((proposal) => idSet.has(proposal.id));
     if (!targets.length) return project;
     if (nextStatus !== 'accepted') {
       return targets.reduce((draft, proposal) => projectService.resolveProposal(draft, proposal.id, nextStatus), project);
     }
-    return applyImportPackageBatches(project, targets);
+    return await applyImportPackageBatches(project, targets);
+  },
+
+  async repairImportPackage(project: NarrativeProject, proposalIds: string[]): Promise<NarrativeProject> {
+    const idSet = new Set(proposalIds);
+    const proposals = project.proposals.filter((proposal) => idSet.has(proposal.id));
+    if (!proposals.length || !proposals.some((proposal) => proposal.lastBlockReason)) return project;
+
+    const repair = await repairLegacyProjectionDescriptors(project, proposals);
+    if (repair.blockedReason) {
+      return blockImportPackage(project, proposals, repair.culprit, repair.blockedReason);
+    }
+
+    const projectionValidation = await validateStagedManuscriptProjections(repair.project, repair.proposals);
+    if (projectionValidation.blockedReason) {
+      return blockImportPackage(project, proposals, projectionValidation.culprit, projectionValidation.blockedReason);
+    }
+
+    const repairedIds = new Set(repair.proposals.map((proposal) => proposal.id));
+    return {
+      ...repair.project,
+      proposals: repair.project.proposals.map((proposal) => repairedIds.has(proposal.id)
+        ? { ...proposal, lastBlockReason: undefined, lastBlockedAt: undefined }
+        : proposal),
+    };
   },
 };
 
@@ -1710,15 +1819,32 @@ const prepareProjectForImportApply = (project: NarrativeProject, proposals: Prop
   if (!proposals.some(importProposalHasCanonicalWrites)) return project;
 
   let draft = project;
-  const hasOnlyStarterChapter =
-    draft.chapters.length === 1 &&
-    draft.chapters[0]?.id === 'chap_1' &&
-    /^chapter 1$/i.test(draft.chapters[0]?.title || '') &&
-    draft.scenes.length === 1 &&
-    draft.scenes[0]?.id === 'scene_1' &&
-    draft.scenes[0]?.chapterId === 'chap_1' &&
-    !(draft.scenes[0]?.content || '').trim();
-  if (hasOnlyStarterChapter) {
+  const importsWritingTree = proposals.some((proposal) => getProposalOperations(proposal).some(
+    (operation) => operation.op === 'create' && operation.entityType === 'chapter',
+  ));
+  const starterChapterIds = new Set(draft.chapters.map((chapter) => chapter.id));
+  const hasOnlyStarterWriting =
+    importsWritingTree &&
+    ['blank', 'starter-demo'].includes(draft.metadata.template || '') &&
+    draft.chapters.length > 0 &&
+    draft.chapters.every((chapter) =>
+      /^chapter 1$/i.test(chapter.title || '') &&
+      !(chapter.summary || '').trim() &&
+      !(chapter.goal || '').trim() &&
+      !(chapter.notes || '').trim() &&
+      chapter.status === 'draft'
+    ) &&
+    draft.scenes.every((scene) =>
+      starterChapterIds.has(scene.chapterId) &&
+      /^scene 1$/i.test(scene.title || '') &&
+      !(scene.summary || '').trim() &&
+      !(scene.content || '').trim() &&
+      scene.status === 'draft' &&
+      !(scene.linkedCharacterIds || []).length &&
+      !(scene.linkedEventIds || []).length &&
+      !(scene.linkedWorldItemIds || []).length
+    );
+  if (hasOnlyStarterWriting) {
     draft = { ...draft, chapters: [], scenes: [] };
   }
 
@@ -1813,15 +1939,13 @@ const applyProposalBatch = (project: NarrativeProject, proposals: Proposal[]): N
   };
 };
 
-const applyImportPackageBatches = (project: NarrativeProject, targets: Proposal[]): NarrativeProject => {
+const applyImportPackageBatches = async (project: NarrativeProject, targets: Proposal[]): Promise<NarrativeProject> => {
   const packageGroups = groupFullImportPackageSelections(project, targets);
   const packageIds = new Set(packageGroups.flatMap((group) => group.map((proposal) => proposal.id)));
   const nonPackageTargets = targets.filter((proposal) => !packageIds.has(proposal.id));
 
   let draft = project;
-  packageGroups.forEach((group) => {
-    draft = applyProposalPackageTransaction(draft, group);
-  });
+  for (const group of packageGroups) draft = await applyProposalPackageTransaction(draft, group);
 
   return nonPackageTargets.length ? applyProposalBatch(draft, nonPackageTargets) : draft;
 };
@@ -1843,12 +1967,12 @@ const validateProposalPackageOperations = (project: NarrativeProject, proposals:
   return { project: draft, applied: true, blockedReason: null, culprit: proposals[0] };
 };
 
-const applyProposalPackageTransaction = (project: NarrativeProject, proposals: Proposal[]): NarrativeProject => {
-  const operationValidation = validateProposalPackageOperations(project, proposals);
-  if (operationValidation.blockedReason) {
-    return blockImportPackage(project, proposals, operationValidation.culprit, operationValidation.blockedReason);
+const applyProposalPackageTransaction = async (project: NarrativeProject, proposals: Proposal[]): Promise<NarrativeProject> => {
+  const initialOperationValidation = validateProposalPackageOperations(project, proposals);
+  if (initialOperationValidation.blockedReason) {
+    return blockImportPackage(project, proposals, initialOperationValidation.culprit, initialOperationValidation.blockedReason);
   }
-  const projectionValidation = validateStagedManuscriptProjections(project, proposals);
+  const projectionValidation = await validateStagedManuscriptProjections(project, proposals);
   if (projectionValidation.blockedReason) {
     return blockImportPackage(project, proposals, projectionValidation.culprit, projectionValidation.blockedReason);
   }
@@ -1873,16 +1997,27 @@ const applyProposalPackageTransaction = (project: NarrativeProject, proposals: P
     accepted.push({ ...proposal, status: 'accepted', resolvedAt: new Date().toISOString() });
   }
 
-  const projectionResult = applyStagedManuscriptProjections(draft, proposals);
+  const projectionResult = await applyStagedManuscriptProjections(draft, proposals);
   if (projectionResult.blockedReason) {
     return blockImportPackage(project, proposals, projectionResult.culprit, projectionResult.blockedReason);
   }
 
-  return finalizeAcceptedProposalBatch(project, projectionResult.project, accepted);
+  const finalized = finalizeAcceptedProposalBatch(project, projectionResult.project, accepted);
+  try {
+    await durablyCommitAcceptedImportPackage(project, finalized, proposals);
+    return finalized;
+  } catch (error) {
+    try {
+      const runtime = getNodeRuntime();
+      if (runtime && !project.metadata.rootPath.startsWith('memory://')) await recoverProjectTransactions(runtime.fs, runtime.path.resolve(project.metadata.rootPath));
+    } catch { /* Recovery is best-effort; the next project open retries it. */ }
+    return blockImportPackage(project, proposals, proposals[0], `Package durability transaction failed: ${String(error)}`);
+  }
 };
 
 type StagedManuscriptProjectionDescriptor = {
   artifact_path?: unknown;
+  artifactRef?: unknown;
   contract_version?: unknown;
   chapter_id?: unknown;
   scene_id?: unknown;
@@ -1892,6 +2027,7 @@ type StagedManuscriptProjectionArtifact = {
   contract_version?: unknown;
   import_run_id?: unknown;
   source_file_path?: unknown;
+  source_ref?: unknown;
   acceptance_required?: unknown;
   chapters?: unknown;
   nodes?: unknown;
@@ -1910,6 +2046,132 @@ const getStagedManuscriptProjectionDescriptor = (proposal: Proposal): StagedManu
     .find((value) => value && typeof value === 'object')
     ?? proposal.data?.stagedManuscriptProjection;
   return projection && typeof projection === 'object' ? projection as StagedManuscriptProjectionDescriptor : null;
+};
+
+const getStagedManuscriptProjectionDescriptors = (proposal: Proposal): StagedManuscriptProjectionDescriptor[] => {
+  const legacyProposal = proposal as Proposal & { operations?: RawProposalOperation[] };
+  return [
+    ...(legacyProposal.operations || []),
+    ...(proposal.proposedOperations || []),
+  ]
+    .map((operation) => operation.fields?.stagedManuscriptProjection)
+    .filter((value): value is StagedManuscriptProjectionDescriptor => Boolean(value && typeof value === 'object'));
+};
+
+type ProjectionRepairResult = {
+  project: NarrativeProject;
+  proposals: Proposal[];
+  culprit: Proposal;
+  blockedReason: string | null;
+};
+
+const repairLegacyProjectionDescriptors = async (project: NarrativeProject, proposals: Proposal[]): Promise<ProjectionRepairResult> => {
+  const fail = (culprit: Proposal, blockedReason: string): ProjectionRepairResult => ({ project, proposals, culprit, blockedReason });
+  const success = (nextProject: NarrativeProject, nextProposals: Proposal[]): ProjectionRepairResult => ({
+    project: nextProject,
+    proposals: nextProposals,
+    culprit: nextProposals[0] || proposals[0],
+    blockedReason: null,
+  });
+  const runtime = getNodeRuntime();
+  if (!runtime || project.metadata.rootPath.startsWith('memory://')) return fail(proposals[0], 'Legacy projection repair requires a local project filesystem.');
+  const runIds = uniqueStrings(proposals.flatMap(getImportRunIds));
+  if (runIds.length !== 1) return fail(proposals[0], 'Import package has conflicting or missing importRunId values.');
+  const runId = runIds[0];
+  if (!isSafeArtifactSegment(runId)) return fail(proposals[0], 'Import package has an invalid importRunId.');
+  const runDirectory = runtime.path.resolve(project.metadata.rootPath, 'system', 'imports', runId);
+  const artifactPath = runtime.path.resolve(runDirectory, 'staged_manuscript_projection.json');
+  const manifestPath = runtime.path.resolve(runDirectory, 'manifest.json');
+  const sourcePath = runtime.path.resolve(runDirectory, 'raw_source.txt');
+  const legacy = proposals.flatMap((proposal) => getStagedManuscriptProjectionDescriptors(proposal)
+    .filter((descriptor) => descriptor.artifactRef === undefined && typeof descriptor.artifact_path === 'string')
+    .map((descriptor) => ({ proposal, descriptor })));
+  if (!legacy.length) return fail(proposals[0], 'Package is blocked, but does not contain a repairable legacy projection descriptor.');
+  if (legacy.every(({ descriptor }) => runtime.path.resolve(descriptor.artifact_path as string) === artifactPath)) {
+    return fail(legacy[0].proposal, 'Package is blocked, but does not contain a stale legacy projection descriptor.');
+  }
+  try {
+    if (![artifactPath, manifestPath, sourcePath].every((path) => runtime.fs.existsSync(path))) return fail(legacy[0].proposal, 'Legacy projection repair is missing its staged artifact, manifest, or source file.');
+    if ([artifactPath, manifestPath, sourcePath].some((path) => runtime.fs.realpathSync(path) !== path)) return fail(legacy[0].proposal, 'Legacy projection repair rejected a symlinked artifact or source file.');
+    const artifactText = runtime.fs.readFileSync(artifactPath, 'utf8');
+    const artifact = JSON.parse(artifactText) as Record<string, unknown>;
+    const manifest = JSON.parse(runtime.fs.readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
+    const raw = runtime.fs.readFileSync(sourcePath, 'utf8');
+    const sourceHash = await sha256Text(raw);
+    if (
+      artifact.import_run_id !== runId || manifest.import_run_id !== runId || sourceHash !== manifest.source_hash
+      || artifact.acceptance_required !== true || !Array.isArray(artifact.chapters)
+      || !Array.isArray(artifact.nodes) || !Array.isArray(artifact.scene_documents)
+    ) return fail(legacy[0].proposal, 'Legacy projection artifact or source manifest failed validation.');
+    const descriptorPairs = new Set(legacy.map(({ descriptor }) => projectionPairKey(String(descriptor.chapter_id || ''), String(descriptor.scene_id || ''))));
+    const pairs = new Set<string>();
+    const sourceByScene = new Map<string, string>();
+    for (const rawChapter of artifact.chapters as Record<string, unknown>[]) {
+      const pair = projectionPairKey(String(rawChapter.chapter_id || ''), String(rawChapter.scene_id || ''));
+      const reconstructed = await reconstructProjectionSourceSpan(rawChapter.source_span, raw, sourceHash);
+      if (!descriptorPairs.has(pair) || pairs.has(pair) || reconstructed.error) return fail(legacy[0].proposal, 'Legacy projection chapters do not match their source descriptors.');
+      pairs.add(pair);
+      sourceByScene.set(String(rawChapter.scene_id || ''), reconstructed.content);
+    }
+    if (pairs.size !== descriptorPairs.size) return fail(legacy[0].proposal, 'Legacy projection chapters do not exactly match their source descriptors.');
+    const documentScenes = new Set<string>();
+    for (const rawDocument of artifact.scene_documents as Record<string, unknown>[]) {
+      const sceneId = String(rawDocument.scene_id || '');
+      const reconstructed = await reconstructProjectionSourceSpan(rawDocument.source_span, raw, sourceHash);
+      if (!sourceByScene.has(sceneId) || documentScenes.has(sceneId) || reconstructed.error || rawDocument.content !== reconstructed.content) return fail(legacy[0].proposal, 'Legacy projection scene documents do not match the verified source.');
+      documentScenes.add(sceneId);
+    }
+    if (documentScenes.size !== sourceByScene.size) return fail(legacy[0].proposal, 'Legacy projection scene documents do not exactly match the staged chapters.');
+    const sourceRef: ArtifactRef = {
+      relativePath: `system/imports/${runId}/raw_source.txt`, sha256: sourceHash,
+      contractVersion: 'w1-raw-source-v1', lineageId: runId, attemptId: 'legacy',
+    };
+    const rewrittenArtifact = { ...artifact, source_file_path: undefined, source_ref: sourceRef };
+    const replacementText = JSON.stringify(rewrittenArtifact, null, 2);
+    const ref: ArtifactRef = { relativePath: `system/imports/${runId}/staged_manuscript_projection.json`, sha256: await sha256Text(replacementText), contractVersion: 'w1-staged-manuscript-v2', lineageId: runId, attemptId: 'legacy' };
+    await commitProjectTransaction(runtime.fs, runtime.path.resolve(project.metadata.rootPath), `repair-package-${runId}`, [{
+      relativePath: `system/imports/${runId}/staged_manuscript_projection.json`,
+      postimage: replacementText,
+    }]);
+    const legacyIds = new Set(legacy.map(({ proposal }) => proposal.id));
+    const migrateOperations = (operations: RawProposalOperation[] | undefined) => operations?.map((operation) => ({
+      ...operation,
+      fields: operation.fields?.stagedManuscriptProjection ? {
+        ...operation.fields,
+        stagedManuscriptProjection: {
+          ...(operation.fields.stagedManuscriptProjection as object),
+          // ArtifactRef v2 is the sole path authority after repair; do not retain
+          // the absolute path from any legacy descriptor shape.
+          artifact_path: undefined,
+          artifactRef: ref,
+          contract_version: 'w1-staged-manuscript-v2',
+        },
+      } : operation.fields,
+    })).map((operation) => {
+      const descriptor = operation.fields?.stagedManuscriptProjection as Record<string, unknown> | undefined;
+      if (!descriptor || !Object.hasOwn(descriptor, 'artifact_path')) return operation;
+      const { artifact_path: _legacyArtifactPath, ...withoutLegacyPath } = descriptor;
+      return {
+        ...operation,
+        fields: { ...operation.fields, stagedManuscriptProjection: withoutLegacyPath },
+      };
+    });
+    const nextProject = {
+      ...project,
+      proposals: project.proposals.map((proposal) => {
+        if (!legacyIds.has(proposal.id)) return proposal;
+        const legacyProposal = proposal as Proposal & { operations?: RawProposalOperation[] };
+        return {
+          ...proposal,
+          ...(legacyProposal.operations ? { operations: migrateOperations(legacyProposal.operations) } : {}),
+          proposedOperations: migrateOperations(proposal.proposedOperations),
+        };
+      }),
+    };
+    return success(nextProject, nextProject.proposals.filter((proposal) => proposals.some((target) => target.id === proposal.id)));
+  } catch (error) {
+    return fail(legacy[0].proposal, `Legacy projection repair transaction failed: ${String(error)}`);
+  }
 };
 
 const projectionBlockedResult = (project: NarrativeProject, culprit: Proposal, blockedReason: string): ProjectionApplyResult => ({
@@ -1933,23 +2195,89 @@ const getImportRunIds = (proposal: Proposal) => uniqueStrings([
 
 const projectionPairKey = (chapterId: string, sceneId: string) => `${chapterId}\u0000${sceneId}`;
 
-const sha256 = (value: string): string | null => {
-  const bridgeHash = electronApi.sha256(value);
-  if (bridgeHash) return bridgeHash;
-  const loader = (globalThis as typeof globalThis & { require?: NodeRequire }).require;
-  if (!loader) return null;
-  try {
-    return loader('crypto').createHash('sha256').update(value, 'utf8').digest('hex');
-  } catch {
-    return null;
-  }
+const isArtifactRef = (value: unknown): value is ArtifactRef => {
+  if (!value || typeof value !== 'object') return false;
+  const ref = value as Record<string, unknown>;
+  return typeof ref.relativePath === 'string'
+    && typeof ref.sha256 === 'string'
+    && typeof ref.contractVersion === 'string'
+    && typeof ref.lineageId === 'string'
+    && typeof ref.attemptId === 'string';
 };
 
-const reconstructProjectionSourceSpan = (
+const isSafeArtifactSegment = (value: string) => /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value)
+  && value !== '.' && value !== '..';
+
+const resolveProjectionArtifactPath = (
+  runtime: NodeRuntime,
+  importsDirectory: string,
+  importRunId: string,
+  descriptor: StagedManuscriptProjectionDescriptor,
+): { path: string | null; directory: string | null; blockedReason: string | null; artifactRef: ArtifactRef | null } => {
+  const ref = descriptor.artifactRef;
+  if (ref !== undefined) {
+    if (!isArtifactRef(ref)) return { path: null, directory: null, artifactRef: null, blockedReason: 'Invalid ArtifactRef for staged manuscript projection.' };
+    if (
+      ref.contractVersion !== 'w1-staged-manuscript-v2'
+      || ref.lineageId !== importRunId
+      || !isSafeArtifactSegment(ref.lineageId)
+      || !isSafeArtifactSegment(ref.attemptId)
+      || ref.relativePath.includes('\\')
+      || ref.relativePath.split('/').some((segment) => !segment || segment === '.' || segment === '..')
+    ) return { path: null, directory: null, artifactRef: null, blockedReason: 'ArtifactRef is not a contained import-run projection reference.' };
+    const attemptRelativePath = `system/imports/${ref.lineageId}/attempts/${ref.attemptId}/staged_manuscript_projection.json`;
+    const legacyRelativePath = `system/imports/${ref.lineageId}/staged_manuscript_projection.json`;
+    const isLegacyDirect = ref.attemptId === 'legacy' && ref.relativePath === legacyRelativePath;
+    if (ref.relativePath !== attemptRelativePath && !isLegacyDirect) {
+      return { path: null, directory: null, artifactRef: null, blockedReason: 'ArtifactRef does not identify the expected staged manuscript projection.' };
+    }
+    const directory = isLegacyDirect
+      ? runtime.path.resolve(importsDirectory, ref.lineageId)
+      : runtime.path.resolve(importsDirectory, ref.lineageId, 'attempts', ref.attemptId);
+    return { path: runtime.path.resolve(directory, 'staged_manuscript_projection.json'), directory, artifactRef: ref, blockedReason: null };
+  }
+  if (descriptor.contract_version !== 'w1-staged-manuscript-v1' || typeof descriptor.artifact_path !== 'string') {
+    return { path: null, directory: null, artifactRef: null, blockedReason: 'Invalid staged manuscript projection descriptor.' };
+  }
+  const directory = runtime.path.resolve(importsDirectory, importRunId);
+  return { path: runtime.path.resolve(descriptor.artifact_path), directory, artifactRef: null, blockedReason: null };
+};
+
+const resolveProjectionSourcePath = (
+  runtime: NodeRuntime,
+  projectRoot: string,
+  artifactDirectory: string,
+  artifact: StagedManuscriptProjectionArtifact,
+  projectionRef: ArtifactRef | null,
+): { path: string | null; sha256: string | null; blockedReason: string | null } => {
+  if (artifact.source_ref !== undefined) {
+    if (!isArtifactRef(artifact.source_ref)) return { path: null, sha256: null, blockedReason: 'Invalid staged manuscript source ArtifactRef.' };
+    const ref = artifact.source_ref;
+    if (
+      ref.contractVersion !== 'w1-raw-source-v1'
+      || !isSafeArtifactSegment(ref.lineageId) || !isSafeArtifactSegment(ref.attemptId)
+      || ref.relativePath.includes('\\') || ref.relativePath.split('/').some((segment) => !segment || segment === '.' || segment === '..')
+      || (projectionRef && (ref.lineageId !== projectionRef.lineageId || ref.attemptId !== projectionRef.attemptId))
+    ) {
+      return { path: null, sha256: null, blockedReason: 'Staged manuscript source ArtifactRef is not project-root-contained.' };
+    }
+    const sourcePath = runtime.path.resolve(projectRoot, ref.relativePath);
+    if (sourcePath !== runtime.path.resolve(artifactDirectory, 'raw_source.txt') || !isPathInside(runtime.path, projectRoot, sourcePath)) {
+      return { path: null, sha256: null, blockedReason: 'Staged manuscript source ArtifactRef must identify raw_source.txt beside its projection.' };
+    }
+    return { path: sourcePath, sha256: ref.sha256, blockedReason: null };
+  }
+  if (typeof artifact.source_file_path !== 'string' || !artifact.source_file_path) {
+    return { path: null, sha256: null, blockedReason: 'Staged manuscript projection requires readable raw source evidence; browser-only acceptance is blocked.' };
+  }
+  return { path: runtime.path.resolve(artifact.source_file_path), sha256: null, blockedReason: null };
+};
+
+const reconstructProjectionSourceSpan = async (
   sourceSpan: unknown,
   rawSource: string,
   sourceHash: string,
-): { content: string; error: string | null } => {
+): Promise<{ content: string; error: string | null }> => {
   if (!sourceSpan || typeof sourceSpan !== 'object') return { content: '', error: 'is missing SourceSpan evidence' };
   const span = sourceSpan as Record<string, unknown>;
   const start = span.absolute_start;
@@ -1966,12 +2294,11 @@ const reconstructProjectionSourceSpan = (
   ) return { content: '', error: 'has an invalid SourceSpan' };
   // Python SourceSpan offsets count Unicode code points; JS string slicing counts UTF-16 code units.
   const content = Array.from(rawSource).slice(start, end).join('');
-  const substringHash = sha256(content);
-  if (!substringHash || span.substring_hash !== substringHash) return { content: '', error: 'has unverifiable SourceSpan evidence' };
+  if (span.substring_hash !== await sha256Text(content)) return { content: '', error: 'has unverifiable SourceSpan evidence' };
   return { content, error: null };
 };
 
-const validateStagedManuscriptProjections = (project: NarrativeProject, proposals: Proposal[]): ProjectionApplyResult => {
+const validateStagedManuscriptProjections = async (project: NarrativeProject, proposals: Proposal[]): Promise<ProjectionApplyResult> => {
   const descriptors = proposals
     .map((proposal) => ({ proposal, descriptor: getStagedManuscriptProjectionDescriptor(proposal) }))
     .filter((entry): entry is { proposal: Proposal; descriptor: StagedManuscriptProjectionDescriptor } => Boolean(entry.descriptor));
@@ -1993,16 +2320,6 @@ const validateStagedManuscriptProjections = (project: NarrativeProject, proposal
   const importRunId = runIds[0];
   const projectRoot = runtime.path.resolve(project.metadata.rootPath);
   const importsDirectory = runtime.path.resolve(projectRoot, 'system', 'imports');
-  const expectedRunDirectory = runtime.path.resolve(importsDirectory, importRunId);
-  let resolvedRunDirectory: string;
-  try {
-    resolvedRunDirectory = runtime.fs.realpathSync(expectedRunDirectory);
-  } catch {
-    return projectionBlockedResult(project, culprit, `Staged manuscript projection run directory is unavailable: ${expectedRunDirectory}`);
-  }
-  if (resolvedRunDirectory !== expectedRunDirectory || !isPathInside(runtime.path, importsDirectory, resolvedRunDirectory)) {
-    return projectionBlockedResult(project, culprit, 'Staged manuscript projection run directory resolves through a symlink or outside its import run.');
-  }
 
   const proposalChapterIds = new Set<string>();
   const proposalSceneToChapter = new Map<string, string>();
@@ -2028,9 +2345,7 @@ const validateStagedManuscriptProjections = (project: NarrativeProject, proposal
   const seenArtifacts = new Set<string>();
   for (const { proposal, descriptor } of descriptors) {
     if (
-      descriptor.contract_version !== 'w1-staged-manuscript-v1'
-      || typeof descriptor.artifact_path !== 'string'
-      || typeof descriptor.chapter_id !== 'string'
+      typeof descriptor.chapter_id !== 'string'
       || typeof descriptor.scene_id !== 'string'
     ) return projectionBlockedResult(project, proposal, 'Invalid staged manuscript projection descriptor.');
 
@@ -2043,15 +2358,24 @@ const validateStagedManuscriptProjections = (project: NarrativeProject, proposal
       return projectionBlockedResult(project, proposal, `Staged manuscript projection may not overwrite existing chapter or scene: ${descriptor.chapter_id}/${descriptor.scene_id}.`);
     }
 
-    const artifactPath = runtime.path.resolve(descriptor.artifact_path);
-    if (artifactPath !== runtime.path.resolve(expectedRunDirectory, 'staged_manuscript_projection.json')) {
+    const artifactResolution = resolveProjectionArtifactPath(runtime, importsDirectory, importRunId, descriptor);
+    if (artifactResolution.blockedReason || !artifactResolution.path) {
+      return projectionBlockedResult(project, proposal, artifactResolution.blockedReason || 'Invalid staged manuscript projection descriptor.');
+    }
+    const artifactPath = artifactResolution.path;
+    const artifactDirectory = artifactResolution.directory!;
+    if (artifactPath !== runtime.path.resolve(artifactDirectory, 'staged_manuscript_projection.json')) {
       return projectionBlockedResult(project, proposal, 'Staged manuscript projection path is outside the expected import run.');
     }
     if (seenArtifacts.has(artifactPath)) continue;
     seenArtifacts.add(artifactPath);
     try {
+      const resolvedRunDirectory = runtime.fs.realpathSync(artifactDirectory);
+      if (resolvedRunDirectory !== artifactDirectory || !isPathInside(runtime.path, importsDirectory, resolvedRunDirectory)) {
+        return projectionBlockedResult(project, proposal, 'Staged manuscript projection run directory resolves through a symlink or outside its import run.');
+      }
       const resolvedArtifactPath = runtime.fs.realpathSync(artifactPath);
-      const manifestPath = runtime.path.resolve(expectedRunDirectory, 'manifest.json');
+      const manifestPath = runtime.path.resolve(artifactDirectory, 'manifest.json');
       const resolvedManifestPath = runtime.fs.realpathSync(manifestPath);
       if (
         resolvedArtifactPath !== artifactPath || !isPathInside(runtime.path, resolvedRunDirectory, resolvedArtifactPath)
@@ -2059,7 +2383,11 @@ const validateStagedManuscriptProjections = (project: NarrativeProject, proposal
       ) return projectionBlockedResult(project, proposal, 'Staged manuscript projection or manifest resolves through a symlink or outside its import run.');
 
       const manifest = JSON.parse(runtime.fs.readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
-      const artifact = JSON.parse(runtime.fs.readFileSync(artifactPath, 'utf8')) as StagedManuscriptProjectionArtifact;
+      const artifactText = runtime.fs.readFileSync(artifactPath, 'utf8');
+      if (artifactResolution.artifactRef && (await sha256Text(artifactText)) !== artifactResolution.artifactRef.sha256) {
+        return projectionBlockedResult(project, proposal, 'ArtifactRef hash does not match the staged manuscript projection.');
+      }
+      const artifact = JSON.parse(artifactText) as StagedManuscriptProjectionArtifact;
       const sourceHash = manifest.source_hash;
       if (manifest.import_run_id !== importRunId || artifact.import_run_id !== importRunId || typeof sourceHash !== 'string' || !sourceHash) {
         return projectionBlockedResult(project, proposal, 'Staged manuscript projection package, importRunId, or source hash does not match its manifest.');
@@ -2067,11 +2395,10 @@ const validateStagedManuscriptProjections = (project: NarrativeProject, proposal
       if (!Array.isArray(artifact.chapters) || !Array.isArray(artifact.nodes) || !Array.isArray(artifact.scene_documents)) {
         return projectionBlockedResult(project, proposal, 'Staged manuscript projection does not satisfy the W1 acceptance contract.');
       }
-      if (typeof artifact.source_file_path !== 'string' || !artifact.source_file_path) {
-        return projectionBlockedResult(project, proposal, 'Staged manuscript projection requires readable raw source evidence; browser-only acceptance is blocked.');
-      }
-      const sourceEvidencePath = runtime.path.resolve(artifact.source_file_path);
-      const expectedSourceEvidencePath = runtime.path.resolve(expectedRunDirectory, 'raw_source.txt');
+      const sourceResolution = resolveProjectionSourcePath(runtime, projectRoot, artifactDirectory, artifact, artifactResolution.artifactRef);
+      if (sourceResolution.blockedReason || !sourceResolution.path) return projectionBlockedResult(project, proposal, sourceResolution.blockedReason || 'Invalid staged manuscript source reference.');
+      const sourceEvidencePath = sourceResolution.path;
+      const expectedSourceEvidencePath = runtime.path.resolve(artifactDirectory, 'raw_source.txt');
       if (sourceEvidencePath !== expectedSourceEvidencePath || !runtime.fs.existsSync(sourceEvidencePath)) {
         return projectionBlockedResult(project, proposal, 'Staged manuscript projection raw source evidence must be raw_source.txt inside its import run.');
       }
@@ -2083,7 +2410,8 @@ const validateStagedManuscriptProjections = (project: NarrativeProject, proposal
         return projectionBlockedResult(project, proposal, 'Staged manuscript projection raw source evidence resolves through a symlink or outside its import run.');
       }
       const rawSource = runtime.fs.readFileSync(resolvedSourceEvidencePath, 'utf8');
-      if (sha256(rawSource) !== sourceHash) {
+      const rawSourceHash = await sha256Text(rawSource);
+      if (rawSourceHash !== sourceHash || (sourceResolution.sha256 && sourceResolution.sha256 !== rawSourceHash)) {
         return projectionBlockedResult(project, proposal, 'Staged manuscript projection raw source does not match its manifest hash.');
       }
       const chapterIds = new Set<string>();
@@ -2100,7 +2428,7 @@ const validateStagedManuscriptProjections = (project: NarrativeProject, proposal
           || typeof sceneId !== 'string' || !sceneId || sceneIds.has(sceneId)
           || !sourceSpan
         ) return projectionBlockedResult(project, proposal, `Staged manuscript projection contains an invalid, duplicate, or source-mismatched chapter descriptor: ${String(chapterId || sceneId || 'unknown')}.`);
-        const reconstructed = reconstructProjectionSourceSpan(sourceSpan, rawSource, sourceHash);
+        const reconstructed = await reconstructProjectionSourceSpan(sourceSpan, rawSource, sourceHash);
         if (reconstructed.error) return projectionBlockedResult(project, proposal, `Staged manuscript projection chapter ${chapterId} ${reconstructed.error}.`);
         chapterIds.add(chapterId);
         sceneIds.add(sceneId);
@@ -2112,7 +2440,7 @@ const validateStagedManuscriptProjections = (project: NarrativeProject, proposal
         if (!rawDocument || typeof rawDocument !== 'object') return projectionBlockedResult(project, proposal, 'Staged manuscript projection contains an invalid scene document.');
         const document = rawDocument as Record<string, unknown>;
         const sceneId = document.scene_id;
-        const reconstructed = reconstructProjectionSourceSpan(document.source_span, rawSource, sourceHash);
+        const reconstructed = await reconstructProjectionSourceSpan(document.source_span, rawSource, sourceHash);
         if (
           typeof sceneId !== 'string' || !sceneIds.has(sceneId) || documentSceneIds.has(sceneId) || typeof document.content !== 'string'
           || reconstructed.error || document.content !== sourceBySceneId.get(sceneId) || document.content !== reconstructed.content
@@ -2153,7 +2481,7 @@ const validateStagedManuscriptProjections = (project: NarrativeProject, proposal
   return { project, culprit, blockedReason: null };
 };
 
-const applyStagedManuscriptProjections = (project: NarrativeProject, proposals: Proposal[]): ProjectionApplyResult => {
+const applyStagedManuscriptProjections = async (project: NarrativeProject, proposals: Proposal[]): Promise<ProjectionApplyResult> => {
   const descriptors = proposals
     .map((proposal) => ({ proposal, descriptor: getStagedManuscriptProjectionDescriptor(proposal) }))
     .filter((entry): entry is { proposal: Proposal; descriptor: StagedManuscriptProjectionDescriptor } => Boolean(entry.descriptor));
@@ -2167,13 +2495,14 @@ const applyStagedManuscriptProjections = (project: NarrativeProject, proposals: 
 
   const projectRoot = runtime.path.resolve(project.metadata.rootPath);
   const importsDirectory = runtime.path.resolve(projectRoot, 'system', 'imports');
+  const runIds = uniqueStrings(proposals.flatMap(getImportRunIds));
+  if (runIds.length !== 1) return projectionBlockedResult(project, culprit, 'Import package has conflicting or missing importRunId values.');
   const artifacts = new Map<string, StagedManuscriptProjectionArtifact>();
 
   for (const { proposal, descriptor } of descriptors) {
-    if (descriptor.contract_version !== 'w1-staged-manuscript-v1' || typeof descriptor.artifact_path !== 'string') {
-      return projectionBlockedResult(project, proposal, 'Invalid staged manuscript projection descriptor.');
-    }
-    const artifactPath = runtime.path.resolve(descriptor.artifact_path);
+    const artifactResolution = resolveProjectionArtifactPath(runtime, importsDirectory, runIds[0], descriptor);
+    if (artifactResolution.blockedReason || !artifactResolution.path) return projectionBlockedResult(project, proposal, artifactResolution.blockedReason || 'Invalid staged manuscript projection descriptor.');
+    const artifactPath = artifactResolution.path;
     if (!isPathInside(runtime.path, importsDirectory, artifactPath) || !artifactPath.endsWith('/staged_manuscript_projection.json')) {
       return projectionBlockedResult(project, proposal, 'Staged manuscript projection path is outside the import artifact directory.');
     }
@@ -2182,7 +2511,11 @@ const applyStagedManuscriptProjections = (project: NarrativeProject, proposals: 
       return projectionBlockedResult(project, proposal, `Staged manuscript projection is unavailable: ${artifactPath}`);
     }
     try {
-      artifacts.set(artifactPath, JSON.parse(runtime.fs.readFileSync(artifactPath, 'utf8')) as StagedManuscriptProjectionArtifact);
+      const artifactText = runtime.fs.readFileSync(artifactPath, 'utf8');
+      if (artifactResolution.artifactRef && (await sha256Text(artifactText)) !== artifactResolution.artifactRef.sha256) {
+        return projectionBlockedResult(project, proposal, 'ArtifactRef hash does not match the staged manuscript projection.');
+      }
+      artifacts.set(artifactPath, JSON.parse(artifactText) as StagedManuscriptProjectionArtifact);
     } catch {
       return projectionBlockedResult(project, proposal, `Staged manuscript projection is unreadable: ${artifactPath}`);
     }

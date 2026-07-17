@@ -265,6 +265,85 @@ export interface W1ConsoleResult {
   breakpoint_chunk: number | null;
 }
 
+export interface RuntimeRunResult {
+  lineage_id: string;
+  attempt_id?: string;
+  status?: string;
+  completed?: number;
+  remaining?: number;
+  source_compatible?: boolean | null;
+  api_cost_usd?: number | null;
+  summary?: string;
+  unknown_calls?: RuntimeUnknownCallResult[];
+  error?: string;
+}
+
+export interface RuntimeUnknownCallResult {
+  tool_call_id: string;
+  idempotency_key: string;
+  decision_key: string;
+  safe_reason: string;
+  decision_state: "pending" | "authorize_retry_once" | "cancel" | string;
+}
+
+export interface RuntimeAttemptResult {
+  attempt_id: string;
+  lineage_id?: string;
+  status?: string;
+  unknown_calls?: RuntimeUnknownCallResult[];
+}
+
+export interface RuntimeRunDetailResult {
+  run?: RuntimeRunResult;
+  attempt?: RuntimeAttemptResult;
+  attempts?: RuntimeAttemptResult[];
+  unknown_calls?: RuntimeUnknownCallResult[];
+  error?: string;
+}
+
+export interface RuntimeDecisionResult {
+  decision_id?: string;
+  decision_key?: string;
+  decision?: "authorize_retry_once" | "cancel";
+  attempt_status?: string;
+  error?: string;
+}
+
+export interface RuntimeForkResult {
+  attempt: RuntimeRunResult;
+  parent_attempt_id: string;
+}
+
+export interface RuntimeEventResult {
+  event_id: string;
+  sequence: number;
+  event_type: string;
+  payload?: Record<string, unknown>;
+  created_at?: string;
+}
+
+export interface RuntimeEventStreamMessage {
+  subscription_id: string;
+  attempt_id: string;
+  event: RuntimeEventResult;
+}
+
+export interface RuntimeEventStreamStatus {
+  subscription_id: string;
+  attempt_id: string;
+  status: "open" | "closed" | "error";
+  retryable?: boolean;
+  error?: string;
+}
+
+export interface RuntimeCheckpointResult {
+  checkpoint_id: string;
+  sequence?: number;
+  label?: string;
+  summary?: string;
+  created_at?: string;
+}
+
 // ── W2 Manuscript Sync ───────────────────────────────────────────────────────
 
 export interface W2StartPayload {
@@ -493,6 +572,15 @@ const invokeMethods: Record<string, string> = {
   "w1:set_breakpoint": "w1SetBreakpoint",
   "w1:resume": "w1Resume",
   "w1:rewind": "w1Rewind",
+  "runtime:recoverable": "runtimeRecoverable",
+  "runtime:run": "runtimeRun",
+  "runtime:events": "runtimeEvents",
+  "runtime:checkpoints": "runtimeCheckpoints",
+  "runtime:pause": "runtimePause",
+  "runtime:resume": "runtimeResume",
+  "runtime:cancel": "runtimeCancel",
+  "runtime:fork": "runtimeFork",
+  "runtime:decision": "runtimeDecision",
   "prompts:list": "fetchPrompts",
   "sidecar:spawn": "sidecarSpawn",
   "w2:start": "w2Start",
@@ -988,6 +1076,76 @@ export const electronApi = {
       session_id: sessionId,
       to_chunk_id: toChunkId,
     })) as { ok: boolean; new_session_id?: string };
+  },
+
+  async runtimeRecoverable(projectRoot: string): Promise<{ runs: RuntimeRunResult[]; error?: string }> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return { runs: [], error: "ipc_unavailable" };
+    return (await ipcRenderer.invoke("runtime:recoverable", { projectRoot })) as { runs: RuntimeRunResult[]; error?: string };
+  },
+
+  async runtimeRun(projectRoot: string, runOrAttemptId: string): Promise<RuntimeRunDetailResult | null> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return null;
+    return (await ipcRenderer.invoke("runtime:run", { projectRoot, lineage_id: runOrAttemptId })) as RuntimeRunDetailResult | null;
+  },
+
+  async runtimeEvents(projectRoot: string, attemptId: string, afterSequence: number): Promise<{ events: RuntimeEventResult[]; error?: string }> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return { events: [], error: "ipc_unavailable" };
+    return (await ipcRenderer.invoke("runtime:events", { projectRoot, attempt_id: attemptId, after_sequence: afterSequence })) as { events: RuntimeEventResult[]; error?: string };
+  },
+
+  runtimeEventStreamSupported(): boolean {
+    const bridge = getPreloadBridge();
+    return Boolean(bridge && ["runtimeEventStreamSubscribe", "runtimeEventStreamUnsubscribe", "onRuntimeEvent", "onRuntimeEventStreamStatus"].every((key) => typeof bridge[key] === "function"));
+  },
+
+  async runtimeEventStreamSubscribe(projectRoot: string, attemptId: string, afterSequence: number, subscriptionId: string): Promise<{ ok: boolean; error?: string }> {
+    const bridge = getPreloadBridge();
+    if (!this.runtimeEventStreamSupported() || !bridge) return { ok: false, error: "sse_unsupported" };
+    return Promise.resolve(bridge.runtimeEventStreamSubscribe({ projectRoot, attempt_id: attemptId, after_sequence: afterSequence, subscription_id: subscriptionId })) as Promise<{ ok: boolean; error?: string }>;
+  },
+
+  async runtimeEventStreamUnsubscribe(subscriptionId: string): Promise<void> {
+    const bridge = getPreloadBridge();
+    if (bridge && typeof bridge.runtimeEventStreamUnsubscribe === "function") {
+      await Promise.resolve(bridge.runtimeEventStreamUnsubscribe({ subscription_id: subscriptionId }));
+    }
+  },
+
+  onRuntimeEvent(callback: (message: RuntimeEventStreamMessage) => void): () => void {
+    const bridge = getPreloadBridge();
+    return bridge && typeof bridge.onRuntimeEvent === "function" ? bridge.onRuntimeEvent(callback) : () => {};
+  },
+
+  onRuntimeEventStreamStatus(callback: (status: RuntimeEventStreamStatus) => void): () => void {
+    const bridge = getPreloadBridge();
+    return bridge && typeof bridge.onRuntimeEventStreamStatus === "function" ? bridge.onRuntimeEventStreamStatus(callback) : () => {};
+  },
+
+  async runtimeCheckpoints(projectRoot: string, attemptId: string): Promise<{ checkpoints: RuntimeCheckpointResult[]; error?: string }> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return { checkpoints: [], error: "ipc_unavailable" };
+    return (await ipcRenderer.invoke("runtime:checkpoints", { projectRoot, attempt_id: attemptId })) as { checkpoints: RuntimeCheckpointResult[]; error?: string };
+  },
+
+  async runtimeAction(projectRoot: string, action: "pause" | "resume" | "cancel", attemptId: string): Promise<RuntimeRunResult> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return { lineage_id: "", attempt_id: attemptId, status: "offline" };
+    return (await ipcRenderer.invoke(`runtime:${action}`, { projectRoot, attempt_id: attemptId })) as RuntimeRunResult;
+  },
+
+  async runtimeFork(projectRoot: string, attemptId: string, checkpointId: string, decisionId: string): Promise<RuntimeForkResult> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return { attempt: { lineage_id: "", status: "offline" }, parent_attempt_id: attemptId };
+    return (await ipcRenderer.invoke("runtime:fork", { projectRoot, attempt_id: attemptId, checkpoint_id: checkpointId, decision_id: decisionId })) as RuntimeForkResult;
+  },
+
+  async runtimeDecision(projectRoot: string, decisionKey: string, attemptId: string, decision: "authorize_retry_once" | "cancel"): Promise<RuntimeDecisionResult> {
+    const ipcRenderer = getIpcRenderer();
+    if (!ipcRenderer) return { error: "ipc_unavailable" };
+    return (await ipcRenderer.invoke("runtime:decision", { projectRoot, decision_key: decisionKey, attempt_id: attemptId, decision })) as RuntimeDecisionResult;
   },
 
   async fetchPrompts(

@@ -27,7 +27,6 @@ from pathlib import Path
 from typing import Any
 
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.memory import MemorySaver
 import os
 
 from langchain_openai import ChatOpenAI
@@ -44,13 +43,22 @@ from sidecar.shared import s2_memory_writer, s3_chunk_manager
 from sidecar.utils.lock import acquire_lock, release_lock, WorkflowBusyError
 from sidecar.workflows.w1_run_events import (
     BudgetPolicy,
+    ProviderCallRequiresHumanConfirmation,
     add_token_usage,
     authoritative_usage_ledger,
+    begin_provider_call,
     configure_budget,
+    provider_message_hash,
+    provider_result_hash,
     record_call_usage,
     release_call_reservation,
     reserve_call_budget,
+    settle_provider_failure,
+    settle_provider_success,
+    settle_provider_unknown,
 )
+from sidecar.workflows import w1_recovery
+from sidecar.runtime.checkpointer import aclose_checkpointer, close_checkpointer, create_sqlite_checkpointer
 from sidecar.prompts.w1_prompts import (
     W1_EXTRACT_CHARACTERS,
     W1_EXTRACT_CHARACTERS_DEEP,
@@ -351,11 +359,8 @@ async def _invoke_json_prompt(
     share the same system_content (entity registry + source text), enabling KV
     prefix caching on the shared tokens.
 
-    Retries up to 4 times with exponential backoff for transient failures:
-    - Rate-limit / governor errors (429, 503, 'Authentication Fails (governor)')
-    - 'str' object has no attribute 'model_dump' — LangChain streaming parse error
-      when DeepSeek injects a governor error into an SSE stream.
-    - JSON parse failures (model returned prose instead of JSON).
+    Retries up to 4 times for explicit pre-provider rate-limit denials and JSON
+    parse failures. Ambiguous transport outcomes fail-stop for human review.
     """
     prompt = prompt_template.format(**kwargs)
     messages = (
@@ -379,35 +384,60 @@ async def _invoke_json_prompt(
                 if _is_truncated_json_error(parse_exc) or isinstance(parse_exc, (JSONDecodeError, JsonPromptParseError, ValueError)):
                     return await _repair_json_response(llm, raw, parse_exc, session_id=session_id)
                 raise
+        except ProviderCallRequiresHumanConfirmation:
+            raise
         except Exception as exc:
             err_str = str(exc).lower()
             is_retryable = (
-                "model_dump" in err_str          # SSE governor parse error
-                or "rate limit" in err_str
+                "rate limit" in err_str
                 or "governor" in err_str
                 or "too many requests" in err_str
-                or "503" in err_str
-                or "502" in err_str
-                or "timeout" in err_str
-                or "401" in err_str              # transient DeepSeek auth blip
-                or "no api key" in err_str
-                or "didn't provide an api key" in err_str
+                or "429" in err_str
                 or isinstance(exc, (json.JSONDecodeError, ValueError))
             )
             if is_retryable and attempt < max_attempts - 1:
-                # Give 401 a longer backoff — DeepSeek occasionally has transient
-                # auth blips that resolve within a few seconds.
-                if "401" in err_str or "no api key" in err_str or "didn't provide an api key" in err_str:
-                    wait = 5 * (attempt + 1)  # 5s, 10s, 15s
-                else:
-                    wait = 2 ** attempt  # 1s, 2s, 4s
-                await asyncio.sleep(wait)
+                await asyncio.sleep(2 ** attempt)
                 continue
             raise
 
 
 def _llm_model_name(llm: Any) -> str:
     return str(getattr(llm, "model_name", "") or getattr(llm, "model", "") or "")
+
+
+def _provider_status_code(exc: Exception) -> int | None:
+    value = getattr(exc, "status_code", None)
+    if value is None:
+        response = getattr(exc, "response", None)
+        value = getattr(response, "status_code", None)
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _provider_error_kind(exc: Exception) -> tuple[str, int | None, bool]:
+    """Return (stable failure type, status code, ambiguous transport)."""
+    status_code = _provider_status_code(exc)
+    class_name = type(exc).__name__.lower()
+    message = str(exc).lower()
+    if status_code == 401 or "authenticationerror" in class_name or "401" in message or "no api key" in message or "didn't provide an api key" in message:
+        return "authentication_denied", 401, False
+    if status_code == 429 or "ratelimit" in class_name or "rate limit" in message or "too many requests" in message or "governor" in message:
+        return "rate_limited", 429, False
+    ambiguous = (
+        isinstance(exc, (asyncio.TimeoutError, TimeoutError, ConnectionError))
+        or status_code in {502, 503, 504}
+        or "timeout" in class_name
+        or "connection" in class_name
+        or "timeout" in message
+        or "connection" in message
+        or "server disconnected" in message
+        or "remote protocol" in message
+        or "model_dump" in message
+        or any(code in message for code in ("502", "503", "504"))
+    )
+    return ("ambiguous_transport" if ambiguous else "provider_failed", status_code, ambiguous)
 
 
 async def _ainvoke_with_budget(
@@ -421,6 +451,7 @@ async def _ainvoke_with_budget(
     """Run one provider call with E0 budget guards around the actual I/O."""
     model = _llm_model_name(llm)
     reservation_token = ""
+    durable_call: dict[str, Any] = {}
     if session_id:
         reserved = reserve_call_budget(
             session_id,
@@ -433,13 +464,35 @@ async def _ainvoke_with_budget(
         reservation_token = reserved
     try:
         async with _API_SEMAPHORE:
+            durable_call = begin_provider_call(
+                session_id,
+                model=model,
+                message_hash=provider_message_hash(messages),
+                estimated_input_tokens=estimated_input_tokens,
+                estimated_output_tokens=estimated_output_tokens,
+            )
             response = await llm.ainvoke(messages)
-    except Exception:
+    except ProviderCallRequiresHumanConfirmation:
         if session_id:
             release_call_reservation(session_id, reservation_token)
         raise
+    except Exception as exc:
+        if session_id:
+            release_call_reservation(session_id, reservation_token)
+        failure_type, status_code, ambiguous = _provider_error_kind(exc)
+        if ambiguous:
+            raise settle_provider_unknown(session_id, durable_call, reason=failure_type)
+        settle_provider_failure(durable_call, failure_type=failure_type, status_code=status_code)
+        raise
+    usage = _extract_llm_usage(response)
+    settle_provider_success(
+        durable_call,
+        model=model,
+        input_tokens=usage[0] if usage else None,
+        output_tokens=usage[1] if usage else None,
+        result_hash=provider_result_hash(response),
+    )
     if session_id:
-        usage = _extract_llm_usage(response)
         if not record_call_usage(
             session_id,
             usage[0] if usage else None,
@@ -1494,8 +1547,34 @@ def _entity_merge_decision(existing: dict, incoming: dict, import_id: str) -> di
     return decision
 
 
-def _artifact_dir(project_path: str | Path, import_run_id: str) -> Path:
-    return Path(project_path) / "system" / "imports" / import_run_id
+def _artifact_dir(project_path: str | Path, import_run_id: str, attempt_id: str = "") -> Path:
+    lineage_dir = Path(project_path) / "system" / "imports" / import_run_id
+    if attempt_id:
+        return lineage_dir / "attempts" / attempt_id
+    return lineage_dir
+
+
+def _validated_runtime_lineage_id(value: Any) -> str:
+    lineage_id = str(value or "").strip()
+    if not lineage_id:
+        return ""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,255}", lineage_id):
+        raise ValueError("Invalid W1 runtime lineage id")
+    return lineage_id
+
+
+def _state_attempt_id(state: ImportState | dict) -> str:
+    recovery_attempt = state.get("context", {}).get("w1_recovery_attempt", {})
+    return str(
+        recovery_attempt.get("attempt_id")
+        or state.get("import_run_manifest", {}).get("attempt_id")
+        or ""
+    )
+
+
+def _state_artifact_dir(state: ImportState | dict, import_run_id: str = "") -> Path:
+    lineage_id = str(import_run_id or state.get("import_run_id") or state.get("import_run_manifest", {}).get("lineage_id") or "")
+    return _artifact_dir(state["project_path"], lineage_id, _state_attempt_id(state))
 
 
 _RAW_SOURCE_EVIDENCE_FILENAME = "raw_source.txt"
@@ -1505,7 +1584,7 @@ def _stage_raw_source_evidence(state: ImportState) -> Path:
     """Atomically preserve the submitted source inside its project-local import run."""
     source_path = Path(str(state["source_file_path"]))
     source_bytes = source_path.read_bytes()
-    evidence_path = _artifact_dir(state["project_path"], str(state.get("import_run_id", ""))) / _RAW_SOURCE_EVIDENCE_FILENAME
+    evidence_path = _state_artifact_dir(state) / _RAW_SOURCE_EVIDENCE_FILENAME
     evidence_path.parent.mkdir(parents=True, exist_ok=True)
     if evidence_path.exists():
         if evidence_path.read_bytes() != source_bytes:
@@ -1527,13 +1606,56 @@ def _stage_raw_source_evidence(state: ImportState) -> Path:
     return evidence_path
 
 
-def _write_import_artifact(project_path: str | Path, import_run_id: str, filename: str, payload: dict | list) -> str:
-    directory = _artifact_dir(project_path, import_run_id)
+def _write_import_artifact(
+    project_path: str | Path,
+    import_run_id: str,
+    filename: str,
+    payload: dict | list,
+    *,
+    attempt_id: str = "",
+) -> str:
+    directory = _artifact_dir(project_path, import_run_id, attempt_id)
     path = directory / filename
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     return str(path)
+
+
+def _write_state_artifact(state: ImportState | dict, filename: str, payload: dict | list, import_run_id: str = "") -> str:
+    lineage_id = str(import_run_id or state.get("import_run_id") or state.get("import_run_manifest", {}).get("lineage_id") or "")
+    return _write_import_artifact(
+        state["project_path"], lineage_id, filename, payload,
+        attempt_id=_state_attempt_id(state),
+    )
+
+
+def _write_recovery_checkpoint(
+    state: ImportState,
+    *,
+    total_chunks: int,
+    entity_registry: dict,
+    chunk_extractions: list[dict],
+    raw_relationships: list[dict],
+    cross_validation: dict | None = None,
+) -> None:
+    identity = state.get("context", {}).get("w1_recovery_identity")
+    attempt = state.get("context", {}).get("w1_recovery_attempt")
+    checkpoint_path = state.get("checkpoint_path")
+    if not isinstance(identity, dict) or not isinstance(attempt, dict) or not checkpoint_path:
+        raise ValueError("W1 recovery identity and attempt are required before checkpointing")
+    committed_ids = sorted({int(item["chunk_id"]) for item in chunk_extractions if item.get("chunk_id") is not None})
+    checkpoint = w1_recovery.build_checkpoint(
+        identity=identity,
+        attempt=attempt,
+        total_chunks=total_chunks,
+        entity_registry=entity_registry,
+        chunk_extractions=chunk_extractions,
+        raw_relationships=raw_relationships,
+        committed_chunk_ids=committed_ids,
+        cross_validation=cross_validation,
+    )
+    w1_recovery.write_checkpoint_atomic(checkpoint_path, checkpoint)
 
 
 def persist_w1_usage_ledger(state: ImportState) -> dict[str, Any] | None:
@@ -1545,7 +1667,7 @@ def persist_w1_usage_ledger(state: ImportState) -> dict[str, Any] | None:
         return None
     model = str(state.get("context", {}).get("model") or state.get("model") or "")
     ledger = authoritative_usage_ledger(session_id, model)
-    directory = _artifact_dir(project_path, import_run_id)
+    directory = _state_artifact_dir(state, str(import_run_id))
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / "usage_ledger.json"
     temporary_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
@@ -1564,25 +1686,20 @@ def persist_w1_usage_ledger(state: ImportState) -> dict[str, Any] | None:
     return ledger
 
 
-def _chunk_cache_path(project_path: str | Path, import_run_id: str, chunk_id: int) -> Path:
-    return _artifact_dir(project_path, import_run_id) / "chunks" / f"chunk_{chunk_id}.json"
-
-
-def _prompt_window_cache_path(project_path: str | Path, import_run_id: str, window_id: str) -> Path:
-    return _artifact_dir(project_path, import_run_id) / "windows" / f"{window_id}.json"
-
-
 def _read_chunk_prompt_cache(state: ImportState, chunk: dict) -> dict | None:
-    import_run_id = state.get("import_run_id")
-    if not import_run_id:
+    identity = state.get("context", {}).get("w1_recovery_identity")
+    if not isinstance(identity, dict):
         return None
-    chunk_id = int(chunk.get("chunk_id", 0) or 0)
-    path = _chunk_cache_path(state["project_path"], import_run_id, chunk_id)
+    raw = chunk.get("manuscript_content") or chunk.get("raw_content") or chunk.get("content", "")
+    span = chunk.get("source_span") or {"substring_hash": _sha256_text(raw), "start": 0, "end": len(raw)}
+    key = w1_recovery.cache_key(identity, span)
+    path = Path(state["project_path"]) / "system" / "imports" / "cache" / f"{key}.json"
     payload = _safe_read_json(path, None)
     if not isinstance(payload, dict):
         return None
-    raw = chunk.get("manuscript_content") or chunk.get("raw_content") or chunk.get("content", "")
     if payload.get("chunk_hash") != _sha256_text(raw):
+        return None
+    if payload.get("cacheKey") != key:
         return None
     if payload.get("prompt_profile") != (state.get("prompt_profile") or "balanced"):
         return None
@@ -1593,15 +1710,18 @@ def _read_chunk_prompt_cache(state: ImportState, chunk: dict) -> dict | None:
 
 
 def _write_chunk_prompt_cache(state: ImportState, chunk: dict, prompt_outputs: dict) -> None:
-    import_run_id = state.get("import_run_id")
-    if not import_run_id:
+    identity = state.get("context", {}).get("w1_recovery_identity")
+    if not isinstance(identity, dict):
         return
     chunk_id = int(chunk.get("chunk_id", 0) or 0)
     raw = chunk.get("manuscript_content") or chunk.get("raw_content") or chunk.get("content", "")
-    path = _chunk_cache_path(state["project_path"], import_run_id, chunk_id)
+    span = chunk.get("source_span") or {"substring_hash": _sha256_text(raw), "start": 0, "end": len(raw)}
+    key = w1_recovery.cache_key(identity, span)
+    path = Path(state["project_path"]) / "system" / "imports" / "cache" / f"{key}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump({
+            "cacheKey": key,
             "chunk_id": chunk_id,
             "segment_id": chunk.get("segment_id"),
             "chunk_hash": _sha256_text(raw),
@@ -1613,11 +1733,13 @@ def _write_chunk_prompt_cache(state: ImportState, chunk: dict, prompt_outputs: d
 
 
 def _read_prompt_window_cache(state: ImportState, window: dict) -> dict | None:
-    import_run_id = state.get("import_run_id")
+    identity = state.get("context", {}).get("w1_recovery_identity")
     window_id = str(window.get("id") or "")
-    if not import_run_id or not window_id:
+    if not isinstance(identity, dict) or not window_id:
         return None
-    path = _prompt_window_cache_path(state["project_path"], import_run_id, window_id)
+    source_span = window.get("source_span") or {}
+    key = w1_recovery.cache_key(identity, source_span)
+    path = Path(state["project_path"]) / "system" / "imports" / "cache" / f"{key}.json"
     payload = _safe_read_json(path, None)
     if not isinstance(payload, dict):
         return None
@@ -1628,6 +1750,8 @@ def _read_prompt_window_cache(state: ImportState, window: dict) -> dict | None:
     )
     if payload.get("source_hash") != _sha256_text(source_text):
         return None
+    if payload.get("cacheKey") != key:
+        return None
     if payload.get("prompt_profile") != (state.get("prompt_profile") or "balanced"):
         return None
     if payload.get("prompt_window_contract") != "packed_chapter_window_v2":
@@ -1637,19 +1761,21 @@ def _read_prompt_window_cache(state: ImportState, window: dict) -> dict | None:
 
 
 def _write_prompt_window_cache(state: ImportState, window: dict, prompt_outputs: dict) -> None:
-    import_run_id = state.get("import_run_id")
+    identity = state.get("context", {}).get("w1_recovery_identity")
     window_id = str(window.get("id") or "")
-    if not import_run_id or not window_id:
+    if not isinstance(identity, dict) or not window_id:
         return
     source_text = "".join(
         str(block.get("text", ""))
         for block in window.get("source_blocks", [])
         if isinstance(block, dict)
     )
-    path = _prompt_window_cache_path(state["project_path"], import_run_id, window_id)
+    key = w1_recovery.cache_key(identity, window.get("source_span") or {})
+    path = Path(state["project_path"]) / "system" / "imports" / "cache" / f"{key}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump({
+            "cacheKey": key,
             "prompt_window_id": window_id,
             "chunk_ids": window.get("chunk_ids", []),
             "source_hash": _sha256_text(source_text),
@@ -1666,7 +1792,7 @@ def _write_chunk_prompt_failure(state: ImportState, chunk: dict, failures: list[
         return
     chunk_id = int(chunk.get("chunk_id", 0) or 0)
     raw = chunk.get("manuscript_content") or chunk.get("raw_content") or chunk.get("content", "")
-    path = _artifact_dir(state["project_path"], import_run_id) / "chunks" / f"chunk_{chunk_id}_failures.json"
+    path = _state_artifact_dir(state, str(import_run_id)) / "chunks" / f"chunk_{chunk_id}_failures.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump({
@@ -1919,7 +2045,8 @@ def _build_project_structure_digest(state: ImportState, import_run_id: str) -> d
     content = json.dumps(digest_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return {
         "import_run_id": import_run_id,
-        "artifact_path": str(_artifact_dir(state["project_path"], import_run_id) / "project_structure_digest.json"),
+        "lineage_id": state.get("lineage_id") or import_run_id,
+        "artifact_path": str(_state_artifact_dir(state, import_run_id) / "project_structure_digest.json"),
         "content": content,
         "estimated_tokens": _estimate_tokens(content),
         "counts": digest_payload["counts"],
@@ -2640,6 +2767,7 @@ def _build_import_manifest(state: ImportState, text: str, chunks: list[dict]) ->
         })
     return {
         "import_run_id": import_run_id,
+        "lineage_id": state.get("lineage_id") or import_run_id,
         "source_file_path": state.get("source_file_path", ""),
         "source_hash": source_hash,
         "import_mode": state.get("import_mode", "import_all"),
@@ -2647,7 +2775,7 @@ def _build_import_manifest(state: ImportState, text: str, chunks: list[dict]) ->
         "model": model,
         "created_at": _now_iso(),
         "segment_count": len(segments),
-        "artifact_dir": str(_artifact_dir(state["project_path"], import_run_id)),
+        "artifact_dir": str(_state_artifact_dir(state, import_run_id)),
         "segments": segments,
     }
 
@@ -3124,7 +3252,7 @@ def _finalize_supervisor_evidence_bindings(state: ImportState | dict) -> dict:
         return {}
     update = _build_supervisor_evidence_cards(state)
     if state.get("project_path") and state.get("import_run_id"):
-        _write_import_artifact(state["project_path"], state["import_run_id"], "evidence_cards.json", update["evidence_cards"])
+        _write_state_artifact(state, "evidence_cards.json", update["evidence_cards"])
     return update
 
 
@@ -3209,25 +3337,9 @@ async def node_validate_file(state: ImportState) -> dict:
 
 
 async def node_load_or_init_checkpoint(state: ImportState) -> dict:
-    """Load existing checkpoint if resuming, or init empty state."""
-    checkpoint_path = Path(state.get("checkpoint_path", ""))
-
-    empty_registry = {"characters": {}, "events": {}, "world": {}}
-
-    if checkpoint_path.exists():
-        try:
-            with open(checkpoint_path, "r", encoding="utf-8") as f:
-                checkpoint = json.load(f)
-            return {
-                "entity_registry": checkpoint.get("entity_registry", empty_registry),
-                "chunk_extractions": checkpoint.get("chunk_extractions", []),
-                "progress": len(checkpoint.get("completed_chunk_ids", [])) / max(checkpoint.get("total_chunks", 1), 1),
-            }
-        except Exception:
-            pass  # Corrupt checkpoint — start fresh
-
+    """Initialize state; source-bound recovery is validated after source loading."""
     return {
-        "entity_registry": empty_registry,
+        "entity_registry": {"characters": {}, "events": {}, "world": {}},
         "chunk_extractions": [],
         "progress": 0.05,
     }
@@ -3282,9 +3394,40 @@ async def node_split_chunks(state: ImportState) -> dict:
         chunk["chunk_id"] = i
 
     source_language = _detect_language(text[:8000])
-    manifest = _build_import_manifest(state, text, chunks)
-    digest = _build_project_structure_digest({**state, "import_run_id": manifest["import_run_id"]}, manifest["import_run_id"])
-    windowing_state = {**state, "import_run_id": manifest["import_run_id"], "import_run_manifest": manifest, "source_language": source_language}
+    prompt_profile = state.get("prompt_profile") or state.get("context", {}).get("prompt_profile") or "balanced"
+    preflight_digest = _build_project_structure_digest({**state, "import_run_id": "recovery_preflight"}, "recovery_preflight")
+    context = state.get("context", {})
+    computed_identity = w1_recovery.build_run_identity(
+        source_text=text,
+        model=str(context.get("model", "deepseek-chat")),
+        profile=prompt_profile,
+        prompt_version=str(context.get("prompt_version", "w1-prompts-v1")),
+        schema_version=str(context.get("schema_version", "w1-schema-v1")),
+        tool_version=str(context.get("tool_version", "w1-tools-v1")),
+        project_digest_hash=_sha256_text(str(preflight_digest.get("content", ""))),
+    )
+    runtime_lineage_id = _validated_runtime_lineage_id(
+        state.get("runtime_lineage_id") or context.get("runtime_lineage_id")
+    )
+    identity = {
+        **computed_identity,
+        "lineage_id": runtime_lineage_id or computed_identity["lineage_id"],
+    }
+    attempt = w1_recovery.allocate_attempt(state["project_path"], identity, context.get("w1_attempt_id") or None)
+    recovery_context = {**context, "w1_recovery_identity": identity, "w1_recovery_attempt": attempt}
+    manifest_state = {**state, "import_run_id": identity["lineage_id"], "context": recovery_context}
+    manifest = _build_import_manifest(manifest_state, text, chunks)
+    manifest["lineage_id"] = identity["lineage_id"]
+    manifest["attempt_id"] = attempt["attempt_id"]
+    manifest["cache_dir"] = attempt["cache_dir"]
+    digest = _build_project_structure_digest({**manifest_state, "import_run_id": manifest["import_run_id"]}, manifest["import_run_id"])
+    windowing_state = {
+        **state,
+        "import_run_id": manifest["import_run_id"],
+        "import_run_manifest": manifest,
+        "source_language": source_language,
+        "context": recovery_context,
+    }
     use_supervisor = bool(state.get("use_supervisor") or state.get("context", {}).get("use_supervisor"))
     if use_supervisor:
         prompt_windows = _build_supervised_prompt_windows(windowing_state, chunks, digest)
@@ -3300,15 +3443,13 @@ async def node_split_chunks(state: ImportState) -> dict:
             {**window, "prompt_variant_manifest": prompt_variant_manifest}
             for window in prompt_windows
         ]
-    _write_import_artifact(
-        state["project_path"],
-        manifest["import_run_id"],
+    _write_state_artifact(
+        manifest_state,
         "project_structure_digest.json",
         {key: value for key, value in digest.items() if key != "content"} | {"content": digest.get("content", "")},
     )
-    _write_import_artifact(
-        state["project_path"],
-        manifest["import_run_id"],
+    _write_state_artifact(
+        manifest_state,
         "prompt_windows.json",
         [_prompt_window_manifest_entry(window) | {"text_hash": _sha256_text(window.get("text", ""))} for window in prompt_windows],
     )
@@ -3325,23 +3466,43 @@ async def node_split_chunks(state: ImportState) -> dict:
     }
     manifest["prompt_windows"] = [_prompt_window_manifest_entry(window) for window in prompt_windows]
     manifest["artifact_paths"] = {
-        "project_structure_digest": str(_artifact_dir(state["project_path"], manifest["import_run_id"]) / "project_structure_digest.json"),
-        "prompt_windows": str(_artifact_dir(state["project_path"], manifest["import_run_id"]) / "prompt_windows.json"),
+        "project_structure_digest": str(_state_artifact_dir(manifest_state) / "project_structure_digest.json"),
+        "prompt_windows": str(_state_artifact_dir(manifest_state) / "prompt_windows.json"),
     }
-    _write_import_artifact(state["project_path"], manifest["import_run_id"], "manifest.json", manifest)
+    _write_state_artifact(manifest_state, "manifest.json", manifest)
 
     source_language = _detect_language(text[:500])
+
+    recovery = w1_recovery.load_checkpoint(attempt["checkpoint_path"], identity, attempt)
+    if recovery.get("status") == "missing":
+        recovery = w1_recovery.read_legacy_progress(
+            Path(state["project_path"]) / "import_progress.json",
+            identity,
+            current_source_path=source_path,
+            current_source_text=text,
+            current_chunks=chunks,
+        )
+    if recovery.get("status") == "recoverable_error":
+        return {"status": "recoverable_error", "errors": list(state.get("errors", [])) + recovery["errors"]}
+    resumed_extractions = recovery.get("chunk_extractions", []) if recovery.get("status") == "ok" else []
+    resumed_registry = recovery.get("entity_registry", {"characters": {}, "events": {}, "world": {}}) if recovery.get("status") == "ok" else {"characters": {}, "events": {}, "world": {}}
 
     return {
         "chunks": chunks,
         "source_text": text,
         "import_run_id": manifest["import_run_id"],
+        "context": recovery_context,
+        "checkpoint_path": attempt["checkpoint_path"],
         "prompt_profile": manifest["prompt_profile"],
         "import_run_manifest": manifest,
         "project_structure_digest": digest,
         "prompt_windows": prompt_windows,
         "source_language": source_language,
-        "progress": 0.1,
+        "entity_registry": resumed_registry,
+        "chunk_extractions": resumed_extractions,
+        "raw_relationships": recovery.get("raw_relationships", []) if recovery.get("status") == "ok" else [],
+        "cross_validation": recovery.get("cross_validation", {}) if recovery.get("status") == "ok" else {},
+        "progress": 0.1 + (0.7 * (len(resumed_extractions) / max(len(chunks), 1))),
     }
 
 
@@ -3526,6 +3687,8 @@ async def _legacy_node_process_chunks(state: ImportState) -> dict:
             }
             extractions.append(extraction)
 
+        except ProviderCallRequiresHumanConfirmation:
+            raise
         except Exception as e:
             errors.append(f"Chunk {chunk_id} failed: {str(e)}")
             # Still add a minimal extraction so we can preserve manuscript content
@@ -3542,18 +3705,10 @@ async def _legacy_node_process_chunks(state: ImportState) -> dict:
         # Save checkpoint after EVERY chunk
         completed = len(completed_ids)
         try:
-            checkpoint = {
-                "project_path": project_path,
-                "source_file_path": state["source_file_path"],
-                "total_chunks": total,
-                "completed_chunk_ids": [e["chunk_id"] for e in extractions],
-                "entity_registry": registry,
-                "chunk_extractions": extractions,
-                "started_at": datetime.now(timezone.utc).isoformat(),
-                "last_updated": datetime.now(timezone.utc).isoformat(),
-            }
-            with open(checkpoint_path, "w", encoding="utf-8") as f:
-                json.dump(checkpoint, f, ensure_ascii=False, indent=2)
+            _write_recovery_checkpoint(
+                state, total_chunks=total, entity_registry=registry,
+                chunk_extractions=extractions, raw_relationships=[],
+            )
         except Exception as e:
             errors.append(f"Checkpoint save failed after chunk {chunk_id}: {str(e)}")
 
@@ -3704,7 +3859,7 @@ async def node_build_evidence_cards(state: ImportState) -> dict:
     if not import_run_id:
         return {"evidence_cards": [], "progress": state.get("progress", 0.8)}
     cards = _build_evidence_cards(state)
-    _write_import_artifact(state["project_path"], import_run_id, "evidence_cards.json", cards)
+    _write_state_artifact(state, "evidence_cards.json", cards, str(import_run_id))
     return {"evidence_cards": cards, "progress": max(float(state.get("progress", 0.8)), 0.82)}
 
 
@@ -3843,7 +3998,7 @@ async def node_reconcile_entities(state: ImportState) -> dict:
         "tag_rejections": tag_rejections,
     }
     if state.get("import_run_id"):
-        _write_import_artifact(project_path, state["import_run_id"], "reducer_artifact.json", artifact)
+        _write_state_artifact(state, "reducer_artifact.json", artifact)
     return {
         "entity_registry": registry,
         "relationships": reconciled_relationships,
@@ -4604,7 +4759,7 @@ async def node_architect_timeline(state: ImportState) -> dict:
         "warnings": warnings,
     }
     if state.get("import_run_id"):
-        _write_import_artifact(project_path, state["import_run_id"], "timeline_architecture.json", artifact)
+        _write_state_artifact(state, "timeline_architecture.json", artifact)
     return {
         "entity_registry": registry,
         "timeline_branches": timeline_branches,
@@ -4639,7 +4794,7 @@ async def node_organize_project(state: ImportState) -> dict:
 
     result = organize_project_content(organizer_input)
     if state.get("import_run_id"):
-        _write_import_artifact(state["project_path"], state["import_run_id"], "organizer_output.json", result)
+        _write_state_artifact(state, "organizer_output.json", result)
 
     excluded_names: set[str] = {item["name"] for item in result.get("excluded_items", [])}
     enrichments: dict[str, dict] = {item["name"]: item for item in result.get("world_items", [])}
@@ -4843,17 +4998,17 @@ async def node_review_import(state: ImportState) -> dict:
         "model": state.get("context", {}).get("model", "deepseek-chat"),
         "prompt_profile": state.get("prompt_profile", "balanced"),
         "artifact_paths": {
-            "manifest": str(_artifact_dir(state["project_path"], state.get("import_run_id", "")) / "manifest.json") if state.get("import_run_id") else "",
-            "reducer": str(_artifact_dir(state["project_path"], state.get("import_run_id", "")) / "reducer_artifact.json") if state.get("import_run_id") else "",
-            "timeline": str(_artifact_dir(state["project_path"], state.get("import_run_id", "")) / "timeline_architecture.json") if state.get("import_run_id") else "",
-            "review": str(_artifact_dir(state["project_path"], state.get("import_run_id", "")) / "review_report.json") if state.get("import_run_id") else "",
+            "manifest": str(_state_artifact_dir(state) / "manifest.json") if state.get("import_run_id") else "",
+            "reducer": str(_state_artifact_dir(state) / "reducer_artifact.json") if state.get("import_run_id") else "",
+            "timeline": str(_state_artifact_dir(state) / "timeline_architecture.json") if state.get("import_run_id") else "",
+            "review": str(_state_artifact_dir(state) / "review_report.json") if state.get("import_run_id") else "",
         },
         "duplicate_merges": timeline.get("discarded_duplicates", []) + reducer.get("duplicate_candidates", []),
         "low_confidence_items": low_confidence_items,
         "reviewer_reports": reviewer_reports,
     }
     if finalized_state.get("import_run_id"):
-        _write_import_artifact(finalized_state["project_path"], finalized_state["import_run_id"], "review_report.json", report)
+        _write_state_artifact(finalized_state, "review_report.json", report)
     return {
         "entity_registry": registry,
         "relationships": finalized_state.get("relationships", []),
@@ -5032,9 +5187,7 @@ def _stage_manuscript_projection(
         "nodes": nodes,
         "scene_documents": scene_documents,
     }
-    artifact_path = _write_import_artifact(
-        state["project_path"], str(state.get("import_run_id", "")), "staged_manuscript_projection.json", payload
-    )
+    artifact_path = _write_state_artifact(state, "staged_manuscript_projection.json", payload)
     return {"artifact_path": artifact_path, "contract_version": payload["contract_version"]}
 
 
@@ -5759,23 +5912,17 @@ async def node_write_to_project(state: ImportState) -> dict:
         review_report["blocked_ids"] = blocked_ids
         review_report["proposal_ids"] = all_proposal_ids
         if state.get("import_run_id"):
-            _write_import_artifact(str(project_path), state["import_run_id"], "review_report.json", review_report)
+            _write_state_artifact(state, "review_report.json", review_report)
 
     if state.get("import_run_id"):
-        _write_import_artifact(
-            str(project_path),
-            state["import_run_id"],
+        _write_state_artifact(
+            state,
             "proposal_write_receipts.json",
             {"proposal_counts": proposal_counts, "proposal_ids": all_proposal_ids, "receipts": receipts},
         )
 
-    # Delete checkpoint on success
-    checkpoint_path = state.get("checkpoint_path", "")
-    if checkpoint_path:
-        try:
-            Path(checkpoint_path).unlink(missing_ok=True)
-        except Exception:
-            pass
+    # Proposal staging is not canonical acceptance. Keep recovery evidence until
+    # an acceptance owner archives it and writes a final canonical receipt.
 
     # Trigger W2 in post_import mode (in-process, NOT via HTTP)
     try:
@@ -5821,6 +5968,8 @@ async def node_write_to_project(state: ImportState) -> dict:
 
 def route_by_mode(state: ImportState) -> str:
     """Conditional edge after split_chunks: content_only skips AI processing."""
+    if state.get("status") == "recoverable_error":
+        return "recoverable_error"
     mode = state.get("import_mode", "import_all")
     if mode == "import_content_only":
         return "build_manuscript"
@@ -6001,6 +6150,8 @@ async def node_synthesize_relationships(state: ImportState) -> dict:
             source_language_label=_src_lang_label,
             language_policy=_lang_policy,
         )
+    except ProviderCallRequiresHumanConfirmation:
+        raise
     except Exception as e:
         errors.append(f"Relationship synthesis failed: {str(e)}")
         return {"relationships": _fallback_relationships(), "errors": errors, "progress": 0.87}
@@ -6095,6 +6246,8 @@ async def node_classify_character_tags(state: ImportState) -> dict:
             source_language_label=_src_lang_label,
             language_policy=_lang_policy,
         )
+    except ProviderCallRequiresHumanConfirmation:
+        raise
     except Exception as e:
         errors.append(f"Character tag classification failed: {str(e)}")
         return {"character_tags": [], "entity_registry": registry, "errors": errors, "progress": 0.89}
@@ -6192,6 +6345,8 @@ async def node_infer_world_settings(state: ImportState) -> dict:
             text_sample=text_sample,
             source_language_label=_lang_label,
         )
+    except ProviderCallRequiresHumanConfirmation:
+        raise
     except Exception as e:
         errors.append(f"World settings inference failed: {str(e)}")
         return {"world_settings": {}, "timeline_branches": [], "world_containers": [], "errors": errors, "progress": 0.91}
@@ -6389,7 +6544,9 @@ async def node_process_chunks(state: ImportState) -> dict:
 
                 def _coerce_result(results: list[Any], index: int, label: str, window: dict) -> dict:
                     result = results[index]
-                    if isinstance(result, Exception):
+                    if isinstance(result, ProviderCallRequiresHumanConfirmation):
+                        raise result
+                    if isinstance(result, BaseException):
                         window_id = window.get("id", "window")
                         chunk_notes.append(f"{label} extraction failed in {window_id}: {result}")
                         errors.append(f"Chunk {chunk_id} {label} extraction failed in {window_id}: {result}")
@@ -6431,12 +6588,14 @@ async def node_process_chunks(state: ImportState) -> dict:
                                 incoming_cross_validation,
                                 state.get("import_run_id") or "import",
                             )
-                            _write_import_artifact(
-                                state["project_path"],
-                                state.get("import_run_id") or "import",
+                            _write_state_artifact(
+                                state,
                                 "cross_validation.json",
                                 cross_validation,
+                                str(state.get("import_run_id") or "import"),
                             )
+                        except ProviderCallRequiresHumanConfirmation:
+                            raise
                         except Exception as validation_exc:
                             warning = f"Cross-validation failed in cached {prompt_window.get('id', 'window')}: {validation_exc}"
                             errors.append(warning)
@@ -6526,12 +6685,14 @@ async def node_process_chunks(state: ImportState) -> dict:
                                 incoming_cross_validation,
                                 state.get("import_run_id") or "import",
                             )
-                            _write_import_artifact(
-                                state["project_path"],
-                                state.get("import_run_id") or "import",
+                            _write_state_artifact(
+                                state,
                                 "cross_validation.json",
                                 cross_validation,
+                                str(state.get("import_run_id") or "import"),
                             )
+                        except ProviderCallRequiresHumanConfirmation:
+                            raise
                         except Exception as validation_exc:
                             warning = f"Cross-validation failed in {prompt_window.get('id', 'window')}: {validation_exc}"
                             errors.append(warning)
@@ -6900,6 +7061,8 @@ async def node_process_chunks(state: ImportState) -> dict:
                 })
                 completed_ids.add(covered_chunk_id)
 
+        except ProviderCallRequiresHumanConfirmation:
+            raise
         except Exception as e:
             errors.append(f"Chunk {chunk_id} failed: {str(e)}")
             extractions.append({
@@ -6943,20 +7106,11 @@ async def node_process_chunks(state: ImportState) -> dict:
         _chunk_log[project_path].append(log_entry)
 
         try:
-            checkpoint = {
-                "project_path": project_path,
-                "source_file_path": state["source_file_path"],
-                "total_chunks": total,
-                "completed_chunk_ids": [e["chunk_id"] for e in extractions],
-                "entity_registry": registry,
-                "chunk_extractions": extractions,
-                "raw_relationships": raw_relationships,
-                "cross_validation": cross_validation,
-                "started_at": datetime.now(timezone.utc).isoformat(),
-                "last_updated": datetime.now(timezone.utc).isoformat(),
-            }
-            with open(checkpoint_path, "w", encoding="utf-8") as f:
-                json.dump(checkpoint, f, ensure_ascii=False, indent=2)
+            _write_recovery_checkpoint(
+                state, total_chunks=total, entity_registry=registry,
+                chunk_extractions=extractions, raw_relationships=raw_relationships,
+                cross_validation=cross_validation,
+            )
         except Exception as e:
             errors.append(f"Checkpoint save failed after chunk {chunk_id}: {str(e)}")
 
@@ -6989,7 +7143,7 @@ async def node_process_chunks(state: ImportState) -> dict:
     }
 
 
-def build_graph() -> Any:
+def build_graph(checkpointer: Any) -> Any:
     """Build and compile the W1 Import StateGraph (dual-mode).
 
     content_only path: validate → checkpoint → split → build_manuscript → todos → write
@@ -7032,6 +7186,7 @@ def build_graph() -> Any:
         {
             "build_manuscript": "build_manuscript",
             "process_chunks": "process_chunks",
+            "recoverable_error": END,
         },
     )
 
@@ -7063,25 +7218,82 @@ def build_graph() -> Any:
     builder.add_edge("review_import", "write_to_project")
     builder.add_edge("write_to_project", END)
 
-    checkpointer = MemorySaver()
     return builder.compile(checkpointer=checkpointer)
 
 
-# Module-level singleton
-_graph: Any = None
+_GRAPH_CACHE: dict[tuple[str, int], Any] = {}
+_PROJECT_CHECKPOINTERS: dict[str, Any] = {}
 
 
-def get_graph() -> Any:
-    global _graph
-    if _graph is None:
-        _graph = build_graph()
-    return _graph
+def _canonical_project_path(project_path: str | Path) -> Path:
+    return Path(project_path).expanduser().resolve()
+
+
+def _project_checkpointer(project_path: Path) -> Any:
+    project_key = str(project_path)
+    if project_key not in _PROJECT_CHECKPOINTERS:
+        _PROJECT_CHECKPOINTERS[project_key] = create_sqlite_checkpointer(
+            project_path / "system" / "runtime" / "langgraph_checkpoints.db"
+        )
+    return _PROJECT_CHECKPOINTERS[project_key]
+
+
+def close_project_checkpointer(project_path: str | Path) -> None:
+    """Release W1's project-scoped durable saver on runtime shutdown."""
+    project_key = str(_canonical_project_path(project_path))
+    for cache_key in [key for key in _GRAPH_CACHE if key[0] == project_key]:
+        _GRAPH_CACHE.pop(cache_key)
+    saver = _PROJECT_CHECKPOINTERS.pop(project_key, None)
+    close_checkpointer(saver)
+
+
+async def close_project_checkpointer_async(project_path: str | Path) -> None:
+    project_key = str(_canonical_project_path(project_path))
+    for cache_key in [key for key in _GRAPH_CACHE if key[0] == project_key]:
+        _GRAPH_CACHE.pop(cache_key)
+    await aclose_checkpointer(_PROJECT_CHECKPOINTERS.pop(project_key, None))
+
+
+def get_graph(project_path: str | Path, *, checkpointer: Any | None = None) -> Any:
+    canonical_path = _canonical_project_path(project_path)
+    saver = checkpointer if checkpointer is not None else _project_checkpointer(canonical_path)
+    cache_key = (str(canonical_path), id(saver))
+    if cache_key not in _GRAPH_CACHE:
+        _GRAPH_CACHE[cache_key] = build_graph(saver)
+    return _GRAPH_CACHE[cache_key]
+
+
+def _stable_runtime_checkpoint_id(attempt_id: str, sequence: int, node: str) -> str:
+    identity = f"W1\0{attempt_id}\0{sequence}\0{node}".encode("utf-8")
+    return f"w1cp_{hashlib.sha256(identity).hexdigest()}"
+
+
+def _runtime_checkpoint_summary(
+    node_output: dict[str, Any], *, progress: Any, errors: Any,
+    completed_chunks: int, total_chunks: int,
+) -> dict[str, Any]:
+    encoded = json.dumps(
+        node_output,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return {
+        "output_hash": hashlib.sha256(encoded).hexdigest(),
+        "progress": float(progress) if isinstance(progress, (int, float)) and math.isfinite(progress) else 0.0,
+        "error_count": len(errors) if isinstance(errors, list) else 0,
+        "completed_chunks": max(0, int(completed_chunks)),
+        "total_chunks": max(0, int(total_chunks)),
+    }
 
 
 async def run(project_path: str, config: dict) -> dict:
     """Convenience entry point — creates state from config and runs graph."""
+    project_path = str(_canonical_project_path(project_path))
     import_mode = config.get("import_mode", "import_all")
     session_id = str(config.get("session_id", "") or config.get("context", {}).get("session_id", "") or "")
+    runtime_lineage_id = str(config.get("lineage_id", "") or config.get("context", {}).get("runtime_lineage_id", "") or "")
     configure_w1_budget(config, session_id)
     state: ImportState = {
         "project_path": project_path,
@@ -7089,7 +7301,8 @@ async def run(project_path: str, config: dict) -> dict:
         "source_file_path": config.get("source_file_path", ""),
         "import_mode": import_mode,
         "prompt_profile": config.get("prompt_profile") or config.get("context", {}).get("prompt_profile", "balanced"),
-        "context": {**config.get("context", {}), "session_id": session_id, "budget_policy": config.get("budget_policy")},
+        "context": {**config.get("context", {}), "session_id": session_id, "budget_policy": config.get("budget_policy"), "w1_attempt_id": config.get("attempt_id", ""), "runtime_lineage_id": runtime_lineage_id},
+        "runtime_lineage_id": runtime_lineage_id,
         "session_id": session_id,
         "chunks": [],
         "import_run_manifest": {},
@@ -7114,8 +7327,9 @@ async def run(project_path: str, config: dict) -> dict:
         "errors": [],
         "status": "running",
     }
-    thread_id = config.get("thread_id", f"w1-{uuid.uuid4().hex[:8]}")
-    compiled = get_graph()
+    attempt_id = str(config.get("attempt_id", "") or config.get("context", {}).get("w1_attempt_id", ""))
+    thread_id = config.get("thread_id") or (f"w1-{attempt_id}" if attempt_id else f"w1-{uuid.uuid4().hex[:8]}")
+    compiled = get_graph(project_path)
     return await compiled.ainvoke(state, {"configurable": {"thread_id": thread_id}})
 
 
@@ -7125,8 +7339,10 @@ async def run_streaming(project_path: str, config: dict):
     Each yielded dict has: progress, errors, completed_chunks, total_chunks.
     The caller can use these to update a status endpoint in real time.
     """
+    project_path = str(_canonical_project_path(project_path))
     prompt_profile = config.get("prompt_profile") or config.get("context", {}).get("prompt_profile", "balanced")
     session_id = str(config.get("session_id", "") or config.get("context", {}).get("session_id", "") or "")
+    runtime_lineage_id = str(config.get("lineage_id", "") or config.get("context", {}).get("runtime_lineage_id", "") or "")
     configure_w1_budget(config, session_id)
     if session_id:
         from sidecar.workflows.w1_run_events import append_event
@@ -7157,7 +7373,8 @@ async def run_streaming(project_path: str, config: dict):
         "source_file_path": config.get("source_file_path", ""),
         "import_mode": import_mode,
         "prompt_profile": prompt_profile,
-        "context": {**config.get("context", {}), "session_id": session_id, "budget_policy": config.get("budget_policy")},
+        "context": {**config.get("context", {}), "session_id": session_id, "budget_policy": config.get("budget_policy"), "w1_attempt_id": config.get("attempt_id", ""), "runtime_lineage_id": runtime_lineage_id},
+        "runtime_lineage_id": runtime_lineage_id,
         "session_id": session_id,
         "import_run_id": config.get("import_run_id", ""),
         "chunks": [],
@@ -7186,13 +7403,34 @@ async def run_streaming(project_path: str, config: dict):
         "extract_world": _profile_cfg.get("extract_world", True),
         "extract_timeline": _profile_cfg.get("extract_timeline", True),
     }
-    thread_id = config.get("thread_id", f"w1-{uuid.uuid4().hex[:8]}")
-    compiled = get_graph()
+    attempt_id = str(config.get("attempt_id", "") or config.get("context", {}).get("w1_attempt_id", ""))
+    thread_id = config.get("thread_id") or (f"w1-{attempt_id}" if attempt_id else f"w1-{uuid.uuid4().hex[:8]}")
+    compiled = get_graph(project_path)
+    from sidecar.workflows.w1_agentic_adapter import W1AgenticAdapter
+
+    agentic_adapter = W1AgenticAdapter.from_config(config)
 
     total_chunks = 0
     completed_chunks = 0
+    runtime_store = config.get("runtime_store")
+    checkpoint_sequence = 0
+    parent_checkpoint_id: str | None = None
+    if runtime_store is not None and attempt_id:
+        existing_checkpoints = runtime_store.list_checkpoint_metadata(attempt_id)
+        if existing_checkpoints:
+            latest = max(existing_checkpoints, key=lambda item: int(item.get("sequence", 0)))
+            checkpoint_sequence = int(latest.get("sequence", 0))
+            parent_checkpoint_id = str(latest["checkpoint_id"])
+        else:
+            runtime_attempt = runtime_store.get_attempt(attempt_id) or {}
+            parent_checkpoint_id = (
+                runtime_attempt.get("fork_checkpoint_id")
+                or runtime_attempt.get("checkpoint_id")
+                or None
+            )
 
-    async for event in compiled.astream(initial_state, {"configurable": {"thread_id": thread_id}}):
+    graph_stream = compiled.astream(initial_state, {"configurable": {"thread_id": thread_id}})
+    async for event in agentic_adapter.observe_stream(graph_stream):
         # astream yields {node_name: node_output} per node
         for node_name, node_output in event.items():
             if not isinstance(node_output, dict):
@@ -7215,6 +7453,26 @@ async def run_streaming(project_path: str, config: dict):
 
             progress = node_output.get("progress", 0.0)
             errors = node_output.get("errors", [])
+            if runtime_store is not None and attempt_id:
+                checkpoint_sequence += 1
+                checkpoint_id = _stable_runtime_checkpoint_id(
+                    attempt_id, checkpoint_sequence, node_name
+                )
+                runtime_store.record_checkpoint_metadata(
+                    attempt_id,
+                    checkpoint_id,
+                    node=node_name,
+                    sequence=checkpoint_sequence,
+                    parent_checkpoint_id=parent_checkpoint_id,
+                    metadata=_runtime_checkpoint_summary(
+                        node_output,
+                        progress=progress,
+                        errors=errors,
+                        completed_chunks=completed_chunks,
+                        total_chunks=total_chunks,
+                    ),
+                )
+                parent_checkpoint_id = checkpoint_id
             if session_id:
                 from sidecar.workflows.w1_run_events import append_event
                 append_event(session_id, {

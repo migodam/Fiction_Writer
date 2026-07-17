@@ -380,6 +380,24 @@ export interface ProposalOperation {
   new_category_path?: string[];
 }
 
+/** A project-root-contained reference to an immutable workflow artifact. */
+export interface ArtifactRef {
+  relativePath: string;
+  sha256: string;
+  contractVersion: string;
+  lineageId: string;
+  attemptId: string;
+}
+
+export interface ArtifactMigrationReceipt {
+  id: string;
+  createdAt: string;
+  legacyPath: string;
+  artifactRef: ArtifactRef;
+  backupPath: string;
+  status: 'completed' | 'rolled_back';
+}
+
 export interface Proposal {
   id: string;
   title: string;

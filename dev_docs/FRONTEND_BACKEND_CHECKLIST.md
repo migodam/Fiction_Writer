@@ -2,7 +2,7 @@
 
 > Integration source of truth for UI action -> store -> Electron bridge -> sidecar/workflow mapping.
 > Update this file whenever a bridge, trigger, store action, endpoint, or verification state changes.
-> Last updated: 2026-04-24
+> Last updated: 2026-07-15
 >
 > **Status legend:**
 > - ✅ COMPLETE — full chain verified end-to-end
@@ -20,6 +20,14 @@ When adding a new button or feature:
 2. Fill in all chain layers you have implemented
 3. Mark status as 🧪 UNTESTED
 4. After verifying end-to-end, update to ✅ COMPLETE
+
+## Verification Boundary (2026-07-15)
+
+Older rows retain historical implementation notes. They are not proof that a
+live DeepSeek/provider call or real import-fixture acceptance passed in this
+worktree. The resilience work has automated Python and mocked-IPC/Playwright
+coverage only; exact commands and outcomes are in
+`dev_logs/2026-07-15-agent-runtime-resilience.md`.
 
 ---
 
@@ -119,6 +127,16 @@ When adding a new button or feature:
 | Spawn sidecar | main.js / WorkbenchWorkspace | — | sidecarSpawn | sidecar:spawn | — (process) | — | 🔵 FRONTEND_ONLY | |
 | Force-clear workflow lock | WorkbenchWorkspace.tsx | — | — | workflow:force-clear | — | — | 🔵 FRONTEND_ONLY | |
 
+### Runtime Recovery (W1)
+
+| UI Element | Component File | Store Action | electronApi Method | IPC Channel | Sidecar Endpoint | AI Workflow | Status | Notes |
+|---|---|---|---|---|---|---|---|---|
+| Recoverable-run list and credentials gate | `ImportWorkflow.tsx` + `import-runtime/RecoveryCenter.tsx` | W1 runtime recovery state/actions | `runtimeRecoverable`, `runtimeResume` | `runtime:recoverable`, `runtime:resume` | `GET /runtime/runs/recoverable`; `POST /runtime/runs/{attempt_id}/resume` | W1 recovery | ✅ COMPLETE | API, mocked IPC, and real Electron project-restart discovery are covered; Import Text 18 is detected at 4/10 without exposing credentials. |
+| Pause/cancel a runtime attempt | `import-runtime/RecoveryCenter.tsx` | W1 runtime action | `runtimeAction` | `runtime:pause`, `runtime:cancel` | `POST /runtime/runs/{attempt_id}/pause|cancel` | W1 recovery | ✅ COMPLETE | Commands are idempotent in API and UI tests. |
+| Checkpoint timeline and immutable fork | `import-runtime/CheckpointTimeline.tsx` | W1 runtime checkpoint/fork state | `runtimeCheckpoints`, `runtimeFork` | `runtime:checkpoints`, `runtime:fork` | `GET /runtime/runs/{attempt_id}/checkpoints`; `POST /runtime/runs/{attempt_id}/fork` | W1 recovery | ✅ COMPLETE | Fork validates checkpoint ownership, creates a child attempt, and preserves the parent. |
+| Durable runtime-event replay | `ImportWorkflow.tsx` + `ImportConsole.tsx` | W1 runtime event cursor | `runtimeEvents` | `runtime:events` | `GET /runtime/runs/{attempt_id}/events?afterSequence=N` | W1 recovery | ✅ COMPLETE | Monotonic sequence, deduplication, cursor replay, and gap handling are covered. |
+| SSE bridge with polling fallback | `ImportWorkflow.tsx` | W1 runtime event cursor | `runtimeEventStreamSubscribe` | `runtime:event-stream-subscribe` | `GET /workflow/stream?attempt_id=...` | W1 recovery | ✅ COMPLETE | Electron Last-Event-ID replay and polling fallback are covered by `import_runtime_sse.spec.ts`; the durable runtime API remains the replay source. |
+
 ### Metadata Library
 
 | UI Element | Component File | Store Action | electronApi Method | IPC Channel | Sidecar Endpoint | AI Workflow | Status | Notes |
@@ -170,7 +188,10 @@ _(none currently tracked in this file)_
 
 _(none currently tracked in this file)_
 
-### ✅ Phase 7 Verified (2026-04-06) — 22/22 PASS
+### Historical Phase 7 Record (2026-04-06)
+
+The following is historical project documentation, not current evidence of
+live-provider execution or real-fixture acceptance:
 
 - **W1 Import** (B): 4 chunks, 77 proposals, 韩立 + alias 二愣子 correctly extracted — **8/10**
 - **W2 Manuscript Sync** (C1-C3): all 3 modes pass; entity diff + proposals generated — **9/10**

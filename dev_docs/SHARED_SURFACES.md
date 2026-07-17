@@ -2,6 +2,16 @@
 
 This document defines the high-conflict files and subsystems that require coordination during parallel development.
 
+## Runtime and Transaction Surfaces (2026-07-15)
+
+| Surface | Owners/consumers | Coordination rule |
+|---|---|---|
+| `sidecar/runtime/agent_runtime.py` and `system/runtime/agent_runtime.db` | Sidecar lifecycle, runtime router, W1 recovery, agentic scheduler | Coordinate schema/migration, lease/fence, event, redaction, and recovery changes. Per-project SQLite WAL metadata only: no graph state blobs or credentials. |
+| `sidecar/runtime/checkpointer.py` and `system/runtime/langgraph_checkpoints.db` | W0-W7 workflow modules, sidecar lifecycle | Project-scoped savers must retain serializer safety and be closed through the established lifecycle. |
+| `sidecar/routers/runtime.py`, `src/electron/main.js`, `src/electron/preload.cjs`, `src/ui-react/services/electronApi.ts` | Runtime API, IPC bridge, Recovery Center | Change endpoints, IPC, cursor, and payloads as one contract. `/workflow/stream` is the current SSE route; polling uses `/runtime/runs/{attempt_id}/events`. |
+| `src/ui-react/services/projectTransaction.ts` | Project persistence and proposal-package acceptance | Coordinate WAL/journal manifest versions, recovery semantics, and crash-injection tests. Rename plus journal is not a power-loss guarantee without `fsync`. |
+| `src/ui-react/models/project.ts` `ArtifactRef` and `src/ui-react/services/projectService.ts` | W1 artifact production/migration and Workbench acceptance | Keep ArtifactRef v2 root-contained, hash-checked, and lineage/attempt-bound; update migrations and acceptance validation together. |
+
 ## Shared Surface Contract
 | Surface | Owner role | Why it is shared | Coordination policy |
 |---|---|---|---|

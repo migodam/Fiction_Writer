@@ -26,15 +26,27 @@ const PID_DIR = path.join(os.homedir(), '.narrative-ide', 'processes');
 const sidecarProcesses = new Map();
 /** Maps projectRoot → sidecar port number */
 const sidecarPorts = new Map();
+/** Maps projectRoot → the in-flight readiness check for a spawned sidecar. */
+const sidecarStartupPromises = new Map();
+/** Maps projectRoot → an in-flight graceful/forced termination. */
+const sidecarShutdownPromises = new Map();
 /** Maps BrowserWindow → projectRoot for sidecar cleanup. */
 const windowProjectMap = new Map();
 /** Maps renderer WebContents IDs → their selected project session. */
 const senderProjectRoots = new Map();
 /** Maps renderer WebContents IDs to one-time local files selected through a native dialog. */
 const senderSourceGrants = new Map();
+/** Maps renderer WebContents IDs to the active durable runtime SSE request. */
+const runtimeEventStreams = new Map();
+/** Maps renderer WebContents IDs to the active legacy workflow SSE request. */
+const workflowEventStreams = new Map();
 const MAX_PROJECT_FILE_BYTES = 64 * 1024 * 1024;
 const MAX_PORTRAIT_BYTES = 16 * 1024 * 1024;
 const SOURCE_GRANT_TTL_MS = 5 * 60 * 1000;
+const SIDECAR_STARTUP_TIMEOUT_MS = 15_000;
+const SIDECAR_HEALTH_REQUEST_TIMEOUT_MS = 750;
+const SIDECAR_SHUTDOWN_GRACE_MS = 3_000;
+const SIDECAR_SHUTDOWN_KILL_MS = 2_000;
 
 async function canonicalProjectRoot(projectRoot) {
   if (typeof projectRoot !== 'string' || projectRoot.includes('\0') || !path.isAbsolute(projectRoot)) {
@@ -469,8 +481,17 @@ async function showOpenDialog(options) {
 
 function getSidecarPidFile(projectRoot) {
   fs.mkdirSync(PID_DIR, { recursive: true });
+  const projectId = createHash('sha256').update(projectRoot, 'utf8').digest('hex').slice(0, 40);
+  return path.join(PID_DIR, `${projectId}.json`);
+}
+
+function getLegacySidecarPidFile(projectRoot) {
   const projectId = Buffer.from(projectRoot).toString('base64url').slice(0, 40);
   return path.join(PID_DIR, `${projectId}.json`);
+}
+
+function getSidecarPidCandidates(projectRoot) {
+  return [...new Set([getSidecarPidFile(projectRoot), getLegacySidecarPidFile(projectRoot)])];
 }
 
 function findFreePort() {
@@ -494,16 +515,33 @@ function isPidAlive(pid) {
   }
 }
 
-async function spawnSidecar(projectRoot) {
-  // Check for existing PID file
-  const pidFile = getSidecarPidFile(projectRoot);
-  if (fs.existsSync(pidFile)) {
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = SIDECAR_HEALTH_REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function startSidecar(projectRoot) {
+  // Check both the collision-resistant identity and the one-version legacy path.
+  for (const pidFile of getSidecarPidCandidates(projectRoot)) {
+    if (!fs.existsSync(pidFile)) continue;
     try {
       const data = JSON.parse(fs.readFileSync(pidFile, 'utf8'));
+      // Legacy IDs can collide on long common path prefixes. Never reuse,
+      // terminate, or delete another project's sidecar metadata.
+      if (data.projectPath !== projectRoot) continue;
       if (data.pid && isPidAlive(data.pid)) {
         // Sidecar already running — verify it's actually listening
         sidecarPorts.set(projectRoot, data.port);
-        if (await waitForSidecarHealth(data.port, 1)) {
+        if (await waitForSidecarHealth(data.port, SIDECAR_HEALTH_REQUEST_TIMEOUT_MS)) {
           return data.port;
         }
         // Health check failed — kill stale process and respawn
@@ -514,16 +552,20 @@ async function spawnSidecar(projectRoot) {
         // Stale PID — delete and respawn
         fs.unlinkSync(pidFile);
       }
-    } catch { /* corrupt file — ignore */ }
+    } catch {
+      try { fs.unlinkSync(pidFile); } catch { /* corrupt file — ignore */ }
+    }
   }
 
-  // If already spawned in this session, wait for health
+  // If already spawned in this session, only reuse it after a bounded readiness check.
   const existingPort = sidecarPorts.get(projectRoot);
   if (existingPort && sidecarProcesses.has(projectRoot)) {
-    if (await waitForSidecarHealth(existingPort, 5)) return existingPort;
+    if (await waitForSidecarHealth(existingPort, SIDECAR_HEALTH_REQUEST_TIMEOUT_MS)) return existingPort;
+    await stopSidecar(projectRoot);
   }
 
   const port = await findFreePort();
+  const pidFile = getSidecarPidFile(projectRoot);
   const sidecarEntry = path.resolve(__dirname, '../../sidecar/main.py');
 
   // Resolve Python: prefer venv at sidecar/.venv, then python3 (macOS/Linux), then python (Windows)
@@ -534,14 +576,24 @@ async function spawnSidecar(projectRoot) {
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: false,
   });
+  let startupFailure = null;
 
   proc.stdout.on('data', (d) => console.log(`[sidecar:${port}]`, d.toString().trim()));
   proc.stderr.on('data', (d) => console.error(`[sidecar:${port}:err]`, d.toString().trim()));
-  proc.on('exit', (code) => {
+  proc.once('error', (error) => {
+    startupFailure = `sidecar_spawn_failed: ${error.message}`;
+  });
+  proc.on('exit', (code, signal) => {
     console.log(`[sidecar:${port}] exited with code ${code}`);
-    sidecarProcesses.delete(projectRoot);
-    sidecarPorts.delete(projectRoot);
-    try { fs.unlinkSync(getSidecarPidFile(projectRoot)); } catch { /* ignore */ }
+    if (sidecarProcesses.get(projectRoot) === proc) {
+      sidecarProcesses.delete(projectRoot);
+      sidecarPorts.delete(projectRoot);
+      try { fs.unlinkSync(getSidecarPidFile(projectRoot)); } catch { /* ignore */ }
+    }
+    if (code !== 0 && signal !== 'SIGTERM' && signal !== 'SIGKILL') {
+      startupFailure ??= `sidecar_exited_before_ready: code=${code ?? 'null'} signal=${signal ?? 'none'}`;
+      console.error(`[sidecar:${port}] exited before readiness (code ${code}, signal ${signal ?? 'none'})`);
+    }
   });
 
   sidecarProcesses.set(projectRoot, proc);
@@ -550,50 +602,106 @@ async function spawnSidecar(projectRoot) {
   // Write PID file
   fs.writeFileSync(pidFile, JSON.stringify({ pid: proc.pid, port, projectPath: projectRoot }, null, 2), 'utf8');
 
-  // Wait for the Python HTTP server to actually start accepting connections
-  await waitForSidecarHealth(port, 15);
+  // Do not publish this port until the exact child we spawned is answering /health.
+  const ready = await waitForSidecarHealth(port, SIDECAR_STARTUP_TIMEOUT_MS, () => proc.exitCode === null && !proc.killed);
+  if (!ready) {
+    await stopSidecar(projectRoot);
+    throw new Error(startupFailure ?? `sidecar_startup_timeout: /health did not become ready within ${SIDECAR_STARTUP_TIMEOUT_MS}ms`);
+  }
 
   return port;
+}
+
+async function spawnSidecar(projectRoot) {
+  const pending = sidecarStartupPromises.get(projectRoot);
+  if (pending) return pending;
+  const startup = startSidecar(projectRoot);
+  sidecarStartupPromises.set(projectRoot, startup);
+  try {
+    return await startup;
+  } finally {
+    if (sidecarStartupPromises.get(projectRoot) === startup) sidecarStartupPromises.delete(projectRoot);
+  }
 }
 
 /**
  * Poll the sidecar health endpoint until it responds or we give up.
  * @param {number} port
- * @param {number} maxAttempts - seconds to wait
+ * @param {number} timeoutMs - maximum wait before reporting failure
+ * @param {() => boolean} isExpectedProcessRunning - validates a just-spawned child
  * @returns {Promise<boolean>} true if healthy
  */
-async function waitForSidecarHealth(port, maxAttempts) {
-  for (let i = 0; i < maxAttempts; i++) {
+async function waitForSidecarHealth(port, timeoutMs, isExpectedProcessRunning = null) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (isExpectedProcessRunning && !isExpectedProcessRunning()) return false;
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/health`);
+      const res = await fetchWithTimeout(`http://127.0.0.1:${port}/health`);
       if (res.ok) return true;
     } catch { /* not ready yet */ }
-    await new Promise(r => setTimeout(r, 1000));
+    await delay(Math.min(150, Math.max(0, deadline - Date.now())));
   }
   return false;
 }
 
-function killSidecar(projectRoot) {
-  const proc = sidecarProcesses.get(projectRoot);
-  if (proc) {
-    try { proc.kill(); } catch { /* ignore */ }
+function waitForChildExit(proc, timeoutMs) {
+  if (proc.exitCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, timeoutMs);
+    const onExit = () => done();
+    function done() {
+      clearTimeout(timer);
+      proc.off('exit', onExit);
+      resolve();
+    }
+    proc.once('exit', onExit);
+  });
+}
+
+async function stopSidecar(projectRoot) {
+  const existingShutdown = sidecarShutdownPromises.get(projectRoot);
+  if (existingShutdown) return existingShutdown;
+  const shutdown = (async () => {
+    const proc = sidecarProcesses.get(projectRoot);
     sidecarProcesses.delete(projectRoot);
     sidecarPorts.delete(projectRoot);
-  }
-  const pidFile = getSidecarPidFile(projectRoot);
-  if (fs.existsSync(pidFile)) {
-    try { fs.unlinkSync(pidFile); } catch { /* ignore */ }
+    sidecarStartupPromises.delete(projectRoot);
+    for (const pidFile of getSidecarPidCandidates(projectRoot)) {
+      if (fs.existsSync(pidFile)) {
+        try { fs.unlinkSync(pidFile); } catch { /* ignore */ }
+      }
+    }
+    if (proc) {
+      try { proc.kill('SIGTERM'); } catch { /* already exited */ }
+      await waitForChildExit(proc, SIDECAR_SHUTDOWN_GRACE_MS);
+      if (proc.exitCode === null) {
+        try { proc.kill('SIGKILL'); } catch { /* already exited */ }
+        await waitForChildExit(proc, SIDECAR_SHUTDOWN_KILL_MS);
+      }
+    }
+  })();
+  sidecarShutdownPromises.set(projectRoot, shutdown);
+  try {
+    await shutdown;
+  } finally {
+    if (sidecarShutdownPromises.get(projectRoot) === shutdown) sidecarShutdownPromises.delete(projectRoot);
   }
 }
 
-function killAllSidecars() {
-  for (const projectRoot of [...sidecarProcesses.keys()]) {
-    killSidecar(projectRoot);
-  }
+async function stopAllSidecars() {
+  const projectRoots = new Set([...sidecarProcesses.keys(), ...sidecarShutdownPromises.keys()]);
+  await Promise.all([...projectRoots].map((projectRoot) => stopSidecar(projectRoot)));
 }
 
-function getSidecarPort(projectRoot) {
-  return sidecarPorts.get(projectRoot) ?? null;
+async function getReadySidecarPort(projectRoot) {
+  const startup = sidecarStartupPromises.get(projectRoot);
+  if (startup) await startup;
+  const port = sidecarPorts.get(projectRoot);
+  if (!port || !(await waitForSidecarHealth(port, SIDECAR_HEALTH_REQUEST_TIMEOUT_MS))) {
+    if (port) await stopSidecar(projectRoot);
+    throw new Error('sidecar_offline');
+  }
+  return port;
 }
 
 const __filename = fileURLToPath(import.meta.url);
@@ -652,12 +760,16 @@ function createWindow() {
       controller.abort();
     }
     streamControllers.clear();
+    runtimeEventStreams.get(win.webContents.id)?.controller.abort();
+    runtimeEventStreams.delete(win.webContents.id);
+    workflowEventStreams.get(win.webContents.id)?.controller.abort();
+    workflowEventStreams.delete(win.webContents.id);
     // Kill per-project sidecar for this window
     const projectRoot = windowProjectMap.get(win);
     windowProjectMap.delete(win);
     senderProjectRoots.delete(win.webContents.id);
     senderSourceGrants.delete(win.webContents.id);
-    if (projectRoot) killSidecar(projectRoot);
+    if (projectRoot && !electronShutdownPromise) void stopSidecar(projectRoot);
   });
 }
 
@@ -753,6 +865,19 @@ function getAIImageConfig(settings) {
     apiKey: profile.apiKey,
     model: profile.imageModel ?? 'dall-e-3',
     size: '1024x1024',
+  };
+}
+
+function getRuntimeResumeCredentials() {
+  const settings = loadAppSettings() ?? {};
+  const profiles = Array.isArray(settings.providerProfiles) ? settings.providerProfiles : [];
+  const models = Array.isArray(settings.modelProfiles) ? settings.modelProfiles : [];
+  const provider = profiles.find((profile) => profile.id === settings.selectedProviderProfileId) ?? profiles[0];
+  const model = models.find((profile) => profile.id === settings.selectedModelProfileId) ?? models[0];
+  return {
+    api_key: typeof provider?.apiKey === 'string' ? provider.apiKey : '',
+    provider: typeof provider?.provider === 'string' ? provider.provider : undefined,
+    model: typeof model?.model === 'string' ? model.model : undefined,
   };
 }
 
@@ -907,10 +1032,9 @@ ipcMain.handle('sidecar:spawn', async (event, { projectRoot }) => {
 // Poll workflow lock status (UI polls every 2s)
 ipcMain.handle('workflow:status', async (event, { projectRoot }) => {
   projectRoot = await requireProjectRoot(event, projectRoot);
-  const port = getSidecarPort(projectRoot);
-  if (!port) return { status: 'offline', workflowId: null, progress: 0 };
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/workflow/status`);
+    const port = await getReadySidecarPort(projectRoot);
+    const res = await fetchWithTimeout(`http://127.0.0.1:${port}/workflow/status`);
     return await res.json();
   } catch {
     return { status: 'offline', workflowId: null, progress: 0 };
@@ -933,9 +1057,11 @@ ipcMain.handle('workflow:force-clear', async (event, { projectRoot }) => {
 ipcMain.on('workflow:stream-subscribe', async (event, { projectRoot }) => {
   try {
     projectRoot = await requireProjectRoot(event, projectRoot);
-    const port = getSidecarPort(projectRoot);
-    if (!port) return;
-    const res = await fetch(`http://127.0.0.1:${port}/workflow/stream`);
+    const port = await getReadySidecarPort(projectRoot);
+    workflowEventStreams.get(event.sender.id)?.controller.abort();
+    const controller = new AbortController();
+    workflowEventStreams.set(event.sender.id, { controller });
+    const res = await fetch(`http://127.0.0.1:${port}/workflow/stream`, { signal: controller.signal });
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     const read = async () => {
@@ -954,7 +1080,9 @@ ipcMain.on('workflow:stream-subscribe', async (event, { projectRoot }) => {
         event.reply('workflow:stream-event', text);
       }
     };
-    read().catch(() => {/* stream ended */});
+    read().catch(() => {/* stream ended */}).finally(() => {
+      if (workflowEventStreams.get(event.sender.id)?.controller === controller) workflowEventStreams.delete(event.sender.id);
+    });
   } catch { /* sidecar offline */ }
 });
 
@@ -965,8 +1093,7 @@ async function proxyToSidecar(event, projectRoot, path, method = 'GET', body = n
   if (process.env.NARRATIVE_IDE_RUNTIME_SMOKE) {
     return { status: 'runtime-smoke', projectRoot, path, method, body };
   }
-  const port = getSidecarPort(projectRoot);
-  if (!port) throw new Error('sidecar_offline');
+  const port = await getReadySidecarPort(projectRoot);
   const opts = { method, headers: { 'Content-Type': 'application/json' } };
   if (body) opts.body = JSON.stringify(body);
   const res = await fetch(`http://127.0.0.1:${port}${path}`, opts);
@@ -1064,6 +1191,154 @@ ipcMain.handle('w1:rewind', async (event, { projectRoot, session_id, to_chunk_id
     return { ok: false };
   }
 });
+
+// ── Durable runtime recovery IPC handlers ───────────────────────────────────
+// These routes are intentionally project-root scoped. The runtime contract is
+// optional during rollout, so unsupported/offline sidecars degrade to an empty
+// inventory instead of blocking the legacy W1 import controls.
+async function runtimeProxy(event, projectRoot, route, method = 'GET', body = null) {
+  const root = await requireProjectRoot(event, projectRoot);
+  try {
+    const port = await getReadySidecarPort(root);
+    const options = { method, headers: { 'Content-Type': 'application/json' } };
+    if (body) options.body = JSON.stringify({ project_path: root, ...body });
+    const response = await fetch(`http://127.0.0.1:${port}${route}`, options);
+    const payload = await response.json().catch(() => ({}));
+    return response.ok ? payload : { ...payload, error: payload?.detail || `runtime_http_${response.status}` };
+  } catch {
+    return { error: 'sidecar_offline' };
+  }
+}
+
+function sendRuntimeStreamMessage(sender, channel, payload) {
+  if (!sender.isDestroyed()) sender.send(channel, payload);
+}
+
+function normalizeRuntimeStreamEvent(value, sseEventType, sseId) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('runtime_sse_invalid_event');
+  const sequence = Number(value.sequence ?? sseId);
+  if (!Number.isSafeInteger(sequence) || sequence <= 0) throw new Error('runtime_sse_invalid_sequence');
+  if (typeof value.event_id !== 'string' || !value.event_id) throw new Error('runtime_sse_invalid_event_id');
+  const eventType = typeof value.event_type === 'string' && value.event_type ? value.event_type : sseEventType;
+  if (typeof eventType !== 'string' || !eventType) throw new Error('runtime_sse_invalid_event_type');
+  const createdAt = typeof value.created_at === 'string'
+    ? value.created_at
+    : Number.isFinite(Number(value.created_at))
+      ? new Date(Number(value.created_at) * 1000).toISOString()
+      : undefined;
+  return {
+    event_id: value.event_id,
+    sequence,
+    event_type: eventType,
+    payload: value.payload && typeof value.payload === 'object' && !Array.isArray(value.payload) ? value.payload : {},
+    ...(createdAt ? { created_at: createdAt } : {}),
+  };
+}
+
+function parseRuntimeSseFrame(frame) {
+  let id = '';
+  let eventType = '';
+  const data = [];
+  for (const line of frame.split('\n')) {
+    if (!line || line.startsWith(':')) continue;
+    const separator = line.indexOf(':');
+    const field = separator < 0 ? line : line.slice(0, separator);
+    const value = separator < 0 ? '' : line.slice(separator + 1).replace(/^ /, '');
+    if (field === 'id') id = value;
+    if (field === 'event') eventType = value;
+    if (field === 'data') data.push(value);
+  }
+  if (data.length === 0) return null;
+  return normalizeRuntimeStreamEvent(JSON.parse(data.join('\n')), eventType, id);
+}
+
+async function consumeRuntimeEventStream(sender, subscription) {
+  const { projectRoot, attemptId, subscriptionId, afterSequence, controller } = subscription;
+  const port = await getReadySidecarPort(projectRoot);
+  const query = new URLSearchParams({ attempt_id: attemptId, afterSequence: String(afterSequence) });
+  const response = await fetch(`http://127.0.0.1:${port}/workflow/stream?${query}`, {
+    headers: { Accept: 'text/event-stream', 'Last-Event-ID': String(afterSequence) },
+    signal: controller.signal,
+  });
+  if (!response.ok || !response.body) throw new Error(`runtime_sse_http_${response.status}`);
+  sendRuntimeStreamMessage(sender, 'runtime:event-stream-status', { subscription_id: subscriptionId, attempt_id: attemptId, status: 'open' });
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, '\n');
+    let boundary = buffer.indexOf('\n\n');
+    while (boundary >= 0) {
+      const event = parseRuntimeSseFrame(buffer.slice(0, boundary));
+      buffer = buffer.slice(boundary + 2);
+      if (event) sendRuntimeStreamMessage(sender, 'runtime:event', { subscription_id: subscriptionId, attempt_id: attemptId, event });
+      boundary = buffer.indexOf('\n\n');
+    }
+    if (done) break;
+  }
+  if (!controller.signal.aborted) {
+    sendRuntimeStreamMessage(sender, 'runtime:event-stream-status', { subscription_id: subscriptionId, attempt_id: attemptId, status: 'closed', retryable: true });
+  }
+}
+
+ipcMain.handle('runtime:event-stream-subscribe', async (event, { projectRoot, attempt_id, after_sequence = 0, subscription_id }) => {
+  const root = await requireProjectRoot(event, projectRoot);
+  const attemptId = requireIdentifier(attempt_id, 'attempt_id');
+  const subscriptionId = requireIdentifier(subscription_id, 'subscription_id');
+  const afterSequence = Number.isSafeInteger(after_sequence) && after_sequence >= 0 ? after_sequence : 0;
+  runtimeEventStreams.get(event.sender.id)?.controller.abort();
+  const subscription = { projectRoot: root, attemptId, subscriptionId, afterSequence, controller: new AbortController() };
+  runtimeEventStreams.set(event.sender.id, subscription);
+  void consumeRuntimeEventStream(event.sender, subscription).catch((error) => {
+    if (!subscription.controller.signal.aborted) {
+      sendRuntimeStreamMessage(event.sender, 'runtime:event-stream-status', { subscription_id: subscriptionId, attempt_id: attemptId, status: 'error', retryable: true, error: error instanceof Error ? error.message : 'runtime_sse_failed' });
+    }
+  }).finally(() => {
+    if (runtimeEventStreams.get(event.sender.id)?.subscriptionId === subscriptionId) runtimeEventStreams.delete(event.sender.id);
+  });
+  return { ok: true, subscription_id: subscriptionId };
+});
+
+ipcMain.handle('runtime:event-stream-unsubscribe', async (event, { subscription_id }) => {
+  const subscription = runtimeEventStreams.get(event.sender.id);
+  if (subscription && (!subscription_id || subscription.subscriptionId === subscription_id)) {
+    subscription.controller.abort();
+    runtimeEventStreams.delete(event.sender.id);
+  }
+  return { ok: true };
+});
+
+ipcMain.handle('runtime:recoverable', async (event, { projectRoot }) => {
+  const root = await requireProjectRoot(event, projectRoot);
+  return runtimeProxy(event, root, `/runtime/runs/recoverable?project_path=${encodeURIComponent(root)}`);
+});
+ipcMain.handle('runtime:run', async (event, { projectRoot, lineage_id }) => {
+  const root = await requireProjectRoot(event, projectRoot);
+  return runtimeProxy(event, root, `/runtime/runs/${encodeURIComponent(lineage_id)}?project_path=${encodeURIComponent(root)}`);
+});
+ipcMain.handle('runtime:events', async (event, { projectRoot, attempt_id, after_sequence = 0 }) => {
+  const root = await requireProjectRoot(event, projectRoot);
+  return runtimeProxy(event, root, `/runtime/runs/${encodeURIComponent(attempt_id)}/events?afterSequence=${encodeURIComponent(after_sequence)}&project_path=${encodeURIComponent(root)}`);
+});
+ipcMain.handle('runtime:checkpoints', async (event, { projectRoot, attempt_id }) => {
+  const root = await requireProjectRoot(event, projectRoot);
+  return runtimeProxy(event, root, `/runtime/runs/${encodeURIComponent(attempt_id)}/checkpoints?project_path=${encodeURIComponent(root)}`);
+});
+for (const action of ['pause', 'cancel']) {
+  ipcMain.handle(`runtime:${action}`, async (event, { projectRoot, attempt_id }) =>
+    runtimeProxy(event, projectRoot, `/runtime/runs/${encodeURIComponent(attempt_id)}/${action}`, 'POST'),
+  );
+}
+ipcMain.handle('runtime:resume', async (event, { projectRoot, attempt_id }) =>
+  runtimeProxy(event, projectRoot, `/runtime/runs/${encodeURIComponent(attempt_id)}/resume`, 'POST', getRuntimeResumeCredentials()),
+);
+ipcMain.handle('runtime:fork', async (event, { projectRoot, attempt_id, checkpoint_id, decision_id }) =>
+  runtimeProxy(event, projectRoot, `/runtime/runs/${encodeURIComponent(attempt_id)}/fork`, 'POST', { checkpoint_id, decision_id }),
+);
+ipcMain.handle('runtime:decision', async (event, { projectRoot, decision_key, attempt_id, decision }) =>
+  runtimeProxy(event, projectRoot, `/runtime/decisions/${encodeURIComponent(decision_key)}`, 'POST', { attempt_id, decision }),
+);
 
 ipcMain.handle('prompts:list', async (event, { projectRoot }) => {
   try {
@@ -1214,19 +1489,81 @@ app.whenReady().then(() => {
   createWindow();
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
+    if (!electronShutdownPromise && !electronShutdownComplete && BrowserWindow.getAllWindows().length === 0) {
       createWindow();
     }
   });
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  if (!electronShutdownPromise && !electronShutdownComplete && process.platform !== 'darwin') {
     app.quit();
   }
 });
 
-app.on('before-quit', () => {
-  closeAllDbs();
-  killAllSidecars();
+let electronShutdownPromise = null;
+let electronShutdownComplete = false;
+
+function writeSmokeLifecycle(event) {
+  if (!process.env.NARRATIVE_IDE_RUNTIME_SMOKE) return;
+  const handles = typeof process._getActiveHandles === 'function'
+    ? process._getActiveHandles().map((handle) => handle?.constructor?.name ?? typeof handle).sort()
+    : [];
+  const summary = {
+    event,
+    pid: process.pid,
+    windows: BrowserWindow.getAllWindows().length,
+    sidecars: sidecarProcesses.size,
+    startupPromises: sidecarStartupPromises.size,
+    shutdownPromises: sidecarShutdownPromises.size,
+    aiStreams: streamControllers.size,
+    runtimeStreams: runtimeEventStreams.size,
+    workflowStreams: workflowEventStreams.size,
+    handles,
+  };
+  try {
+    fs.appendFileSync(path.join(app.getPath('userData'), 'electron-lifecycle-smoke.jsonl'), `${JSON.stringify(summary)}\n`);
+  } catch { /* diagnostics must never block shutdown */ }
+}
+
+function abortActiveStreams() {
+  for (const controller of streamControllers.values()) controller.abort();
+  streamControllers.clear();
+  for (const { controller } of runtimeEventStreams.values()) controller.abort();
+  runtimeEventStreams.clear();
+  for (const { controller } of workflowEventStreams.values()) controller.abort();
+  workflowEventStreams.clear();
+}
+
+async function shutdownElectronResources() {
+  if (electronShutdownPromise) return electronShutdownPromise;
+  electronShutdownPromise = (async () => {
+    abortActiveStreams();
+    closeAllDbs();
+    await stopAllSidecars();
+  })();
+  return electronShutdownPromise;
+}
+
+app.on('before-quit', (event) => {
+  writeSmokeLifecycle('before-quit');
+  if (electronShutdownComplete) return;
+  event.preventDefault();
+  void shutdownElectronResources()
+    .catch((error) => console.error('[electron] sidecar shutdown failed', error))
+    .finally(() => {
+      electronShutdownComplete = true;
+      writeSmokeLifecycle('shutdown-complete');
+      // Leave the intercepted before-quit callback before the final native
+      // exit; Electron defers termination when exit is invoked in that stack.
+      setImmediate(() => {
+        writeSmokeLifecycle('final-exit');
+        for (const window of BrowserWindow.getAllWindows()) window.destroy();
+        app.removeAllListeners('before-quit');
+        if (typeof process.reallyExit === 'function') process.reallyExit(0);
+        else process.exit(0);
+      });
+    });
 });
+
+app.on('will-quit', () => writeSmokeLifecycle('will-quit'));

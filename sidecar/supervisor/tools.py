@@ -74,7 +74,11 @@ from sidecar.workflows.w1_import import (
     node_synthesize_relationships,
     node_write_to_project,
 )
-from sidecar.workflows.w1_run_events import append_event, set_active_call
+from sidecar.workflows.w1_run_events import (
+    ProviderCallRequiresHumanConfirmation,
+    append_event,
+    set_active_call,
+)
 from sidecar.supervisor.prompt_policy import build_directives_header
 from sidecar.prompts.w1_prompts import (
     W1_CROSS_VALIDATE_IMPORT,
@@ -210,6 +214,8 @@ async def _invoke_window_prompt_with_activity(
                 "duration_ms": int((perf_counter() - started) * 1000),
             })
         return result
+    except ProviderCallRequiresHumanConfirmation:
+        raise
     except Exception as exc:
         if session_id:
             is_budget = _is_budget_exhausted_error(exc)
@@ -604,6 +610,8 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
         for kind, prompt, extra in prompt_specs:
             try:
                 results.append(await invoke_prompt(kind, prompt, extra))
+            except ProviderCallRequiresHumanConfirmation:
+                raise
             except Exception as exc:
                 results.append(exc)
                 if _is_budget_exhausted_error(exc):
@@ -619,6 +627,8 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
     outputs: list[dict] = []
     _budget_exhausted_in_window = False
     for i, (label, result) in enumerate(zip(labels, results)):
+        if isinstance(result, ProviderCallRequiresHumanConfirmation):
+            raise result
         if isinstance(result, Exception):
             if _is_budget_exhausted_error(result):
                 _budget_exhausted_in_window = True
@@ -887,6 +897,8 @@ async def cross_validate_window(state: ImportSupervisorState, window_id: str) ->
         )
         raw = response.content if isinstance(response.content, str) else str(response.content)
         result = _parse_json_response(raw)
+    except ProviderCallRequiresHumanConfirmation:
+        raise
     except Exception as exc:
         log = list(state.get("supervisor_log", []))
         log.append(f"cross_validate_window {window_id}: non-fatal error — {exc}")

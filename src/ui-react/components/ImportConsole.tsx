@@ -19,6 +19,8 @@ export const ImportConsole: React.FC<ImportConsoleProps> = ({ visible }) => {
   const setW1Breakpoint = useProjectStore((s) => s.setW1Breakpoint);
   const resumeW1 = useProjectStore((s) => s.resumeW1);
   const rewindW1 = useProjectStore((s) => s.rewindW1);
+  const w1RuntimeSelectedAgent = useProjectStore((s) => s.w1RuntimeSelectedAgent);
+  const w1RuntimeEvents = useProjectStore((s) => s.w1RuntimeEvents);
 
   const [breakpointInput, setBreakpointInput] = useState("");
   const [expandedChunks, setExpandedChunks] = useState<Set<number>>(new Set());
@@ -54,7 +56,24 @@ export const ImportConsole: React.FC<ImportConsoleProps> = ({ visible }) => {
 
   if (!visible) return null;
 
-  const executionStream = createW1ExecutionStream(w1ActivityLog, w1ConsoleLog);
+  const runtimeActivityLog = w1RuntimeEvents.map((event) => ({
+    id: 1000000000 + event.sequence,
+    timestamp: event.created_at ?? '',
+    level: event.event_type.includes('error') ? 'error' : 'info',
+    phase: event.event_type,
+    tool: String(event.payload?.agent_id ?? event.payload?.agentId ?? 'runtime'),
+    status: event.event_type,
+    message: String(event.payload?.summary ?? event.payload?.message ?? event.event_type),
+    agent_id: String(event.payload?.agent_id ?? event.payload?.agentId ?? event.payload?.node_id ?? event.payload?.nodeId ?? 'runtime'),
+  }));
+  const combinedActivityLog = [...w1ActivityLog, ...runtimeActivityLog];
+  const filteredActivityLog = w1RuntimeSelectedAgent
+    ? combinedActivityLog.filter((entry) => {
+        const payload = entry as unknown as Record<string, unknown>;
+        return String(payload.agent_id ?? payload.agentId ?? payload.node_id ?? payload.nodeId ?? '') === w1RuntimeSelectedAgent;
+      })
+    : combinedActivityLog;
+  const executionStream = createW1ExecutionStream(filteredActivityLog, w1ConsoleLog);
   const currentHint =
     w1RuntimeStatus?.last_activity_message ||
     w1RuntimeStatus?.current_tool ||
@@ -102,6 +121,7 @@ export const ImportConsole: React.FC<ImportConsoleProps> = ({ visible }) => {
             {w1BreakpointChunk}
           </span>
         )}
+        {w1RuntimeSelectedAgent && <span className="text-[10px] text-brand" data-testid="console-agent-filter">{w1RuntimeSelectedAgent}</span>}
       </div>
 
       {/* Paused banner */}

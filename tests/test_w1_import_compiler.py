@@ -31,6 +31,29 @@ def test_import_manifest_is_deterministic(tmp_path):
     assert first["segments"][0]["id"] == second["segments"][0]["id"]
 
 
+def test_import_manifest_keeps_lineage_as_compatibility_import_run_id(tmp_path):
+    source = tmp_path / "novel.txt"
+    source.write_text("Chapter 1\nA beginning.", encoding="utf-8")
+    manifest = w1_import._build_import_manifest(
+        {
+            "project_path": str(tmp_path),
+            "source_file_path": str(source),
+            "import_run_id": "lineage_stable",
+            "lineage_id": "lineage_stable",
+            "context": {},
+        },
+        source.read_text(encoding="utf-8"),
+        [{"chunk_id": 0, "chapter_hint": "Chapter 1", "manuscript_content": "A beginning."}],
+    )
+
+    assert manifest["import_run_id"] == "lineage_stable"
+    assert manifest["lineage_id"] == "lineage_stable"
+
+
+def test_recoverable_checkpoint_error_stops_before_chunk_processing():
+    assert w1_import.route_by_mode({"status": "recoverable_error"}) == "recoverable_error"
+
+
 def test_prompt_window_preserves_complete_normal_chapter(tmp_path):
     state = {"project_path": str(tmp_path), "prompt_profile": "deep", "context": {}}
     digest = {
@@ -1337,6 +1360,23 @@ def test_node_write_to_project_returns_compact_receipts(tmp_path, monkeypatch):
     assert "character" in entity_types
     assert "timeline_event" in entity_types
     assert "world_item" in entity_types
+
+
+def test_proposal_staging_preserves_recovery_checkpoint_until_acceptance(tmp_path, monkeypatch):
+    async def fake_propose_write(op, _project_path):
+        return {"id": f"p_{op['entity_id']}", "confidence": op["confidence"]}
+
+    monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", fake_propose_write)
+    checkpoint_path = tmp_path / "system" / "imports" / "lineage" / "attempts" / "attempt" / "checkpoint.json"
+    checkpoint_path.parent.mkdir(parents=True)
+    checkpoint_path.write_text('{"status":"recoverable"}', encoding="utf-8")
+    state = _make_write_state(tmp_path)
+    state["checkpoint_path"] = str(checkpoint_path)
+
+    asyncio.run(w1_import.node_write_to_project(state))
+
+    assert checkpoint_path.read_text(encoding="utf-8") == '{"status":"recoverable"}'
+    assert (tmp_path / "system" / "imports" / "import_compact" / "proposal_write_receipts.json").exists()
 
 
 def test_matched_character_merge_writes_an_accepted_update_proposal(tmp_path, monkeypatch):

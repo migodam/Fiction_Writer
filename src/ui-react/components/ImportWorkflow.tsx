@@ -1,9 +1,12 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { CheckCircle2, ClipboardCheck, Terminal } from "lucide-react";
 import { electronApi } from "../services/electronApi";
 import { useProjectStore } from "../store";
 import { useI18n } from "../i18n";
 import { ImportConsole } from "./ImportConsole";
+import { RecoveryCenter } from "./import-runtime/RecoveryCenter";
+import { CheckpointTimeline } from "./import-runtime/CheckpointTimeline";
+import { AgentDag } from "./import-runtime/AgentDag";
 import type {
   ImportObservabilitySummary,
   W1CustomProfileConfig,
@@ -280,6 +283,22 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
   const startImport = useProjectStore((s) => s.startImport);
   const cancelImport = useProjectStore((s) => s.cancelImport);
   const resetImport = useProjectStore((s) => s.resetImport);
+  const w1RecoverableRuns = useProjectStore((s) => s.w1RecoverableRuns);
+  const w1RuntimeEvents = useProjectStore((s) => s.w1RuntimeEvents);
+  const w1RuntimeCheckpoints = useProjectStore((s) => s.w1RuntimeCheckpoints);
+  const w1RuntimeLoading = useProjectStore((s) => s.w1RuntimeLoading);
+  const w1RuntimeError = useProjectStore((s) => s.w1RuntimeError);
+  const w1RuntimeGapWarning = useProjectStore((s) => s.w1RuntimeGapWarning);
+  const w1RuntimeAction = useProjectStore((s) => s.w1RuntimeAction);
+  const w1RuntimeSelectedAgent = useProjectStore((s) => s.w1RuntimeSelectedAgent);
+  const w1RuntimeLineageId = useProjectStore((s) => s.w1RuntimeLineageId);
+  const discoverW1Recovery = useProjectStore((s) => s.discoverW1Recovery);
+  const syncW1Runtime = useProjectStore((s) => s.syncW1Runtime);
+  const resumeW1Recovery = useProjectStore((s) => s.resumeW1Recovery);
+  const forkW1Checkpoint = useProjectStore((s) => s.forkW1Checkpoint);
+  const pauseW1Runtime = useProjectStore((s) => s.pauseW1Runtime);
+  const cancelW1Runtime = useProjectStore((s) => s.cancelW1Runtime);
+  const setW1RuntimeSelectedAgent = useProjectStore((s) => s.setW1RuntimeSelectedAgent);
   const { t } = useI18n();
   const [consoleOpen, setConsoleOpen] = useState(true);
   const [showAllWarnings, setShowAllWarnings] = useState(false);
@@ -288,6 +307,12 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
     remaining: number;
   } | null>(null);
   const [sourceFilePath, setSourceFilePath] = useState("");
+
+  useEffect(() => {
+    void discoverW1Recovery();
+    const interval = window.setInterval(() => void syncW1Runtime(), 4000);
+    return () => window.clearInterval(interval);
+  }, [discoverW1Recovery, syncW1Runtime, projectRoot]);
 
   const updateCustomProfile = useCallback(
     (patch: Partial<W1CustomProfileConfig>) => {
@@ -390,6 +415,10 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
         <h2 className="mb-4 text-lg font-semibold text-text">
           {t("import.title")}
         </h2>
+        <RecoveryCenter runs={w1RecoverableRuns} loading={w1RuntimeLoading} error={w1RuntimeError} action={w1RuntimeAction} activeLineageId={w1RuntimeLineageId} onRefresh={() => void discoverW1Recovery()} onResume={(run) => void resumeW1Recovery(run)} onPause={() => void pauseW1Runtime()} onCancel={() => void cancelW1Runtime()} t={t} />
+        {w1RuntimeGapWarning && <div className="mb-3 border-l-2 border-amber bg-amber/10 px-3 py-2 text-xs text-text-2" data-testid="w1-runtime-gap-warning">{t("import.runtimeGap", "Some runtime events were unavailable; the activity view resumes from the latest confirmed sequence.")}</div>}
+        <CheckpointTimeline checkpoints={w1RuntimeCheckpoints} action={w1RuntimeAction} onFork={(checkpointId) => void forkW1Checkpoint(checkpointId)} t={t} />
+        <AgentDag events={w1RuntimeEvents} selectedAgent={w1RuntimeSelectedAgent} onSelect={setW1RuntimeSelectedAgent} t={t} />
         <div
           data-testid="w1-import-entry"
           className="mb-4 grid gap-2 rounded-xl border border-border bg-bg-elev-1 p-3 text-xs sm:grid-cols-4"

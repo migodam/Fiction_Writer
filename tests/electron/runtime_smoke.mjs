@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { once } from 'node:events';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -16,7 +18,7 @@ const fixture = `<!doctype html>
 </script></body></html>`;
 
 const startedAt = process.hrtime.bigint();
-const resources = { app: undefined, vite: undefined };
+const resources = { app: undefined, vite: undefined, sidecarPid: undefined, userData: undefined };
 let cleanupPromise;
 
 let providerModelsRequest;
@@ -113,11 +115,38 @@ async function closeServer() {
 async function closeElectronApp(app, stage = 'electron.app.close') {
   if (!app) return;
   try {
-    await runStage(stage, 5_000, () => app.close());
+    await runStage(stage, 9_000, async () => {
+      const child = app.process();
+      const exitPromise = once(child, 'exit');
+      void app.evaluate(({ app: electronApp }) => electronApp.quit()).catch(() => {});
+      await exitPromise;
+    });
+    const diagnostics = (await readFile(path.join(resources.userData, 'electron-lifecycle-smoke.jsonl'), 'utf8'))
+      .trim().split('\n').map((line) => JSON.parse(line));
+    const shutdown = diagnostics.findLast((entry) => entry.event === 'shutdown-complete');
+    assert(shutdown, 'Missing shutdown-complete lifecycle diagnostic');
+    assert.equal(shutdown.sidecars, 0);
+    assert.equal(shutdown.runtimeStreams, 0);
+    assert.equal(shutdown.workflowStreams, 0);
+    if (resources.sidecarPid) {
+      let alive = false;
+      try {
+        process.kill(resources.sidecarPid, 0);
+        alive = true;
+      } catch (error) {
+        if (error?.code !== 'ESRCH') throw error;
+      }
+      assert.equal(alive, false, `Sidecar child ${resources.sidecarPid} survived Electron quit`);
+    }
   } catch (error) {
     const child = app.process();
+    try {
+      const diagnostics = await readFile(path.join(resources.userData, 'electron-lifecycle-smoke.jsonl'), 'utf8');
+      log(stage, `main lifecycle diagnostics: ${diagnostics.trim()}`);
+    } catch { /* diagnostics unavailable */ }
     log(stage, `forcing process termination after close failure (pid ${child?.pid ?? 'unknown'})`);
     try { child?.kill('SIGKILL'); } catch (killError) { log(stage, `force kill failed: ${describeError(killError)}`); }
+    throw error;
   }
 }
 
@@ -143,7 +172,12 @@ async function cleanup(tempDirectories = []) {
   if (cleanupPromise) return cleanupPromise;
   cleanupPromise = (async () => {
     log('cleanup', 'start');
-    await closeElectron();
+    let electronCloseError;
+    try {
+      await closeElectron();
+    } catch (error) {
+      electronCloseError = error;
+    }
     try {
       await closeVite();
     } catch (error) {
@@ -162,12 +196,14 @@ async function cleanup(tempDirectories = []) {
       }
     }
     log('cleanup', 'complete');
+    if (electronCloseError) throw electronCloseError;
   })();
   return cleanupPromise;
 }
 
 async function main() {
   const userData = await mkdtemp(path.join(os.tmpdir(), 'narrative-ide-electron-smoke-'));
+  resources.userData = userData;
   const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'narrative-ide-electron-smoke-project-'));
   const unauthorizedRoot = await mkdtemp(path.join(os.tmpdir(), 'narrative-ide-electron-untrusted-project-'));
   const canonicalProjectRoot = await realpath(projectRoot);
@@ -245,6 +281,12 @@ async function main() {
     const providerInvalidResponse = await bridge.testProviderConnection({ provider: 'smoke-provider', endpoint: invalidProviderEndpoint, apiKey: 'smoke-secret-key' });
     const providerUnsafeEndpoint = await bridge.testProviderConnection({ provider: 'smoke-provider', endpoint: 'https://169.254.169.254/v1', apiKey: 'smoke-secret-key' });
     const providerInvalidEndpoint = await bridge.testProviderConnection({ provider: 'smoke-provider', endpoint: 'http://example.com/v1', apiKey: 'smoke-secret-key' });
+    const [firstSpawn, secondSpawn, thirdSpawn] = await Promise.all([
+      bridge.sidecarSpawn({ projectRoot: expectedProjectRoot }),
+      bridge.sidecarSpawn({ projectRoot: expectedProjectRoot }),
+      bridge.sidecarSpawn({ projectRoot: expectedProjectRoot }),
+    ]);
+    const runtimeRecoverable = await bridge.runtimeRecoverable({ projectRoot: expectedProjectRoot });
     const w1 = await bridge.w1Status({ projectRoot: expectedProjectRoot, session_id: 'w1 smoke/&?' });
     let unauthorizedError = '';
     try {
@@ -265,6 +307,10 @@ async function main() {
       providerInvalidResponse,
       providerUnsafeEndpoint,
       providerInvalidEndpoint,
+      firstSpawn,
+      secondSpawn,
+      thirdSpawn,
+      runtimeRecoverable,
       w1,
       unauthorizedError,
       bridgeFileContents,
@@ -296,6 +342,12 @@ async function main() {
   assert.equal(runtime.providerInvalidEndpoint.code, 'invalid_endpoint');
   assert.equal(JSON.stringify(runtime.providerConnection).includes('smoke-secret-key'), false);
   assert.deepEqual(providerModelsRequest, { method: 'GET', authorization: 'Bearer smoke-secret-key' });
+  assert.equal(runtime.firstSpawn.ok, true);
+  assert.equal(runtime.secondSpawn.ok, true);
+  assert.equal(runtime.thirdSpawn.ok, true);
+  assert.equal(runtime.firstSpawn.port, runtime.secondSpawn.port);
+  assert.equal(runtime.secondSpawn.port, runtime.thirdSpawn.port);
+  assert.notEqual(runtime.runtimeRecoverable.error, 'sidecar_offline');
   assert.equal(runtime.w1.status, 'runtime-smoke');
   assert.equal(runtime.w1.projectRoot, canonicalProjectRoot);
   assert.match(runtime.w1.path, /^\/workflow\/w1\/status\?session_id=w1%20smoke%2F%26%3F$/);
@@ -307,6 +359,11 @@ async function main() {
   assert.equal(runtime.bridgeKeys.includes('invoke'), false);
   assert.equal(runtime.bridgeKeys.includes('send'), false);
   assert.equal(runtime.sha256, 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+
+  const projectIdentity = createHash('sha256').update(canonicalProjectRoot, 'utf8').digest('hex').slice(0, 40);
+  const pidFile = path.join(os.homedir(), '.narrative-ide', 'processes', `${projectIdentity}.json`);
+  resources.sidecarPid = JSON.parse(await readFile(pidFile, 'utf8')).pid;
+  assert.equal(typeof resources.sidecarPid, 'number');
 
   const portraitSecurity = await runStage('fixture-page.portrait-source-grants', 30_000, () => page.evaluate(async ({ expectedProjectRoot, unauthorizedPath }) => {
     const bridge = window.narrativeIDE;
@@ -438,7 +495,7 @@ async function main() {
       ...created,
       metadata: { ...created.metadata, name: 'Bridge Roundtrip Saved' },
     });
-    const opened = projectService.openProject(expectedProjectRoot);
+    const opened = await projectService.openProject(expectedProjectRoot);
     return {
       savedName: saved.metadata.name,
       openedName: opened.metadata.name,

@@ -2,6 +2,27 @@
 
 > For supervisor-mode operation (`use_supervisor=true`), see [W1_AGENTIC_IMPORT_SUPERVISOR.md](./W1_AGENTIC_IMPORT_SUPERVISOR.md).
 
+## Durable Attempt and Artifact Contract (2026-07-15)
+
+Each W1 execution has stable input-derived lineage/cache identity and a distinct
+attempt directory under `system/imports/<lineage_id>/attempts/<attempt_id>/`.
+Checkpoint receipts revalidate source and receipt hashes before recovery. A
+legacy import can migrate only from a verified contiguous prefix; stale,
+noncanonical, tampered, or source-mutated state fails closed.
+
+Staged manuscript packages use ArtifactRef v2: relative path, SHA-256, contract
+version, lineage ID, and attempt ID. Workbench acceptance rejects uncontained
+paths, lineage/attempt mismatch, symlinks, contract mismatch, or
+hash/source-manifest mismatch before canonical mutation. Legacy migration is
+journaled. Package persistence uses `projectTransaction` prepared manifests,
+preimages, rename/commit markers, and idempotent recovery. The current bridge
+has no `fsync`, so this is not a power-loss guarantee.
+
+The runtime records tool intents/results and may mark post-restart calls
+`unknown_outcome`. Recovery Center requires a durable, versioned human decision
+to retry exactly once or cancel; recovery never repeats an unknown paid call by
+default.
+
 ## Status
 W1 import now uses a Hybrid Compiler spine for long novel imports. The runtime still starts from the existing Import modal and sidecar W1 endpoint, but imported material is staged through deterministic artifacts before proposals are written.
 

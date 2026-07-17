@@ -9,9 +9,13 @@ from __future__ import annotations
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+import hashlib
+import json
 import re
 from threading import RLock
 from typing import Any
+
+from sidecar.runtime.agent_runtime import LeaseLostError
 
 _events: dict[str, list[dict[str, Any]]] = {}
 _started_at: dict[str, datetime] = {}
@@ -20,6 +24,8 @@ _active_calls: dict[str, int] = {}
 _cancel_requested: set[str] = set()
 _token_ledger: dict[str, dict[str, int]] = {}
 _budget_ledgers: dict[str, "BudgetLedger"] = {}
+_runtime_bindings: dict[str, tuple[Any, str, str, int]] = {}
+_runtime_tool_call_lock = RLock()
 _compat_reservation_tokens: ContextVar[dict[str, tuple[str, ...]]] = ContextVar(
     "w1_compat_reservation_tokens", default={}
 )
@@ -58,6 +64,14 @@ _SORTED_PRICE_TABLE: list[tuple[str, dict[str, Any]]] = sorted(
 )
 
 _SECRET_KEYS = {"api_key", "apikey", "authorization", "token", "password", "secret"}
+
+
+class ProviderCallRequiresHumanConfirmation(RuntimeError):
+    """Fail-stop signal for a provider call whose billable outcome is unknown."""
+
+    def __init__(self, idempotency_key: str):
+        self.idempotency_key = idempotency_key
+        super().__init__(f"requires_human_confirmation:unknown_outcome:{idempotency_key}")
 
 
 def _matches_model_key(model: str, key: str) -> bool:
@@ -311,6 +325,7 @@ def clear_session(session_id: str) -> None:
     _active_calls.pop(session_id, None)
     _token_ledger.pop(session_id, None)
     _budget_ledgers.pop(session_id, None)
+    _runtime_bindings.pop(session_id, None)
     _cancel_requested.discard(session_id)
     bound = dict(_compat_reservation_tokens.get())
     if session_id in bound:
@@ -354,6 +369,185 @@ def _bind_compat_reservation(session_id: str, reservation_token: str) -> None:
     bound = dict(_compat_reservation_tokens.get())
     bound[session_id] = (*bound.get(session_id, ()), reservation_token)
     _compat_reservation_tokens.set(bound)
+
+
+def bind_runtime(session_id: str, store: Any, attempt_id: str, owner_id: str, fence_token: int) -> None:
+    """Mirror legacy activity into the durable runtime event stream."""
+    ensure_session(session_id)
+    _runtime_bindings[session_id] = (store, attempt_id, owner_id, fence_token)
+
+
+def provider_message_hash(messages: list[Any]) -> str:
+    """Hash provider input without returning or persisting message content."""
+    canonical = []
+    for message in messages:
+        canonical.append({
+            "type": type(message).__name__,
+            "content": getattr(message, "content", ""),
+        })
+    encoded = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def provider_result_hash(response: Any) -> str:
+    content = getattr(response, "content", "")
+    encoded = json.dumps(content, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _retry_decision_key(idempotency_key: str) -> str:
+    return f"retry_provider_call:{idempotency_key}"
+
+
+def _retry_is_authorized(store: Any, attempt_id: str, idempotency_key: str) -> bool:
+    expected = _retry_decision_key(idempotency_key)
+    return any(
+        decision.get("decision_key") == expected
+        and decision.get("decision") == "authorize_retry_once"
+        for decision in store.list_human_decisions(attempt_id)
+    )
+
+
+def begin_provider_call(
+    session_id: str,
+    *,
+    model: str,
+    message_hash: str,
+    estimated_input_tokens: int,
+    estimated_output_tokens: int,
+) -> dict[str, Any]:
+    """Persist a redacted provider-call intent before network I/O."""
+    binding = _runtime_bindings.get(session_id)
+    if binding is None:
+        fallback_key = hashlib.sha256(
+            f"unmanaged:{session_id}:{model}:{message_hash}".encode("utf-8")
+        ).hexdigest()
+        return {"managed": False, "idempotency_key": fallback_key}
+
+    store, attempt_id, owner_id, fence_token = binding
+    with _runtime_tool_call_lock:
+        existing_calls = store.list_tool_calls(attempt_id)
+        unknown_calls = [call for call in existing_calls if call.get("status") == "unknown_outcome"]
+        for call in unknown_calls:
+            unknown_key = str(call.get("intent_payload", {}).get("idempotency_key", ""))
+            if unknown_key and not _retry_is_authorized(store, attempt_id, unknown_key):
+                mark_cancel_requested(session_id)
+                store.set_attempt_status(
+                    attempt_id, "waiting_human",
+                    owner_id=owner_id, fence_token=fence_token,
+                )
+                raise ProviderCallRequiresHumanConfirmation(unknown_key)
+
+        sequence = len(existing_calls) + 1
+        idempotency_key = hashlib.sha256(
+            f"{attempt_id}:{sequence}:{model}:{message_hash}".encode("utf-8")
+        ).hexdigest()
+        tool_call_id = f"w1_provider_{idempotency_key[:32]}"
+        payload = {
+            "message_hash": message_hash,
+            "model": model,
+            "estimated_input_tokens": max(0, int(estimated_input_tokens or 0)),
+            "estimated_output_tokens": max(0, int(estimated_output_tokens or 0)),
+            "sequence": sequence,
+            "idempotency_key": idempotency_key,
+        }
+        matching_unknown = next((
+            item for item in unknown_calls
+            if item.get("intent_payload", {}).get("message_hash") == message_hash
+            and item.get("intent_payload", {}).get("model") == model
+        ), None)
+        if matching_unknown is not None:
+            unknown_key = str(matching_unknown["intent_payload"]["idempotency_key"])
+            call = store.record_authorized_retry_intent(
+                attempt_id,
+                matching_unknown["tool_call_id"],
+                _retry_decision_key(unknown_key),
+                "provider.chat.completions",
+                payload,
+                tool_call_id=tool_call_id,
+                owner_id=owner_id,
+                fence_token=fence_token,
+            )
+        else:
+            call = store.record_tool_intent(
+                attempt_id,
+                "provider.chat.completions",
+                payload,
+                tool_call_id=tool_call_id,
+                owner_id=owner_id,
+                fence_token=fence_token,
+            )
+        return {
+            "managed": True,
+            "store": store,
+            "attempt_id": attempt_id,
+            "tool_call_id": call["tool_call_id"],
+            "idempotency_key": idempotency_key,
+            "owner_id": owner_id,
+            "fence_token": fence_token,
+        }
+
+
+def settle_provider_success(
+    call: dict[str, Any], *, model: str, input_tokens: int | None,
+    output_tokens: int | None, result_hash: str,
+) -> None:
+    if not call.get("managed"):
+        return
+    call["store"].record_tool_result(call["tool_call_id"], {
+        "outcome": "success",
+        "model": model,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "result_hash": result_hash,
+        "idempotency_key": call["idempotency_key"],
+    }, attempt_id=call["attempt_id"], owner_id=call["owner_id"], fence_token=call["fence_token"])
+
+
+def settle_provider_failure(call: dict[str, Any], *, failure_type: str, status_code: int | None = None) -> None:
+    if not call.get("managed"):
+        return
+    store = call["store"]
+    payload = {
+        "outcome": "failed",
+        "failure_type": failure_type,
+        "status_code": status_code,
+        "idempotency_key": call["idempotency_key"],
+    }
+    if hasattr(store, "record_tool_failure"):
+        store.record_tool_failure(
+            call["tool_call_id"], payload, attempt_id=call["attempt_id"],
+            owner_id=call["owner_id"], fence_token=call["fence_token"],
+        )
+    else:
+        store._update_tool_call(
+            call["tool_call_id"], "failed", payload=payload, reason=failure_type,
+            attempt_id=call["attempt_id"], owner_id=call["owner_id"],
+            fence_token=call["fence_token"],
+        )
+
+
+def settle_provider_unknown(session_id: str, call: dict[str, Any], *, reason: str) -> ProviderCallRequiresHumanConfirmation:
+    idempotency_key = str(call.get("idempotency_key", "unmanaged"))
+    if call.get("managed"):
+        store = call["store"]
+        store.record_tool_unknown_outcome(
+            call["tool_call_id"], reason, attempt_id=call["attempt_id"],
+            owner_id=call["owner_id"], fence_token=call["fence_token"],
+        )
+        store.set_attempt_status(
+            call["attempt_id"], "waiting_human", owner_id=call["owner_id"],
+            fence_token=call["fence_token"],
+        )
+    mark_cancel_requested(session_id)
+    append_event(session_id, {
+        "level": "warning",
+        "phase": "provider_call",
+        "tool": "provider.chat.completions",
+        "status": "waiting_human",
+        "message": "requires_human_confirmation:unknown_outcome",
+    })
+    return ProviderCallRequiresHumanConfirmation(idempotency_key)
 
 
 def _take_compat_reservation(session_id: str) -> str | None:
@@ -588,6 +782,17 @@ def append_event(session_id: str, event: dict[str, Any]) -> dict[str, Any]:
     }
     entries.append(entry)
     _last_activity_at[session_id] = now
+    binding = _runtime_bindings.get(session_id)
+    if binding is not None:
+        store, attempt_id, owner_id, fence_token = binding
+        try:
+            store.append_event(attempt_id, "w1_activity", entry, owner_id=owner_id, fence_token=fence_token)
+        except LeaseLostError:
+            # Preserve managed mode. The next provider intent will fence before I/O.
+            mark_cancel_requested(session_id)
+        except Exception:
+            # A transient event-mirror failure must not downgrade provider calls.
+            pass
     return entry
 
 

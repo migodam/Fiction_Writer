@@ -7,10 +7,12 @@ Each session maps a UUID to the graph config needed to resume execution.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import uuid
+from pathlib import Path
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from sidecar.utils.lock import acquire_lock, release_lock, WorkflowBusyError
@@ -27,6 +29,93 @@ _w2_sessions: dict[str, dict] = {}
 _w4_sessions: dict[str, dict] = {}
 _w5_sessions: dict[str, dict] = {}
 _w6_sessions: dict[str, dict] = {}
+
+
+def apply_runtime_command(attempt_id: str, command: str) -> None:
+    """Apply durable runtime controls to an in-memory W1 session when present."""
+    session = _w1_sessions.get(attempt_id)
+    if session is None:
+        return
+    from sidecar.workflows.w1_import import _breakpoint_chunks, _cancel_events, _pause_events
+    from sidecar.workflows.w1_run_events import mark_cancel_requested
+
+    project_path = session.get("project_path", "")
+    if command == "pause":
+        session["paused"] = True
+        session["status"] = "paused"
+        session["breakpoint_chunk"] = 0
+        _breakpoint_chunks[project_path] = 0
+        if project_path in _pause_events:
+            _pause_events[project_path].clear()
+    elif command == "resume":
+        session["paused"] = False
+        session["status"] = "running"
+        session["breakpoint_chunk"] = None
+        _breakpoint_chunks.pop(project_path, None)
+        if project_path in _pause_events:
+            _pause_events[project_path].set()
+    elif command == "cancel":
+        mark_cancel_requested(attempt_id)
+        session["status"] = "cancelled"
+        if project_path in _cancel_events:
+            _cancel_events[project_path].set()
+        if project_path in _pause_events:
+            _pause_events[project_path].set()
+        task = _w1_tasks.get(attempt_id)
+        if task and not task.done():
+            task.cancel()
+    _w1_sessions[attempt_id] = session
+
+
+async def resume_w1_attempt(
+    *, attempt_id: str, runtime_store: Any, runtime_owner_id: str, api_key: str,
+    persisted_config: dict[str, Any], overrides: dict[str, Any] | None = None,
+) -> bool:
+    """Rebuild transient W1 credentials and schedule exactly one recovered worker."""
+    existing = _w1_tasks.get(attempt_id)
+    if existing is not None and not existing.done():
+        apply_runtime_command(attempt_id, "resume")
+        return False
+
+    config = dict(persisted_config)
+    config.update(overrides or {})
+    project_path = str(config.get("project_path") or "")
+    source_file_path = str(config.get("source_file_path") or "")
+    if not project_path or not source_file_path:
+        raise ValueError("recoverable W1 config is missing project_path or source_file_path")
+    lease = runtime_store.acquire_lease(attempt_id, runtime_owner_id, ttl_seconds=60)
+    context = dict(config.get("context") or {})
+    context.update({
+        "api_key": api_key,
+        "model": config.get("model", context.get("model", "deepseek-chat")),
+        "prompt_profile": config.get("profile", config.get("prompt_profile", context.get("prompt_profile", "balanced"))),
+    })
+    budget_policy = dict(config.get("budget_config") or config.get("budget_policy") or context.get("budget_policy") or {})
+    context["budget_policy"] = budget_policy
+    config.update({
+        "project_path": project_path,
+        "source_file_path": source_file_path,
+        "prompt_profile": config.get("profile", config.get("prompt_profile", "balanced")),
+        "budget_policy": budget_policy,
+        "context": context,
+        "session_id": attempt_id,
+        "attempt_id": attempt_id,
+        "thread_id": config.get("thread_id", f"w1-{attempt_id}"),
+        "runtime_store": runtime_store,
+        "runtime_owner_id": runtime_owner_id,
+        "runtime_fence_token": lease["fence_token"],
+    })
+    from sidecar.workflows.w1_run_events import bind_runtime, ensure_session, session_status
+    ensure_session(attempt_id)
+    _w1_sessions[attempt_id] = {
+        "status": "running", "progress": config.get("progress", 0.0), "errors": [],
+        "completed_chunks": config.get("completed_chunks", 0), "total_chunks": config.get("total_chunks", 0),
+        "prompt_profile": config["prompt_profile"], "paused": False, "breakpoint_chunk": None,
+        "project_path": project_path, "config": config, **session_status(attempt_id),
+    }
+    bind_runtime(attempt_id, runtime_store, attempt_id, runtime_owner_id, lease["fence_token"])
+    _w1_tasks[attempt_id] = asyncio.create_task(_run_w1(attempt_id, config))
+    return True
 
 
 # ── Request / Response models ─────────────────────────────────────────────────
@@ -113,7 +202,7 @@ async def w3_start(body: W3StartRequest) -> W3StartResponse:
         "errors": [],
     }
 
-    graph = get_graph()
+    graph = get_graph(body.project_path)
 
     try:
         # ainvoke runs until completion or interrupt
@@ -158,7 +247,7 @@ async def w3_select(body: W3SelectRequest) -> W3SelectResponse:
     project_path = session["project_path"]
     config = {"configurable": {"thread_id": thread_id}}
 
-    graph = get_graph()
+    graph = get_graph(project_path)
 
     try:
         # Resume graph: update selected_option then continue
@@ -290,9 +379,33 @@ class W2StatusResult(BaseModel):
 # ── W1 background task ────────────────────────────────────────────────────────
 
 async def _run_w1(session_id: str, config: dict) -> None:
+    from sidecar.runtime.agent_runtime import LeaseLostError
     from sidecar.workflows.w1_import import run_streaming, _chunk_progress, _chunk_log
-    from sidecar.workflows.w1_run_events import append_event, session_status, set_active_call
+    from sidecar.workflows.w1_run_events import (
+        ProviderCallRequiresHumanConfirmation,
+        append_event,
+        session_status,
+        set_active_call,
+    )
     project_path = config["project_path"]
+    runtime_store = config.get("runtime_store")
+    runtime_owner_id = config.get("runtime_owner_id", "")
+    runtime_fence_token = config.get("runtime_fence_token")
+
+    def runtime_heartbeat() -> None:
+        if runtime_store is not None and runtime_fence_token is not None:
+            runtime_store.heartbeat_lease(session_id, runtime_owner_id, runtime_fence_token, ttl_seconds=60)
+
+    def runtime_set_status(status: str) -> None:
+        if runtime_store is None or runtime_fence_token is None or not runtime_owner_id:
+            return
+        try:
+            runtime_store.set_attempt_status(
+                session_id, status, owner_id=runtime_owner_id,
+                fence_token=runtime_fence_token,
+            )
+        except LeaseLostError:
+            pass
 
     # Poll _chunk_progress and _chunk_log every second so that mid-node chunk
     # updates (written by node_process_chunks after each individual chunk) are
@@ -321,6 +434,7 @@ async def _run_w1(session_id: str, config: dict) -> None:
                 updates["chunk_log"] = log_entries[:]
             if updates:
                 _w1_sessions[session_id] = {**current, **updates}
+                runtime_heartbeat()
 
     poll_task = asyncio.create_task(_poll_chunk_progress())
 
@@ -336,6 +450,7 @@ async def _run_w1(session_id: str, config: dict) -> None:
             ),
         })
         async for state_update in run_streaming(project_path, config):
+            runtime_heartbeat()
             current = _w1_sessions.get(session_id, {})
             activity = session_status(session_id)
             _w1_sessions[session_id] = {
@@ -374,6 +489,46 @@ async def _run_w1(session_id: str, config: dict) -> None:
             "message": "W1 import completed.",
         })
         _w1_sessions[session_id] = final
+        runtime_set_status("completed")
+    except ProviderCallRequiresHumanConfirmation as exc:
+        append_event(session_id, {
+            "phase": "provider_call",
+            "tool": "workflow",
+            "status": "paused",
+            "level": "warning",
+            "message": "W1 import paused because a provider call has an unknown outcome.",
+            "error": str(exc),
+            "recoverable": True,
+        })
+        current = _w1_sessions.get(session_id, {})
+        _w1_sessions[session_id] = {
+            **current,
+            "status": "paused",
+            "errors": [str(exc)],
+            "paused": True,
+            "recoverable": True,
+            **session_status(session_id),
+        }
+        runtime_set_status("waiting_human")
+    except LeaseLostError as exc:
+        append_event(session_id, {
+            "phase": "runtime_lease",
+            "tool": "workflow",
+            "status": "paused",
+            "level": "warning",
+            "message": "W1 worker stopped because its runtime lease was fenced.",
+            "error": "runtime_lease_lost",
+            "recoverable": True,
+        })
+        current = _w1_sessions.get(session_id, {})
+        _w1_sessions[session_id] = {
+            **current,
+            "status": "paused",
+            "errors": [str(exc)],
+            "paused": True,
+            "recoverable": True,
+            **session_status(session_id),
+        }
     except asyncio.CancelledError:
         append_event(session_id, {
             "phase": "cancelled",
@@ -389,6 +544,7 @@ async def _run_w1(session_id: str, config: dict) -> None:
             "progress": current.get("progress", 0.0),
             **session_status(session_id),
         }
+        runtime_set_status("cancelled")
         raise
     except Exception as e:
         append_event(session_id, {
@@ -406,10 +562,15 @@ async def _run_w1(session_id: str, config: dict) -> None:
             "paused": False, "breakpoint_chunk": None,
             **session_status(session_id),
         }
+        runtime_set_status("failed")
     finally:
         ctrl["active"] = False
         set_active_call(session_id, -9999)
         poll_task.cancel()
+        try:
+            await poll_task
+        except asyncio.CancelledError:
+            pass
         _w1_tasks.pop(session_id, None)
         _chunk_progress.pop(project_path, None)
         _chunk_log.pop(project_path, None)
@@ -440,11 +601,36 @@ async def _run_w2(session_id: str, config: dict) -> None:
 # ── W1 Import endpoints ──────────────────────────────────────────────────────
 
 @router.post("/workflow/w1/start", response_model=W1StartResponse)
-async def w1_start(body: W1StartRequest) -> W1StartResponse:
+async def w1_start(body: W1StartRequest, request: Request) -> W1StartResponse:
     """Start a W1 Import workflow run."""
     from sidecar.workflows.w1_run_events import append_event, ensure_session, session_status
 
-    session_id = str(uuid.uuid4())
+    from sidecar.routers.runtime import require_project_identity
+    from sidecar.runtime import RuntimeStore
+
+    require_project_identity(request, body.project_path)
+    runtime_store = getattr(request.app.state, "runtime_store", None)
+    if runtime_store is None:
+        runtime_store = RuntimeStore(body.project_path)
+    attempt_id = str(uuid.uuid4())
+    thread_id = f"w1-{attempt_id}"
+    lineage_id = str(uuid.uuid4())
+    source_path = Path(body.source_file_path).expanduser().resolve()
+    source_hash = hashlib.sha256(source_path.read_bytes()).hexdigest() if source_path.is_file() else ""
+    safe_config = {
+        "project_path": str(Path(body.project_path).resolve()), "provider": "deepseek",
+        "model": body.model, "profile": body.prompt_profile, "endpoint": body.endpoint,
+        "lineage_id": lineage_id,
+        "source_file_path": str(source_path), "source_hash": source_hash, "budget_config": {},
+        "import_mode": body.import_mode, "use_supervisor": body.use_supervisor,
+        "use_orchestrator": body.use_orchestrator,
+        "custom_profile_config": body.custom_profile_config or {},
+        "orchestrator_overrides": body.orchestrator_overrides or {},
+    }
+    run = runtime_store.create_run(workflow_id="W1", lineage_id=lineage_id, thread_id=thread_id, config=safe_config)
+    attempt = runtime_store.create_attempt(run["run_id"], attempt_id=attempt_id)
+    lease = runtime_store.acquire_lease(attempt["attempt_id"], request.app.state.runtime_owner_id, ttl_seconds=60)
+    session_id = attempt_id
     ensure_session(session_id)
     custom_profile_config = body.custom_profile_config or {}
     orchestrator_overrides = body.orchestrator_overrides or {}
@@ -471,7 +657,7 @@ async def w1_start(body: W1StartRequest) -> W1StartResponse:
     }
     config = {
         "project_path": body.project_path,
-        "source_file_path": body.source_file_path,
+        "source_file_path": str(source_path),
         "import_mode": body.import_mode,
         "prompt_profile": body.prompt_profile,
         "use_supervisor": effective_use_supervisor,
@@ -481,6 +667,12 @@ async def w1_start(body: W1StartRequest) -> W1StartResponse:
         "profile_config": custom_profile_config if body.prompt_profile == "custom" else {},
         "context": context,
         "session_id": session_id,
+        "attempt_id": attempt_id,
+        "lineage_id": lineage_id,
+        "thread_id": thread_id,
+        "runtime_store": runtime_store,
+        "runtime_owner_id": request.app.state.runtime_owner_id,
+        "runtime_fence_token": lease["fence_token"],
     }
     _w1_sessions[session_id] = {
         "status": "running", "progress": 0.0, "errors": [],
@@ -509,6 +701,8 @@ async def w1_start(body: W1StartRequest) -> W1StartResponse:
         "config": config,
         **session_status(session_id),
     }
+    from sidecar.workflows.w1_run_events import bind_runtime
+    bind_runtime(session_id, runtime_store, attempt_id, request.app.state.runtime_owner_id, lease["fence_token"])
     append_event(session_id, {
         "phase": "queued",
         "tool": "start_import",
@@ -547,6 +741,9 @@ async def w1_cancel(body: W1CancelRequest) -> W1CancelResponse:
             "message": "Cancel requested by user.",
         })
         _w1_sessions[body.session_id] = {**session, "status": "cancelled"}
+        runtime_store = (session.get("config") or {}).get("runtime_store")
+        if runtime_store is not None:
+            runtime_store.set_attempt_status(body.session_id, "cancelled")
     return W1CancelResponse(status="cancelled")
 
 
@@ -611,6 +808,9 @@ async def w1_resume(body: W1ResumeRequest) -> dict:
         project_path = session.get("project_path", "")
         if project_path and project_path in _pause_events:
             _pause_events[project_path].set()
+        runtime_store = (session.get("config") or {}).get("runtime_store")
+        if runtime_store is not None:
+            runtime_store.set_attempt_status(body.session_id, "running")
     return {"ok": True}
 
 

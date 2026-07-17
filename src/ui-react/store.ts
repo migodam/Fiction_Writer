@@ -56,12 +56,57 @@ import { projectService } from './services/projectService';
 import { appSettingsService, defaultAppSettings } from './services/appSettingsService';
 import * as metadataService from './services/metadataService';
 import { electronApi } from './services/electronApi';
-import type { W1CustomProfileConfig, W1OrchestratorOverrides, W1PromptProfile } from './services/electronApi';
+import type { RuntimeForkResult, W1CustomProfileConfig, W1OrchestratorOverrides, W1PromptProfile } from './services/electronApi';
+import type { RuntimeCheckpoint, RuntimeEvent, RuntimeRun, RuntimeUnknownCall, RuntimeUnknownCallDecision } from './components/import-runtime/types';
 
 const UI_SETTINGS_KEY = 'narrative-ide-ui-settings';
 const W1_POLL_INTERVAL_MS = 3000;
 const W1_SILENT_SPEND_TIMEOUT_MS = 30 * 60 * 1000;
 const W1_ABSOLUTE_TIMEOUT_MS = 4 * 60 * 60 * 1000;
+const W1_RUNTIME_SSE_MAX_FAILURES = 3;
+const W1_RUNTIME_SSE_RECONNECT_MS = 150;
+
+type W1RuntimeTransport = 'idle' | 'connecting' | 'sse' | 'polling';
+
+interface W1RuntimeStreamHandle {
+  projectRoot: string;
+  attemptId: string;
+  subscriptionId: string;
+  unsubscribeEvent: () => void;
+  unsubscribeStatus: () => void;
+}
+
+let activeW1RuntimeStream: W1RuntimeStreamHandle | null = null;
+let w1RuntimeReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let w1RuntimeSubscriptionNonce = 0;
+
+const disposeW1RuntimeStream = () => {
+  if (w1RuntimeReconnectTimer) clearTimeout(w1RuntimeReconnectTimer);
+  w1RuntimeReconnectTimer = null;
+  const active = activeW1RuntimeStream;
+  activeW1RuntimeStream = null;
+  if (!active) return;
+  active.unsubscribeEvent();
+  active.unsubscribeStatus();
+  void electronApi.runtimeEventStreamUnsubscribe(active.subscriptionId).catch(() => undefined);
+};
+
+const mergeRuntimeEvents = (current: RuntimeEvent[], incoming: RuntimeEvent[], cursor: number) => {
+  const seenIds = new Set(current.map((event) => event.event_id));
+  const seenSequences = new Set(current.map((event) => event.sequence));
+  const fresh = incoming
+    .filter((event) => Number.isSafeInteger(event.sequence) && event.sequence > 0 && !seenIds.has(event.event_id) && !seenSequences.has(event.sequence))
+    .sort((left, right) => left.sequence - right.sequence);
+  const events = [...current, ...fresh].sort((left, right) => left.sequence - right.sequence || left.event_id.localeCompare(right.event_id));
+  const sequences = new Set(events.map((event) => event.sequence));
+  let contiguousSequence = cursor;
+  while (sequences.has(contiguousSequence + 1)) contiguousSequence += 1;
+  return {
+    events,
+    sequence: contiguousSequence,
+    gap: events.some((event) => event.sequence > contiguousSequence + 1),
+  };
+};
 
 export const defaultW1CustomProfileConfig: W1CustomProfileConfig = {
   quality_target: 'max',
@@ -298,8 +343,9 @@ interface ProjectState {
   updateGraphEdge: (boardId: string, edge: Partial<GraphBoard['edges'][number]> & { id: string }) => void;
   setGraphBoardView: (boardId: string, view: GraphBoard['view']) => void;
   resolveProposal: (proposalId: string, status: Proposal['status']) => void;
-  resolveProposals: (proposalIds: string[], status: Proposal['status']) => void;
-  resolveAllProposals: (status: Proposal['status']) => void;
+  resolveProposals: (proposalIds: string[], status: Proposal['status']) => Promise<void>;
+  repairImportPackage: (proposalIds: string[]) => Promise<void>;
+  resolveAllProposals: (status: Proposal['status']) => Promise<void>;
   resolveIssue: (issueId: string, resolution: 'resolved' | 'ignored') => void;
   dismissIssue: (issueId: string) => void;
   addProposal: (proposal: Proposal) => void;
@@ -389,6 +435,30 @@ interface ProjectState {
   w1SupervisorDecisions: unknown[];
   w1GateFailures: unknown[];
   w1SupervisorIteration: number;
+  w1RuntimeLineageId: string | null;
+  w1RuntimeAttemptId: string | null;
+  w1RuntimeProjectRoot: string | null;
+  w1RecoverableRuns: RuntimeRun[];
+  w1RuntimeEvents: RuntimeEvent[];
+  w1RuntimeSequence: number;
+  w1RuntimeCheckpoints: RuntimeCheckpoint[];
+  w1RuntimeLoading: boolean;
+  w1RuntimeError: string | null;
+  w1RuntimeGapWarning: boolean;
+  w1RuntimeAction: string | null;
+  w1RuntimeSelectedAgent: string | null;
+  w1RuntimeTransport: W1RuntimeTransport;
+  w1RuntimeStreamFailures: number;
+  discoverW1Recovery: () => Promise<void>;
+  syncW1Runtime: () => Promise<void>;
+  connectW1RuntimeStream: () => void;
+  disconnectW1RuntimeStream: () => void;
+  resumeW1Recovery: (run: RuntimeRun) => Promise<void>;
+  decideW1UnknownOutcome: (run: RuntimeRun, call: RuntimeUnknownCall, decision: RuntimeUnknownCallDecision) => Promise<void>;
+  pauseW1Runtime: () => Promise<void>;
+  cancelW1Runtime: () => Promise<void>;
+  forkW1Checkpoint: (checkpointId: string) => Promise<void>;
+  setW1RuntimeSelectedAgent: (agentId: string | null) => void;
   setW1ImportMode: (mode: 'import_content_only' | 'import_all') => void;
   setW1PromptProfile: (profile: W1PromptProfile) => void;
   setW1CustomProfileConfig: (patch: Partial<W1CustomProfileConfig>) => void;
@@ -1154,7 +1224,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       electronApi.dbClose(prevRoot).catch(() => {});
     }
     set({ saveStatus: 'Saving' });
-    const project = projectService.openProject(rootPath);
+    const project = await projectService.openProject(rootPath);
     useUIStore.getState().hydrateFromProjectUiState(project.uiState);
     set({ ...deriveState(project), selectedEntity: { type: null, id: null }, saveStatus: 'Saved', undoStack: [], redoStack: [], pendingUndoTransaction: null });
     useUIStore.getState().setLocale(project.metadata.locale);
@@ -1561,17 +1631,23 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   resolveProposal: (proposalId, status) => {
     set((state) => withDirtyState(projectService.resolveProposal(cloneProject(state, useUIStore.getState().locale), proposalId, status)));
   },
-  resolveProposals: (proposalIds, status) => {
-    set((state) => withDirtyState(projectService.resolveProposals(cloneProject(state, useUIStore.getState().locale), proposalIds, status)));
+  resolveProposals: async (proposalIds, status) => {
+    const project = await projectService.resolveProposals(cloneProject(get(), useUIStore.getState().locale), proposalIds, status);
+    set(withDirtyState(project));
   },
-  resolveAllProposals: (status) => {
+  repairImportPackage: async (proposalIds) => {
+    const project = await projectService.repairImportPackage(cloneProject(get(), useUIStore.getState().locale), proposalIds);
+    set(withDirtyState(project));
+  },
+  resolveAllProposals: async (status) => {
     const pending = get().proposals.filter((p) => p.status === 'pending' || !p.status);
     if (!pending.length) return;
-    set((state) => withDirtyState(projectService.resolveProposals(
-      cloneProject(state, useUIStore.getState().locale),
+    const project = await projectService.resolveProposals(
+      cloneProject(get(), useUIStore.getState().locale),
       pending.map((proposal) => proposal.id),
       status,
-    )));
+    );
+    set(withDirtyState(project));
   },
   resolveIssue: (issueId, resolution) => set((state) => withDirtyState({
     issues: state.issues.map((issue) => issue.id === issueId ? { ...issue, status: resolution, visibility: 'history', dismissedAt: new Date().toISOString() } : issue),
@@ -1959,6 +2035,20 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   w1SupervisorDecisions: [],
   w1GateFailures: [],
   w1SupervisorIteration: 0,
+  w1RuntimeLineageId: null,
+  w1RuntimeAttemptId: null,
+  w1RuntimeProjectRoot: null,
+  w1RecoverableRuns: [],
+  w1RuntimeEvents: [],
+  w1RuntimeSequence: 0,
+  w1RuntimeCheckpoints: [],
+  w1RuntimeLoading: false,
+  w1RuntimeError: null,
+  w1RuntimeGapWarning: false,
+  w1RuntimeAction: null,
+  w1RuntimeSelectedAgent: null,
+  w1RuntimeTransport: 'idle',
+  w1RuntimeStreamFailures: 0,
   setW1ImportMode: (mode) => set({ w1ImportMode: mode }),
   setW1PromptProfile: (profile) => set((state) => {
     const supervisorDefault = profile === 'deep' || profile === 'custom';
@@ -1981,6 +2071,219 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     };
   }),
   setW1UseSupervisor: (v) => set({ w1UseSupervisor: v }),
+  discoverW1Recovery: async () => {
+    const { projectRoot } = get();
+    if (!projectRoot) {
+      get().disconnectW1RuntimeStream();
+      set({ w1RuntimeProjectRoot: null, w1RuntimeLineageId: null, w1RuntimeAttemptId: null, w1RecoverableRuns: [], w1RuntimeEvents: [], w1RuntimeSequence: 0, w1RuntimeCheckpoints: [], w1RuntimeGapWarning: false });
+      return;
+    }
+    const projectChanged = get().w1RuntimeProjectRoot !== projectRoot;
+    if (projectChanged) get().disconnectW1RuntimeStream();
+    set({ w1RuntimeLoading: true, w1RuntimeError: null });
+    const result = await electronApi.runtimeRecoverable(projectRoot).catch(() => ({ runs: [], error: 'sidecar_offline' }));
+    const runs = Array.isArray(result.runs) ? result.runs as RuntimeRun[] : [];
+    const active = runs.find((run) => run.attempt_id) ?? null;
+    const selectedAttemptId = projectChanged ? active?.attempt_id ?? null : get().w1RuntimeAttemptId ?? active?.attempt_id ?? null;
+    set({
+      w1RecoverableRuns: runs,
+      w1RuntimeLoading: false,
+      w1RuntimeError: result.error ?? null,
+      w1RuntimeProjectRoot: projectRoot,
+      w1RuntimeLineageId: projectChanged ? active?.lineage_id ?? null : get().w1RuntimeLineageId ?? active?.lineage_id ?? null,
+      w1RuntimeAttemptId: selectedAttemptId,
+      ...(projectChanged ? { w1RuntimeEvents: [], w1RuntimeSequence: 0, w1RuntimeCheckpoints: [], w1RuntimeGapWarning: false } : {}),
+    });
+    if (selectedAttemptId) {
+      get().connectW1RuntimeStream();
+      await get().syncW1Runtime();
+    } else {
+      get().disconnectW1RuntimeStream();
+    }
+  },
+  syncW1Runtime: async () => {
+    const { projectRoot, w1RuntimeAttemptId, w1RuntimeSequence, w1RuntimeTransport } = get();
+    if (!projectRoot || !w1RuntimeAttemptId) return;
+    const shouldPollEvents = w1RuntimeTransport === 'polling' || w1RuntimeTransport === 'idle';
+    const [eventsResult, checkpointsResult] = await Promise.all([
+      shouldPollEvents
+        ? electronApi.runtimeEvents(projectRoot, w1RuntimeAttemptId, w1RuntimeSequence).catch(() => ({ events: [], error: 'sidecar_offline' }))
+        : Promise.resolve({ events: [] as RuntimeEvent[], error: undefined }),
+      electronApi.runtimeCheckpoints(projectRoot, w1RuntimeAttemptId).catch(() => ({ checkpoints: [], error: 'sidecar_offline' })),
+    ]);
+    const incoming = Array.isArray(eventsResult.events) ? eventsResult.events as RuntimeEvent[] : [];
+    set((state) => {
+      const merged = mergeRuntimeEvents(state.w1RuntimeEvents, incoming, state.w1RuntimeSequence);
+      return {
+        w1RuntimeEvents: merged.events,
+        w1RuntimeSequence: merged.sequence,
+        w1RuntimeCheckpoints: Array.isArray(checkpointsResult.checkpoints) ? checkpointsResult.checkpoints as RuntimeCheckpoint[] : state.w1RuntimeCheckpoints,
+        w1RuntimeError: eventsResult.error ?? checkpointsResult.error ?? state.w1RuntimeError,
+        w1RuntimeGapWarning: state.w1RuntimeGapWarning || merged.gap,
+      };
+    });
+  },
+  connectW1RuntimeStream: () => {
+    const { projectRoot, w1RuntimeAttemptId, w1RuntimeSequence, w1RuntimeTransport, w1RuntimeStreamFailures } = get();
+    if (!projectRoot || !w1RuntimeAttemptId) return;
+    if (activeW1RuntimeStream?.projectRoot === projectRoot && activeW1RuntimeStream.attemptId === w1RuntimeAttemptId) return;
+    if (w1RuntimeTransport === 'polling' && w1RuntimeStreamFailures >= W1_RUNTIME_SSE_MAX_FAILURES) return;
+    disposeW1RuntimeStream();
+    if (!electronApi.runtimeEventStreamSupported()) {
+      set({ w1RuntimeTransport: 'polling', w1RuntimeStreamFailures: W1_RUNTIME_SSE_MAX_FAILURES });
+      return;
+    }
+
+    const subscriptionId = `runtime-${Date.now()}-${++w1RuntimeSubscriptionNonce}`;
+    const target = { projectRoot, attemptId: w1RuntimeAttemptId, subscriptionId };
+    const restart = (countFailure: boolean) => {
+      const state = get();
+      if (state.projectRoot !== target.projectRoot || state.w1RuntimeAttemptId !== target.attemptId) return;
+      const failures = countFailure ? state.w1RuntimeStreamFailures + 1 : state.w1RuntimeStreamFailures;
+      disposeW1RuntimeStream();
+      if (failures >= W1_RUNTIME_SSE_MAX_FAILURES) {
+        set({ w1RuntimeTransport: 'polling', w1RuntimeStreamFailures: failures });
+        void get().syncW1Runtime();
+        return;
+      }
+      set({ w1RuntimeTransport: 'connecting', w1RuntimeStreamFailures: failures });
+      w1RuntimeReconnectTimer = setTimeout(() => {
+        w1RuntimeReconnectTimer = null;
+        get().connectW1RuntimeStream();
+      }, countFailure ? W1_RUNTIME_SSE_RECONNECT_MS * Math.max(1, failures) : 0);
+    };
+    const unsubscribeEvent = electronApi.onRuntimeEvent((message) => {
+      if (message.subscription_id !== subscriptionId || message.attempt_id !== w1RuntimeAttemptId) return;
+      let gapDetected = false;
+      set((state) => {
+        const merged = mergeRuntimeEvents(state.w1RuntimeEvents, [message.event as RuntimeEvent], state.w1RuntimeSequence);
+        gapDetected = merged.gap;
+        return {
+          w1RuntimeEvents: merged.events,
+          w1RuntimeSequence: merged.sequence,
+          w1RuntimeGapWarning: state.w1RuntimeGapWarning || merged.gap,
+          w1RuntimeStreamFailures: 0,
+          w1RuntimeTransport: 'sse',
+        };
+      });
+      if (gapDetected) restart(false);
+    });
+    const unsubscribeStatus = electronApi.onRuntimeEventStreamStatus((status) => {
+      if (status.subscription_id !== subscriptionId || status.attempt_id !== w1RuntimeAttemptId) return;
+      if (status.status === 'open') {
+        set({ w1RuntimeTransport: 'sse' });
+      } else if (status.status === 'closed') {
+        restart(false);
+      } else if (status.status === 'error') {
+        restart(true);
+      }
+    });
+    activeW1RuntimeStream = { ...target, unsubscribeEvent, unsubscribeStatus };
+    set({ w1RuntimeTransport: 'connecting' });
+    void electronApi.runtimeEventStreamSubscribe(projectRoot, w1RuntimeAttemptId, w1RuntimeSequence, subscriptionId).then((result) => {
+      if (!result.ok && activeW1RuntimeStream?.subscriptionId === subscriptionId) restart(true);
+    }).catch(() => {
+      if (activeW1RuntimeStream?.subscriptionId === subscriptionId) restart(true);
+    });
+  },
+  disconnectW1RuntimeStream: () => {
+    disposeW1RuntimeStream();
+    set({ w1RuntimeTransport: 'idle', w1RuntimeStreamFailures: 0 });
+  },
+  resumeW1Recovery: async (run) => {
+    const { projectRoot, w1RuntimeAction } = get();
+    const hasUnresolvedUnknownCall = run.unknown_calls?.some((call) => call.decision_state !== 'authorize_retry_once');
+    if (!projectRoot || w1RuntimeAction || run.source_compatible === false || !run.attempt_id || hasUnresolvedUnknownCall) return;
+    set({ w1RuntimeAction: 'resume' });
+    const result: RuntimeRun = await electronApi.runtimeAction(projectRoot, 'resume', run.attempt_id).catch(() => ({ lineage_id: run.lineage_id, attempt_id: run.attempt_id, status: 'error' }));
+    const nextAttemptId = result.attempt_id ?? run.attempt_id;
+    if (nextAttemptId !== get().w1RuntimeAttemptId) get().disconnectW1RuntimeStream();
+    set({ w1RuntimeAction: null, w1RuntimeLineageId: run.lineage_id, w1RuntimeAttemptId: nextAttemptId, w1RuntimeEvents: nextAttemptId !== run.attempt_id ? [] : get().w1RuntimeEvents, w1RuntimeSequence: nextAttemptId !== run.attempt_id ? 0 : get().w1RuntimeSequence, w1RuntimeGapWarning: false, w1RuntimeStreamFailures: 0, w1RuntimeError: result.status === 'needs_credentials' ? 'needs_credentials' : result.status === 'error' ? 'runtime_action_failed' : null });
+    get().connectW1RuntimeStream();
+    await get().syncW1Runtime();
+  },
+  decideW1UnknownOutcome: async (run, call, decision) => {
+    const { projectRoot, w1RuntimeAction } = get();
+    if (!projectRoot || !run.attempt_id || w1RuntimeAction || call.decision_state !== 'pending') return;
+
+    const pendingAction = `unknown:${decision}:${call.tool_call_id}`;
+    set({ w1RuntimeAction: pendingAction, w1RuntimeError: null });
+    const decisionResult = await electronApi
+      .runtimeDecision(projectRoot, call.decision_key, run.attempt_id, decision)
+      .catch(() => ({ error: 'sidecar_offline' }));
+    if (decisionResult.error) {
+      set({ w1RuntimeAction: null, w1RuntimeError: 'runtime_decision_failed' });
+      return;
+    }
+
+    // Refresh the durable decision state before any attempt can be resumed.
+    await get().discoverW1Recovery();
+    if (decision === 'cancel') {
+      set({ w1RuntimeAction: null });
+      return;
+    }
+
+    const refreshedRun = get().w1RecoverableRuns.find((candidate) => candidate.attempt_id === run.attempt_id);
+    const allUnknownCallsAuthorized = Boolean(
+      refreshedRun?.unknown_calls?.length
+      && refreshedRun.unknown_calls.every((unknownCall) => unknownCall.decision_state === 'authorize_retry_once'),
+    );
+    if (!allUnknownCallsAuthorized) {
+      set({ w1RuntimeAction: null });
+      return;
+    }
+
+    const result: RuntimeRun = await electronApi
+      .runtimeAction(projectRoot, 'resume', run.attempt_id)
+      .catch(() => ({ lineage_id: run.lineage_id, attempt_id: run.attempt_id, status: 'error' }));
+    const nextAttemptId = result.attempt_id ?? run.attempt_id;
+    if (nextAttemptId !== get().w1RuntimeAttemptId) get().disconnectW1RuntimeStream();
+    set({
+      w1RuntimeLineageId: run.lineage_id,
+      w1RuntimeAttemptId: nextAttemptId,
+      w1RuntimeEvents: nextAttemptId !== run.attempt_id ? [] : get().w1RuntimeEvents,
+      w1RuntimeSequence: nextAttemptId !== run.attempt_id ? 0 : get().w1RuntimeSequence,
+      w1RuntimeGapWarning: false,
+      w1RuntimeStreamFailures: 0,
+    });
+    get().connectW1RuntimeStream();
+    await get().discoverW1Recovery();
+    set({
+      w1RuntimeAction: null,
+      w1RuntimeError: result.status === 'needs_credentials'
+        ? 'needs_credentials'
+        : result.status === 'error' || result.error
+          ? 'runtime_action_failed'
+          : null,
+    });
+  },
+  pauseW1Runtime: async () => {
+    const { projectRoot, w1RuntimeAttemptId, w1RuntimeAction } = get();
+    if (!projectRoot || !w1RuntimeAttemptId || w1RuntimeAction) return;
+    set({ w1RuntimeAction: 'pause' });
+    await electronApi.runtimeAction(projectRoot, 'pause', w1RuntimeAttemptId).catch(() => null);
+    set({ w1RuntimeAction: null });
+  },
+  cancelW1Runtime: async () => {
+    const { projectRoot, w1RuntimeAttemptId, w1RuntimeAction } = get();
+    if (!projectRoot || !w1RuntimeAttemptId || w1RuntimeAction) return;
+    set({ w1RuntimeAction: 'cancel' });
+    await electronApi.runtimeAction(projectRoot, 'cancel', w1RuntimeAttemptId).catch(() => null);
+    set({ w1RuntimeAction: null });
+  },
+  forkW1Checkpoint: async (checkpointId) => {
+    const { projectRoot, w1RuntimeAttemptId, w1RuntimeAction } = get();
+    if (!projectRoot || !w1RuntimeAttemptId || w1RuntimeAction) return;
+    set({ w1RuntimeAction: 'fork' });
+    const decisionId = `fork:${w1RuntimeAttemptId}:${checkpointId}`;
+    const result: RuntimeForkResult = await electronApi.runtimeFork(projectRoot, w1RuntimeAttemptId, checkpointId, decisionId).catch(() => ({ attempt: { lineage_id: '', status: 'error' }, parent_attempt_id: w1RuntimeAttemptId }));
+    const forkedAttemptId = result.attempt?.attempt_id;
+    if (forkedAttemptId) get().disconnectW1RuntimeStream();
+    set({ w1RuntimeAction: null, w1RuntimeAttemptId: forkedAttemptId ?? w1RuntimeAttemptId, w1RuntimeSequence: forkedAttemptId ? 0 : get().w1RuntimeSequence, w1RuntimeEvents: forkedAttemptId ? [] : get().w1RuntimeEvents, w1RuntimeGapWarning: false, w1RuntimeError: result.attempt?.status === 'error' ? 'runtime_action_failed' : null });
+    get().connectW1RuntimeStream();
+    await get().syncW1Runtime();
+  },
+  setW1RuntimeSelectedAgent: (agentId) => set({ w1RuntimeSelectedAgent: agentId }),
   setW1Breakpoint: async (chunkId) => {
     const { projectRoot, w1SessionId } = get();
     if (!projectRoot || !w1SessionId) return;
@@ -1994,12 +2297,13 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     await electronApi.w1Resume(projectRoot, w1SessionId);
   },
   rewindW1: async (toChunkId) => {
-    const { projectRoot, w1SessionId } = get();
-    if (!projectRoot || !w1SessionId) return;
-    const result = await electronApi.w1Rewind(projectRoot, w1SessionId, toChunkId);
-    if (result.ok && result.new_session_id) {
-      set({ w1SessionId: result.new_session_id, w1Status: 'running', w1Paused: false, w1BreakpointChunk: null, w1ConsoleLog: [], w1ActivityLog: [], w1ConnectionWarning: null });
+    const { w1RuntimeAttemptId, w1RuntimeCheckpoints } = get();
+    const checkpoint = w1RuntimeCheckpoints.find((entry) => entry.sequence === toChunkId);
+    if (w1RuntimeAttemptId && checkpoint) {
+      await get().forkW1Checkpoint(checkpoint.checkpoint_id);
+      return;
     }
+    set({ w1ConnectionWarning: 'Immutable runtime recovery is unavailable for this legacy checkpoint. Start a new import or select a durable runtime checkpoint.' });
   },
   startImport: async (payload) => {
     const { projectRoot, w1ImportMode, w1PromptProfile, w1UseSupervisor, w1CustomProfileConfig, w1OrchestratorOverrides } = get();
@@ -2099,8 +2403,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     let lastTokenProgressAt = pollStartedAt;
     let lastActivityProgressAt = pollStartedAt;
     const shouldContinuePolling = () => get().w1Status !== 'cancelled';
+    let isFirstPoll = true;
     while (shouldContinuePolling()) {
-      await new Promise(r => setTimeout(r, W1_POLL_INTERVAL_MS));
+      if (!isFirstPoll) await new Promise(r => setTimeout(r, W1_POLL_INTERVAL_MS));
+      isFirstPoll = false;
       const { w1Status: cur } = get();
       if (cur === 'cancelled') return;
       try {
@@ -2154,11 +2460,19 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           const activityEntries = console.activity_entries ?? [];
           if (chunkEntries.length > 0) {
             consoleLogOffset += chunkEntries.length;
-            set((state) => ({ w1ConsoleLog: [...state.w1ConsoleLog, ...chunkEntries] }));
+            set((state) => {
+              const seen = new Set(state.w1ConsoleLog.map((entry) => `${entry.chunk_id}:${entry.timestamp}`));
+              const fresh = chunkEntries.filter((entry) => !seen.has(`${entry.chunk_id}:${entry.timestamp}`));
+              return fresh.length ? { w1ConsoleLog: [...state.w1ConsoleLog, ...fresh] } : {};
+            });
           }
           if (activityEntries.length > 0) {
             activityLogOffset += activityEntries.length;
-            set((state) => ({ w1ActivityLog: [...state.w1ActivityLog, ...activityEntries] }));
+            set((state) => {
+              const seen = new Set(state.w1ActivityLog.map((entry) => entry.id));
+              const fresh = activityEntries.filter((entry) => !seen.has(entry.id));
+              return fresh.length ? { w1ActivityLog: [...state.w1ActivityLog, ...fresh] } : {};
+            });
           }
           set({ w1Paused: console.paused, w1BreakpointChunk: console.breakpoint_chunk });
           if (console.paused) {
@@ -2174,7 +2488,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           try {
             const { projectRoot } = get();
             if (projectRoot) {
-              const freshProject = projectService.openProject(projectRoot);
+              const freshProject = await projectService.openProject(projectRoot);
               if (freshProject) {
                 get().loadProject(freshProject);
               }
@@ -2288,7 +2602,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           set({ w2Status: 'done', w2Progress: 1, w2ProposalCount: s.proposals_count ?? 0 });
           try {
             if (effectiveRoot) {
-              const freshProject = projectService.openProject(effectiveRoot);
+              const freshProject = await projectService.openProject(effectiveRoot);
               if (freshProject) {
                 get().loadProject(freshProject);
               }
