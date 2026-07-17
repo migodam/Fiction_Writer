@@ -66,6 +66,12 @@ const W1_ABSOLUTE_TIMEOUT_MS = 4 * 60 * 60 * 1000;
 const W1_RUNTIME_SSE_MAX_FAILURES = 3;
 const W1_RUNTIME_SSE_RECONNECT_MS = 150;
 
+// Demo projects use URI roots and must stay renderer-only until a filesystem project is selected.
+export const isFilesystemProjectRoot = (projectRoot: unknown): projectRoot is string =>
+  typeof projectRoot === 'string' && pathIsAbsolute(projectRoot) && !/^[a-z][a-z0-9+.-]*:\/\//i.test(projectRoot);
+
+const pathIsAbsolute = (projectRoot: string) => projectRoot.startsWith('/');
+
 type W1RuntimeTransport = 'idle' | 'connecting' | 'sse' | 'polling';
 
 interface W1RuntimeStreamHandle {
@@ -1220,7 +1226,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   openProject: async (rootPath) => {
     // Close previous DB if switching projects
     const prevRoot = get().projectRoot;
-    if (prevRoot && prevRoot !== rootPath) {
+    if (isFilesystemProjectRoot(prevRoot) && prevRoot !== rootPath) {
       electronApi.dbClose(prevRoot).catch(() => {});
     }
     set({ saveStatus: 'Saving' });
@@ -1229,9 +1235,12 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({ ...deriveState(project), selectedEntity: { type: null, id: null }, saveStatus: 'Saved', undoStack: [], redoStack: [], pendingUndoTransaction: null });
     useUIStore.getState().setLocale(project.metadata.locale);
     if (rootPath) get().loadMetadata(rootPath);
-    // Open/migrate SQLite DB (fire-and-forget; JSON store still drives memory)
-    electronApi.dbOpen(rootPath ?? project.metadata.rootPath, project).catch(() => {});
-    electronApi.sidecarSpawn(rootPath ?? project.metadata.rootPath).catch(() => {});
+    const persistedRoot = rootPath ?? project.metadata.rootPath;
+    if (isFilesystemProjectRoot(persistedRoot)) {
+      // Open/migrate SQLite DB (fire-and-forget; JSON store still drives memory)
+      electronApi.dbOpen(persistedRoot, project).catch(() => {});
+      electronApi.sidecarSpawn(persistedRoot).catch(() => {});
+    }
     setTimeout(() => get().saveStatus === 'Saved' && set({ saveStatus: 'Idle' }), 1200);
   },
   saveProject: async () => {

@@ -467,6 +467,30 @@ async function main() {
   });
 
   await runStage('vite-page.goto', 20_000, () => page.goto(viteUrl, { waitUntil: 'domcontentloaded', timeout: 20_000 }));
+  const startupDbCalls = await runStage('vite-page.virtual-project-db-guard', 30_000, () => page.evaluate(async () => {
+    const [{ useProjectStore }, { electronApi }] = await Promise.all([
+      import('/src/ui-react/store.ts'),
+      import('/src/ui-react/services/electronApi.ts'),
+    ]);
+    const calls = { open: 0, close: 0, sidecar: 0 };
+    const original = {
+      dbOpen: electronApi.dbOpen,
+      dbClose: electronApi.dbClose,
+      sidecarSpawn: electronApi.sidecarSpawn,
+    };
+    electronApi.dbOpen = async () => { calls.open += 1; return { ok: true }; };
+    electronApi.dbClose = async () => { calls.close += 1; return { ok: true }; };
+    electronApi.sidecarSpawn = async () => { calls.sidecar += 1; return { ok: true }; };
+    try {
+      await useProjectStore.getState().openProject();
+      return calls;
+    } finally {
+      electronApi.dbOpen = original.dbOpen;
+      electronApi.dbClose = original.dbClose;
+      electronApi.sidecarSpawn = original.sidecarSpawn;
+    }
+  }));
+  assert.deepEqual(startupDbCalls, { open: 0, close: 0, sidecar: 0 });
   const roundtrip = await runStage('vite-page.project-service-evaluate', 90_000, () => page.evaluate(async (expectedProjectRoot) => {
     const [{ electronApi }, { projectService }] = await Promise.all([
       import('/src/ui-react/services/electronApi.ts'),
