@@ -145,6 +145,103 @@ def test_tool_unknown_outcome_is_durable(runtime):
     assert unknown["unknown_reason"] == "sidecar restarted"
 
 
+def _authorized_provider_unknown(runtime, idempotency_key):
+    attempt = runtime.create_attempt(runtime.create_run(workflow_id="W1")["run_id"])
+    lease = runtime.acquire_lease(attempt["attempt_id"], "artifact-worker", ttl_seconds=30)
+    call = runtime.record_tool_intent(
+        attempt["attempt_id"],
+        "provider.chat.completions",
+        {"idempotency_key": idempotency_key, "model": "deepseek-chat", "message_hash": "a" * 64},
+    )
+    runtime.record_tool_unknown_outcome(call["tool_call_id"], "runtime_interrupted")
+    decision_key = f"retry_provider_call:{idempotency_key}"
+    runtime.record_unknown_call_decision(attempt["attempt_id"], decision_key, "authorize_retry_once")
+    return attempt, lease, call, decision_key
+
+
+def _write_minimal_provider_artifact(runtime, operation_key, **extra_payload):
+    payload = {
+        "contract": "W1ProviderResponse/v1",
+        "operation_key": operation_key,
+        **extra_payload,
+    }
+    artifact_bytes = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+    artifact_hash = hashlib.sha256(artifact_bytes).hexdigest()
+    relative_path = (
+        f"system/imports/lineage/provider_responses/{operation_key}/{artifact_hash}.json"
+    )
+    artifact_path = runtime.project_root / relative_path
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_bytes(artifact_bytes)
+    return {
+        "operation_key": operation_key,
+        "artifact_path": relative_path,
+        "artifact_hash": artifact_hash,
+    }
+
+
+def test_authorized_unknown_can_be_atomically_resolved_from_verified_artifact(runtime):
+    attempt, lease, call, decision_key = _authorized_provider_unknown(runtime, "artifact-retry-key")
+    receipt = _write_minimal_provider_artifact(runtime, "b" * 64)
+
+    resolved = runtime.resolve_authorized_unknown_with_artifact(
+        attempt["attempt_id"], call["tool_call_id"], decision_key, receipt,
+        owner_id="artifact-worker", fence_token=lease["fence_token"],
+    )
+    repeated = runtime.resolve_authorized_unknown_with_artifact(
+        attempt["attempt_id"], call["tool_call_id"], decision_key, receipt,
+        owner_id="artifact-worker", fence_token=lease["fence_token"],
+    )
+
+    assert resolved["status"] == "retry_consumed"
+    assert resolved["result_payload"]["outcome"] == "resolved_from_verified_artifact"
+    assert resolved["result_payload"]["artifact_receipt"] == receipt
+    assert resolved["idempotent"] is False
+    assert repeated["idempotent"] is True
+    different_receipt = _write_minimal_provider_artifact(runtime, "b" * 64, variant=2)
+    with pytest.raises(ValueError, match="unknown_retry_already_consumed"):
+        runtime.resolve_authorized_unknown_with_artifact(
+            attempt["attempt_id"], call["tool_call_id"], decision_key,
+            different_receipt,
+            owner_id="artifact-worker", fence_token=lease["fence_token"],
+        )
+
+
+def test_authorized_unknown_missing_artifact_does_not_consume_authorization(runtime):
+    attempt, lease, call, decision_key = _authorized_provider_unknown(runtime, "missing-artifact-key")
+    receipt = {
+        "operation_key": "c" * 64,
+        "artifact_path": "system/imports/lineage/provider_responses/missing/artifact.json",
+        "artifact_hash": "d" * 64,
+    }
+
+    with pytest.raises(ValueError, match="artifact_missing"):
+        runtime.resolve_authorized_unknown_with_artifact(
+            attempt["attempt_id"], call["tool_call_id"], decision_key, receipt,
+            owner_id="artifact-worker", fence_token=lease["fence_token"],
+        )
+
+    persisted = {item["tool_call_id"]: item for item in runtime.list_tool_calls(attempt["attempt_id"])}
+    assert persisted[call["tool_call_id"]]["status"] == "unknown_outcome"
+
+
+def test_authorized_unknown_hash_mismatch_does_not_consume_authorization(runtime):
+    attempt, lease, call, decision_key = _authorized_provider_unknown(runtime, "hash-mismatch-key")
+    receipt = _write_minimal_provider_artifact(runtime, "e" * 64)
+    receipt["artifact_hash"] = "f" * 64
+
+    with pytest.raises(ValueError, match="artifact_hash_mismatch"):
+        runtime.resolve_authorized_unknown_with_artifact(
+            attempt["attempt_id"], call["tool_call_id"], decision_key, receipt,
+            owner_id="artifact-worker", fence_token=lease["fence_token"],
+        )
+
+    persisted = {item["tool_call_id"]: item for item in runtime.list_tool_calls(attempt["attempt_id"])}
+    assert persisted[call["tool_call_id"]]["status"] == "unknown_outcome"
+
+
 def test_secrets_are_rejected_in_identifiers_and_redacted_in_payloads(runtime):
     with pytest.raises(SecretValueError):
         runtime.create_run(workflow_id="W0", cache_key="sk-this-is-a-secret")

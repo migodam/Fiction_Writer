@@ -7,12 +7,16 @@ finishes and before proposals are written.
 from __future__ import annotations
 
 from contextvars import ContextVar
+from concurrent.futures import Future
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
+from pathlib import Path
 import re
 from threading import RLock
+import tempfile
 from typing import Any
 
 from sidecar.runtime.agent_runtime import LeaseLostError
@@ -26,6 +30,11 @@ _token_ledger: dict[str, dict[str, int]] = {}
 _budget_ledgers: dict[str, "BudgetLedger"] = {}
 _runtime_bindings: dict[str, tuple[Any, str, str, int]] = {}
 _runtime_tool_call_lock = RLock()
+_cached_usage_lock = RLock()
+_accounted_cached_operations: dict[str, set[str]] = {}
+_provider_singleflight_lock = RLock()
+_provider_singleflights: dict[str, Future[None]] = {}
+_PROVIDER_RESPONSE_CONTRACT = "W1ProviderResponse/v1"
 _compat_reservation_tokens: ContextVar[dict[str, tuple[str, ...]]] = ContextVar(
     "w1_compat_reservation_tokens", default={}
 )
@@ -72,6 +81,24 @@ class ProviderCallRequiresHumanConfirmation(RuntimeError):
     def __init__(self, idempotency_key: str):
         self.idempotency_key = idempotency_key
         super().__init__(f"requires_human_confirmation:unknown_outcome:{idempotency_key}")
+
+
+class CachedProviderResponse:
+    """Minimal provider response reconstructed from a verified W1 artifact."""
+
+    def __init__(
+        self,
+        content: Any,
+        usage: dict[str, Any] | None = None,
+        *,
+        operation_key: str,
+        artifact_receipt: dict[str, str],
+    ) -> None:
+        self.content = content
+        self.usage_metadata = dict(usage or {})
+        self.response_metadata: dict[str, Any] = {"w1_cache_hit": True}
+        self.operation_key = operation_key
+        self.artifact_receipt = artifact_receipt
 
 
 def _matches_model_key(model: str, key: str) -> bool:
@@ -326,11 +353,16 @@ def clear_session(session_id: str) -> None:
     _token_ledger.pop(session_id, None)
     _budget_ledgers.pop(session_id, None)
     _runtime_bindings.pop(session_id, None)
+    _accounted_cached_operations.pop(session_id, None)
     _cancel_requested.discard(session_id)
     bound = dict(_compat_reservation_tokens.get())
     if session_id in bound:
         bound.pop(session_id, None)
         _compat_reservation_tokens.set(bound)
+    with _provider_singleflight_lock:
+        for operation_key, flight in tuple(_provider_singleflights.items()):
+            if flight.done():
+                _provider_singleflights.pop(operation_key, None)
 
 
 def set_active_call(session_id: str, delta: int) -> int:
@@ -351,6 +383,11 @@ def mark_cancel_requested(session_id: str) -> None:
         _cancel_requested.add(session_id)
 
 
+def clear_cancel_requested(session_id: str) -> None:
+    if session_id:
+        _cancel_requested.discard(session_id)
+
+
 def cancel_requested(session_id: str) -> bool:
     return session_id in _cancel_requested
 
@@ -362,6 +399,7 @@ def configure_budget(session_id: str, policy: BudgetPolicy, *, model: str = "") 
     ensure_session(session_id)
     ledger = BudgetLedger(policy=policy, model=model)
     _budget_ledgers[session_id] = ledger
+    _accounted_cached_operations[session_id] = set()
     return ledger
 
 
@@ -395,6 +433,225 @@ def provider_result_hash(response: Any) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def _canonical_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def _provider_operation_inputs(session_id: str, model: str, message_hash: str) -> dict[str, str] | None:
+    binding = _runtime_bindings.get(session_id)
+    if binding is None:
+        return None
+    store, attempt_id, _owner_id, _fence_token = binding
+    attempt = store.get_attempt(attempt_id) or {}
+    run = store.get_run(str(attempt.get("run_id") or "")) or {}
+    config = dict(run.get("config") or {})
+    context = dict(config.get("context") or {})
+    version_inputs = {
+        "profile": str(config.get("prompt_profile") or config.get("profile") or context.get("prompt_profile") or "balanced"),
+        "config_version": str(config.get("config_version") or context.get("config_version") or "w1-provider-config-v1"),
+        "prompt_version": str(config.get("prompt_version") or context.get("prompt_version") or "w1-prompts-v1"),
+        "schema_version": str(config.get("schema_version") or context.get("schema_version") or "w1-schema-v1"),
+        "tool_version": str(config.get("tool_version") or context.get("tool_version") or "w1-tools-v1"),
+    }
+    return {
+        "lineage_id": str(run.get("lineage_id") or ""),
+        "model": model,
+        "message_hash": message_hash,
+        "profile_hash": hashlib.sha256(version_inputs["profile"].encode("utf-8")).hexdigest(),
+        "prompt_hash": hashlib.sha256(version_inputs["prompt_version"].encode("utf-8")).hexdigest(),
+        "schema_hash": hashlib.sha256(version_inputs["schema_version"].encode("utf-8")).hexdigest(),
+        "tool_hash": hashlib.sha256(version_inputs["tool_version"].encode("utf-8")).hexdigest(),
+        "config_hash": hashlib.sha256(version_inputs["config_version"].encode("utf-8")).hexdigest(),
+    }
+
+
+def provider_operation_key(session_id: str, *, model: str, message_hash: str) -> str | None:
+    """Return the sequence-independent identity for one W1 provider operation."""
+    inputs = _provider_operation_inputs(session_id, model, message_hash)
+    if inputs is None:
+        return None
+    return hashlib.sha256(_canonical_json({"contract": _PROVIDER_RESPONSE_CONTRACT, **inputs}).encode("utf-8")).hexdigest()
+
+
+def begin_provider_singleflight(operation_key: str) -> tuple[bool, Future[None]]:
+    """Elect one in-process caller without binding synchronization to an event loop."""
+    with _provider_singleflight_lock:
+        existing = _provider_singleflights.get(operation_key)
+        if existing is not None:
+            return False, existing
+        flight: Future[None] = Future()
+        _provider_singleflights[operation_key] = flight
+        return True, flight
+
+
+def finish_provider_singleflight(operation_key: str, flight: Future[None], error: BaseException | None = None) -> None:
+    with _provider_singleflight_lock:
+        if not flight.done():
+            if error is None:
+                flight.set_result(None)
+            else:
+                flight.set_exception(error)
+        if _provider_singleflights.get(operation_key) is flight:
+            _provider_singleflights.pop(operation_key, None)
+
+
+def _provider_artifact_dir(store: Any, inputs: dict[str, str], operation_key: str) -> Path:
+    lineage_id = inputs["lineage_id"]
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,255}", lineage_id):
+        raise ValueError("invalid_provider_artifact_lineage")
+    project_root = Path(store.project_root).resolve()
+    directory = (
+        project_root / "system" / "imports" / lineage_id
+        / "provider_responses" / operation_key
+    )
+    return directory
+
+
+def _provider_cache_path_is_safe(project_root: Path, directory: Path, artifact: Path | None = None) -> bool:
+    provider_root = directory.parent
+    paths = (provider_root, directory) if artifact is None else (provider_root, directory, artifact)
+    try:
+        return all(
+            not path.is_symlink()
+            and path.resolve(strict=False).is_relative_to(project_root)
+            for path in paths
+        )
+    except OSError:
+        return False
+
+
+def _secure_provider_artifact_directory(project_root: Path, directory: Path) -> None:
+    if not _provider_cache_path_is_safe(project_root, directory):
+        raise RuntimeError("provider_cache_symlink_or_escape_rejected")
+    provider_root = directory.parent
+    provider_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if not _provider_cache_path_is_safe(project_root, directory):
+        raise RuntimeError("provider_cache_symlink_or_escape_rejected")
+    os.chmod(provider_root, 0o700)
+    directory.mkdir(mode=0o700, exist_ok=True)
+    if not _provider_cache_path_is_safe(project_root, directory):
+        raise RuntimeError("provider_cache_symlink_or_escape_rejected")
+    os.chmod(directory, 0o700)
+
+
+def _load_verified_provider_artifact(session_id: str, *, model: str, message_hash: str) -> CachedProviderResponse | None:
+    binding = _runtime_bindings.get(session_id)
+    inputs = _provider_operation_inputs(session_id, model, message_hash)
+    operation_key = provider_operation_key(session_id, model=model, message_hash=message_hash)
+    if binding is None or inputs is None or operation_key is None:
+        return None
+    directory = _provider_artifact_dir(binding[0], inputs, operation_key)
+    project_root = Path(binding[0].project_root).resolve()
+    if not _provider_cache_path_is_safe(project_root, directory):
+        return None
+    try:
+        if (directory.parent.stat().st_mode & 0o777) != 0o700 or (directory.stat().st_mode & 0o777) != 0o700:
+            return None
+    except OSError:
+        return None
+    for path in sorted(directory.glob("*.json")):
+        try:
+            if not _provider_cache_path_is_safe(project_root, directory, path):
+                continue
+            if (path.stat().st_mode & 0o777) != 0o600:
+                continue
+            raw = path.read_bytes()
+            payload = json.loads(raw.decode("utf-8"))
+            artifact_hash = hashlib.sha256(raw).hexdigest()
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if path.stem != artifact_hash or not isinstance(payload, dict):
+            continue
+        if payload.get("contract") != _PROVIDER_RESPONSE_CONTRACT or payload.get("operation_key") != operation_key:
+            continue
+        if payload.get("operation_inputs") != inputs:
+            continue
+        content = payload.get("response_content")
+        if payload.get("response_hash") != hashlib.sha256(_canonical_json(content).encode("utf-8")).hexdigest():
+            continue
+        usage = payload.get("usage")
+        if not isinstance(usage, dict):
+            continue
+        return CachedProviderResponse(
+            content,
+            usage,
+            operation_key=operation_key,
+            artifact_receipt={
+                "operation_key": operation_key,
+                "artifact_path": str(path.relative_to(project_root)),
+                "artifact_hash": artifact_hash,
+            },
+        )
+    return None
+
+
+def persist_provider_response(
+    session_id: str,
+    *,
+    model: str,
+    message_hash: str,
+    response: Any,
+    input_tokens: int | None,
+    output_tokens: int | None,
+) -> dict[str, str] | None:
+    """Atomically write the completed response before its runtime receipt is recorded."""
+    binding = _runtime_bindings.get(session_id)
+    inputs = _provider_operation_inputs(session_id, model, message_hash)
+    operation_key = provider_operation_key(session_id, model=model, message_hash=message_hash)
+    if binding is None or inputs is None or operation_key is None:
+        return None
+    content = getattr(response, "content", "")
+    usage = {"input_tokens": input_tokens, "output_tokens": output_tokens}
+    payload = {
+        "contract": _PROVIDER_RESPONSE_CONTRACT,
+        "operation_key": operation_key,
+        "operation_inputs": inputs,
+        "model": model,
+        "response_content": content,
+        "response_hash": hashlib.sha256(_canonical_json(content).encode("utf-8")).hexdigest(),
+        "usage": usage,
+        "safe_input_hash": message_hash,
+        "safe_config_hash": inputs["config_hash"],
+    }
+    raw = _canonical_json(payload).encode("utf-8")
+    artifact_hash = hashlib.sha256(raw).hexdigest()
+    directory = _provider_artifact_dir(binding[0], inputs, operation_key)
+    project_root = Path(binding[0].project_root).resolve()
+    _secure_provider_artifact_directory(project_root, directory)
+    destination = directory / f"{artifact_hash}.json"
+    if not _provider_cache_path_is_safe(project_root, directory, destination):
+        raise RuntimeError("provider_cache_symlink_or_escape_rejected")
+    needs_write = not destination.exists() or destination.read_bytes() != raw
+    if needs_write:
+        fd, temporary_name = tempfile.mkstemp(prefix=".provider_response_", suffix=".tmp", dir=directory)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(raw)
+                handle.flush()
+                os.fsync(handle.fileno())
+            if not _provider_cache_path_is_safe(project_root, directory, destination):
+                raise RuntimeError("provider_cache_symlink_or_escape_rejected")
+            os.replace(temporary_name, destination)
+            if not _provider_cache_path_is_safe(project_root, directory, destination):
+                raise RuntimeError("provider_cache_symlink_or_escape_rejected")
+            os.chmod(destination, 0o600)
+            directory_fd = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except BaseException:
+            Path(temporary_name).unlink(missing_ok=True)
+            raise
+    else:
+        os.chmod(destination, 0o600)
+    return {
+        "operation_key": operation_key,
+        "artifact_path": str(destination.relative_to(project_root)),
+        "artifact_hash": artifact_hash,
+    }
+
+
 def _retry_decision_key(idempotency_key: str) -> str:
     return f"retry_provider_call:{idempotency_key}"
 
@@ -406,6 +663,90 @@ def _retry_is_authorized(store: Any, attempt_id: str, idempotency_key: str) -> b
         and decision.get("decision") == "authorize_retry_once"
         for decision in store.list_human_decisions(attempt_id)
     )
+
+
+def _unknown_call_key(attempt_id: str, call: dict[str, Any]) -> str:
+    key = str(call.get("intent_payload", {}).get("idempotency_key", ""))
+    return key or hashlib.sha256(
+        f"{attempt_id}:{call.get('tool_call_id', '')}".encode("utf-8")
+    ).hexdigest()
+
+
+def _block_for_unknown_call(
+    session_id: str, store: Any, attempt_id: str, owner_id: str,
+    fence_token: int, call: dict[str, Any],
+) -> None:
+    mark_cancel_requested(session_id)
+    store.set_attempt_status(
+        attempt_id,
+        "waiting_human",
+        owner_id=owner_id,
+        fence_token=fence_token,
+    )
+    raise ProviderCallRequiresHumanConfirmation(_unknown_call_key(attempt_id, call))
+
+
+def guard_pending_provider_unknown_outcomes(session_id: str) -> None:
+    """Block cache and provider paths without consuming an unknown-call decision."""
+    binding = _runtime_bindings.get(session_id)
+    if binding is None:
+        return
+    store, attempt_id, owner_id, fence_token = binding
+    unknown_calls = [
+        call for call in store.list_tool_calls(attempt_id)
+        if call.get("status") == "unknown_outcome"
+    ]
+    for call in unknown_calls:
+        unknown_key = str(call.get("intent_payload", {}).get("idempotency_key", ""))
+        if unknown_key and _retry_is_authorized(store, attempt_id, unknown_key):
+            continue
+        _block_for_unknown_call(
+            session_id, store, attempt_id, owner_id, fence_token, call,
+        )
+
+
+def reconcile_authorized_unknown_from_cache(
+    session_id: str, *, model: str, message_hash: str,
+    artifact_receipt: dict[str, str],
+) -> bool:
+    """Consume only the authorized unknown exactly matched by a verified cache hit."""
+    binding = _runtime_bindings.get(session_id)
+    if binding is None:
+        return False
+    store, attempt_id, owner_id, fence_token = binding
+    with _runtime_tool_call_lock:
+        unknown_calls = [
+            call for call in store.list_tool_calls(attempt_id)
+            if call.get("status") == "unknown_outcome"
+        ]
+        for call in unknown_calls:
+            key = str(call.get("intent_payload", {}).get("idempotency_key", ""))
+            if not key or not _retry_is_authorized(store, attempt_id, key):
+                _block_for_unknown_call(
+                    session_id, store, attempt_id, owner_id, fence_token, call,
+                )
+        matching = [
+            call for call in unknown_calls
+            if call.get("intent_payload", {}).get("model") == model
+            and call.get("intent_payload", {}).get("message_hash") == message_hash
+        ]
+        if not matching:
+            return False
+        if len(matching) != 1:
+            _block_for_unknown_call(
+                session_id, store, attempt_id, owner_id, fence_token, matching[0],
+            )
+        key = _unknown_call_key(attempt_id, matching[0])
+        store.resolve_authorized_unknown_with_artifact(
+            attempt_id,
+            matching[0]["tool_call_id"],
+            _retry_decision_key(key),
+            artifact_receipt,
+            owner_id=owner_id,
+            fence_token=fence_token,
+        )
+        clear_cancel_requested(session_id)
+        return True
 
 
 def begin_provider_call(
@@ -430,13 +771,20 @@ def begin_provider_call(
         unknown_calls = [call for call in existing_calls if call.get("status") == "unknown_outcome"]
         for call in unknown_calls:
             unknown_key = str(call.get("intent_payload", {}).get("idempotency_key", ""))
-            if unknown_key and not _retry_is_authorized(store, attempt_id, unknown_key):
-                mark_cancel_requested(session_id)
-                store.set_attempt_status(
-                    attempt_id, "waiting_human",
-                    owner_id=owner_id, fence_token=fence_token,
+            if not unknown_key or not _retry_is_authorized(store, attempt_id, unknown_key):
+                _block_for_unknown_call(
+                    session_id, store, attempt_id, owner_id, fence_token, call,
                 )
-                raise ProviderCallRequiresHumanConfirmation(unknown_key)
+
+        matching_authorized = [
+            item for item in unknown_calls
+            if item.get("intent_payload", {}).get("message_hash") == message_hash
+            and item.get("intent_payload", {}).get("model") == model
+        ]
+        if unknown_calls and len(matching_authorized) != 1:
+            _block_for_unknown_call(
+                session_id, store, attempt_id, owner_id, fence_token, unknown_calls[0],
+            )
 
         sequence = len(existing_calls) + 1
         idempotency_key = hashlib.sha256(
@@ -451,11 +799,7 @@ def begin_provider_call(
             "sequence": sequence,
             "idempotency_key": idempotency_key,
         }
-        matching_unknown = next((
-            item for item in unknown_calls
-            if item.get("intent_payload", {}).get("message_hash") == message_hash
-            and item.get("intent_payload", {}).get("model") == model
-        ), None)
+        matching_unknown = matching_authorized[0] if matching_authorized else None
         if matching_unknown is not None:
             unknown_key = str(matching_unknown["intent_payload"]["idempotency_key"])
             call = store.record_authorized_retry_intent(
@@ -468,6 +812,7 @@ def begin_provider_call(
                 owner_id=owner_id,
                 fence_token=fence_token,
             )
+            clear_cancel_requested(session_id)
         else:
             call = store.record_tool_intent(
                 attempt_id,
@@ -490,7 +835,7 @@ def begin_provider_call(
 
 def settle_provider_success(
     call: dict[str, Any], *, model: str, input_tokens: int | None,
-    output_tokens: int | None, result_hash: str,
+    output_tokens: int | None, result_hash: str, artifact_receipt: dict[str, str] | None = None,
 ) -> None:
     if not call.get("managed"):
         return
@@ -501,6 +846,7 @@ def settle_provider_success(
         "output_tokens": output_tokens,
         "result_hash": result_hash,
         "idempotency_key": call["idempotency_key"],
+        **({"artifact_receipt": artifact_receipt} if artifact_receipt else {}),
     }, attempt_id=call["attempt_id"], owner_id=call["owner_id"], fence_token=call["fence_token"])
 
 
@@ -651,6 +997,35 @@ def record_call_usage(
             "message": f"budget_exhausted:{ledger.exhausted_reason}",
         })
     return allowed
+
+
+def mark_operation_usage_accounted(session_id: str, operation_key: str) -> None:
+    if not session_id or not operation_key:
+        return
+    with _cached_usage_lock:
+        _accounted_cached_operations.setdefault(session_id, set()).add(operation_key)
+
+
+def record_cached_call_usage_once(
+    session_id: str,
+    operation_key: str,
+    usage: dict[str, Any],
+    *,
+    model: str,
+) -> bool:
+    """Restore paid cached usage once without creating a call reservation."""
+    with _cached_usage_lock:
+        accounted = _accounted_cached_operations.setdefault(session_id, set())
+        if operation_key in accounted:
+            ledger = _budget_ledgers.get(session_id)
+            return ledger is None or not bool(ledger.exhausted_reason)
+        accounted.add(operation_key)
+        return record_call_usage(
+            session_id,
+            usage.get("input_tokens"),
+            usage.get("output_tokens"),
+            model=model,
+        )
 
 
 def release_call_reservation(session_id: str, reservation_token: str | None = None) -> None:

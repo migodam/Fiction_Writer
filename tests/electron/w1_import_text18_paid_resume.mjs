@@ -23,6 +23,8 @@ const POLL_INTERVAL_MS = 1_000;
 const HARD_WALL_CLOCK_TIMEOUT_MS = 20 * 60_000;
 const STATIC_ONLY = !process.argv.includes('--execute-paid');
 const RECONCILE_ONLY = process.argv.includes('--reconcile-only');
+const AUTHORIZE_RETRY_ONCE = process.argv.includes('--authorize-retry-once');
+const UNIT_TEST = process.argv.includes('--unit-test');
 const startedAt = Date.now();
 const resources = { app: null, vite: null, page: null, closing: false };
 let reconcileUserData = null;
@@ -80,6 +82,28 @@ async function readJson(file, label) {
 function assertNoUnknownCalls(run) {
   assert(Array.isArray(run.unknown_calls), 'runtime response did not expose unknown_calls');
   assert.equal(run.unknown_calls.length, 0, 'unknown_outcome calls must be empty; this runner never authorizes them');
+}
+
+function assertOnlyAuthorizedHistoricalUnknowns(unknownCalls) {
+  assert(Array.isArray(unknownCalls), 'runtime response did not expose unknown_calls');
+  for (const unknownCall of unknownCalls) {
+    assert.equal(unknownCall?.decision_state, 'authorize_retry_once', 'new or unresolved unknown outcome appeared after resume');
+  }
+}
+
+function runUnitTests() {
+  assert.doesNotThrow(() => assertOnlyAuthorizedHistoricalUnknowns([
+    { decision_state: 'authorize_retry_once' },
+  ]), 'authorized historical unknown should be tolerated');
+  assert.throws(() => assertOnlyAuthorizedHistoricalUnknowns([
+    { decision_state: 'authorize_retry_once' },
+    { decision_state: 'pending' },
+  ]), /new or unresolved unknown outcome/, 'a second pending unknown must fail');
+  console.log('UNIT PASS; authorized historical unknown tolerated and second pending unknown rejected');
+}
+
+function validateArguments() {
+  assert(!AUTHORIZE_RETRY_ONCE || !STATIC_ONLY, '--authorize-retry-once requires --execute-paid');
 }
 
 function assertBudget(config) {
@@ -271,8 +295,32 @@ function assertRecoverableRun(result) {
   assert.equal(run.source_compatible, true, 'runtime source is incompatible');
   assert.equal(run.config?.source_hash, EXPECTED_SOURCE_HASH, 'runtime source hash differs from approved source');
   assertBudget(run.config);
-  assertNoUnknownCalls(run);
+  if (AUTHORIZE_RETRY_ONCE) {
+    assert.equal(run.unknown_calls?.length, 1, 'retry authorization requires exactly one pending unknown outcome');
+    assert.equal(run.unknown_calls[0].decision_state, 'pending', 'unknown outcome must be pending before authorization');
+    assert.equal(typeof run.unknown_calls[0].decision_key, 'string', 'pending unknown outcome is missing decision_key');
+  } else {
+    assertNoUnknownCalls(run);
+  }
   return run;
+}
+
+async function authorizeExactlyOneRetry(page, run) {
+  const unknownCall = run.unknown_calls[0];
+  const decision = await stage('runtime.decision.authorize-retry-once', () => page.evaluate(({ root, attempt, decisionKey }) => window.narrativeIDE.runtimeDecision({
+    projectRoot: root,
+    attempt_id: attempt,
+    decision_key: decisionKey,
+    decision: 'authorize_retry_once',
+  }), { root: PROJECT_ROOT, attempt: run.attempt_id, decisionKey: unknownCall.decision_key }), 60_000);
+  assert.equal(decision?.decision, 'authorize_retry_once', `retry authorization was not accepted: ${sanitizedError(decision?.error || decision?.decision)}`);
+
+  const detail = await page.evaluate(({ root, lineage }) => window.narrativeIDE.runtimeRun({ projectRoot: root, lineage_id: lineage }), { root: PROJECT_ROOT, lineage: run.lineage_id });
+  const refreshedRun = detail?.attempt ?? detail?.attempts?.find((item) => item.attempt_id === run.attempt_id);
+  assert.equal(refreshedRun?.unknown_calls?.length ?? detail?.unknown_calls?.length, 1, 'retry authorization must leave exactly one decision record');
+  const refreshedCall = (refreshedRun?.unknown_calls ?? detail?.unknown_calls)[0];
+  assert.equal(refreshedCall.decision_key, unknownCall.decision_key, 'refetched decision_key changed');
+  assert.equal(refreshedCall.decision_state, 'authorize_retry_once', 'retry decision was not durably authorized');
 }
 
 function eventText(event) {
@@ -282,7 +330,7 @@ function eventText(event) {
 function assertNoFatalEvent(events) {
   for (const event of events) {
     const text = eventText(event);
-    if (/unknown_outcome|waiting_human|needs_credentials|missing_usage|usage.*missing|budget_exhausted|max_cost_usd|source_incompatible|source.*mismatch|authorization|unauthori[sz]ed/.test(text)) {
+    if (/waiting_human|needs_credentials|missing_usage|usage.*missing|budget_exhausted|max_cost_usd|source_incompatible|source.*mismatch|authorization|unauthori[sz]ed/.test(text)) {
       throw new Error(`durable runtime event stopped the recovery: ${event.event_type || 'unknown'}`);
     }
   }
@@ -305,7 +353,7 @@ async function monitorCompletion(page, attemptId) {
     const attempt = detail?.attempt ?? detail?.attempts?.find((item) => item.attempt_id === attemptId);
     const status = attempt?.status;
     const unknownCalls = attempt?.unknown_calls ?? detail?.unknown_calls ?? [];
-    assert.equal(unknownCalls.length, 0, 'unknown outcome appeared after resume; runner will not authorize it');
+    assertOnlyAuthorizedHistoricalUnknowns(unknownCalls);
     if (['needs_credentials', 'waiting_human', 'failed', 'cancelled', 'error'].includes(status)) throw new Error(`recovery stopped with status=${status}`);
     if (status === 'completed') return { detail, events, finalAttempt: attempt };
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
@@ -362,6 +410,11 @@ async function writeReceipt({ backup, run, model, completion }) {
 }
 
 async function main() {
+  validateArguments();
+  if (UNIT_TEST) {
+    runUnitTests();
+    return;
+  }
   const preflight = await stage('static.preflight', staticPreflight, 60_000);
   log('static.preflight', `PASS source_sha256=${preflight.sourceHash} completed=4/10`);
   if (RECONCILE_ONLY) {
@@ -386,6 +439,7 @@ async function main() {
     const inventory = await waitForRecoverable(page);
     const run = assertRecoverableRun(inventory);
     await backupRuntimeDatabases(backup);
+    if (AUTHORIZE_RETRY_ONCE) await authorizeExactlyOneRetry(page, run);
 
     assert.equal(resumeInvocations, 0, 'resume was already invoked');
     resumeInvocations += 1;

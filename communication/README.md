@@ -1,6 +1,6 @@
 # Narrative IDE Communication Index
 
-Last updated: 2026-07-17
+Last updated: 2026-07-19
 Owner: Codex / W4 QA + Communication Merge
 
 This folder is the evidence and handoff layer for Narrative IDE work. It is not the canonical product source of truth. When docs conflict, use `dev_docs/README.md` to identify the winning canonical document, then use the files here as reports, prompt packages, QA evidence, and historical context.
@@ -25,8 +25,9 @@ This folder is the evidence and handoff layer for Narrative IDE work. It is not 
 
 ## Current Verdict
 
-- The Agent Runtime resilience wave passes 781 targeted Python tests, 44 W1 recovery/package Playwright tests, UI lint/build, Electron smoke/lifecycle, disposable 89-proposal acceptance, original benchmark repair-only migration, and real Import Text 18 cold-start reconciliation.
-- Import Text 18 remains at the trusted 4/10 checkpoint because one of six DeepSeek recovery calls exceeded the 20-minute fuse. The cold start preserved five result receipts and converted the unresolved call to one human-gated `unknown_outcome`; no automatic retry or package acceptance occurred.
+- The Agent Runtime resilience wave passes 793 targeted zero-cost tests, 44 W1 recovery/package Playwright tests, UI lint/build, Electron smoke/lifecycle, disposable 89-proposal acceptance, original benchmark repair-only migration, and provider-response recovery verification. The current recovery/transaction subset also passes 7/7.
+- Import Text 18 has the clean 4/10 baseline restored. A paid 10/10 run was attempted but blocked before execution by environment policy; no paid success is claimed and 10/10 remains pending explicit renewed approval.
+- Provider response recovery uses a stable sequence-independent operation key excluding `attemptId`, project-local `0700`/`0600` content-addressed artifacts, verified cross-attempt reuse, per-process singleflight, human-gated unknown outcomes on cache and network paths, and unique-operation usage-ledger rebuilds without session double counting.
 - Current verified baselines are 659 W1 backend tests, 230 full P0/P1 Playwright tests, Electron runtime smoke, UI lint/build, Python compileall, and diff/secret checks.
 - Final Flash artifact `/tmp/.../20260713_033431` passes every extraction and semantic gate except the now-fixed 张铁 serializer boundary. Exact production-code replay passes diagnostics with every symptom flag false.
 - Six ledger-backed Flash runs cost `$0.439420`. One Pro attempt was stopped after 12 minutes with zero settled calls/tokens/cost because provider latency made completion inside the 30-minute gate impossible.

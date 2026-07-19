@@ -1,20 +1,19 @@
 # Narrative IDE Agent Runtime Resilience and Recovery Report
 
-**Final implementation review:** 2026-07-17
+**Final implementation review:** 2026-07-19
 **Branch:** `codex/agent-runtime-resilience`
 **Backup tag:** `backup/agent-runtime-pre-resilience-20260715` (`c9598dc`)
 
 ## Executive Verdict
 
 The durable Agent Runtime implementation is reviewer-ready. Automated backend,
-frontend, Electron lifecycle, crash recovery, real-fixture acceptance, and
-original benchmark repair-only migration gates pass.
+frontend, Electron lifecycle, crash recovery, real-fixture acceptance,
+original benchmark repair-only migration, and zero-cost provider response
+recovery gates pass (**793 passed**).
 
-The real Import Text 18 paid recovery is intentionally **waiting for a human
-decision**, not marked complete. Five of six DeepSeek calls returned; one call
-remained unresolved until the 20-minute runner fuse stopped the process. Cold
-start converted that single unfinished intent to `unknown_outcome`, preserved
-the trusted 4/10 checkpoint, and prohibited automatic retry.
+The clean Import Text 18 4/10 baseline was restored. A paid 10/10 run was
+attempted but blocked before provider execution by environment policy, so it is
+not a paid success and 10/10 remains pending explicit renewed approval.
 
 ## What Shipped
 
@@ -27,6 +26,11 @@ the trusted 4/10 checkpoint, and prohibited automatic retry.
   remains on the production path.
 - Stable `lineageId`, unique `attemptId`, thread/checkpoint identity, and
   content-addressed cache keys.
+- Provider response operation keys are stable and sequence-independent and
+  exclude `attemptId`; project-local content-addressed response artifacts use
+  `0700` directories and `0600` files. Verified artifacts are reusable across
+  attempts, per-process singleflight prevents duplicate calls, and usage is
+  rebuilt from unique cached operations without session double counting.
 - Transactional cold-start reconciliation: running attempts become
   `interrupted`; unfinished provider intents become `unknown_outcome`; completed
   results stay immutable.
@@ -44,6 +48,7 @@ the trusted 4/10 checkpoint, and prohibited automatic retry.
   single-writer operation.
 - Budget ceilings cannot increase on resume; missing usage and unknown pricing
   fail closed.
+- Unknown outcomes remain human-gated on both cache and network paths.
 
 ### Package And File Durability
 
@@ -116,28 +121,39 @@ Latest evidence root:
 - Failure receipt:
   `/Users/migodam/narrative-ide-recovery-receipts/import-text18-2026-07-17T14-30-28-317Z/failure.json`.
 
-No accurate cost can be claimed for the partial batch because the node did not
-commit its usage ledger. Recovery therefore reports unknown spend and cannot
-resume until the user explicitly chooses retry-once or cancel.
+The clean 4/10 baseline was restored before the paid follow-up. A paid 10/10
+run was attempted, but environment policy blocked it before provider execution;
+therefore no paid success or paid usage is claimed. Explicit renewed approval
+is still required before the 10/10 run can execute.
+
+### Zero-Cost Provider Recovery Verification
+
+- Restart coverage reused five saved role responses and called the provider only
+  for the sixth missing role.
+- Verified response reuse worked across attempts using the stable operation key.
+- Per-process singleflight and session usage-ledger deduplication passed.
+- Cache-path and network-path `unknown_outcome` states remained human-gated.
 
 ## Verification Matrix
 
 | Gate | Result |
 | --- | --- |
-| W1/runtime/agentic/checkpointer pytest | **781 passed** in 7.93s |
+| W1/runtime/agentic/checkpointer pytest | **793 passed** in 8.26s |
 | W1 package/recovery/SSE/transaction Playwright | **44 passed** in 11.1s |
+| Current targeted recovery/transaction Playwright | **7 passed** in 4.7s |
 | UI lint | **PASS**, zero warnings |
 | UI production build | **PASS** |
 | Electron runtime smoke | **PASS**, clean exit |
 | Electron sidecar lifecycle | **PASS** |
 | Real disposable fixture | **PASS**, 89 accepted and restart-persistent |
 | Original benchmark repair-only | **PASS**, 89 pending and canonical hashes unchanged |
-| Real Import Text 18 cold-start reconcile | **PASS**, 1 unknown call human-gated |
-| Real Import Text 18 10/10 completion | **WAITING FOR HUMAN DECISION** |
+| Real Import Text 18 clean 4/10 baseline restore | **PASS** |
+| Zero-cost provider response recovery | **PASS**, 5 saved roles reused; 1 missing role called |
+| Real Import Text 18 paid 10/10 completion | **PENDING EXPLICIT RENEWED APPROVAL**, blocked before execution by environment policy |
 
 ## Remaining Risks
 
-- The unresolved DeepSeek call requires an explicit retry-once or cancel choice.
+- The paid 10/10 run remains blocked until explicit renewed approval is granted.
 - A provider-level per-request timeout shorter than the 20-minute workflow fuse
   should be considered as a P2 tuning item; it must still produce an unknown
   outcome after transport ambiguity.
@@ -151,14 +167,10 @@ resume until the user explicitly chooses retry-once or cancel.
 
 ## Human Next Step
 
-1. Open Import Text 18 and enter **Import > Recovery Center**.
-2. Inspect the single unknown DeepSeek call and unknown-spend warning.
-3. Choose **Retry once** to authorize exactly one replacement call, or **Cancel**
-   to preserve 4/10 without further cost.
-4. After retry, run the paid resume runner again. It will still enforce USD 3,
-   one Resume, 20 minutes, 10/10 contiguous checkpoint, and zero accepted
-   proposals.
-5. Review and Accept the resulting proposal package manually; no recovery code
+1. Obtain explicit renewed approval for the paid 10/10 run.
+2. Run the paid resume path with its USD 3 hard ceiling, one Resume, 20-minute
+   fuse, contiguous 10/10 checkpoint requirement, and zero accepted proposals.
+3. Review and Accept the resulting proposal package manually; no recovery code
    is allowed to cross that gate.
 
 ## Local Run Guide

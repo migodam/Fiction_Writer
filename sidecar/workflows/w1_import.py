@@ -47,10 +47,19 @@ from sidecar.workflows.w1_run_events import (
     add_token_usage,
     authoritative_usage_ledger,
     begin_provider_call,
+    begin_provider_singleflight,
     configure_budget,
+    finish_provider_singleflight,
+    guard_pending_provider_unknown_outcomes,
+    _load_verified_provider_artifact,
+    mark_operation_usage_accounted,
+    persist_provider_response,
     provider_message_hash,
+    provider_operation_key,
     provider_result_hash,
+    reconcile_authorized_unknown_from_cache,
     record_call_usage,
+    record_cached_call_usage_once,
     release_call_reservation,
     reserve_call_budget,
     settle_provider_failure,
@@ -448,8 +457,92 @@ async def _ainvoke_with_budget(
     estimated_input_tokens: int = 0,
     estimated_output_tokens: int = 0,
 ) -> Any:
-    """Run one provider call with E0 budget guards around the actual I/O."""
+    """Run or reuse one provider operation with E0 budget and singleflight guards."""
     model = _llm_model_name(llm)
+    message_hash = provider_message_hash(messages)
+    if session_id:
+        guard_pending_provider_unknown_outcomes(session_id)
+    operation_key = provider_operation_key(
+        session_id, model=model, message_hash=message_hash,
+    ) if session_id else None
+    if operation_key is None:
+        return await _ainvoke_provider_operation(
+            llm,
+            messages,
+            session_id=session_id,
+            model=model,
+            message_hash=message_hash,
+            estimated_input_tokens=estimated_input_tokens,
+            estimated_output_tokens=estimated_output_tokens,
+        )
+
+    is_leader, flight = begin_provider_singleflight(operation_key)
+    if not is_leader:
+        await asyncio.shield(asyncio.wrap_future(flight))
+        guard_pending_provider_unknown_outcomes(session_id)
+        cached_response = _load_verified_provider_artifact(
+            session_id, model=model, message_hash=message_hash,
+        )
+        if cached_response is None:
+            raise RuntimeError("provider_singleflight_completed_without_verified_artifact")
+        return _account_cached_provider_response(
+            session_id, model, message_hash, cached_response,
+        )
+
+    try:
+        response = await _ainvoke_provider_operation(
+            llm,
+            messages,
+            session_id=session_id,
+            model=model,
+            message_hash=message_hash,
+            estimated_input_tokens=estimated_input_tokens,
+            estimated_output_tokens=estimated_output_tokens,
+        )
+    except BaseException as exc:
+        finish_provider_singleflight(operation_key, flight, error=exc)
+        raise
+    finish_provider_singleflight(operation_key, flight)
+    return response
+
+
+def _account_cached_provider_response(
+    session_id: str, model: str, message_hash: str, cached_response: Any,
+) -> Any:
+    reconcile_authorized_unknown_from_cache(
+        session_id,
+        model=model,
+        message_hash=message_hash,
+        artifact_receipt=cached_response.artifact_receipt,
+    )
+    if not record_cached_call_usage_once(
+        session_id,
+        cached_response.operation_key,
+        cached_response.usage_metadata,
+        model=model,
+    ):
+        reason = authoritative_usage_ledger(session_id, model).get("budget_status", {}).get("reason", "budget_exhausted")
+        raise RuntimeError(f"budget_exhausted: cached provider response denied ({reason})")
+    return cached_response
+
+
+async def _ainvoke_provider_operation(
+    llm: Any,
+    messages: list[Any],
+    *,
+    session_id: str,
+    model: str,
+    message_hash: str,
+    estimated_input_tokens: int,
+    estimated_output_tokens: int,
+) -> Any:
+    cached_response = _load_verified_provider_artifact(
+        session_id, model=model, message_hash=message_hash,
+    ) if session_id else None
+    if cached_response is not None:
+        return _account_cached_provider_response(
+            session_id, model, message_hash, cached_response,
+        )
     reservation_token = ""
     durable_call: dict[str, Any] = {}
     if session_id:
@@ -467,11 +560,19 @@ async def _ainvoke_with_budget(
             durable_call = begin_provider_call(
                 session_id,
                 model=model,
-                message_hash=provider_message_hash(messages),
+                message_hash=message_hash,
                 estimated_input_tokens=estimated_input_tokens,
                 estimated_output_tokens=estimated_output_tokens,
             )
             response = await llm.ainvoke(messages)
+    except asyncio.CancelledError:
+        if session_id:
+            release_call_reservation(session_id, reservation_token)
+        if durable_call:
+            settle_provider_unknown(
+                session_id, durable_call, reason="operation_cancelled",
+            )
+        raise
     except ProviderCallRequiresHumanConfirmation:
         if session_id:
             release_call_reservation(session_id, reservation_token)
@@ -485,21 +586,30 @@ async def _ainvoke_with_budget(
         settle_provider_failure(durable_call, failure_type=failure_type, status_code=status_code)
         raise
     usage = _extract_llm_usage(response)
+    artifact_receipt = persist_provider_response(
+        session_id, model=model, message_hash=message_hash, response=response,
+        input_tokens=usage[0] if usage else None,
+        output_tokens=usage[1] if usage else None,
+    ) if session_id else None
     settle_provider_success(
         durable_call,
         model=model,
         input_tokens=usage[0] if usage else None,
         output_tokens=usage[1] if usage else None,
         result_hash=provider_result_hash(response),
+        artifact_receipt=artifact_receipt,
     )
     if session_id:
-        if not record_call_usage(
+        usage_allowed = record_call_usage(
             session_id,
             usage[0] if usage else None,
             usage[1] if usage else None,
             model=model,
             reservation_token=reservation_token,
-        ):
+        )
+        if artifact_receipt:
+            mark_operation_usage_accounted(session_id, artifact_receipt["operation_key"])
+        if not usage_allowed:
             reason = authoritative_usage_ledger(session_id, model).get("budget_status", {}).get("reason", "budget_exhausted")
             raise RuntimeError(f"budget_exhausted: postflight denied provider response ({reason})")
     return response

@@ -9,9 +9,11 @@ from __future__ import annotations
 from contextlib import contextmanager
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import sqlite3
+import stat
 import threading
 import time
 from typing import Any, Iterator
@@ -629,6 +631,111 @@ class RuntimeStore:
             ).fetchone())
             assert row is not None
             return row
+
+    def resolve_authorized_unknown_with_artifact(
+        self, attempt_id: str, unknown_tool_call_id: str, decision_key: str,
+        artifact_receipt: Any, *, owner_id: str, fence_token: int,
+    ) -> dict[str, Any]:
+        """Atomically consume one authorized unknown using a verified artifact."""
+        if not isinstance(artifact_receipt, dict):
+            raise ValueError("artifact_receipt_must_be_an_object")
+        safe_receipt = {
+            "operation_key": _identifier(artifact_receipt.get("operation_key"), "operation_key", required=True),
+            "artifact_path": _identifier(artifact_receipt.get("artifact_path"), "artifact_path", required=True),
+            "artifact_hash": _identifier(artifact_receipt.get("artifact_hash"), "artifact_hash", required=True),
+        }
+        if not re.fullmatch(r"[0-9a-f]{64}", str(safe_receipt["operation_key"])):
+            raise ValueError("artifact_operation_key_invalid")
+        if not re.fullmatch(r"[0-9a-f]{64}", str(safe_receipt["artifact_hash"])):
+            raise ValueError("artifact_hash_invalid")
+        receipt_path = Path(str(safe_receipt["artifact_path"]))
+        if receipt_path.is_absolute() or any(part in {"", ".", ".."} for part in receipt_path.parts):
+            raise ValueError("artifact_path_invalid")
+        project_root = self.project_root.resolve()
+        artifact_path = project_root / receipt_path
+        if not artifact_path.resolve(strict=False).is_relative_to(project_root):
+            raise ValueError("artifact_path_escapes_project")
+        now = _now()
+        with self.transaction() as connection:
+            self._assert_lease(connection, attempt_id, owner_id, fence_token, now)
+            unknown = connection.execute(
+                "SELECT * FROM tool_calls WHERE tool_call_id = ? AND attempt_id = ?",
+                (unknown_tool_call_id, attempt_id),
+            ).fetchone()
+            if unknown is None:
+                raise ValueError("unknown_retry_not_found")
+            unknown_intent = json.loads(unknown["intent_payload_json"])
+            idempotency_key = str(unknown_intent.get("idempotency_key", ""))
+            expected_key = f"retry_provider_call:{idempotency_key}"
+            if decision_key != expected_key:
+                raise ValueError("unknown_retry_decision_key_mismatch")
+            decision = connection.execute(
+                "SELECT decision FROM human_decisions WHERE attempt_id = ? AND decision_key = ?",
+                (attempt_id, decision_key),
+            ).fetchone()
+            if decision is None or decision["decision"] != "authorize_retry_once":
+                raise ValueError("unknown_retry_not_authorized")
+            try:
+                resolved_artifact_path = artifact_path.resolve(strict=True)
+            except FileNotFoundError as exc:
+                raise ValueError("artifact_missing") from exc
+            except OSError as exc:
+                raise ValueError("artifact_path_invalid") from exc
+            if not resolved_artifact_path.is_relative_to(project_root):
+                raise ValueError("artifact_path_escapes_project")
+            if artifact_path.is_symlink():
+                raise ValueError("artifact_symlink_rejected")
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            try:
+                descriptor = os.open(artifact_path, flags)
+            except FileNotFoundError as exc:
+                raise ValueError("artifact_missing") from exc
+            except OSError as exc:
+                raise ValueError("artifact_unreadable") from exc
+            try:
+                file_stat = os.fstat(descriptor)
+                if not stat.S_ISREG(file_stat.st_mode):
+                    raise ValueError("artifact_not_regular_file")
+                with os.fdopen(descriptor, "rb") as artifact_file:
+                    descriptor = -1
+                    artifact_bytes = artifact_file.read()
+            finally:
+                if descriptor >= 0:
+                    os.close(descriptor)
+            if hashlib.sha256(artifact_bytes).hexdigest() != safe_receipt["artifact_hash"]:
+                raise ValueError("artifact_hash_mismatch")
+            try:
+                artifact_payload = json.loads(artifact_bytes.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ValueError("artifact_contract_invalid") from exc
+            if not isinstance(artifact_payload, dict) or artifact_payload.get("contract") != "W1ProviderResponse/v1":
+                raise ValueError("artifact_contract_invalid")
+            if artifact_payload.get("operation_key") != safe_receipt["operation_key"]:
+                raise ValueError("artifact_operation_key_mismatch")
+            resolution = {
+                "outcome": "resolved_from_verified_artifact",
+                "idempotency_key": idempotency_key,
+                "artifact_receipt": safe_receipt,
+            }
+            if unknown["status"] == "retry_consumed":
+                existing = json.loads(unknown["result_payload_json"]) if unknown["result_payload_json"] else None
+                if existing == resolution:
+                    row = _row(unknown)
+                    assert row is not None
+                    return {**row, "idempotent": True}
+                raise ValueError("unknown_retry_already_consumed")
+            if unknown["status"] != "unknown_outcome":
+                raise ValueError("unknown_retry_already_consumed")
+            connection.execute(
+                "UPDATE tool_calls SET status = 'retry_consumed', result_payload_json = ?, updated_at = ? "
+                "WHERE tool_call_id = ? AND status = 'unknown_outcome'",
+                (_dump(resolution), now, unknown_tool_call_id),
+            )
+            row = _row(connection.execute(
+                "SELECT * FROM tool_calls WHERE tool_call_id = ?", (unknown_tool_call_id,)
+            ).fetchone())
+            assert row is not None
+            return {**row, "idempotent": False}
 
     def record_artifact_receipt(self, attempt_id: str, artifact_type: str, artifact_uri: str, checksum: str | None = None, metadata: Any | None = None) -> dict[str, Any]:
         receipt_id, timestamp = str(uuid4()), _now()

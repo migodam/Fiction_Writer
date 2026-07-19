@@ -23,6 +23,23 @@ The runtime records tool intents/results and may mark post-restart calls
 to retry exactly once or cancel; recovery never repeats an unknown paid call by
 default.
 
+### Provider Response Recovery Contract (2026-07-19)
+
+Provider response reuse is keyed by a stable, sequence-independent operation
+key. The key excludes `attemptId`, so an equivalent operation can be verified
+and reused across attempts without treating a retry as a new provider call.
+Response artifacts are content-addressed and stored project-locally with
+permissions `0700` for containing directories and `0600` for artifact files.
+Reuse requires verification of the artifact and operation identity; an
+unverified or mismatched artifact is never accepted. Recovery coverage verifies
+that five saved role responses are reused while only the sixth missing role
+causes one provider call; per-process singleflight prevents duplicate concurrent
+execution of the same operation.
+
+Unknown outcomes remain human-gated on both cache and network paths. The usage
+ledger is rebuilt from unique cached operations and does not double-count an
+operation within a session.
+
 ## Status
 W1 import now uses a Hybrid Compiler spine for long novel imports. The runtime still starts from the existing Import modal and sidecar W1 endpoint, but imported material is staged through deterministic artifacts before proposals are written.
 

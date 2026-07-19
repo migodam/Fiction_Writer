@@ -1,0 +1,27 @@
+# W1 Provider Response Reuse
+
+## Changes
+
+- Added deterministic, sequence-independent W1 provider operation keys using lineage, model, message hash, and profile/prompt/schema/tool/config hashes. Attempt identity is deliberately excluded so verified responses can be reused by child and replacement attempts.
+- Added atomic, project-contained, content-addressed provider-response artifacts under `system/imports/<lineage>/provider_responses/<operation_key>/`. Durable tool results retain the verified relative artifact receipt and hashes.
+- Added pre-budget/pre-intent artifact validation and reuse. Missing, malformed, or tampered artifacts fail closed and cause a new provider call rather than a cache hit.
+- Added an exact-operation unknown-outcome gate. `authorize_retry_once` permits only one unresolved unknown with the same model and message hash to create its atomically linked replacement intent; mismatched paid operations remain `waiting_human`. Once consumed and linked, downstream operations may proceed, and the old authorization cannot be reused.
+- A matching verified cache atomically consumes the authorized unknown through its safe artifact receipt, without creating an intent or provider call. Inside the consume transaction, the runtime requires an existing regular non-symlink file beneath the resolved project root, verifies its byte SHA-256, and confirms its `W1ProviderResponse/v1` contract and operation key. Missing, malformed, or hash-mismatched artifacts leave the unknown unresolved. Unrelated completed cache entries remain reusable, but unrelated paid calls stay blocked while the authorized unknown remains unresolved. The resolution is idempotent only for the identical unknown/receipt pair and adds no schema.
+- The in-process cancel flag raised by the waiting-human gate is cleared only after the exact retry intent is durably linked or the matching artifact resolution is durably consumed, allowing downstream supervisor work to continue.
+- Added per-process, operation-keyed singleflight around lookup, reservation, intent, provider I/O, and persistence. Concurrent identical callers wait for one leader, then revalidate the shared artifact. Follower cancellation leaves the leader running; leader cancellation releases followers, durably marks an in-flight intent unknown, and requires its matching authorization. SQLite lease/fencing remains the cross-process authority.
+- Cached usage and derived cost are restored into each fresh runtime-session ledger exactly once per operation. Repeated reads within that session do not double-count. After restart, the ledger is rebuilt from unique reused operations and reaches the same total; it is not added to a persisted aggregate. Restored usage can exhaust the configured budget without creating a reservation, intent, or provider call. No database schema was added.
+- Provider-response cache directories and files are owner-only (`0700`/`0600`). Read and write paths explicitly reject symlinked provider roots, operation directories, and artifact files, and verify each resolved component remains beneath the project root. Reads fail as cache misses; persistence raises before following or replacing a link. The project already stores manuscript plaintext; provider response content is confined to the project artifact and never copied into runtime receipts, events, or this log.
+
+## Validation
+
+- `sidecar/.venv/bin/python -m pytest -q tests/test_w1_run_events.py` -> `26 passed`.
+- `sidecar/.venv/bin/python -m pytest -q tests/test_agent_runtime.py` -> `21 passed`.
+- `sidecar/.venv/bin/python -m pytest -q tests/test_w1_run_events.py tests/test_w1_attempt_recovery.py tests/test_w1_import_compiler.py tests/test_agent_runtime.py` -> `139 passed`.
+- Focused fault injection confirms restart resumes five saved role artifacts plus one missing role, making exactly one provider call; tamper coverage confirms a modified artifact is not reused.
+- Cross-attempt coverage confirms identical inputs reuse the lineage artifact, while changed config, message, or model inputs miss. Cached-accounting coverage confirms one-time token/call/cost restoration and `max_cost_usd` enforcement.
+- Unknown/cache coverage confirms a pending unknown blocks a valid cache with zero provider calls, then durable authorization permits the cache with zero provider calls and no new intent. Twelve concurrent identical calls produce one provider request and one accounting entry, including after a fresh `asyncio.run` following `clear_session`.
+- Authorization coverage confirms mismatched network work is blocked with zero calls, the matching replacement is linked once, downstream work proceeds only after resolution, matching cache resolution creates no intent, and duplicate authorization is not reusable. Leader/follower cancellation coverage confirms singleflight cleanup and the durable unknown gate.
+- Direct runtime coverage creates a minimal valid provider-response artifact and confirms missing or hash-mismatched files fail before authorization consumption, leaving the unknown outcome durable.
+- Permission coverage confirms the shared provider-response root and operation directory are `0700` and the content-addressed JSON artifact is `0600`.
+- Symlink coverage confirms linked artifact files and linked `provider_responses` directories are never read as cache hits and cause persistence to raise rather than write through the link.
+- A symlinked project-root binding emits the same resolved-root-relative artifact receipt without raising `ValueError`.
