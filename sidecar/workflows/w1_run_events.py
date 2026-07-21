@@ -397,6 +397,13 @@ def configure_budget(session_id: str, policy: BudgetPolicy, *, model: str = "") 
     if not session_id:
         raise ValueError("session_id is required")
     ensure_session(session_id)
+    existing = _budget_ledgers.get(session_id)
+    if existing is not None:
+        if existing.policy != policy or (model and existing.model and existing.model != model):
+            raise ValueError("budget_policy_reconfiguration_rejected")
+        if model and not existing.model:
+            existing.model = model
+        return existing
     ledger = BudgetLedger(policy=policy, model=model)
     _budget_ledgers[session_id] = ledger
     _accounted_cached_operations[session_id] = set()
@@ -747,6 +754,97 @@ def reconcile_authorized_unknown_from_cache(
         )
         clear_cancel_requested(session_id)
         return True
+
+
+def restore_durable_provider_history(session_id: str) -> dict[str, int]:
+    """Restore paid usage and consume authorized unknowns backed by verified artifacts.
+
+    A checkpoint resume can skip the node that originally requested a response.
+    Reconcile its durable provider history before any downstream call so the
+    human authorization and lifetime budget remain effective across restarts.
+    """
+    binding = _runtime_bindings.get(session_id)
+    if binding is None:
+        return {"accounted": 0, "reconciled": 0}
+    store, attempt_id, _owner_id, _fence_token = binding
+    accounted = 0
+    reconciled = 0
+    for call in store.list_tool_calls(attempt_id):
+        if call.get("tool_name") != "provider.chat.completions":
+            continue
+        intent = call.get("intent_payload") or {}
+        model = str(intent.get("model") or "")
+        message_hash = str(intent.get("message_hash") or "")
+        if not model or not message_hash:
+            continue
+
+        status = call.get("status")
+        if status == "unknown_outcome":
+            key = str(intent.get("idempotency_key") or "")
+            if not key or not _retry_is_authorized(store, attempt_id, key):
+                continue
+            cached = _load_verified_provider_artifact(
+                session_id, model=model, message_hash=message_hash,
+            )
+            if cached is None:
+                continue
+            if reconcile_authorized_unknown_from_cache(
+                session_id,
+                model=model,
+                message_hash=message_hash,
+                artifact_receipt=cached.artifact_receipt,
+            ):
+                reconciled += 1
+            if not record_cached_call_usage_once(
+                session_id, cached.operation_key, cached.usage_metadata, model=model,
+            ):
+                reason = authoritative_usage_ledger(session_id, model).get(
+                    "budget_status", {}
+                ).get("reason", "budget_exhausted")
+                raise RuntimeError(
+                    f"budget_exhausted: durable provider response denied ({reason})"
+                )
+            accounted += 1
+            continue
+
+        if status != "result":
+            continue
+        result = call.get("result_payload") or {}
+        receipt = result.get("artifact_receipt") or {}
+        operation_key = str(receipt.get("operation_key") or "")
+        if not re.fullmatch(r"[0-9a-f]{64}", operation_key):
+            operation_key = provider_operation_key(
+                session_id, model=model, message_hash=message_hash,
+            ) or ""
+        if not operation_key:
+            continue
+        if not record_cached_call_usage_once(
+            session_id,
+            operation_key,
+            {
+                "input_tokens": result.get("input_tokens"),
+                "output_tokens": result.get("output_tokens"),
+            },
+            model=model,
+        ):
+            reason = authoritative_usage_ledger(session_id, model).get(
+                "budget_status", {}
+            ).get("reason", "budget_exhausted")
+            raise RuntimeError(
+                f"budget_exhausted: durable provider usage denied ({reason})"
+            )
+        accounted += 1
+    if reconciled:
+        append_event(session_id, {
+            "phase": "recovery",
+            "tool": "provider_history",
+            "status": "success",
+            "message": (
+                f"Recovered {reconciled} authorized provider result(s) from "
+                "verified durable artifacts."
+            ),
+        })
+    return {"accounted": accounted, "reconciled": reconciled}
 
 
 def begin_provider_call(

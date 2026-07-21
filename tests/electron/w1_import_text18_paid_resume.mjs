@@ -289,16 +289,17 @@ function assertRecoverableRun(result) {
   assert.equal(result?.error, undefined, `runtime recoverable request failed: ${sanitizedError(result?.error)}`);
   assert.equal(result.runs?.length, 1, 'expected exactly one recoverable Import Text 18 run');
   const run = result.runs[0];
-  assert.equal(run.status, 'interrupted', 'recovery must start interrupted and must not auto-resume');
+  const allowedStatus = AUTHORIZE_RETRY_ONCE ? ['interrupted', 'waiting_human'] : ['interrupted'];
+  assert(allowedStatus.includes(run.status), 'recovery must start from a recoverable non-running state');
   assert.equal(run.config?.completed_chunks, 4, 'runtime must report 4 completed chunks');
   assert.equal(run.config?.total_chunks, 10, 'runtime must report 10 total chunks');
   assert.equal(run.source_compatible, true, 'runtime source is incompatible');
   assert.equal(run.config?.source_hash, EXPECTED_SOURCE_HASH, 'runtime source hash differs from approved source');
   assertBudget(run.config);
   if (AUTHORIZE_RETRY_ONCE) {
-    assert.equal(run.unknown_calls?.length, 1, 'retry authorization requires exactly one pending unknown outcome');
-    assert.equal(run.unknown_calls[0].decision_state, 'pending', 'unknown outcome must be pending before authorization');
-    assert.equal(typeof run.unknown_calls[0].decision_key, 'string', 'pending unknown outcome is missing decision_key');
+    assert.equal(run.unknown_calls?.length, 1, 'retry authorization requires exactly one unknown outcome');
+    assert(['pending', 'authorize_retry_once'].includes(run.unknown_calls[0].decision_state), 'unknown outcome has an unsupported decision state');
+    assert.equal(typeof run.unknown_calls[0].decision_key, 'string', 'unknown outcome is missing decision_key');
   } else {
     assertNoUnknownCalls(run);
   }
@@ -307,6 +308,10 @@ function assertRecoverableRun(result) {
 
 async function authorizeExactlyOneRetry(page, run) {
   const unknownCall = run.unknown_calls[0];
+  if (unknownCall.decision_state === 'authorize_retry_once') {
+    log('runtime.decision.authorize-retry-once', 'already durably authorized; reusing existing decision');
+    return;
+  }
   const decision = await stage('runtime.decision.authorize-retry-once', () => page.evaluate(({ root, attempt, decisionKey }) => window.narrativeIDE.runtimeDecision({
     projectRoot: root,
     attempt_id: attempt,
@@ -336,8 +341,18 @@ function assertNoFatalEvent(events) {
   }
 }
 
-async function monitorCompletion(page, attemptId) {
-  let sequence = 0;
+async function latestEventSequence(page, attemptId) {
+  const result = await page.evaluate(({ root, attempt }) => window.narrativeIDE.runtimeEvents({
+    projectRoot: root,
+    attempt_id: attempt,
+    after_sequence: 0,
+  }), { root: PROJECT_ROOT, attempt: attemptId });
+  if (result?.error) throw new Error(`durable event baseline failed: ${sanitizedError(result.error)}`);
+  return (result?.events || []).reduce((latest, event) => Math.max(latest, Number(event.sequence) || 0), 0);
+}
+
+async function monitorCompletion(page, attemptId, afterSequence = 0) {
+  let sequence = afterSequence;
   const events = [];
   const deadline = Date.now() + HARD_WALL_CLOCK_TIMEOUT_MS;
   while (Date.now() < deadline) {
@@ -441,6 +456,7 @@ async function main() {
     await backupRuntimeDatabases(backup);
     if (AUTHORIZE_RETRY_ONCE) await authorizeExactlyOneRetry(page, run);
 
+    const eventBaseline = await stage('runtime.events.baseline', () => latestEventSequence(page, run.attempt_id), 60_000);
     assert.equal(resumeInvocations, 0, 'resume was already invoked');
     resumeInvocations += 1;
     const resumed = await stage('runtime.resume.once', () => page.evaluate(({ root, attempt }) => window.narrativeIDE.runtimeResume({ projectRoot: root, attempt_id: attempt }), { root: PROJECT_ROOT, attempt: run.attempt_id }), 60_000);
@@ -448,7 +464,7 @@ async function main() {
     assert.equal(resumed?.status, 'resumed', `resume was not accepted: ${sanitizedError(resumed?.error || resumed?.status)}`);
     assert.equal(resumed?.restarted, true, 'resume did not launch exactly one recovered worker');
 
-    const monitor = await monitorCompletion(page, run.attempt_id);
+    const monitor = await monitorCompletion(page, run.attempt_id, eventBaseline);
     const completion = await verifyCompletion(page, run, monitor);
     await writeReceipt({ backup, run, model: selected.model, completion });
     log('result', `PAID PASS receipt=${path.join(receiptDirectory, 'receipt.json')}`);

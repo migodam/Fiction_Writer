@@ -60,6 +60,7 @@ from sidecar.workflows.w1_run_events import (
     reconcile_authorized_unknown_from_cache,
     record_call_usage,
     record_cached_call_usage_once,
+    restore_durable_provider_history,
     release_call_reservation,
     reserve_call_budget,
     settle_provider_failure,
@@ -622,6 +623,7 @@ def configure_w1_budget(config: dict, session_id: str) -> None:
         return
     model = str(config.get("context", {}).get("model") or config.get("model") or "deepseek-chat")
     configure_budget(session_id, BudgetPolicy(**policy_data), model=model)
+    restore_durable_provider_history(session_id)
 
 
 def _append_unique_strings(target: list[str], values: list[Any]) -> None:

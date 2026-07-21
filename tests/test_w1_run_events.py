@@ -412,6 +412,95 @@ def test_matching_verified_cache_consumes_authorized_unknown_then_allows_downstr
     events.clear_session(session_id)
 
 
+def test_budget_configuration_proactively_recovers_authorized_durable_artifact(tmp_path):
+    store = RuntimeStore(tmp_path)
+    run = store.create_run(workflow_id="W1", lineage_id="lineage-proactive-recovery")
+    prompt = "completed response before power loss"
+    prompt_hash = events.provider_message_hash([w1_import.HumanMessage(content=prompt)])
+
+    source_attempt = store.create_attempt(run["run_id"], attempt_id="proactive-source")
+    source_lease = store.acquire_lease(source_attempt["attempt_id"], "source-worker", ttl_seconds=30)
+    source_session = "proactive-source-session"
+    events.bind_runtime(
+        source_session, store, source_attempt["attempt_id"], "source-worker", source_lease["fence_token"],
+    )
+    assert asyncio.run(w1_import._invoke_json_prompt(
+        _FakeLlm([_Response()]), prompt, session_id=source_session,
+    )) == {"ok": True}
+
+    target_attempt = store.create_attempt(run["run_id"], attempt_id="proactive-target")
+    unknown = store.record_tool_intent(
+        target_attempt["attempt_id"],
+        "provider.chat.completions",
+        {
+            "idempotency_key": "proactive-unknown",
+            "model": "deepseek-chat",
+            "message_hash": prompt_hash,
+        },
+    )
+    store.record_tool_unknown_outcome(unknown["tool_call_id"], "runtime_interrupted")
+    store.record_unknown_call_decision(
+        target_attempt["attempt_id"],
+        "retry_provider_call:proactive-unknown",
+        "authorize_retry_once",
+    )
+    target_lease = store.acquire_lease(target_attempt["attempt_id"], "target-worker", ttl_seconds=30)
+    target_session = "proactive-target-session"
+    events.bind_runtime(
+        target_session, store, target_attempt["attempt_id"], "target-worker", target_lease["fence_token"],
+    )
+
+    config = {
+        "budget_policy": {"max_calls": 2, "max_total_tokens": 100},
+        "context": {"model": "deepseek-chat"},
+    }
+    w1_import.configure_w1_budget(config, target_session)
+    restored = store.list_tool_calls(target_attempt["attempt_id"])
+    assert restored[0]["status"] == "retry_consumed"
+    assert restored[0]["result_payload"]["outcome"] == "resolved_from_verified_artifact"
+    ledger = events.authoritative_usage_ledger(target_session, "deepseek-chat")
+    assert ledger["actual_calls"] == 1
+    assert ledger["actual_input_tokens"] == 11
+    assert ledger["actual_output_tokens"] == 7
+
+    # Supervisor and standard runners may both configure the same budget. The
+    # durable response must remain accounted exactly once.
+    w1_import.configure_w1_budget(config, target_session)
+    assert events.authoritative_usage_ledger(target_session, "deepseek-chat")["actual_calls"] == 1
+
+    events.clear_session(source_session)
+    events.clear_session(target_session)
+
+
+def test_budget_configuration_keeps_authorized_unknown_without_artifact_gated(tmp_path):
+    session_id = "proactive-missing-artifact"
+    store, attempt = _bound_runtime(tmp_path, session_id)
+    unknown = store.record_tool_intent(
+        attempt["attempt_id"],
+        "provider.chat.completions",
+        {
+            "idempotency_key": "missing-artifact",
+            "model": "deepseek-chat",
+            "message_hash": "e" * 64,
+        },
+    )
+    store.record_tool_unknown_outcome(unknown["tool_call_id"], "runtime_interrupted")
+    store.record_unknown_call_decision(
+        attempt["attempt_id"],
+        "retry_provider_call:missing-artifact",
+        "authorize_retry_once",
+    )
+
+    w1_import.configure_w1_budget(
+        {"budget_policy": {"max_calls": 1}, "context": {"model": "deepseek-chat"}},
+        session_id,
+    )
+    calls = store.list_tool_calls(attempt["attempt_id"])
+    assert calls[0]["status"] == "unknown_outcome"
+    assert events.authoritative_usage_ledger(session_id, "deepseek-chat")["actual_calls"] == 0
+    events.clear_session(session_id)
+
+
 def test_concurrent_identical_provider_calls_singleflight_and_account_once(tmp_path):
     session_id = "provider-singleflight"
     store, attempt = _bound_runtime(tmp_path, session_id)
