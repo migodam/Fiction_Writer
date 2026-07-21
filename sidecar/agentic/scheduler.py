@@ -152,6 +152,16 @@ class RuntimeStoreScheduler:
         task = self._task(run_id, task_id)
         self.store.complete_task(run_id, task_id, self.worker_id, dict(task["fence_map"]))
 
+    def heartbeat(self, run_id: str, task_id: str) -> None:
+        task = self._task(run_id, task_id)
+        self.store.heartbeat_task_claim(
+            run_id,
+            task_id,
+            self.worker_id,
+            dict(task["fence_map"]),
+            ttl_seconds=self.claim_ttl_seconds,
+        )
+
     def fail(self, run_id: str, task_id: str, reason: str) -> None:
         task = self._task(run_id, task_id)
         self.store.fail_task(run_id, task_id, self.worker_id, dict(task["fence_map"]), reason)

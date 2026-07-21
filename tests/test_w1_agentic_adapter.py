@@ -95,5 +95,31 @@ def test_stream_wrapper_calls_lifecycle_hooks_without_a_runtime_store():
     assert asyncio.run(_collect(adapter.observe_stream(updates()))) == [{"validate_file": {}}]
 
 
+def test_stream_heartbeats_silent_task_claim_and_resource_fence(tmp_path):
+    store, run_id = _runtime(tmp_path)
+    adapter = W1AgenticAdapter(
+        import_mode="import_content_only",
+        runtime_store=store,
+        run_id=run_id,
+        worker_id="worker",
+        claim_ttl_seconds=0.06,
+    )
+
+    async def delayed_update():
+        yield {"current_node": "validate_file"}
+        yield {"current_node": "load_or_init_checkpoint"}
+        await asyncio.sleep(0.15)
+        yield {"current_node": "split_chunks"}
+
+    assert asyncio.run(_collect(adapter.observe_stream(delayed_update()))) == [
+        {"current_node": "validate_file"},
+        {"current_node": "load_or_init_checkpoint"},
+        {"current_node": "split_chunks"},
+    ]
+    assert adapter.scheduler.status(run_id, "split_chunks") == "completed"
+    split_task = next(task for task in store.get_task_dag(run_id) if task["task_id"] == "split_chunks")
+    assert split_task["fence_map"] == {}
+
+
 async def _collect(stream):
     return [item async for item in stream]

@@ -549,6 +549,10 @@ async def _run_w1(session_id: str, config: dict) -> None:
             "recoverable": True,
             **session_status(session_id),
         }
+        try:
+            runtime_set_status("interrupted")
+        except LeaseLostError:
+            pass
     except asyncio.CancelledError:
         append_event(session_id, {
             "phase": "cancelled",

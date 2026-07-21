@@ -17,6 +17,10 @@ paid operation.
   cannot reset restored usage.
 - Allow the paid recovery harness to reuse an already durable authorization and monitor
   only events emitted after the current resume action.
+- Added atomic task-claim heartbeats that renew the DAG claim and every resource fence.
+- W1 now heartbeats the active durable task while an async node is silent, including
+  long provider calls, and records a fenced run as `interrupted` instead of leaving it
+  visibly `running`.
 
 ## Validation
 
@@ -26,3 +30,17 @@ paid operation.
 - Full repository suite: `818 passed`, with 11 unrelated legacy failures and 7 setup
   errors (missing legacy `tests/api_key.txt` and removed prototype `ProjectMemory` APIs).
 - No provider request was made while implementing or testing this fix.
+
+## Paid Resume Observation
+
+- The first post-fix resume safely reconciled the prior unknown result and restored five
+  historical calls into the budget ledger.
+- One new DeepSeek V4 Flash call completed and was persisted. Total observed usage was
+  18,337 input tokens and 30,562 output tokens, costing `$0.011125` under the configured
+  price table.
+- This exposed a separate 30-second DAG task-claim expiry during
+  `synthesize_relationships`; no response was lost and no call remained unknown.
+- The run was stopped with checkpoint/canonical data unchanged and a failure receipt at
+  `/Users/migodam/narrative-ide-recovery-receipts/import-text18-2026-07-21T03-20-08-203Z/failure.json`.
+- Task-claim heartbeat coverage was added before another paid resume. Updated W1/runtime
+  regression suite: `772 passed`.

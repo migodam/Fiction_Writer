@@ -7,6 +7,7 @@ control surface cannot bypass W1 validation, budgets, or proposal staging.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any, AsyncIterable, AsyncIterator, Iterable, Mapping
@@ -98,10 +99,15 @@ def _publication_tail(after: str) -> tuple[PlanTask, ...]:
 class W1AgenticAdapter:
     """Idempotent hooks for wiring W1 streaming to a durable task DAG."""
 
-    def __init__(self, *, import_mode: str, runtime_store: RuntimeStore | None = None, run_id: str | None = None, attempt_id: str | None = None, worker_id: str = "w1-agentic", window_ids: Iterable[str] = (), max_concurrency: int = 4) -> None:
+    def __init__(self, *, import_mode: str, runtime_store: RuntimeStore | None = None, run_id: str | None = None, attempt_id: str | None = None, worker_id: str = "w1-agentic", window_ids: Iterable[str] = (), max_concurrency: int = 4, claim_ttl_seconds: float = 30) -> None:
         self.plan = build_execution_plan(import_mode, window_ids=window_ids)
         self.runtime_store, self.run_id, self.attempt_id = runtime_store, run_id, attempt_id
-        self.scheduler = RuntimeStoreScheduler(runtime_store, worker_id=worker_id, max_concurrency=max_concurrency) if runtime_store and run_id else None
+        self.scheduler = RuntimeStoreScheduler(
+            runtime_store,
+            worker_id=worker_id,
+            max_concurrency=max_concurrency,
+            claim_ttl_seconds=claim_ttl_seconds,
+        ) if runtime_store and run_id else None
         self._decisions = 0
         self._last_node = ""
         self._self_ask = SelfAsk(max_questions=2, max_rounds=2)
@@ -119,6 +125,7 @@ class W1AgenticAdapter:
             attempt_id=attempt_id,
             worker_id=str(config.get("runtime_owner_id") or "w1-agentic"),
             window_ids=config.get("prompt_window_ids") or (),
+            claim_ttl_seconds=float(config.get("runtime_task_claim_ttl_seconds", 30)),
         )
 
     def before_run(self) -> ExecutionPlan:
@@ -132,8 +139,23 @@ class W1AgenticAdapter:
     async def observe_stream(self, updates: AsyncIterable[Mapping[str, Any]]) -> AsyncIterator[Mapping[str, Any]]:
         """Apply all lifecycle hooks around an existing deterministic W1 stream."""
         self.before_run()
+        stop_heartbeat = asyncio.Event()
+        heartbeat_task = asyncio.create_task(self._heartbeat_claims(stop_heartbeat))
+        stream = updates.__aiter__()
         try:
-            async for update in updates:
+            while True:
+                update_task = asyncio.create_task(anext(stream))
+                done, _ = await asyncio.wait(
+                    {update_task, heartbeat_task}, return_when=asyncio.FIRST_COMPLETED,
+                )
+                if heartbeat_task in done:
+                    update_task.cancel()
+                    await asyncio.gather(update_task, return_exceptions=True)
+                    heartbeat_task.result()
+                try:
+                    update = update_task.result()
+                except StopAsyncIteration:
+                    break
                 node_name = str(update.get("current_node", ""))
                 if not node_name and len(update) == 1:
                     node_name = str(next(iter(update)))
@@ -146,6 +168,26 @@ class W1AgenticAdapter:
             raise
         else:
             self.on_completion()
+        finally:
+            stop_heartbeat.set()
+            heartbeat_task.cancel()
+            await asyncio.gather(heartbeat_task, return_exceptions=True)
+
+    async def _heartbeat_claims(self, stop: asyncio.Event) -> None:
+        if not self.scheduler or not self.run_id:
+            await stop.wait()
+            return
+        interval = max(0.01, self.scheduler.claim_ttl_seconds / 3)
+        while not stop.is_set():
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=interval)
+            except asyncio.TimeoutError:
+                pass
+            if stop.is_set():
+                break
+            for task in self.plan.tasks:
+                if self._status(task.task_id) == "running":
+                    self.scheduler.heartbeat(self.run_id, task.task_id)
 
     def on_node_yielded(self, node_name: str, payload: Mapping[str, Any] | None = None) -> None:
         if not self.scheduler or not self.run_id:

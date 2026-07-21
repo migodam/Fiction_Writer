@@ -882,6 +882,52 @@ class RuntimeStore:
     def complete_task(self, run_id: str, task_id: str, worker_id: str, fences: dict[str, int], *, now: float | None = None) -> dict[str, Any]:
         return self._finish_task(run_id, task_id, worker_id, fences, "completed", now=now)
 
+    def heartbeat_task_claim(
+        self, run_id: str, task_id: str, worker_id: str, fences: dict[str, int],
+        *, ttl_seconds: float, now: float | None = None,
+    ) -> dict[str, Any]:
+        """Atomically renew a task claim and every write resource it fences."""
+        if ttl_seconds <= 0:
+            raise ValueError("ttl_seconds must be positive")
+        timestamp = _now(now)
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM agent_tasks WHERE run_id = ? AND task_id = ?",
+                (run_id, task_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(task_id)
+            expected = json.loads(row["fence_map_json"])
+            if (
+                row["status"] != "running"
+                or row["claim_owner"] != worker_id
+                or row["claim_expires_at"] <= timestamp
+                or expected != fences
+            ):
+                raise LeaseLostError("task claim is missing, expired, or fenced")
+            self._assert_task_resources(connection, run_id, task_id, expected, timestamp)
+            expires_at = timestamp + ttl_seconds
+            connection.execute(
+                "UPDATE agent_tasks SET claim_expires_at = ?, updated_at = ? "
+                "WHERE run_id = ? AND task_id = ?",
+                (expires_at, timestamp, run_id, task_id),
+            )
+            owner = self._task_owner(run_id, task_id)
+            for resource, fence in expected.items():
+                result = connection.execute(
+                    "UPDATE resource_leases SET heartbeat_at = ?, expires_at = ? "
+                    "WHERE resource_key = ? AND owner_id = ? AND fence_token = ?",
+                    (timestamp, expires_at, resource, owner, fence),
+                )
+                if result.rowcount != 1:
+                    raise LeaseLostError("resource lease is missing, expired, or fenced")
+            renewed = _row(connection.execute(
+                "SELECT * FROM agent_tasks WHERE run_id = ? AND task_id = ?",
+                (run_id, task_id),
+            ).fetchone())
+            assert renewed is not None
+            return renewed
+
     def fail_task(self, run_id: str, task_id: str, worker_id: str, fences: dict[str, int], reason: str, *, now: float | None = None) -> dict[str, Any]:
         result = self._finish_task(run_id, task_id, worker_id, fences, "failed", reason=reason, now=now)
         with self.transaction() as connection:

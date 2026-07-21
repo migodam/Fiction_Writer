@@ -53,6 +53,30 @@ def test_concurrent_workers_have_one_claim_winner_and_stale_fence_cannot_finish(
     assert new_row["fence_map"]["project:story"] > old_fences["project:story"]
 
 
+def test_task_heartbeat_renews_claim_and_all_resource_fences_atomically(tmp_path):
+    store = RuntimeStore(tmp_path)
+    run = store.create_run(workflow_id="W0")
+    store.submit_task_plan(run["run_id"], plan(), now=10)
+    task = store.claim_ready_tasks(
+        run["run_id"], "worker-a", ttl_seconds=30, now=10,
+    )[0]
+    fences = dict(task["fence_map"])
+
+    renewed = store.heartbeat_task_claim(
+        run["run_id"], "prepare", "worker-a", fences,
+        ttl_seconds=30, now=25,
+    )
+    assert renewed["claim_expires_at"] == 55
+    with pytest.raises(LeaseLostError):
+        store.heartbeat_task_claim(
+            run["run_id"], "prepare", "worker-b", fences,
+            ttl_seconds=30, now=26,
+        )
+    assert store.complete_task(
+        run["run_id"], "prepare", "worker-a", fences, now=54,
+    )["status"] == "completed"
+
+
 def test_cancel_propagates_dead_letters_and_failed_task_can_be_recovered(tmp_path):
     store = RuntimeStore(tmp_path)
     run = store.create_run(workflow_id="W0")

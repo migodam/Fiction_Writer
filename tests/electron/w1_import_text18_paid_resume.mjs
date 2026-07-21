@@ -369,7 +369,7 @@ async function monitorCompletion(page, attemptId, afterSequence = 0) {
     const status = attempt?.status;
     const unknownCalls = attempt?.unknown_calls ?? detail?.unknown_calls ?? [];
     assertOnlyAuthorizedHistoricalUnknowns(unknownCalls);
-    if (['needs_credentials', 'waiting_human', 'failed', 'cancelled', 'error'].includes(status)) throw new Error(`recovery stopped with status=${status}`);
+    if (['needs_credentials', 'waiting_human', 'interrupted', 'failed', 'cancelled', 'error'].includes(status)) throw new Error(`recovery stopped with status=${status}`);
     if (status === 'completed') return { detail, events, finalAttempt: attempt };
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
   }
