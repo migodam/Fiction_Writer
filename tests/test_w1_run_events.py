@@ -972,3 +972,131 @@ def test_run_w1_consumes_unknown_outcome_and_leaves_attempt_waiting_human(tmp_pa
 
     workflow_router._w1_sessions.pop(session_id, None)
     events.clear_session(session_id)
+
+
+def _w1_runtime_config(tmp_path, store, session_id, owner_id, fence_token, **overrides):
+    config = {
+        "project_path": str(tmp_path),
+        "runtime_store": store,
+        "runtime_owner_id": owner_id,
+        "runtime_fence_token": fence_token,
+        "runtime_lease_ttl_seconds": 0.05,
+        "runtime_heartbeat_interval_seconds": 0.01,
+    }
+    config.update(overrides)
+    return config
+
+
+def test_run_w1_heartbeats_during_silent_work_longer_than_lease_ttl(tmp_path, monkeypatch):
+    store = RuntimeStore(tmp_path)
+    attempt = store.create_attempt(store.create_run(workflow_id="W1")["run_id"])
+    session_id = attempt["attempt_id"]
+    owner_id = "silent-worker"
+    lease = store.acquire_lease(session_id, owner_id, ttl_seconds=0.05)
+    events.clear_session(session_id)
+    events.bind_runtime(session_id, store, session_id, owner_id, lease["fence_token"])
+    workflow_router._w1_sessions[session_id] = {"status": "running", "progress": 0.0}
+
+    async def silent_stream(_project_path, _config):
+        await asyncio.sleep(0.12)
+        yield {"progress": 0.8, "completed_chunks": 1, "total_chunks": 1}
+
+    monkeypatch.setattr(w1_import, "run_streaming", silent_stream)
+
+    asyncio.run(asyncio.wait_for(
+        workflow_router._run_w1(
+            session_id,
+            _w1_runtime_config(tmp_path, store, session_id, owner_id, lease["fence_token"]),
+        ),
+        timeout=1,
+    ))
+
+    assert workflow_router._w1_sessions[session_id]["status"] == "done"
+    assert store.get_attempt(session_id)["status"] == "completed"
+
+    workflow_router._w1_sessions.pop(session_id, None)
+    events.clear_session(session_id)
+
+
+def test_run_w1_cancellation_stops_lease_heartbeat_task(tmp_path, monkeypatch):
+    store = RuntimeStore(tmp_path)
+    attempt = store.create_attempt(store.create_run(workflow_id="W1")["run_id"])
+    session_id = attempt["attempt_id"]
+    owner_id = "cancel-worker"
+    lease = store.acquire_lease(session_id, owner_id, ttl_seconds=0.05)
+    events.clear_session(session_id)
+    events.bind_runtime(session_id, store, session_id, owner_id, lease["fence_token"])
+    workflow_router._w1_sessions[session_id] = {"status": "running", "progress": 0.0}
+    heartbeats = 0
+    original_heartbeat = store.heartbeat_lease
+
+    def count_heartbeat(*args, **kwargs):
+        nonlocal heartbeats
+        heartbeats += 1
+        return original_heartbeat(*args, **kwargs)
+
+    monkeypatch.setattr(store, "heartbeat_lease", count_heartbeat)
+
+    async def never_returns(_project_path, _config):
+        await asyncio.Event().wait()
+        yield {}
+
+    monkeypatch.setattr(w1_import, "run_streaming", never_returns)
+
+    async def exercise():
+        task = asyncio.create_task(workflow_router._run_w1(
+            session_id,
+            _w1_runtime_config(tmp_path, store, session_id, owner_id, lease["fence_token"]),
+        ))
+        await asyncio.sleep(0.04)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        count_at_cancel = heartbeats
+        await asyncio.sleep(0.04)
+        return count_at_cancel
+
+    count_at_cancel = asyncio.run(exercise())
+    assert heartbeats == count_at_cancel
+    assert workflow_router._w1_sessions[session_id]["status"] == "cancelled"
+
+    workflow_router._w1_sessions.pop(session_id, None)
+    events.clear_session(session_id)
+
+
+def test_run_w1_heartbeat_fencing_stops_silent_worker_without_replacement_corruption(tmp_path, monkeypatch):
+    store = RuntimeStore(tmp_path)
+    attempt = store.create_attempt(store.create_run(workflow_id="W1")["run_id"])
+    session_id = attempt["attempt_id"]
+    owner_id = "old-worker"
+    lease = store.acquire_lease(session_id, owner_id, ttl_seconds=0.05)
+    events.clear_session(session_id)
+    events.bind_runtime(session_id, store, session_id, owner_id, lease["fence_token"])
+    workflow_router._w1_sessions[session_id] = {"status": "running", "progress": 0.0}
+
+    async def never_returns(_project_path, _config):
+        await asyncio.Event().wait()
+        yield {}
+
+    monkeypatch.setattr(w1_import, "run_streaming", never_returns)
+
+    async def exercise():
+        task = asyncio.create_task(workflow_router._run_w1(
+            session_id,
+            _w1_runtime_config(tmp_path, store, session_id, owner_id, lease["fence_token"]),
+        ))
+        await asyncio.sleep(0.03)
+        replacement = store.acquire_lease(
+            session_id, "replacement-worker", ttl_seconds=0.05, now=time.time() + 1,
+        )
+        await asyncio.wait_for(task, timeout=1)
+        return replacement
+
+    replacement = asyncio.run(exercise())
+    assert replacement["fence_token"] == lease["fence_token"] + 1
+    assert store.get_attempt(session_id)["status"] == "running"
+    assert workflow_router._w1_sessions[session_id]["status"] == "paused"
+    assert workflow_router._w1_sessions[session_id]["errors"] == ["lease is missing, expired, or fenced"]
+
+    workflow_router._w1_sessions.pop(session_id, None)
+    events.clear_session(session_id)

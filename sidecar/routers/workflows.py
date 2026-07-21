@@ -391,21 +391,25 @@ async def _run_w1(session_id: str, config: dict) -> None:
     runtime_store = config.get("runtime_store")
     runtime_owner_id = config.get("runtime_owner_id", "")
     runtime_fence_token = config.get("runtime_fence_token")
+    lease_ttl_seconds = float(config.get("runtime_lease_ttl_seconds", 60))
+    heartbeat_interval_seconds = float(config.get("runtime_heartbeat_interval_seconds", 20))
 
     def runtime_heartbeat() -> None:
         if runtime_store is not None and runtime_fence_token is not None:
-            runtime_store.heartbeat_lease(session_id, runtime_owner_id, runtime_fence_token, ttl_seconds=60)
+            runtime_store.heartbeat_lease(
+                session_id,
+                runtime_owner_id,
+                runtime_fence_token,
+                ttl_seconds=lease_ttl_seconds,
+            )
 
     def runtime_set_status(status: str) -> None:
         if runtime_store is None or runtime_fence_token is None or not runtime_owner_id:
             return
-        try:
-            runtime_store.set_attempt_status(
-                session_id, status, owner_id=runtime_owner_id,
-                fence_token=runtime_fence_token,
-            )
-        except LeaseLostError:
-            pass
+        runtime_store.set_attempt_status(
+            session_id, status, owner_id=runtime_owner_id,
+            fence_token=runtime_fence_token,
+        )
 
     # Poll _chunk_progress and _chunk_log every second so that mid-node chunk
     # updates (written by node_process_chunks after each individual chunk) are
@@ -434,9 +438,30 @@ async def _run_w1(session_id: str, config: dict) -> None:
                 updates["chunk_log"] = log_entries[:]
             if updates:
                 _w1_sessions[session_id] = {**current, **updates}
-                runtime_heartbeat()
 
     poll_task = asyncio.create_task(_poll_chunk_progress())
+    heartbeat_stop = asyncio.Event()
+
+    async def _heartbeat_lease() -> None:
+        while not heartbeat_stop.is_set():
+            runtime_heartbeat()
+            try:
+                await asyncio.wait_for(heartbeat_stop.wait(), timeout=heartbeat_interval_seconds)
+            except asyncio.TimeoutError:
+                pass
+
+    heartbeat_task = asyncio.create_task(_heartbeat_lease())
+
+    async def _next_state_update(stream: Any) -> dict:
+        update_task = asyncio.create_task(anext(stream))
+        done, _ = await asyncio.wait(
+            {update_task, heartbeat_task}, return_when=asyncio.FIRST_COMPLETED,
+        )
+        if heartbeat_task in done:
+            update_task.cancel()
+            await asyncio.gather(update_task, return_exceptions=True)
+            heartbeat_task.result()
+        return update_task.result()
 
     try:
         append_event(session_id, {
@@ -449,8 +474,12 @@ async def _run_w1(session_id: str, config: dict) -> None:
                 f"model={config.get('context', {}).get('model', '')}"
             ),
         })
-        async for state_update in run_streaming(project_path, config):
-            runtime_heartbeat()
+        stream = run_streaming(project_path, config).__aiter__()
+        while True:
+            try:
+                state_update = await _next_state_update(stream)
+            except StopAsyncIteration:
+                break
             current = _w1_sessions.get(session_id, {})
             activity = session_status(session_id)
             _w1_sessions[session_id] = {
@@ -511,15 +540,6 @@ async def _run_w1(session_id: str, config: dict) -> None:
         }
         runtime_set_status("waiting_human")
     except LeaseLostError as exc:
-        append_event(session_id, {
-            "phase": "runtime_lease",
-            "tool": "workflow",
-            "status": "paused",
-            "level": "warning",
-            "message": "W1 worker stopped because its runtime lease was fenced.",
-            "error": "runtime_lease_lost",
-            "recoverable": True,
-        })
         current = _w1_sessions.get(session_id, {})
         _w1_sessions[session_id] = {
             **current,
@@ -565,12 +585,15 @@ async def _run_w1(session_id: str, config: dict) -> None:
         runtime_set_status("failed")
     finally:
         ctrl["active"] = False
+        heartbeat_stop.set()
         set_active_call(session_id, -9999)
         poll_task.cancel()
+        heartbeat_task.cancel()
         try:
             await poll_task
         except asyncio.CancelledError:
             pass
+        await asyncio.gather(heartbeat_task, return_exceptions=True)
         _w1_tasks.pop(session_id, None)
         _chunk_progress.pop(project_path, None)
         _chunk_log.pop(project_path, None)
