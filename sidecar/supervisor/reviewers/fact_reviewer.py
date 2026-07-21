@@ -104,9 +104,20 @@ class FactReviewer(BaseReviewer):
 
         entity_to_cards: dict[str, list[dict]] = {}
         for card in evidence_cards:
-            eid = card.get("entityId") or card.get("entity_id") or ""
-            if eid:
-                entity_to_cards.setdefault(str(eid), []).append(card)
+            raw = card.get("raw") if isinstance(card.get("raw"), dict) else {}
+            entity_ids = {
+                str(value)
+                for value in (
+                    card.get("entityId"),
+                    card.get("entity_id"),
+                    raw.get("canonical_id"),
+                    raw.get("event_id"),
+                    *(card.get("candidate_ids") or []),
+                )
+                if value
+            }
+            for entity_id in entity_ids:
+                entity_to_cards.setdefault(entity_id, []).append(card)
 
         char_event_ops = [
             op
@@ -121,9 +132,14 @@ class FactReviewer(BaseReviewer):
 
             has_evidence = bool(
                 fields.get("source_segment_id")
+                or fields.get("sourceSegmentId")
                 or fields.get("source_span")
+                or fields.get("sourceSpan")
                 or fields.get("evidence")
                 or fields.get("evidence_card_id")
+                or fields.get("evidenceCardId")
+                or fields.get("evidence_refs")
+                or fields.get("evidenceRefs")
                 or entity_id in entity_to_cards
             )
             if not has_evidence:

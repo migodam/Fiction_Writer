@@ -128,6 +128,33 @@ class TestFactReviewer(unittest.TestCase):
         check_names = [f["check_name"] for f in report["findings"]]
         self.assertIn("evidence_missing", check_names)
 
+    def test_fact_accepts_runtime_camel_case_and_candidate_card_ids(self):
+        proposal = {
+            "id": "prop_char_han",
+            "operations": [{
+                "op": "create",
+                "entityType": "character",
+                "entityId": "char_han",
+                "fields": {
+                    "name": "韩立",
+                    "summary": "韩立离开山村前往七玄门。",
+                    "sourceSpan": {"absolute_start": 0, "absolute_end": 20},
+                    "evidenceRefs": ["evc_han"],
+                },
+            }],
+        }
+        card = {
+            "id": "evc_han",
+            "kind": "character",
+            "candidate_ids": ["char_han"],
+            "snippets": ["韩立离开山村，跟随三叔前往七玄门。"],
+            "raw": {"canonical_id": "char_han"},
+        }
+        report = self.reviewer.review(_make_state_with_cards([card], [proposal]))
+        check_names = [finding["check_name"] for finding in report["findings"]]
+        self.assertNotIn("evidence_missing", check_names)
+        self.assertNotIn("evidence_entity_mismatch", check_names)
+
     def test_fact_reviewer_never_reads_chunks_directly(self):
         """FactReviewer must not consume chunks array from state — snippet-only RAG."""
         state = {

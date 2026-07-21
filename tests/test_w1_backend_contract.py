@@ -229,3 +229,42 @@ def test_usage_ledger_artifact_is_authoritative_and_non_secret(tmp_path):
     assert "api_key" not in json.dumps(artifact).lower()
     assert not list((tmp_path / "system" / "imports" / "run_usage").glob(".usage_ledger.json.*.tmp"))
     w1_run_events.clear_session(session_id)
+
+
+def test_standard_stream_persists_usage_ledger_after_success(tmp_path, monkeypatch):
+    session_id = "f1-standard-stream-ledger"
+
+    class FakeGraph:
+        async def astream(self, _state, _config):
+            yield {
+                "split_chunks": {
+                    "chunks": [{"chunk_id": 0}],
+                    "import_run_id": "lineage-standard",
+                    "progress": 0.1,
+                    "errors": [],
+                }
+            }
+            yield {
+                "write_to_project": {
+                    "progress": 1.0,
+                    "errors": [],
+                    "proposals": [{"id": "proposal-1"}],
+                }
+            }
+
+    monkeypatch.setattr(w1_import, "get_graph", lambda _project_path: FakeGraph())
+
+    async def collect():
+        return [update async for update in w1_import.run_streaming(str(tmp_path), {
+            "session_id": session_id,
+            "import_mode": "import_all",
+            "import_run_id": "lineage-standard",
+            "budget_policy": {"max_cost_usd": 3},
+            "context": {"model": "deepseek-v4-flash"},
+        })]
+
+    updates = asyncio.run(collect())
+    assert updates[-1]["current_node"] == "write_to_project"
+    ledger_path = tmp_path / "system" / "imports" / "lineage-standard" / "usage_ledger.json"
+    assert json.loads(ledger_path.read_text(encoding="utf-8"))["actual_calls"] == 0
+    w1_run_events.clear_session(session_id)

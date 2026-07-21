@@ -468,6 +468,16 @@ def test_budget_configuration_proactively_recovers_authorized_durable_artifact(t
     w1_import.configure_w1_budget(config, target_session)
     assert events.authoritative_usage_ledger(target_session, "deepseek-chat")["actual_calls"] == 1
 
+    events.clear_session(target_session)
+    target_lease = store.acquire_lease(
+        target_attempt["attempt_id"], "target-worker", ttl_seconds=30,
+    )
+    events.bind_runtime(
+        target_session, store, target_attempt["attempt_id"], "target-worker", target_lease["fence_token"],
+    )
+    w1_import.configure_w1_budget(config, target_session)
+    assert events.authoritative_usage_ledger(target_session, "deepseek-chat")["actual_calls"] == 1
+
     events.clear_session(source_session)
     events.clear_session(target_session)
 

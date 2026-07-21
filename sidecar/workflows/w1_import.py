@@ -756,16 +756,18 @@ def _compact_character_card(entry: dict) -> dict:
 
 
 _CHARACTER_FALLBACK_EXPERIENCE_LIMIT = 3
-_WINDOW_PROVENANCE_NOTE_RE = re.compile(r"^\[window\s+[^\]]+\]\s*(.+)$", re.IGNORECASE)
+_WINDOW_PROVENANCE_NOTE_RE = re.compile(r"^\[(?:window|chunk)\s+[^\]]+\]\s*(.+)$", re.IGNORECASE)
 _CHARACTER_ACTION_STATE_MARKERS = (
     "参加", "进入", "离开", "通过", "未能", "成为", "收为", "收下", "选中", "传授",
     "教授", "学习", "开始", "救", "安排", "留下", "贿赂", "说服", "答应", "介绍",
     "摘", "带", "住", "担任", "当过", "重视", "失去", "获得", "发现", "毫无进展", "允诺",
+    "抵达", "到达", "攀爬", "跟随", "前往",
     "joined", "entered", "left", "became", "selected", "taught", "learned", "rescued",
 )
 _CHARACTER_IDENTITY_ROLE_MARKERS = (
     "主角", "供奉", "师父", "师长", "弟子", "医师", "大夫", "掌柜", "铁匠", "书童",
-    "农家", "村", "出身", "来自", "父", "母", "兄", "妹", "家族", "门", "组织",
+    "农家", "村", "出身", "来自", "父", "母", "兄", "妹", "叔", "伯", "舅", "姑", "姨",
+    "侄", "家族", "门", "组织",
     "protagonist", "mentor", "doctor", "apprentice", "from ", "born ",
 )
 
@@ -932,7 +934,7 @@ def _backfill_character_profile_at_write_boundary(character_id: str, entry: dict
                 source_span,
             )
 
-    if not background and _is_supported_major_character(entry):
+    if not background:
         fallback_background = _identity_or_role_background(entry)
         if fallback_background:
             background = fallback_background
@@ -943,6 +945,40 @@ def _backfill_character_profile_at_write_boundary(character_id: str, entry: dict
                 source_span,
             )
     return experience, background, profile_field_evidence
+
+
+def _attach_entity_evidence_card(
+    entry: dict,
+    entity_id: str,
+    evidence_cards: list[dict],
+    *,
+    kind: str,
+) -> dict:
+    """Attach stable provenance from the first matching entity evidence card."""
+    updated = dict(entry)
+    refs = list(updated.get("evidence_refs", [])) if isinstance(updated.get("evidence_refs"), list) else []
+    for card in evidence_cards:
+        if not isinstance(card, dict) or card.get("kind") != kind:
+            continue
+        candidate_ids = card.get("candidate_ids") if isinstance(card.get("candidate_ids"), list) else []
+        raw = card.get("raw") if isinstance(card.get("raw"), dict) else {}
+        raw_id = raw.get("canonical_id") if kind == "character" else raw.get("event_id")
+        if entity_id not in candidate_ids and raw_id != entity_id:
+            continue
+        evidence_id = str(card.get("id") or "").strip()
+        if evidence_id and evidence_id not in refs:
+            refs.append(evidence_id)
+        if not _character_source_span(updated, {}):
+            source_span = card.get("source_span")
+            if isinstance(source_span, dict):
+                updated["source_span"] = dict(source_span)
+        break
+    updated["evidence_refs"] = refs
+    return updated
+
+
+def _attach_character_evidence_card(entry: dict, character_id: str, evidence_cards: list[dict]) -> dict:
+    return _attach_entity_evidence_card(entry, character_id, evidence_cards, kind="character")
 
 
 def _resolve_character_id(reference: Any, registry: dict) -> str | None:
@@ -2986,7 +3022,62 @@ def _build_evidence_cards(state: ImportState) -> list[dict]:
                 "uncertainty": "",
                 "raw": scene,
             })
+    raw_source = str(state.get("source_text", "") or "")
+    for card in cards:
+        card_id = str(card.get("id") or "")
+        card["card_id"] = card_id
+        candidate_ids = [str(value) for value in card.get("candidate_ids", []) if value]
+        if card.get("kind") in {"character", "event"} and candidate_ids:
+            card["entity_id"] = candidate_ids[0]
+            card["entityId"] = candidate_ids[0]
+        raw = card.get("raw") if isinstance(card.get("raw"), dict) else {}
+        candidates = [
+            *card.get("candidate_names", []),
+            card.get("summary"),
+            *raw.get("character_names", []),
+            raw.get("canonical_name"),
+            raw.get("source_character_name"),
+            raw.get("target_character_name"),
+        ]
+        snippet = _claim_local_evidence_snippet(
+            raw_source, card.get("source_span"), candidates,
+        )
+        card["snippets"] = [snippet] if snippet else []
     return cards
+
+
+def _claim_local_evidence_snippet(
+    raw_source: str,
+    source_span: Any,
+    candidates: list[Any],
+    *,
+    max_chars: int = 420,
+) -> str:
+    """Return one literal sentence around an entity mention inside a verified span."""
+    if not raw_source or not isinstance(source_span, dict):
+        return ""
+    ok, _ = validate_source_span(source_span, raw_source)
+    if not ok:
+        return ""
+    start = int(source_span["absolute_start"])
+    end = int(source_span["absolute_end"])
+    segment = raw_source[start:end]
+    cleaned_candidates = [str(candidate or "").strip() for candidate in candidates if str(candidate or "").strip()]
+    query = "".join(re.sub(r"[^\w\u4e00-\u9fff]", "", value).lower() for value in cleaned_candidates)
+    query_bigrams = {query[index:index + 2] for index in range(max(0, len(query) - 1))}
+    sentences = [part.strip() for part in re.split(r"(?<=[。！？\n])", segment) if part.strip()]
+    scored: list[tuple[int, int, str]] = []
+    for index, sentence in enumerate(sentences):
+        normalized = re.sub(r"[^\w\u4e00-\u9fff]", "", sentence).lower()
+        bigrams = {normalized[offset:offset + 2] for offset in range(max(0, len(normalized) - 1))}
+        exact_hits = sum(1 for candidate in cleaned_candidates if len(candidate) >= 2 and candidate in sentence)
+        scored.append((exact_hits * 20 + len(query_bigrams & bigrams), -index, sentence))
+    if not scored or max(scored)[0] <= 0:
+        return ""
+    snippet = max(scored)[2]
+    if len(snippet) > max_chars:
+        snippet = snippet[:max_chars].strip()
+    return snippet
 
 
 def _build_supervisor_evidence_cards(state: ImportState | dict) -> dict:
@@ -4842,6 +4933,16 @@ async def node_architect_timeline(state: ImportState) -> dict:
             "reason": "deterministic first canonical event fork anchor with optional model merge/callback hint",
         })
 
+    active_branch_ids = {
+        str(event.get("branchId") or "").strip()
+        for event in canonical_events.values()
+        if str(event.get("branchId") or "").strip()
+    }
+    timeline_branches = [
+        branch for branch in timeline_branches
+        if branch.get("id") == root_branch_id or str(branch.get("id") or "") in active_branch_ids
+    ]
+
     registry["events"] = canonical_events
     artifact = {
         "import_run_id": state.get("import_run_id", ""),
@@ -5391,6 +5492,9 @@ async def node_write_to_project(state: ImportState) -> dict:
     # Write character proposals — iterate-with-pop so each entry is GC-eligible
     # immediately after its await, rather than holding the full snapshot.
     characters = registry.pop("characters", {})
+    character_evidence_cards = [
+        card for card in state.get("evidence_cards", []) if isinstance(card, dict)
+    ]
     print(f"[proposal_write] writing {len(characters)} character proposals...", flush=True)
     for cid in list(characters.keys()):
         entry = characters.pop(cid)
@@ -5447,8 +5551,12 @@ async def node_write_to_project(state: ImportState) -> dict:
             except Exception as e:
                 errors.append(f"Failed to propose character merge {cid}->{existing_id}: {str(e)}")
             continue
-        entry = _compact_character_card(dict(entry))
+        entry = _attach_character_evidence_card(
+            _compact_character_card(dict(entry)), cid, character_evidence_cards,
+        )
         experience, background, profile_field_evidence = _backfill_character_profile_at_write_boundary(cid, entry)
+        evidence_refs = _character_evidence_refs(entry, profile_field_evidence)
+        source_span = _character_source_span(entry, profile_field_evidence)
         op = {
             "op_type": "create",
             "entity_type": "character",
@@ -5478,8 +5586,8 @@ async def node_write_to_project(state: ImportState) -> dict:
                 "importRunId": import_run_id,
                 "importImportance": entry.get("importance", ""),
                 "importCardType": "draft",
-                "evidenceRefs": entry.get("evidence_refs", []),
-                "sourceSpan": entry.get("source_span"),
+                "evidenceRefs": evidence_refs,
+                "sourceSpan": source_span,
                 "sourceSegmentId": entry.get("source_segment_id", ""),
                 "enrichmentRecommended": bool(entry.get("open_questions")),
                 "importance": entry.get("importance", "supporting") or "supporting",
@@ -5606,6 +5714,7 @@ async def node_write_to_project(state: ImportState) -> dict:
     # Write event proposals
     print(f"[proposal_write] writing {len(sorted_events)} event proposals...", flush=True)
     for fallback_order_idx, (eid, entry) in enumerate(sorted_events):
+        entry = _attach_entity_evidence_card(entry, eid, character_evidence_cards, kind="event")
         order_index = int(entry.get("orderIndex", fallback_order_idx) or 0)
         branch_id = _proposal_event_branch_id(entry)
         op = {
@@ -7542,11 +7651,13 @@ async def run_streaming(project_path: str, config: dict):
             )
 
     graph_stream = compiled.astream(initial_state, {"configurable": {"thread_id": thread_id}})
+    final_state: ImportState | dict[str, Any] = dict(initial_state)
     async for event in agentic_adapter.observe_stream(graph_stream):
         # astream yields {node_name: node_output} per node
         for node_name, node_output in event.items():
             if not isinstance(node_output, dict):
                 continue
+            final_state = {**final_state, **node_output}
 
             # Track chunk counts from split_chunks and process_chunks
             if node_name == "split_chunks":
@@ -7608,3 +7719,4 @@ async def run_streaming(project_path: str, config: dict):
                 "proposals_count": len(node_output.get("proposals", [])) if isinstance(node_output.get("proposals", []), list) else 0,
                 "window_metrics": node_output.get("window_metrics", {}),
             }
+    persist_w1_usage_ledger(final_state)

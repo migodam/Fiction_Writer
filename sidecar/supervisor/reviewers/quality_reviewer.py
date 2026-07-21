@@ -399,7 +399,10 @@ class QualityReviewer(BaseReviewer):
     def _check_relationship_no_evidence(self, rel_ops: list, findings: list) -> None:
         for op in rel_ops:
             fields = op.get("fields") or {}
-            if not fields.get("evidence", ""):
+            if not any(
+                fields.get(key)
+                for key in ("evidence", "evidenceRefs", "evidence_refs", "sourceNotes", "source_notes", "sourceSpan", "source_span")
+            ):
                 entity_id = op.get("entityId", "?")
                 findings.append(self._finding(
                     "relationship_no_evidence",

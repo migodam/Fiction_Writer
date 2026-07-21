@@ -807,6 +807,27 @@ def restore_durable_provider_history(session_id: str) -> dict[str, int]:
             accounted += 1
             continue
 
+        if status == "retry_consumed":
+            result = call.get("result_payload") or {}
+            if result.get("outcome") != "resolved_from_verified_artifact":
+                continue
+            cached = _load_verified_provider_artifact(
+                session_id, model=model, message_hash=message_hash,
+            )
+            if cached is None:
+                continue
+            if not record_cached_call_usage_once(
+                session_id, cached.operation_key, cached.usage_metadata, model=model,
+            ):
+                reason = authoritative_usage_ledger(session_id, model).get(
+                    "budget_status", {}
+                ).get("reason", "budget_exhausted")
+                raise RuntimeError(
+                    f"budget_exhausted: reconciled provider usage denied ({reason})"
+                )
+            accounted += 1
+            continue
+
         if status != "result":
             continue
         result = call.get("result_payload") or {}

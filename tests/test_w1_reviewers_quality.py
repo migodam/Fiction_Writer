@@ -64,6 +64,27 @@ class TestQualityReviewer(unittest.TestCase):
     def setUp(self):
         self.reviewer = QualityReviewer()
 
+    def test_relationship_source_notes_satisfy_evidence_contract(self):
+        state = {
+            "proposals": [{
+                "operations": [{
+                    "op": "create",
+                    "entityType": "relationship",
+                    "entityId": "rel_family",
+                    "fields": {
+                        "sourceId": "char_a",
+                        "targetId": "char_b",
+                        "sourceNotes": "原文明确称二人为叔侄。",
+                    },
+                }],
+            }],
+            "manuscript_chapters": [{}],
+        }
+        report = self.reviewer.review(state)
+        assert "relationship_no_evidence" not in {
+            finding["check_name"] for finding in report["findings"]
+        }
+
     def test_quality_catches_50_trivial_events(self):
         proposals = [_make_event_proposal(f"ev_{i}", timeline_class="scene_beat") for i in range(50)]
         state = _make_state(proposals=proposals)

@@ -1,6 +1,6 @@
 # Narrative IDE Agent Runtime Resilience and Recovery Report
 
-**Final implementation review:** 2026-07-19
+**Final implementation review:** 2026-07-21
 **Branch:** `codex/agent-runtime-resilience`
 **Backup tag:** `backup/agent-runtime-pre-resilience-20260715` (`c9598dc`)
 
@@ -8,12 +8,12 @@
 
 The durable Agent Runtime implementation is reviewer-ready. Automated backend,
 frontend, Electron lifecycle, crash recovery, real-fixture acceptance,
-original benchmark repair-only migration, and zero-cost provider response
-recovery gates pass (**793 passed**).
+original benchmark migration, paid provider recovery, and offline artifact
+repair gates pass. The current W1/runtime suite is **782 passed**.
 
-The clean Import Text 18 4/10 baseline was restored. A paid 10/10 run was
-attempted but blocked before provider execution by environment policy, so it is
-not a paid success and 10/10 remains pending explicit renewed approval.
+Import Text 18 completed its authorized 10/10 DeepSeek V4 Flash resume for
+`$0.014351`. The resulting 108-proposal package passes all diagnostic hard
+thresholds and remains entirely pending for human review.
 
 ## What Shipped
 
@@ -111,20 +111,20 @@ Latest evidence root:
   `6c7cfd49949e89cecb8b00a4bd9ab374e7393ff1b4fe84a0e8a809e060cb522d`.
 - DeepSeek `/models` authentication probe returned HTTP `200` without sending
   manuscript text.
-- One explicit `deepseek-v4-flash` resume was issued with a USD 3 hard ceiling.
-- Six remaining calls were dispatched; five produced durable result receipts.
-- The sixth did not return before the 20-minute hard fuse. No seventh call or
-  retry was issued.
-- Checkpoint stayed at the last atomic boundary: 4/10 and four extractions.
-- Cold restart produced `interrupted`, five `result`, one `unknown_outcome`, and
-  one pending human decision.
-- Failure receipt:
-  `/Users/migodam/narrative-ide-recovery-receipts/import-text18-2026-07-17T14-30-28-317Z/failure.json`.
-
-The clean 4/10 baseline was restored before the paid follow-up. A paid 10/10
-run was attempted, but environment policy blocked it before provider execution;
-therefore no paid success or paid usage is claimed. Explicit renewed approval
-is still required before the 10/10 run can execute.
+- The user explicitly authorized the first 10 chapters for `deepseek-v4-flash`
+  with a USD 3 hard ceiling.
+- Durable reconciliation recovered the prior verified response, and run/task
+  heartbeats prevented both run-lease and DAG task-claim expiry.
+- The attempt completed 10/10 chunks and all 16 DAG tasks: 8 accounted calls,
+  35,805 input tokens, 33,351 output tokens, `$0.014351` total cost.
+- Output: 108 pending proposals, 10 staged chapters, 20 manuscript nodes, and
+  10 scene documents. No proposal was accepted automatically.
+- Deterministic offline repair bound 27 characters and 5 events to source
+  evidence, restored supported background/experience, and removed 3 empty
+  branches. It made zero provider calls.
+- Repair receipt:
+  `system/imports/lineage_68b3fe6d3172718a45f6ca66/attempts/legacy_attempt_614123c9b409771fcdf06f0c/repair_receipts/20260721T034616Z/receipt.json`.
+- Final diagnostics exited 0 with every symptom flag false.
 
 ### Zero-Cost Provider Recovery Verification
 
@@ -138,7 +138,7 @@ is still required before the 10/10 run can execute.
 
 | Gate | Result |
 | --- | --- |
-| W1/runtime/agentic/checkpointer pytest | **793 passed** in 8.26s |
+| W1/runtime pytest | **782 passed** in 7.89s |
 | W1 package/recovery/SSE/transaction Playwright | **44 passed** in 11.1s |
 | Current targeted recovery/transaction Playwright | **7 passed** in 4.7s |
 | UI lint | **PASS**, zero warnings |
@@ -147,13 +147,16 @@ is still required before the 10/10 run can execute.
 | Electron sidecar lifecycle | **PASS** |
 | Real disposable fixture | **PASS**, 89 accepted and restart-persistent |
 | Original benchmark repair-only | **PASS**, 89 pending and canonical hashes unchanged |
-| Real Import Text 18 clean 4/10 baseline restore | **PASS** |
 | Zero-cost provider response recovery | **PASS**, 5 saved roles reused; 1 missing role called |
-| Real Import Text 18 paid 10/10 completion | **PENDING EXPLICIT RENEWED APPROVAL**, blocked before execution by environment policy |
+| Real Import Text 18 paid 10/10 completion | **PASS**, `$0.014351` under `$3` cap |
+| Real Import Text 18 proposal diagnostics | **PASS**, every symptom flag false; 108 pending |
 
 ## Remaining Risks
 
-- The paid 10/10 run remains blocked until explicit renewed approval is granted.
+- The monolithic legacy E2E suite currently reports 250/270 passing. The current
+  dedicated W1 recovery, SSE, observability, and package-acceptance gate passes
+  44/44; the 20 residual failures are old unscoped fixtures and cross-workspace
+  smoke selectors that need a separate compatibility/test-maintenance pass.
 - A provider-level per-request timeout shorter than the 20-minute workflow fuse
   should be considered as a P2 tuning item; it must still produce an unknown
   outcome after transport ambiguity.
@@ -167,11 +170,11 @@ is still required before the 10/10 run can execute.
 
 ## Human Next Step
 
-1. Obtain explicit renewed approval for the paid 10/10 run.
-2. Run the paid resume path with its USD 3 hard ceiling, one Resume, 20-minute
-   fuse, contiguous 10/10 checkpoint requirement, and zero accepted proposals.
-3. Review and Accept the resulting proposal package manually; no recovery code
-   is allowed to cross that gate.
+1. Open Import Text 18 in Workbench and review the 108-proposal package.
+2. Inspect the remaining non-blocking reviewer notes: 12 thin supporting
+   character cards and 3 repeated-phrase suggestions.
+3. Accept packages manually only after review; recovery code never crosses the
+   proposal gate.
 
 ## Local Run Guide
 

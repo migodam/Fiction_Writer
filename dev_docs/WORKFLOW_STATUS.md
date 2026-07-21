@@ -8,7 +8,7 @@ This is the status source of truth for W0-W7. Use `FRONTEND_BACKEND_CHECKLIST.md
 - `partial`: usable path exists, but known gaps remain open
 - `reference`: historical or diagnostic only
 
-## Runtime Resilience Baseline (2026-07-19)
+## Runtime Resilience Baseline (2026-07-21)
 
 The current implementation adds a per-project SQLite WAL `RuntimeStore` at
 `system/runtime/agent_runtime.db` for durable run/attempt, lease/fence, event,
@@ -34,16 +34,17 @@ Durable event polling is available through the runtime API. Electron also has
 an SSE bridge to legacy `/workflow/stream`, with cursor replay and polling
 fallback; no separately verified `/runtime` SSE endpoint exists. API, mocked
 IPC, real Electron restart recovery, disposable real-fixture acceptance, and
-zero-cost provider recovery are covered: **793 passed**. The clean 4/10
-baseline was restored. A paid 10/10 run was attempted but blocked before
-execution by environment policy; 10/10 remains pending explicit renewed
-approval. Exact commands are in the existing dev logs.
+provider recovery are covered. The authorized Import Text 18 resume completed
+10/10 with 8 calls costing `$0.014351`; all 108 proposals remain pending. The
+post-run offline evidence repair passed diagnostics with every symptom flag
+false. Current W1/runtime regression: **782 passed**. Exact commands and
+receipts are in the 2026-07-21 dev log.
 
 ## Workflow Matrix
 | Workflow | Purpose | Backend status | UI status | Current status | Integration source | Open gaps |
 |---|---|---|---|---|---|---|
 | W0 Orchestrator | Multi-step workflow planner/executor | Durable project checkpointer wired; automated coverage exists | Agents workspace control surface present for goal entry, status, permissions, and results | `partial` | `FRONTEND_BACKEND_CHECKLIST.md` | No live provider regression recorded for this baseline |
-| W1 Import | Novel/file import into proposals and project structure | Durable attempts, provider-response recovery, and legacy validation covered by automated tests | Import modal includes Recovery Center/runtime event and checkpoint surfaces alongside import observability | `partial` | `FRONTEND_BACKEND_CHECKLIST.md` | Disposable real-fixture acceptance and clean 4/10 recovery pass; paid 10/10 remains pending renewed approval |
+| W1 Import | Novel/file import into proposals and project structure | Durable attempts, provider-response recovery, legacy validation, and completed 10/10 paid recovery covered | Import modal includes Recovery Center/runtime event and checkpoint surfaces alongside import observability | `partial` | `FRONTEND_BACKEND_CHECKLIST.md` | Import Text 18 has 108 pending proposals awaiting human review; thin supporting-character cards remain non-blocking |
 | W2 Manuscript Sync | Sync writing content back into canonical/project data proposals | Verified in backend | Writing Chapters trigger with status/result path to Workbench Inbox | `active` | `FRONTEND_BACKEND_CHECKLIST.md` | Proposal acceptance safety remains owned by Workbench |
 | W3 Writing Assistant | Continue/rewrite/expand/improve-dialogue flows | Verified and wired | Available in writing flows | `active` | `FRONTEND_BACKEND_CHECKLIST.md` | Occasional preamble text still needs prompt hardening |
 | W4 Consistency Check | Detect contradictions and consistency issues | Verified and wired | Audit button and polling present | `active` | `FRONTEND_BACKEND_CHECKLIST.md` | Issue review/queue-fix closure still lighter than target product loop |
@@ -56,7 +57,7 @@ approval. Exact commands are in the existing dev logs.
 - W0 now has a canonical Agents workspace control surface for goal composition, permissions, status, and results.
 - Proposal acceptance now blocks unsupported canonical operations instead of accepting no-ops; dedicated link/unlink canonical mutators remain future work.
 - Publish/export remains present as a workspace but is not yet a fully closed delivery surface.
-- Sidecar lifecycle now has durable runtime/checkpointer shutdown handling and restart lease invalidation. Real Electron restart recovery passes; the remaining external gate is the paid provider resume.
+- Sidecar lifecycle now has durable runtime/checkpointer shutdown handling and restart lease invalidation. Real Electron restart recovery and the paid Import Text 18 resume pass; the remaining gate is human review of the pending package.
 
 ## Workflow Ownership Boundaries
 - Status changes update this file.

@@ -471,6 +471,9 @@ def _timeline_branch_quality(timeline: dict[str, Any]) -> dict[str, Any]:
             branch_id = event.get("branchId") or event.get("branch_id")
             if branch_id:
                 active_branch_ids.add(str(branch_id))
+            active_branch_ids.update(
+                str(item) for item in _safe_list(event.get("sharedBranchIds")) if item
+            )
     empty_count = sum(
         1 for branch in branches
         if isinstance(branch, dict) and branch.get("id") and str(branch["id"]) not in active_branch_ids

@@ -808,6 +808,46 @@ def test_character_experience_note_fallback_has_stable_ids_and_a_small_cap():
     assert background == "农家少年"
     assert profile_field_evidence["experience"] == ["evc_major", source_span]
     assert w1_import._action_or_state_note("[window pwin_1] 性格冷漠，给人难以亲近的感觉。") == ""
+    assert w1_import._action_or_state_note("[chunk 1] 抵达七玄门。") == "抵达七玄门。"
+
+
+def test_character_evidence_card_restores_profile_provenance_and_supported_fields():
+    source_span = {
+        "raw_source_hash": "source_hash",
+        "absolute_start": 0,
+        "absolute_end": 100,
+        "substring_hash": "substring_hash",
+    }
+    entry = w1_import._attach_character_evidence_card(
+        {
+            "canonical_name": "三叔",
+            "importance": "supporting",
+            "summary": "韩立的亲三叔，七玄门外门弟子，经营春香酒楼",
+            "notes": ["[chunk 1] 准时到达青牛镇并带韩立进入七玄门。"],
+        },
+        "char_uncle",
+        [{
+            "id": "evc_uncle",
+            "kind": "character",
+            "candidate_ids": ["char_uncle"],
+            "source_span": source_span,
+        }],
+    )
+
+    experience, background, profile_field_evidence = w1_import._backfill_character_profile_at_write_boundary(
+        "char_uncle", entry,
+    )
+    assert background == "韩立的亲三叔"
+    assert experience == [{
+        "id": "char_uncle_experience_1",
+        "chapter": "",
+        "fact": "准时到达青牛镇并带韩立进入七玄门。",
+        "evidence": "evc_uncle",
+    }]
+    assert entry["evidence_refs"] == ["evc_uncle"]
+    assert entry["source_span"] == source_span
+    assert profile_field_evidence["background"] == ["evc_uncle", source_span]
+    assert profile_field_evidence["experience"] == ["evc_uncle", source_span]
 
 
 def test_character_card_compaction_caps_long_running_import_fields():
@@ -991,6 +1031,37 @@ def test_timeline_architect_merges_near_duplicate_chinese_titles(tmp_path):
 
     assert list(events) == ["event_a"]
     assert any(item.get("event_id") == "event_b" and item.get("reason") == "high-confidence duplicate title" for item in discarded)
+
+
+def test_timeline_architect_prunes_imported_branches_without_canonical_events(tmp_path):
+    state = {
+        "project_path": str(tmp_path),
+        "import_run_id": "import_prune_empty_branch",
+        "entity_registry": {
+            "events": {
+                "event_main": {
+                    "title": "韩立参加七玄门选拔",
+                    "description": "韩立离开家乡，参加七玄门弟子选拔。",
+                    "character_ids": ["char_han"],
+                    "temporal_hint": "第一章",
+                    "confidence": 0.95,
+                    "importanceScore": 95,
+                    "chunk_id": 0,
+                },
+            },
+            "character_id_map": {"char_han": "char_han"},
+        },
+        "timeline_branches": [
+            {"id": "branch_unused", "name": "未使用支线", "mode": "forked"},
+        ],
+        "errors": [],
+    }
+
+    result = asyncio.run(w1_import.node_architect_timeline(state))
+    branch_ids = {branch["id"] for branch in result["timeline_architecture"]["branches"]}
+    active_ids = {event["branchId"] for event in result["timeline_architecture"]["canonical_events"]}
+    assert "branch_unused" not in branch_ids
+    assert branch_ids - {result["timeline_architecture"]["root_branch_id"]} <= active_ids
 
 
 def test_timeline_architect_creates_semantic_branches_for_dense_import(tmp_path):
@@ -2193,6 +2264,30 @@ def test_node_review_import_runs_all_zero_cost_reviewers(tmp_path):
         ledger = reviewer_report["token_cost_ledger"]
         assert ledger["live_model_calls"] is False
         assert ledger["full50_run"] is False
+
+
+def test_attach_event_evidence_card_uses_candidate_id():
+    entry = {"title": "韩立离家", "evidence_refs": []}
+    source_span = {
+        "raw_source_hash": "a" * 64,
+        "absolute_start": 10,
+        "absolute_end": 20,
+        "substring_hash": "b" * 64,
+    }
+    cards = [{
+        "id": "evc_event",
+        "kind": "event",
+        "candidate_ids": ["event_departure"],
+        "source_span": source_span,
+        "raw": {"event_id": "event_departure"},
+    }]
+
+    result = w1_import._attach_entity_evidence_card(
+        entry, "event_departure", cards, kind="event",
+    )
+
+    assert result["evidence_refs"] == ["evc_event"]
+    assert result["source_span"] == source_span
 
 
 def test_import_observability_key_survives_proposal_write_merge():

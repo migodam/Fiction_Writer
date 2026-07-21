@@ -386,8 +386,8 @@ async function verifyCompletion(page, run, monitor) {
   assert.equal(typeof ledger.cost_usd, 'number', 'usage ledger is missing cost_usd');
   assert(ledger.cost_usd >= 0 && ledger.cost_usd <= MAX_COST_USD, 'usage ledger cost is outside the approved budget');
   assert.equal(ledger.budget_status?.exhausted, false, 'usage ledger reports budget exhaustion');
-  const checkpoint = await readJson(CHECKPOINT_PATH, 'completed checkpoint');
-  const trustedChunks = [...checkpoint.completed_chunk_ids].sort((a, b) => a - b);
+  const checkpoint = await readJson(path.join(attemptRoot, 'checkpoint.json'), 'completed attempt checkpoint');
+  const trustedChunks = [...checkpoint.committed_chunk_ids].sort((a, b) => a - b);
   assert.equal(checkpoint.total_chunks, 10, 'completed checkpoint total must remain 10');
   assert.deepEqual(trustedChunks, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], 'completion must have the trustworthy 10/10 contiguous chunk prefix');
   assert.equal(checkpoint.chunk_extractions?.length, 10, 'completion must include ten persisted chunk extractions');

@@ -1,6 +1,6 @@
 # Narrative IDE Communication Index
 
-Last updated: 2026-07-19
+Last updated: 2026-07-21
 Owner: Codex / W4 QA + Communication Merge
 
 This folder is the evidence and handoff layer for Narrative IDE work. It is not the canonical product source of truth. When docs conflict, use `dev_docs/README.md` to identify the winning canonical document, then use the files here as reports, prompt packages, QA evidence, and historical context.
@@ -25,8 +25,8 @@ This folder is the evidence and handoff layer for Narrative IDE work. It is not 
 
 ## Current Verdict
 
-- The Agent Runtime resilience wave passes 793 targeted zero-cost tests, 44 W1 recovery/package Playwright tests, UI lint/build, Electron smoke/lifecycle, disposable 89-proposal acceptance, original benchmark repair-only migration, and provider-response recovery verification. The current recovery/transaction subset also passes 7/7.
-- Import Text 18 has the clean 4/10 baseline restored. A paid 10/10 run was attempted but blocked before execution by environment policy; no paid success is claimed and 10/10 remains pending explicit renewed approval.
+- The Agent Runtime resilience wave passes the established Playwright/Electron gates; the current W1/runtime regression is 782 passed and UI lint/build are clean.
+- Import Text 18 completed the authorized DeepSeek V4 Flash 10/10 resume for `$0.014351`. Its 108 proposals remain pending. Offline provenance/profile repair completed with backups, and final diagnostics report every symptom flag false.
 - Provider response recovery uses a stable sequence-independent operation key excluding `attemptId`, project-local `0700`/`0600` content-addressed artifacts, verified cross-attempt reuse, per-process singleflight, human-gated unknown outcomes on cache and network paths, and unique-operation usage-ledger rebuilds without session double counting.
 - Current verified baselines are 659 W1 backend tests, 230 full P0/P1 Playwright tests, Electron runtime smoke, UI lint/build, Python compileall, and diff/secret checks.
 - Final Flash artifact `/tmp/.../20260713_033431` passes every extraction and semantic gate except the now-fixed 张铁 serializer boundary. Exact production-code replay passes diagnostics with every symptom flag false.
