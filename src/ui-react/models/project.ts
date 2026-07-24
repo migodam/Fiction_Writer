@@ -380,10 +380,11 @@ export interface GraphBoard {
 }
 
 export interface ProposalOperation {
-  op: 'create' | 'update' | 'delete' | 'link' | 'unlink' | 'reclassify_world_item' | 'relocate_world_item_to_character';
+  op: 'create' | 'update' | 'delete' | 'link' | 'unlink' | 'reclassify_world_item' | 'relocate_world_item' | 'relocate_world_item_to_character';
   entityType: EntityKind;
   entityId?: string | null;
   fields?: Record<string, unknown>;
+  relocation_plan?: Record<string, unknown>;
   new_category?: string;
   new_container_key?: string;
   new_category_path?: string[];

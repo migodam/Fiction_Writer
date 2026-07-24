@@ -276,7 +276,12 @@ class QualityReviewer(BaseReviewer):
             repairs.append(self._repair(
                 "relocate", [entity_id, str(plan["target_entity_id"])],
                 f"Relocate {name!r} from World to its matched character", deterministic=True,
-                proposed_operations=[{"op": "relocate_world_item", "relocation_plan": plan}],
+                proposed_operations=[{
+                    "op": "relocate_world_item",
+                    "entityType": "world_item",
+                    "entityId": entity_id,
+                    "relocation_plan": plan,
+                }],
             ))
 
     def _check_character_duplicate_name(

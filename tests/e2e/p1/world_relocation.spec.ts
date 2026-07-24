@@ -48,3 +48,57 @@ test('relocation proposal stays pending when its target character is missing', a
     lastBlockReason: expect.stringContaining('target character char_not_found does not exist'),
   });
 });
+
+test('reviewer relocation_plan wire format is accepted by the canonical applier', async ({ page }) => {
+  await page.goto('http://localhost:3000');
+  await page.evaluate(() => {
+    (window as any).__narrativeStore.setState((state: any) => ({
+      ...state,
+      worldContainers: [{ id: 'nb_wire', name: '世界模型', type: 'notebook', sortOrder: 0 }],
+      worldItems: [{ id: 'world_wire', folderId: 'nb_wire', containerId: 'nb_wire', type: 'organization', name: '正门主王六', description: '', attributes: [], linkedCharacterIds: [], linkedEventIds: [], linkedSceneIds: [], mapMarkers: [], tagIds: [] }],
+      characters: [{ id: 'char_wire', name: '王六', summary: '', background: '', aliases: ['王6'], birthdayText: '', tagIds: [], organizationIds: [], linkedSceneIds: [], linkedEventIds: [], linkedWorldItemIds: ['world_wire'], statusFlags: {} }],
+      proposals: [{
+        id: 'proposal_wire',
+        title: '搬运人物职务混合条目',
+        source: 'quality_reviewer',
+        kind: 'import_review',
+        description: '',
+        targetEntityType: 'world_item',
+        targetEntityId: 'world_wire',
+        preview: '',
+        reviewPolicy: 'manual_workbench',
+        status: 'pending',
+        createdAt: '2026-07-25T00:00:00.000Z',
+        proposedOperations: [{
+          op: 'relocate_world_item',
+          entityType: 'world_item',
+          entityId: 'world_wire',
+          relocation_plan: {
+            plan_id: 'relocate_world_wire_to_char_wire',
+            source_candidate_id: 'world_wire',
+            target_kind: 'character',
+            target_entity_id: 'char_wire',
+            field_merge_plan: {
+              aliases: ['正门主王六'],
+              role: '正门主',
+              evidence_refs: ['evidence_wire'],
+            },
+            status: 'approved',
+            deterministic: true,
+          },
+        }],
+      }],
+      proposalHistory: [],
+      issues: [],
+    }));
+  });
+
+  await page.evaluate(() => (window as any).__narrativeStore.getState().resolveProposal('proposal_wire', 'accepted'));
+  const state = await page.evaluate(() => (window as any).__narrativeStore.getState());
+  expect(state.worldItems.some((item: any) => item.id === 'world_wire')).toBe(false);
+  expect(state.characters.find((item: any) => item.id === 'char_wire')).toMatchObject({
+    aliases: expect.arrayContaining(['王6', '正门主王六']),
+    role: '正门主',
+    evidenceRefs: ['evidence_wire'],
+  });
+});

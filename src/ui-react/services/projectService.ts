@@ -2672,7 +2672,7 @@ const applyProposalOperations = (project: NarrativeProject, proposal: Proposal, 
   let applied = false;
 
   for (const operation of operations) {
-    if (operation.op === 'relocate_world_item_to_character') {
+    if (operation.op === 'relocate_world_item_to_character' || operation.op === 'relocate_world_item') {
       const result = applyWorldItemRelocationOperation(draft, operation);
       if (result.blockedReason) return { project, applied: false, blockedReason: result.blockedReason };
       draft = result.project;
@@ -2736,7 +2736,25 @@ const applyWorldItemRelocationOperation = (
   project: NarrativeProject,
   operation: RawProposalOperation,
 ): ProposalApplyResult => {
-  const fields = operation.fields || {};
+  const relocationPlan = operation.relocation_plan && typeof operation.relocation_plan === 'object'
+    ? operation.relocation_plan
+    : {};
+  const mergePlan = relocationPlan.field_merge_plan && typeof relocationPlan.field_merge_plan === 'object'
+    ? relocationPlan.field_merge_plan as Record<string, unknown>
+    : {};
+  const fields: Record<string, unknown> = {
+    ...mergePlan,
+    ...(operation.fields || {}),
+    sourceWorldItemId:
+      operation.fields?.sourceWorldItemId
+      || operation.fields?.source_world_item_id
+      || relocationPlan.source_candidate_id,
+    targetCharacterId:
+      operation.fields?.targetCharacterId
+      || operation.fields?.target_character_id
+      || operation.fields?.targetEntityId
+      || relocationPlan.target_entity_id,
+  };
   const sourceId = String(fields.sourceWorldItemId || fields.source_world_item_id || operation.entityId || '');
   const targetId = String(fields.targetCharacterId || fields.target_character_id || fields.targetEntityId || '');
   if (!sourceId) return { project, applied: false, blockedReason: 'relocate_world_item_to_character is missing sourceWorldItemId.' };

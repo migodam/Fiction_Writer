@@ -332,7 +332,10 @@ class TestQualityReviewer(unittest.TestCase):
         )
         report = self.reviewer.review(state)
         relocation = next(action for action in report["local_repair_actions"] if action["action_type"] == "relocate")
-        plan = relocation["proposed_operations"][0]["relocation_plan"]
+        operation = relocation["proposed_operations"][0]
+        plan = operation["relocation_plan"]
+        self.assertEqual(operation["entityType"], "world_item")
+        self.assertEqual(operation["entityId"], "world_wang")
         self.assertEqual(plan["source_candidate_id"], "world_wang")
         self.assertEqual(plan["target_entity_id"], "char_wang")
         self.assertTrue(plan["deterministic"])
