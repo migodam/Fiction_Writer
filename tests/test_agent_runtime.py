@@ -357,9 +357,13 @@ def test_fork_creates_an_isolated_checkpoint_snapshot_and_scoped_receipt_copy(ru
         "immutable": True,
         "kind": "external_checkpoint_reference/v1",
         "lineage_id": "lineage-fork",
+        "mode": "preview_only",
+        "resumable": False,
         "thread_id": "thread-parent",
         "workflow_id": "W1",
     }
+    assert snapshot["resumable"] is False
+    assert snapshot["non_resumable_reason"] == "fork_snapshot_not_resumable"
     child_receipts = runtime.list_artifact_receipts(child_id)
     assert len(child_receipts) == 1
     assert child_receipts[0]["artifact_uri"] == "cache/chunk-1.json"
@@ -432,7 +436,9 @@ def test_control_events_are_durable_idempotent_and_conflict_safe(runtime):
         attempt["attempt_id"], "pause", {"reason": "user"}, decision_key="control-pause-1",
     )
 
-    assert repeated == first
+    assert first["idempotent"] is False
+    assert repeated["idempotent"] is True
+    assert repeated["event_id"] == first["event_id"]
     assert len(runtime.list_human_decisions(attempt["attempt_id"])) == 1
     assert len(runtime.list_events(attempt["attempt_id"])) == 1
     with pytest.raises(ValueError, match="control_decision_conflict"):

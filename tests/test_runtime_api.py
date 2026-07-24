@@ -125,6 +125,43 @@ def test_fork_rejects_checkpoint_from_a_different_attempt(tmp_path):
     assert parent["attempt"]["checkpoint_id"] is None
 
 
+def test_preview_only_fork_cannot_resume_and_never_replays_the_parent(tmp_path):
+    with _client(tmp_path) as client:
+        parent_id = _attempt(client)
+        store = client.app.state.runtime_store
+        store.record_checkpoint_metadata(parent_id, "fork-checkpoint", node="process_chunks", sequence=1)
+        fork = client.post(
+            f"/runtime/runs/{parent_id}/fork",
+            json={"checkpoint_id": "fork-checkpoint", "decision_id": "fork-preview-only"},
+        )
+        child_id = fork.json()["attempt"]["attempt_id"]
+        response = client.post(f"/runtime/runs/{child_id}/resume", json={})
+        child_events = client.get(f"/runtime/runs/{child_id}/events").json()["events"]
+
+    assert fork.status_code == 200
+    assert fork.json()["attempt"]["status"] == "paused"
+    assert response.status_code == 409
+    assert response.json()["detail"] == "fork_snapshot_not_resumable"
+    assert [event["event_type"] for event in child_events] == ["fork_snapshot"]
+
+
+def test_later_pause_after_a_resume_transition_uses_a_new_control_decision(tmp_path):
+    with _client(tmp_path) as client:
+        attempt_id = _attempt(client)
+        first = client.post(f"/runtime/runs/{attempt_id}/pause")
+        client.app.state.runtime_store.set_attempt_status(attempt_id, "running")
+        second = client.post(f"/runtime/runs/{attempt_id}/pause")
+        repeated = client.post(f"/runtime/runs/{attempt_id}/pause")
+        controls = [
+            event for event in client.get(f"/runtime/runs/{attempt_id}/events").json()["events"]
+            if event["event_type"] == "control"
+        ]
+
+    assert first.status_code == second.status_code == repeated.status_code == 200
+    assert len(controls) == 2
+    assert controls[0]["causation_id"] != controls[1]["causation_id"]
+
+
 def test_decisions_tools_and_config_redact_secrets(tmp_path):
     secret = "sk-secret-should-never-persist"
     with _client(tmp_path) as client:

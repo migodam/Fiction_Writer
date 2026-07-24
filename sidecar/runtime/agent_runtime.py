@@ -265,6 +265,13 @@ class RuntimeStore:
                         "ON attempt_fork_snapshots(parent_attempt_id, source_checkpoint_id)"
                     )
                     connection.execute("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (7, ?)", (_now(),))
+                if connection.execute("SELECT 1 FROM schema_migrations WHERE version = 8").fetchone() is None:
+                    columns = {row[1] for row in connection.execute("PRAGMA table_info(attempt_fork_snapshots)")}
+                    if "resumable" not in columns:
+                        connection.execute("ALTER TABLE attempt_fork_snapshots ADD COLUMN resumable INTEGER NOT NULL DEFAULT 0")
+                    if "non_resumable_reason" not in columns:
+                        connection.execute("ALTER TABLE attempt_fork_snapshots ADD COLUMN non_resumable_reason TEXT")
+                    connection.execute("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (8, ?)", (_now(),))
                 connection.execute("COMMIT")
             except BaseException:
                 connection.execute("ROLLBACK")
@@ -389,6 +396,10 @@ class RuntimeStore:
             checkpoint_metadata = json.loads(checkpoint["metadata_json"])
             run = connection.execute("SELECT workflow_id, lineage_id, thread_id FROM agent_runs WHERE run_id = ?", (parent["run_id"],)).fetchone()
             assert run is not None
+            # The current W1 supervisor persists summaries, not a serializable
+            # execution state.  This snapshot is therefore useful for review and
+            # future migration only; resume must fail closed until a workflow
+            # adapter can restore a selected node boundary without replaying work.
             state_reference = {
                 "kind": "external_checkpoint_reference/v1",
                 "workflow_id": run["workflow_id"],
@@ -396,12 +407,14 @@ class RuntimeStore:
                 "thread_id": run["thread_id"],
                 "checkpoint_id": checkpoint_id,
                 "immutable": True,
+                "mode": "preview_only",
+                "resumable": False,
             }
             connection.execute(
                 "INSERT INTO attempt_fork_snapshots("
                 "snapshot_id, attempt_id, parent_attempt_id, source_checkpoint_id, checkpoint_sequence, "
-                "checkpoint_node, checkpoint_parent_id, checkpoint_metadata_json, state_reference_json, created_at"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "checkpoint_node, checkpoint_parent_id, checkpoint_metadata_json, state_reference_json, resumable, non_resumable_reason, created_at"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'fork_snapshot_not_resumable', ?)",
                 (
                     snapshot_id, child_id, attempt_id, checkpoint_id, checkpoint["sequence"],
                     checkpoint["node"], checkpoint["parent_checkpoint_id"], _dump(checkpoint_metadata),
@@ -484,9 +497,14 @@ class RuntimeStore:
 
     def get_fork_snapshot(self, attempt_id: str) -> dict[str, Any] | None:
         with self._connect() as connection:
-            return _row(connection.execute(
+            snapshot = _row(connection.execute(
                 "SELECT * FROM attempt_fork_snapshots WHERE attempt_id = ?", (attempt_id,)
             ).fetchone())
+            if snapshot is not None:
+                snapshot["resumable"] = bool(snapshot.get("resumable"))
+                if not snapshot["resumable"]:
+                    snapshot["non_resumable_reason"] = snapshot.get("non_resumable_reason") or "fork_snapshot_not_resumable"
+            return snapshot
 
     def acquire_lease(self, attempt_id: str, owner_id: str, *, ttl_seconds: float, now: float | None = None) -> dict[str, Any]:
         owner_id = _identifier(owner_id, "owner_id", required=True)
@@ -661,18 +679,26 @@ class RuntimeStore:
             if existing is not None:
                 if existing["decision"] != "control" or existing["payload_json"] != payload_json:
                     raise ValueError("control_decision_conflict")
+                event = self._append_event_in_transaction(
+                    connection, attempt_id, "control", command_payload, timestamp=_now(),
+                    contract_version="AgentEvent/v1", actor={"kind": "human", "id": "runtime_control"},
+                    idempotency_key=f"control:{decision_key}", causation_id=decision_key,
+                    correlation_id=None, event_id=None,
+                )
+                return {**event, "idempotent": True}
             else:
                 connection.execute(
                     "INSERT INTO human_decisions(decision_id, attempt_id, decision_key, decision, payload_json, created_at) "
                     "VALUES (?, ?, ?, 'control', ?, ?)",
                     (str(uuid4()), attempt_id, decision_key, payload_json, _now()),
                 )
-            return self._append_event_in_transaction(
+            event = self._append_event_in_transaction(
                 connection, attempt_id, "control", command_payload, timestamp=_now(),
                 contract_version="AgentEvent/v1", actor={"kind": "human", "id": "runtime_control"},
                 idempotency_key=f"control:{decision_key}", causation_id=decision_key,
                 correlation_id=None, event_id=None,
             )
+            return {**event, "idempotent": False}
 
     def record_artifact_receipt(
         self, attempt_id: str, artifact_type: str, artifact_uri: str, checksum: str | None = None,

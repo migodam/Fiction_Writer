@@ -47,6 +47,7 @@ def _attempt_or_404(request: Request, attempt_id: str) -> dict[str, Any]:
 
 
 class ResumeRequest(BaseModel):
+    decision_id: str | None = None
     api_key: str | None = None
     provider: str | None = None
     model: str | None = None
@@ -67,6 +68,20 @@ class ForkRequest(BaseModel):
     decision_id: str
 
 
+class ControlRequest(BaseModel):
+    """Optional caller key makes retries stable across renderer/network failures."""
+
+    decision_id: str | None = None
+
+
+def _control_decision_key(attempt: dict[str, Any], command: str, decision_id: str | None = None) -> str:
+    if isinstance(decision_id, str) and decision_id.strip():
+        return f"runtime:{command}:request:{decision_id.strip()}"
+    # Legacy callers do not send a request ID.  The pre-transition version still
+    # makes a later pause after a resume a distinct durable command.
+    return f"runtime:{command}:transition:{attempt.get('status', '')}:{attempt.get('updated_at', '')}"
+
+
 @router.get("/runs/recoverable")
 async def recoverable_runs(request: Request) -> dict[str, Any]:
     return {"runs": _store(request).scan_recoverable_attempts()}
@@ -80,15 +95,22 @@ async def run_detail(lineage_id: str, request: Request) -> dict[str, Any]:
         attempts = store.list_attempts(run["run_id"])
         for item in attempts:
             item["unknown_calls"] = store.list_unknown_call_summaries(item["attempt_id"])
+            snapshot = store.get_fork_snapshot(item["attempt_id"])
+            if snapshot is not None:
+                item["fork_snapshot"] = snapshot
         return {"run": run, "attempts": attempts}
     attempt = store.get_attempt(lineage_id)
     if attempt is None:
         raise HTTPException(status_code=404, detail="run_not_found")
-    return {
+    snapshot = store.get_fork_snapshot(attempt["attempt_id"])
+    detail = {
         "run": store.get_run(attempt["run_id"]),
         "attempt": attempt,
         "unknown_calls": store.list_unknown_call_summaries(attempt["attempt_id"]),
     }
+    if snapshot is not None:
+        detail["fork_snapshot"] = snapshot
+    return detail
 
 
 @router.get("/runs/{attempt_id}/events")
@@ -104,11 +126,13 @@ async def checkpoints(attempt_id: str, request: Request) -> dict[str, Any]:
 
 
 @router.post("/runs/{attempt_id}/pause")
-async def pause(attempt_id: str, request: Request) -> dict[str, Any]:
+async def pause(attempt_id: str, request: Request, body: ControlRequest | None = None) -> dict[str, Any]:
     attempt = _attempt_or_404(request, attempt_id)
-    if attempt["status"] not in {"cancelled", "completed", "failed"}:
+    if attempt["status"] in {"running", "interrupted", "waiting_human", "needs_credentials"}:
         try:
-            _store(request).append_control_event(attempt_id, "pause", decision_key="runtime:pause")
+            _store(request).append_control_event(
+                attempt_id, "pause", decision_key=_control_decision_key(attempt, "pause", body.decision_id if body else None),
+            )
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         attempt = _store(request).set_attempt_status(attempt_id, "paused")
@@ -118,11 +142,13 @@ async def pause(attempt_id: str, request: Request) -> dict[str, Any]:
 
 
 @router.post("/runs/{attempt_id}/cancel")
-async def cancel(attempt_id: str, request: Request) -> dict[str, Any]:
+async def cancel(attempt_id: str, request: Request, body: ControlRequest | None = None) -> dict[str, Any]:
     attempt = _attempt_or_404(request, attempt_id)
     if attempt["status"] != "cancelled":
         try:
-            _store(request).append_control_event(attempt_id, "cancel", decision_key="runtime:cancel")
+            _store(request).append_control_event(
+                attempt_id, "cancel", decision_key=_control_decision_key(attempt, "cancel", body.decision_id if body else None),
+            )
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         attempt = _store(request).set_attempt_status(attempt_id, "cancelled")
@@ -134,6 +160,9 @@ async def cancel(attempt_id: str, request: Request) -> dict[str, Any]:
 @router.post("/runs/{attempt_id}/resume")
 async def resume(attempt_id: str, body: ResumeRequest, request: Request) -> dict[str, Any]:
     attempt = _attempt_or_404(request, attempt_id)
+    fork_snapshot = _store(request).get_fork_snapshot(attempt_id)
+    if fork_snapshot is not None and not fork_snapshot["resumable"]:
+        raise HTTPException(status_code=409, detail=fork_snapshot["non_resumable_reason"])
     run = _store(request).get_run(attempt["run_id"])
     config = dict((run or {}).get("config", {}))
     registered_project = str(config.get("project_path") or "")
@@ -164,12 +193,23 @@ async def resume(attempt_id: str, body: ResumeRequest, request: Request) -> dict
     if body.budget_config:
         config["budget_config"] = _merge_budget_config(dict(config.get("budget_config") or {}), body.budget_config)
     source_compatible = _store(request)._source_is_compatible(config)
-    _store(request).update_run_config(attempt["run_id"], config)
     if not source_compatible:
         raise HTTPException(status_code=409, detail="source_incompatible")
     if not body.api_key:
         attempt = _store(request).set_attempt_status(attempt_id, "needs_credentials")
         return {"attempt_id": attempt_id, "status": "needs_credentials"}
+    try:
+        control = _store(request).append_control_event(
+            attempt_id, "resume", {"requested": True},
+            decision_key=_control_decision_key(attempt, "resume", body.decision_id),
+        )
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if control.get("idempotent"):
+        if attempt["status"] == "running":
+            return {"attempt_id": attempt_id, "status": "resumed", "restarted": False}
+        raise HTTPException(status_code=409, detail="resume_request_already_recorded_requires_new_decision_id")
+    _store(request).update_run_config(attempt["run_id"], config)
     try:
         from sidecar.routers.workflows import resume_w1_attempt
         launched = await resume_w1_attempt(
@@ -178,12 +218,6 @@ async def resume(attempt_id: str, body: ResumeRequest, request: Request) -> dict
             persisted_config=config,
         )
     except (ValueError, KeyError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    try:
-        _store(request).append_control_event(
-            attempt_id, "resume", {"requested": True}, decision_key="runtime:resume",
-        )
-    except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     attempt = _store(request).set_attempt_status(attempt_id, "running")
     return {"attempt_id": attempt_id, "status": "resumed", "restarted": launched}
@@ -196,7 +230,8 @@ async def fork(attempt_id: str, body: ForkRequest, request: Request) -> dict[str
         result = _store(request).fork_attempt(attempt_id, checkpoint_id=body.checkpoint_id, decision_id=body.decision_id)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return {**result, "parent_attempt_id": attempt_id}
+    child_id = result["attempt"]["attempt_id"]
+    return {**result, "parent_attempt_id": attempt_id, "fork_snapshot": _store(request).get_fork_snapshot(child_id)}
 
 
 @router.post("/decisions/{decision_id}")
