@@ -117,6 +117,48 @@ def test_unknown_top_level_state_is_rejected_and_secrets_cannot_be_persisted(tmp
         _write(tmp_path, state={"chunks": [{"artifact_path": "/private/tmp/leak.json"}]})
 
 
+def test_source_body_keys_are_recursively_rejected_and_never_persisted(tmp_path: Path) -> None:
+    unique_body = "UNIQUE_W1_SOURCE_BODY_SENTENCE_DO_NOT_PERSIST_8f2d7a"
+    ref = _write(
+        tmp_path,
+        state={
+            "chunks": [
+                {
+                    "summary": "A concise structural summary is allowed.",
+                    "description": "A durable description is allowed.",
+                    "evidence": [{"span_start": 0, "span_end": 5, "kind": "chapter"}],
+                }
+            ]
+        },
+    )
+    assert load_w1_supervisor_snapshot(tmp_path, ref)["state"]["chunks"][0]["summary"]
+
+    for index, body_key in enumerate(
+        [
+            "content",
+            "raw_content",
+            "manuscript_content",
+            "text",
+            "source_text",
+            "chapter_text",
+            "window_text",
+            "input_text",
+            "rawContent",
+            "fullText",
+        ],
+        start=2,
+    ):
+        with pytest.raises(SnapshotValidationError, match="source_body_key"):
+            _write(
+                tmp_path,
+                checkpoint_id=f"checkpoint_{index:02d}",
+                state={"chunks": [{"nested": {body_key: unique_body}}]},
+            )
+
+    persisted = b"".join(path.read_bytes() for path in tmp_path.rglob("*") if path.is_file())
+    assert unique_body.encode("utf-8") not in persisted
+
+
 def test_absolute_paths_and_unsupported_boundaries_are_rejected(tmp_path: Path) -> None:
     absolute_source = _source() | {"source_relative_path": "/Users/unsafe/novel.txt"}
     with pytest.raises(SnapshotValidationError, match="contained"):

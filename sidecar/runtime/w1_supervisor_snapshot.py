@@ -35,6 +35,12 @@ _UNSAFE_KEY = re.compile(
     r"(?:prompt(?:_body|_text)?|source_(?:body|text|content)|chain_?of_?thought|hidden_?reasoning|reasoning_trace|callback|client|runtime|callable)",
     re.I,
 )
+# Chunk and extraction implementations historically used these generic keys
+# for full source payloads.  Keep this separate from ``_UNSAFE_KEY`` so
+# structured summaries, descriptions, and evidence remain durable.
+_BODY_CONTENT_KEY = re.compile(
+    r"(?:content|text|(?:raw|manuscript|source|chapter|window|input|original|full|body)_?(?:content|text)|(?:content|text)_?(?:raw|manuscript|source|chapter|window|input|original|full|body))"
+)
 _SECRET_VALUE = re.compile(
     r"(?:\bsk-[A-Za-z0-9_-]{8,}\b|\bghp_[A-Za-z0-9]{20,}\b|\bAIza[A-Za-z0-9_-]{20,}\b|\bBearer\s+[A-Za-z0-9._-]{20,}\b)"
 )
@@ -197,6 +203,8 @@ def _safe_json(value: Any, field: str) -> Any:
         for key, item in value.items():
             if not isinstance(key, str):
                 raise SnapshotValidationError(f"{field}_must_not_contain_non_string_key")
+            if _BODY_CONTENT_KEY.fullmatch(key.casefold()):
+                raise SnapshotValidationError(f"{field}_must_not_contain_source_body_key")
             if _SECRET_KEY.search(key) or _UNSAFE_KEY.search(key):
                 raise SnapshotValidationError(f"{field}_must_not_contain_{key}")
             normalized[key] = _safe_json(item, f"{field}.{key}")
