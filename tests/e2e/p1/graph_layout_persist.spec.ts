@@ -9,7 +9,10 @@ test.describe('Graph and Workbench flow', () => {
     await page.getByTestId('activity-btn-graph').click();
     await expect(page.getByTestId('graph-board-flow')).toBeVisible();
 
-    await page.getByTestId('graph-node-graph_char_aria').click();
+    const graphNode = page.getByTestId('graph-node-graph_char_aria');
+    await expect(graphNode).toBeVisible();
+    await expect(graphNode).toHaveCSS('pointer-events', 'all');
+    await graphNode.click();
     await page.getByTestId('graph-sync-selection-btn').click();
     await expect(page.getByText('Proposal queued', { exact: true })).toBeVisible();
 

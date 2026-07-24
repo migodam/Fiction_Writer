@@ -42,8 +42,8 @@ export const GraphWorkspace = () => {
   }, [activeGraphBoardId, graphBoards, location.pathname, setActiveGraphBoard]);
 
   return (
-    <div className="flex h-full overflow-hidden bg-bg">
-      <aside className="w-72 border-r border-border bg-bg-elev-1">
+    <div className="flex h-full min-h-0 min-w-0 overflow-hidden bg-bg">
+      <aside className="w-72 shrink-0 border-r border-border bg-bg-elev-1">
         <div className="border-b border-border bg-bg-elev-2 p-4">
           <div className="mb-3 flex items-center justify-between">
             <div>
@@ -107,7 +107,7 @@ export const GraphWorkspace = () => {
         </div>
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <div className="flex items-center gap-4 border-b border-border bg-bg-elev-1 px-6 py-3" data-testid="graph-toolbar">
           <button
             type="button"
@@ -181,7 +181,7 @@ export const GraphWorkspace = () => {
         </div>
 
         {activeBoard ? (
-          <div className="flex-1 overflow-hidden">
+          <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
             <GraphBoardFlow board={activeBoard} />
           </div>
         ) : (
@@ -197,4 +197,3 @@ export const GraphWorkspace = () => {
     </div>
   );
 };
-

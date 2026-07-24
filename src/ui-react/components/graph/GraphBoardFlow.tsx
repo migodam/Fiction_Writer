@@ -282,14 +282,17 @@ export const GraphBoardFlow: React.FC<GraphBoardFlowProps> = ({ board }) => {
   }, [board.id, openContextMenu, t, deleteGraphEdge, setEdges]);
 
   return (
-    <div className="h-full w-full" data-testid="graph-board-flow">
+    <div className="relative h-full min-h-0 min-w-0 w-full overflow-hidden" data-testid="graph-board-flow">
       <ReactFlow
+        className="relative z-0"
         nodes={nodes}
         edges={edges}
         onNodesChange={handleNodesChange}
         onEdgesChange={handleEdgesChange}
         onConnect={onConnect}
         nodeTypes={nodeTypes}
+        minZoom={0.1}
+        maxZoom={2}
         onNodeDoubleClick={onNodeDoubleClick}
         onNodeContextMenu={onNodeContextMenu}
         onEdgeContextMenu={onEdgeContextMenu}
