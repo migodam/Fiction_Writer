@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 from typing import Any, Callable, Iterable, Mapping, Sequence
 from uuid import uuid4
 
@@ -154,7 +155,7 @@ def _require_sha256(value: Any, field: str) -> str:
 
 
 def _safe_relative_path(value: Any, field: str = "relative_path") -> str:
-    if not isinstance(value, str) or not value or "\\x00" in value:
+    if not isinstance(value, str) or not value or "\x00" in value:
         raise SnapshotValidationError(f"{field}_must_be_a_nonempty_relative_path")
     path = Path(value)
     if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
@@ -269,7 +270,21 @@ def _normalize_budget(value: Mapping[str, Any] | None) -> dict[str, Any] | None:
     for key, item in value.items():
         if not isinstance(item, (int, float)) or isinstance(item, bool) or not math.isfinite(item) or item < 0:
             raise SnapshotValidationError(f"budget_snapshot.{key}_must_be_nonnegative_number")
+        if key in {"call_count", "max_steps", "input_tokens", "output_tokens", "total_tokens"} and (
+            not isinstance(item, int) or isinstance(item, bool)
+        ):
+            raise SnapshotValidationError(f"budget_snapshot.{key}_must_be_a_nonnegative_integer")
         normalized[key] = item
+    if {"spent_usd", "reserved_usd", "budget_limit_usd"}.issubset(normalized) and (
+        normalized["spent_usd"] + normalized["reserved_usd"] > normalized["budget_limit_usd"]
+    ):
+        raise SnapshotValidationError("budget_snapshot_spent_and_reserved_exceed_limit")
+    if {"input_tokens", "output_tokens", "total_tokens"}.issubset(normalized) and (
+        normalized["input_tokens"] + normalized["output_tokens"] != normalized["total_tokens"]
+    ):
+        raise SnapshotValidationError("budget_snapshot_token_total_mismatch")
+    if {"call_count", "max_steps"}.issubset(normalized) and normalized["call_count"] > normalized["max_steps"]:
+        raise SnapshotValidationError("budget_snapshot_call_count_exceeds_max_steps")
     return normalized
 
 
@@ -335,7 +350,13 @@ def _ensure_directory(path: Path) -> None:
     if cursor.is_symlink() or not cursor.is_dir():
         raise SnapshotValidationError("snapshot_directory_is_not_safe")
     for directory in reversed(missing):
-        directory.mkdir(mode=0o700)
+        try:
+            directory.mkdir(mode=0o700)
+        except FileExistsError:
+            # A competing writer may have published the parent while this
+            # worker was traversing it.  Re-validate rather than trusting it.
+            if directory.is_symlink() or not directory.is_dir():
+                raise SnapshotValidationError("snapshot_directory_is_not_safe")
         _fsync_directory(directory)
         _fsync_directory(directory.parent)
     if path.is_symlink() or not path.is_dir():
@@ -358,6 +379,91 @@ def _assert_no_symlink(project_root: Path, target: Path) -> None:
             raise SnapshotValidationError("snapshot_path_must_not_contain_symlink")
 
 
+def _read_regular_file_no_follow(project_root: Path, target: Path, *, error_prefix: str) -> bytes:
+    """Read a project-contained regular file while narrowing symlink TOCTOU windows.
+
+    ``O_NOFOLLOW`` is available on supported macOS/Linux deployments.  The
+    pre-open lstat/fstat inode comparison catches a final-path substitution
+    between validation and open; parent components are still re-checked before
+    every open because portable Python has no complete openat traversal API.
+    """
+    _assert_no_symlink(project_root, target)
+    try:
+        before = os.lstat(target)
+    except OSError as exc:
+        raise SnapshotValidationError(f"{error_prefix}_missing") from exc
+    if not os.path.isfile(target) or os.path.islink(target):
+        raise SnapshotValidationError(f"{error_prefix}_must_be_a_regular_file")
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(target, flags)
+    except OSError as exc:
+        raise SnapshotValidationError(f"{error_prefix}_cannot_be_opened_safely") from exc
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode) or (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino):
+            raise SnapshotValidationError(f"{error_prefix}_changed_during_open")
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
+
+
+def _validate_artifact_ref_for_resume(
+    project_root: Path,
+    snapshot_directory: Path,
+    reference: Mapping[str, str] | None,
+    field: str,
+    receipt_validator: Callable[[Mapping[str, str], Mapping[str, Any]], bool] | None,
+    snapshot: Mapping[str, Any],
+) -> None:
+    if reference is None:
+        return
+    relative_path = _safe_relative_path(reference["relative_path"], f"{field}.relative_path")
+    target = project_root / relative_path
+    try:
+        target.relative_to(snapshot_directory)
+    except ValueError:
+        pass
+    else:
+        raise SnapshotValidationError(f"{field}_must_not_reference_snapshot_contents")
+    data = _read_regular_file_no_follow(project_root, target, error_prefix=field)
+    if _sha256(data) != reference["sha256"]:
+        raise SnapshotValidationError(f"{field}_hash_mismatch")
+    if receipt_validator is not None:
+        try:
+            accepted = receipt_validator(reference, snapshot)
+        except Exception as exc:
+            raise SnapshotValidationError(f"{field}_receipt_validation_failed") from exc
+        if accepted is not True:
+            raise SnapshotValidationError(f"{field}_receipt_validation_rejected")
+
+
+def _validate_resume_source(project_root: Path, expected_source_identity: Mapping[str, Any]) -> dict[str, Any]:
+    expected = _normalize_identity(expected_source_identity, kind="source")
+    source_path = project_root / expected["source_relative_path"]
+    data = _read_regular_file_no_follow(project_root, source_path, error_prefix="resume_source")
+    if _sha256(data) != expected["source_sha256"]:
+        raise SnapshotValidationError("resume_source_hash_mismatch")
+    if "source_size" in expected and len(data) != expected["source_size"]:
+        raise SnapshotValidationError("resume_source_size_mismatch")
+    if "source_mtime" in expected:
+        try:
+            current_mtime = source_path.stat().st_mtime
+        except OSError as exc:
+            raise SnapshotValidationError("resume_source_missing") from exc
+        if not math.isclose(current_mtime, expected["source_mtime"], rel_tol=0.0, abs_tol=1e-6):
+            raise SnapshotValidationError("resume_source_mtime_mismatch")
+    return expected
+
+
 def _write_json(path: Path, value: Any) -> tuple[str, int]:
     data = _canonical_bytes(value)
     with path.open("xb") as handle:
@@ -371,6 +477,13 @@ def _read_json(path: Path) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SnapshotValidationError("snapshot_json_is_invalid") from exc
+
+
+def _decode_json(data: bytes) -> Any:
+    try:
+        return json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise SnapshotValidationError("snapshot_json_is_invalid") from exc
 
 
@@ -467,7 +580,8 @@ def _read_and_validate_snapshot(project_root: Path, relative_path: str) -> tuple
         raise SnapshotValidationError("snapshot_directory_does_not_exist")
     manifest_path = final / "manifest.json"
     _assert_no_symlink(root, manifest_path)
-    manifest = _read_json(manifest_path)
+    manifest_bytes = _read_regular_file_no_follow(root, manifest_path, error_prefix="snapshot_manifest")
+    manifest = _decode_json(manifest_bytes)
     if not isinstance(manifest, Mapping) or manifest.get("contract_version") != SNAPSHOT_CONTRACT_VERSION:
         raise SnapshotValidationError("snapshot_manifest_contract_is_invalid")
     files = manifest.get("files")
@@ -484,15 +598,14 @@ def _read_and_validate_snapshot(project_root: Path, relative_path: str) -> tuple
     for relative_file, entry in expected_entries.items():
         file_path = final / relative_file
         _assert_no_symlink(root, file_path)
-        if not file_path.is_file():
-            raise SnapshotValidationError("snapshot_manifest_file_missing")
-        data = file_path.read_bytes()
+        data = _read_regular_file_no_follow(root, file_path, error_prefix="snapshot_manifest_file")
         if len(data) != entry.get("size") or _sha256(data) != entry.get("sha256"):
             raise SnapshotValidationError("snapshot_manifest_file_hash_mismatch")
     expected_state_paths = {f"state/{field}.json" for field in STATE_FIELD_ALLOWLIST}
     if not set(expected_entries).issubset({"snapshot.json", *expected_state_paths}):
         raise SnapshotValidationError("snapshot_manifest_contains_unsupported_path")
-    snapshot = _read_json(final / "snapshot.json")
+    snapshot_bytes = _read_regular_file_no_follow(root, final / "snapshot.json", error_prefix="snapshot_payload")
+    snapshot = _decode_json(snapshot_bytes)
     if not isinstance(snapshot, Mapping):
         raise SnapshotValidationError("snapshot_payload_is_invalid")
     try:
@@ -502,7 +615,9 @@ def _read_and_validate_snapshot(project_root: Path, relative_path: str) -> tuple
             completed_nodes=snapshot.get("completed_nodes", []), completed_window_ids=snapshot.get("completed_window_ids", []),
             repeatable_node_counts=snapshot.get("repeatable_node_counts"), source_identity=snapshot["source_identity"],
             config_identity=snapshot["config_identity"], state={
-                path.removeprefix("state/").removesuffix(".json"): _read_json(final / path)
+                path.removeprefix("state/").removesuffix(".json"): _decode_json(
+                    _read_regular_file_no_follow(root, final / path, error_prefix="snapshot_state")
+                )
                 for path in expected_entries if path.startswith("state/")
             }, budget_snapshot=snapshot.get("budget_snapshot"), usage_ledger_ref=snapshot.get("usage_ledger_ref"),
             unknown_tool_call_ids=snapshot.get("unknown_tool_call_ids", []), semantic_coverage_ref=snapshot.get("semantic_coverage_ref"),
@@ -525,7 +640,7 @@ def _read_and_validate_snapshot(project_root: Path, relative_path: str) -> tuple
     expected_manifest, _ = _expected_manifest(rebuilt, state)
     if expected_manifest != manifest:
         raise SnapshotValidationError("snapshot_manifest_identity_mismatch")
-    manifest_sha = _sha256(manifest_path.read_bytes())
+    manifest_sha = _sha256(manifest_bytes)
     ref = SnapshotRef(
         contract_version=SNAPSHOT_CONTRACT_VERSION,
         lineage_id=rebuilt["lineage_id"],
@@ -533,7 +648,7 @@ def _read_and_validate_snapshot(project_root: Path, relative_path: str) -> tuple
         checkpoint_id=rebuilt["checkpoint_id"],
         relative_path=_safe_relative_path(relative_path),
         manifest_sha256=manifest_sha,
-        snapshot_sha256=_sha256((final / "snapshot.json").read_bytes()),
+        snapshot_sha256=_sha256(snapshot_bytes),
         source_identity_sha256=rebuilt["source_identity_sha256"],
         config_identity_sha256=rebuilt["config_identity_sha256"],
     )
@@ -615,7 +730,12 @@ def write_w1_supervisor_snapshot(
         _invoke_failpoint(failpoint, "before_rename")
         try:
             os.rename(temporary, final)
-        except FileExistsError:
+        except OSError:
+            # macOS reports a non-empty target directory as errno 66 rather
+            # than FileExistsError.  Treat only a now-visible final snapshot
+            # as a competing publisher; all other rename failures propagate.
+            if not final.exists():
+                raise
             _, _, existing_ref = _read_and_validate_snapshot(root, relative_path)
             expected_manifest_sha = _sha256(_canonical_bytes(manifest))
             expected_snapshot_sha = _sha256(files["snapshot.json"])
@@ -666,3 +786,54 @@ def load_w1_supervisor_snapshot(
         if expected != snapshot["config_identity"]:
             raise SnapshotValidationError("snapshot_config_identity_mismatch")
     return {"snapshot": snapshot, "state": state, "reference": calculated_ref.to_dict()}
+
+
+def load_w1_supervisor_snapshot_for_resume(
+    project_root: str | Path,
+    reference: SnapshotRef | Mapping[str, Any],
+    *,
+    expected_source_identity: Mapping[str, Any],
+    expected_config_identity: Mapping[str, Any],
+    artifact_receipt_validator: Callable[[Mapping[str, str], Mapping[str, Any]], bool] | None = None,
+) -> dict[str, Any]:
+    """Load only a snapshot that is safe to resume.
+
+    Unlike :func:`load_w1_supervisor_snapshot`, this API intentionally has no
+    optional identity arguments.  It validates the current source file and all
+    referenced external artifacts before an adapter can schedule another tool
+    call.  RuntimeStore ownership of unknown provider outcomes remains an
+    integration-layer responsibility; callers must still block resume while
+    ``unknown_tool_call_ids`` is non-empty unless the runtime resolves them.
+    """
+    root_input = Path(project_root)
+    if root_input.is_symlink() or not root_input.exists() or not root_input.is_dir():
+        raise SnapshotValidationError("project_root_must_be_an_existing_directory")
+    root = root_input.resolve(strict=True)
+    expected_source = _validate_resume_source(root, expected_source_identity)
+    expected_config = _normalize_identity(expected_config_identity, kind="config")
+    loaded = load_w1_supervisor_snapshot(
+        root,
+        reference,
+        expected_source_identity=expected_source,
+        expected_config_identity=expected_config,
+    )
+    snapshot = loaded["snapshot"]
+    snapshot_directory = root / loaded["reference"]["relative_path"]
+    _assert_no_symlink(root, snapshot_directory)
+    _validate_artifact_ref_for_resume(
+        root,
+        snapshot_directory,
+        snapshot.get("usage_ledger_ref"),
+        "usage_ledger_ref",
+        artifact_receipt_validator,
+        snapshot,
+    )
+    _validate_artifact_ref_for_resume(
+        root,
+        snapshot_directory,
+        snapshot.get("semantic_coverage_ref"),
+        "semantic_coverage_ref",
+        artifact_receipt_validator,
+        snapshot,
+    )
+    return loaded

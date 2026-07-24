@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -13,6 +14,7 @@ from sidecar.runtime.w1_supervisor_snapshot import (
     SnapshotConflictError,
     SnapshotValidationError,
     load_w1_supervisor_snapshot,
+    load_w1_supervisor_snapshot_for_resume,
     write_w1_supervisor_snapshot,
 )
 
@@ -69,6 +71,25 @@ def _write(project: Path, **changes: object):
     values = _kwargs()
     values.update(changes)
     return write_w1_supervisor_snapshot(project, **values)  # type: ignore[arg-type]
+
+
+def _prepare_resume_source(project: Path) -> None:
+    source = project / "sources" / "novel.txt"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("novel", encoding="utf-8")
+
+
+def _artifact(project: Path, relative_path: str, contents: str) -> dict[str, str]:
+    path = project / relative_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(contents, encoding="utf-8")
+    return {
+        "relative_path": relative_path,
+        "sha256": _sha(contents),
+        "contract_version": "ArtifactRef/v2",
+        "lineage_id": "lineage_01",
+        "attempt_id": "attempt_01",
+    }
 
 
 def test_round_trip_writes_relative_immutable_contract(tmp_path: Path) -> None:
@@ -168,3 +189,117 @@ def test_same_checkpoint_is_idempotent_but_different_content_conflicts(tmp_path:
     assert _write(tmp_path) == first
     with pytest.raises(SnapshotConflictError, match="different_snapshot_content"):
         _write(tmp_path, state={"chunks": [{"id": "chunk_changed"}]})
+
+
+def test_resume_loader_requires_matching_source_and_config_identity(tmp_path: Path) -> None:
+    _prepare_resume_source(tmp_path)
+    ref = _write(tmp_path)
+    with pytest.raises(SnapshotValidationError, match="source_identity_must_be_an_object"):
+        load_w1_supervisor_snapshot_for_resume(
+            tmp_path, ref, expected_source_identity=None, expected_config_identity=_config()  # type: ignore[arg-type]
+        )
+    with pytest.raises(SnapshotValidationError, match="config_identity_must_be_an_object"):
+        load_w1_supervisor_snapshot_for_resume(
+            tmp_path, ref, expected_source_identity=_source(), expected_config_identity=None  # type: ignore[arg-type]
+        )
+    with pytest.raises(SnapshotValidationError, match="resume_source_hash_mismatch"):
+        (tmp_path / "sources" / "novel.txt").write_text("changed", encoding="utf-8")
+        load_w1_supervisor_snapshot_for_resume(
+            tmp_path, ref, expected_source_identity=_source(), expected_config_identity=_config()
+        )
+    _prepare_resume_source(tmp_path)
+    with pytest.raises(SnapshotValidationError, match="snapshot_config_identity_mismatch"):
+        load_w1_supervisor_snapshot_for_resume(
+            tmp_path,
+            ref,
+            expected_source_identity=_source(),
+            expected_config_identity=_config() | {"model": "deepseek-v4-pro"},
+        )
+
+
+def test_resume_loader_rejects_missing_and_hash_mismatched_artifacts(tmp_path: Path) -> None:
+    _prepare_resume_source(tmp_path)
+    missing = {
+        "relative_path": "artifacts/usage.json",
+        "sha256": _sha("missing"),
+        "contract_version": "ArtifactRef/v2",
+        "lineage_id": "lineage_01",
+        "attempt_id": "attempt_01",
+    }
+    ref = _write(tmp_path, usage_ledger_ref=missing)
+    with pytest.raises(SnapshotValidationError, match="usage_ledger_ref_missing"):
+        load_w1_supervisor_snapshot_for_resume(
+            tmp_path, ref, expected_source_identity=_source(), expected_config_identity=_config()
+        )
+
+    ref = _write(
+        tmp_path,
+        checkpoint_id="checkpoint_02",
+        semantic_coverage_ref=_artifact(tmp_path, "artifacts/coverage.json", "correct"),
+    )
+    (tmp_path / "artifacts" / "coverage.json").write_text("tampered", encoding="utf-8")
+    with pytest.raises(SnapshotValidationError, match="semantic_coverage_ref_hash_mismatch"):
+        load_w1_supervisor_snapshot_for_resume(
+            tmp_path, ref, expected_source_identity=_source(), expected_config_identity=_config()
+        )
+
+
+def test_resume_loader_rejects_symlink_and_snapshot_internal_artifacts(tmp_path: Path) -> None:
+    _prepare_resume_source(tmp_path)
+    target = tmp_path / "outside.json"
+    target.write_text("usage", encoding="utf-8")
+    artifact_path = tmp_path / "artifacts" / "usage.json"
+    artifact_path.parent.mkdir(parents=True)
+    artifact_path.symlink_to(target)
+    symlink_ref = {
+        "relative_path": "artifacts/usage.json",
+        "sha256": _sha("usage"),
+        "contract_version": "ArtifactRef/v2",
+        "lineage_id": "lineage_01",
+        "attempt_id": "attempt_01",
+    }
+    ref = _write(tmp_path, usage_ledger_ref=symlink_ref)
+    with pytest.raises(SnapshotValidationError, match="symlink|cannot_be_opened_safely"):
+        load_w1_supervisor_snapshot_for_resume(
+            tmp_path, ref, expected_source_identity=_source(), expected_config_identity=_config()
+        )
+
+    snapshot_file_ref = {
+        "relative_path": "system/imports/lineage_01/attempts/attempt_01/snapshots/checkpoint_02/snapshot.json",
+        "sha256": _sha("placeholder"),
+        "contract_version": "ArtifactRef/v2",
+        "lineage_id": "lineage_01",
+        "attempt_id": "attempt_01",
+    }
+    ref = _write(tmp_path, checkpoint_id="checkpoint_02", usage_ledger_ref=snapshot_file_ref)
+    with pytest.raises(SnapshotValidationError, match="must_not_reference_snapshot_contents"):
+        load_w1_supervisor_snapshot_for_resume(
+            tmp_path, ref, expected_source_identity=_source(), expected_config_identity=_config()
+        )
+
+
+@pytest.mark.parametrize(
+    ("budget", "message"),
+    [
+        ({"budget_limit_usd": 1, "spent_usd": 0.8, "reserved_usd": 0.3}, "spent_and_reserved"),
+        ({"input_tokens": 2, "output_tokens": 3, "total_tokens": 4}, "token_total"),
+        ({"call_count": 3, "max_steps": 2}, "call_count_exceeds"),
+    ],
+)
+def test_budget_invariants_fail_closed(tmp_path: Path, budget: dict[str, int | float], message: str) -> None:
+    with pytest.raises(SnapshotValidationError, match=message):
+        _write(tmp_path, budget_snapshot=budget)
+
+
+def test_actual_nul_path_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(SnapshotValidationError, match="nonempty_relative_path"):
+        _write(tmp_path, source_identity=_source() | {"source_relative_path": "sources/novel\x00.txt"})
+
+
+def test_concurrent_same_checkpoint_is_idempotent_and_conflicts_fail_closed(tmp_path: Path) -> None:
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        refs = list(executor.map(lambda _index: _write(tmp_path), range(6)))
+    assert len({ref.manifest_sha256 for ref in refs}) == 1
+    assert load_w1_supervisor_snapshot(tmp_path, refs[0])["snapshot"]["checkpoint_id"] == "checkpoint_01"
+    with pytest.raises(SnapshotConflictError, match="different_snapshot_content"):
+        _write(tmp_path, state={"chunks": [{"id": "different"}]})
