@@ -1,15 +1,20 @@
 import React from 'react';
 import { Bot, ChevronRight } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useProjectStore, useUIStore } from '../store';
 import { useI18n } from '../i18n';
+import { RuntimeExecutionSurface } from './agent/RuntimeExecutionSurface';
 
 export const AgentDock = () => {
   const { isAgentDockOpen, toggleAgentDock } = useUIStore();
   const {
-    taskRequests,
-    taskRuns,
+    w1RuntimeEvents,
+    w1RuntimeCheckpoints,
+    w1RuntimeSelectedAgent,
+    setW1RuntimeSelectedAgent,
   } = useProjectStore();
   const { t } = useI18n();
+  const navigate = useNavigate();
 
   if (!isAgentDockOpen) {
     return (
@@ -54,38 +59,17 @@ export const AgentDock = () => {
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
-        {/* Active tasks */}
-        <section className="rounded-2xl border border-border bg-card p-4 shadow-1">
-          <div className="text-[10px] font-black uppercase tracking-[0.2em] text-text-3">{t('agentDock.liveQueue')}</div>
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            <Metric label={t('agentDock.queued')} value={String(taskRequests.filter((r) => r.status === 'queued').length)} />
-            <Metric label={t('agentDock.running')} value={String(taskRuns.filter((r) => r.status === 'running').length)} />
-          </div>
-          {taskRuns.length > 0 && (
-            <div className="mt-3 space-y-2">
-              {taskRuns.slice(0, 3).map((run) => (
-                <div key={run.id} className="rounded-xl border border-border bg-bg px-3 py-2">
-                  <div className="text-[10px] font-black text-text line-clamp-1">{run.summary}</div>
-                  <div className="mt-0.5 text-[9px] uppercase tracking-wider text-text-3">{run.status}</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-
-        {/* Quick link to agents */}
-        <section className="rounded-2xl border border-dashed border-border bg-bg p-4 text-sm text-text-2">
-          {t('agentDock.viewHistory')}
-        </section>
+      <div className="min-h-0 flex-1 overflow-hidden p-3">
+        <RuntimeExecutionSurface
+          events={w1RuntimeEvents}
+          checkpoints={w1RuntimeCheckpoints}
+          selectedAgent={w1RuntimeSelectedAgent}
+          onSelectAgent={setW1RuntimeSelectedAgent}
+          t={t}
+          compact
+          onOpenWorkspace={() => navigate('/agents')}
+        />
       </div>
     </aside>
   );
 };
-
-const Metric = ({ label, value }: { label: string; value: string }) => (
-  <div className="rounded-xl border border-border bg-bg-elev-2 p-3">
-    <div className="text-[10px] font-black uppercase tracking-[0.2em] text-text-3">{label}</div>
-    <div className="mt-2 text-2xl font-black text-text">{value}</div>
-  </div>
-);
