@@ -130,11 +130,16 @@ async def pause(attempt_id: str, request: Request, body: ControlRequest | None =
     attempt = _attempt_or_404(request, attempt_id)
     if attempt["status"] in {"running", "interrupted", "waiting_human", "needs_credentials"}:
         try:
-            _store(request).append_control_event(
+            control = _store(request).append_control_event(
                 attempt_id, "pause", decision_key=_control_decision_key(attempt, "pause", body.decision_id if body else None),
             )
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        # A delayed renderer or IPC retry must never re-apply an earlier pause
+        # after a later resume has made this attempt runnable again.
+        if control.get("idempotent"):
+            current = _attempt_or_404(request, attempt_id)
+            return {"attempt_id": attempt_id, "status": current["status"]}
         attempt = _store(request).set_attempt_status(attempt_id, "paused")
         from sidecar.routers.workflows import apply_runtime_command
         apply_runtime_command(attempt_id, "pause")
@@ -146,11 +151,14 @@ async def cancel(attempt_id: str, request: Request, body: ControlRequest | None 
     attempt = _attempt_or_404(request, attempt_id)
     if attempt["status"] != "cancelled":
         try:
-            _store(request).append_control_event(
+            control = _store(request).append_control_event(
                 attempt_id, "cancel", decision_key=_control_decision_key(attempt, "cancel", body.decision_id if body else None),
             )
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if control.get("idempotent"):
+            current = _attempt_or_404(request, attempt_id)
+            return {"attempt_id": attempt_id, "status": current["status"]}
         attempt = _store(request).set_attempt_status(attempt_id, "cancelled")
         from sidecar.routers.workflows import apply_runtime_command
         apply_runtime_command(attempt_id, "cancel")
@@ -195,6 +203,32 @@ async def resume(attempt_id: str, body: ResumeRequest, request: Request) -> dict
     source_compatible = _store(request)._source_is_compatible(config)
     if not source_compatible:
         raise HTTPException(status_code=409, detail="source_incompatible")
+    # A lost renderer response must not start another worker. A stable decision
+    # ID is still recorded while already running so its duplicate receives the
+    # same semantic result as the original delivery.
+    if attempt["status"] == "running":
+        if body.decision_id:
+            try:
+                control = _store(request).append_control_event(
+                    attempt_id, "resume", {"requested": True},
+                    decision_key=_control_decision_key(attempt, "resume", body.decision_id),
+                )
+            except (ValueError, KeyError) as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            if control.get("idempotent"):
+                return {
+                    "attempt_id": attempt_id,
+                    "status": "resumed",
+                    "restarted": True,
+                    "decision_id": body.decision_id,
+                }
+        return {
+            "attempt_id": attempt_id,
+            "status": "resumed",
+            "restarted": False,
+            "decision_id": body.decision_id,
+            "already_running": True,
+        }
     if not body.api_key:
         attempt = _store(request).set_attempt_status(attempt_id, "needs_credentials")
         return {"attempt_id": attempt_id, "status": "needs_credentials"}
@@ -207,9 +241,13 @@ async def resume(attempt_id: str, body: ResumeRequest, request: Request) -> dict
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if control.get("idempotent"):
         if attempt["status"] == "running":
-            return {"attempt_id": attempt_id, "status": "resumed", "restarted": False}
-        raise HTTPException(status_code=409, detail="resume_request_already_recorded_requires_new_decision_id")
+            return {"attempt_id": attempt_id, "status": "resumed", "restarted": False, "decision_id": body.decision_id, "idempotent": True}
+        raise HTTPException(status_code=409, detail="resume_request_already_recorded_retry_with_new_decision_id")
     _store(request).update_run_config(attempt["run_id"], config)
+    # Record the intent first, then move to running before scheduling the task.
+    # A concurrent/new delivery now observes running and cannot schedule a second
+    # recovered worker; a failed launch returns this attempt to a retryable state.
+    _store(request).set_attempt_status(attempt_id, "running")
     try:
         from sidecar.routers.workflows import resume_w1_attempt
         launched = await resume_w1_attempt(
@@ -218,9 +256,11 @@ async def resume(attempt_id: str, body: ResumeRequest, request: Request) -> dict
             persisted_config=config,
         )
     except (ValueError, KeyError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    attempt = _store(request).set_attempt_status(attempt_id, "running")
-    return {"attempt_id": attempt_id, "status": "resumed", "restarted": launched}
+        current = _attempt_or_404(request, attempt_id)
+        if current["status"] == "running":
+            _store(request).set_attempt_status(attempt_id, "paused")
+        raise HTTPException(status_code=503, detail="resume_launch_failed_retry_with_new_decision_id") from exc
+    return {"attempt_id": attempt_id, "status": "resumed", "restarted": launched, "decision_id": body.decision_id}
 
 
 @router.post("/runs/{attempt_id}/fork")

@@ -110,6 +110,31 @@ def test_runtime_commands_are_idempotent_and_fork_keeps_parent_immutable(tmp_pat
     assert parent["attempt"]["status"] == "cancelled"
 
 
+def test_control_decision_id_prevents_delayed_pause_from_replaying(tmp_path, monkeypatch):
+    """A late IPC retry must observe its original command, not apply it again."""
+    from sidecar.routers import workflows
+
+    applied: list[str] = []
+    monkeypatch.setattr(workflows, "apply_runtime_command", lambda _attempt, command: applied.append(command))
+    with _client(tmp_path) as client:
+        attempt_id = _attempt(client)
+        first = client.post(f"/runtime/runs/{attempt_id}/pause", json={"decision_id": "pause-click-1"})
+        client.app.state.runtime_store.set_attempt_status(attempt_id, "running")
+        late_retry = client.post(f"/runtime/runs/{attempt_id}/pause", json={"decision_id": "pause-click-1"})
+        later_click = client.post(f"/runtime/runs/{attempt_id}/pause", json={"decision_id": "pause-click-2"})
+        controls = [
+            event for event in client.get(f"/runtime/runs/{attempt_id}/events").json()["events"]
+            if event["event_type"] == "control"
+        ]
+
+    assert first.status_code == late_retry.status_code == later_click.status_code == 200
+    assert first.json()["status"] == "paused"
+    assert late_retry.json()["status"] == "running"
+    assert later_click.json()["status"] == "paused"
+    assert applied == ["pause", "pause"]
+    assert len(controls) == 2
+
+
 def test_fork_rejects_checkpoint_from_a_different_attempt(tmp_path):
     with _client(tmp_path) as client:
         parent_id = _attempt(client)
@@ -341,6 +366,44 @@ def test_resume_after_restart_relaunches_once_with_transient_credentials(tmp_pat
             dumped = "\n".join(str(row) for row in connection.execute("SELECT * FROM agent_runs, agent_attempts, run_events"))
 
     assert "sk-transient-restart-secret" not in dumped
+
+
+def test_resume_decision_id_launches_once_and_a_new_id_can_retry_a_failed_launch(tmp_path, monkeypatch):
+    from sidecar.routers import workflows
+
+    launches: list[str] = []
+
+    async def fake_resume(**_kwargs):
+        launches.append("launch")
+        if len(launches) == 1:
+            raise ValueError("transient launch failure")
+        return True
+
+    monkeypatch.setattr(workflows, "resume_w1_attempt", fake_resume)
+    with _client(tmp_path) as client:
+        attempt_id = _attempt(client)
+        client.app.state.runtime_store.set_attempt_status(attempt_id, "paused")
+        payload = {"api_key": "sk-transient", "decision_id": "resume-click-1"}
+        failed = client.post(f"/runtime/runs/{attempt_id}/resume", json=payload)
+        repeated_failed = client.post(f"/runtime/runs/{attempt_id}/resume", json=payload)
+        retried = client.post(f"/runtime/runs/{attempt_id}/resume", json={**payload, "decision_id": "resume-click-2"})
+        repeated_success = client.post(f"/runtime/runs/{attempt_id}/resume", json={**payload, "decision_id": "resume-click-2"})
+        later_running_click = client.post(f"/runtime/runs/{attempt_id}/resume", json={**payload, "decision_id": "resume-click-3"})
+        controls = [
+            event for event in client.get(f"/runtime/runs/{attempt_id}/events").json()["events"]
+            if event["event_type"] == "control"
+        ]
+
+    assert failed.status_code == 503
+    assert failed.json()["detail"] == "resume_launch_failed_retry_with_new_decision_id"
+    assert repeated_failed.status_code == 409
+    assert repeated_failed.json()["detail"] == "resume_request_already_recorded_retry_with_new_decision_id"
+    assert retried.status_code == repeated_success.status_code == later_running_click.status_code == 200
+    assert retried.json()["restarted"] is True
+    assert repeated_success.json() == retried.json()
+    assert later_running_click.json()["restarted"] is False
+    assert launches == ["launch", "launch"]
+    assert len(controls) == 3
 
 
 def test_startup_discovers_one_validated_legacy_recovery(tmp_path):

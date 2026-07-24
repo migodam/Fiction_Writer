@@ -40,13 +40,16 @@ test('recovery discovery is attempt-scoped, dedupes reconnect events, and forks 
   await page.getByTestId('w1-runtime-cancel').click();
   await expect.poll(() => page.evaluate(() => (window as any).__recoveryState.pauseCalls)).toBe(1);
   await expect.poll(() => page.evaluate(() => (window as any).__recoveryState.cancelCalls)).toBe(1);
-  await expect.poll(() => page.evaluate(() => (window as any).__recoveryState.actionPayloads.map((entry: any) => ({ channel: entry.channel, attempt_id: entry.payload.attempt_id, keys: Object.keys(entry.payload).sort() })))).toEqual([
-    { channel: 'runtime:pause', attempt_id: 'attempt-1', keys: ['attempt_id', 'projectRoot'] },
-    { channel: 'runtime:cancel', attempt_id: 'attempt-1', keys: ['attempt_id', 'projectRoot'] },
+  await expect.poll(() => page.evaluate(() => (window as any).__recoveryState.actionPayloads.map((entry: any) => ({ channel: entry.channel, attempt_id: entry.payload.attempt_id, decision_id: entry.payload.decision_id })))).toEqual([
+    { channel: 'runtime:pause', attempt_id: 'attempt-1', decision_id: expect.any(String) },
+    { channel: 'runtime:cancel', attempt_id: 'attempt-1', decision_id: expect.any(String) },
   ]);
+  const controlIds = await page.evaluate(() => (window as any).__recoveryState.actionPayloads.map((entry: any) => entry.payload.decision_id));
+  expect(new Set(controlIds).size).toBe(2);
 
   await page.getByTestId('w1-recovery-resume-lineage-1').click();
   await expect.poll(() => page.evaluate(() => (window as any).__recoveryState.resumeCalls)).toBe(1);
+  await expect.poll(() => page.evaluate(() => (window as any).__recoveryState.actionPayloads.find((entry: any) => entry.channel === 'runtime:resume')?.payload.decision_id)).toEqual(expect.any(String));
   await page.getByTestId('w1-checkpoint-fork-checkpoint-1').click();
   await expect.poll(() => page.evaluate(() => (window as any).__recoveryState.forkCalls)).toBe(1);
   await expect.poll(() => page.evaluate(() => (window as any).__recoveryState.actionPayloads.find((entry: any) => entry.channel === 'runtime:fork'))).toMatchObject({

@@ -1149,10 +1149,10 @@ export const electronApi = {
     return (await ipcRenderer.invoke("runtime:checkpoints", { projectRoot, attempt_id: attemptId })) as { checkpoints: RuntimeCheckpointResult[]; error?: string };
   },
 
-  async runtimeAction(projectRoot: string, action: "pause" | "resume" | "cancel", attemptId: string): Promise<RuntimeRunResult> {
+  async runtimeAction(projectRoot: string, action: "pause" | "resume" | "cancel", attemptId: string, decisionId: string): Promise<RuntimeRunResult> {
     const ipcRenderer = getIpcRenderer();
     if (!ipcRenderer) return { lineage_id: "", attempt_id: attemptId, status: "offline" };
-    return (await ipcRenderer.invoke(`runtime:${action}`, { projectRoot, attempt_id: attemptId })) as RuntimeRunResult;
+    return (await ipcRenderer.invoke(`runtime:${action}`, { projectRoot, attempt_id: attemptId, decision_id: decisionId })) as RuntimeRunResult;
   },
 
   async runtimeFork(projectRoot: string, attemptId: string, checkpointId: string, decisionId: string): Promise<RuntimeForkResult> {

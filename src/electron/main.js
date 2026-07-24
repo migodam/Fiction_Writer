@@ -1373,12 +1373,12 @@ ipcMain.handle('runtime:checkpoints', async (event, { projectRoot, attempt_id })
   return runtimeProxy(event, root, `/runtime/runs/${encodeURIComponent(attempt_id)}/checkpoints?project_path=${encodeURIComponent(root)}`);
 });
 for (const action of ['pause', 'cancel']) {
-  ipcMain.handle(`runtime:${action}`, async (event, { projectRoot, attempt_id }) =>
-    runtimeProxy(event, projectRoot, `/runtime/runs/${encodeURIComponent(attempt_id)}/${action}`, 'POST'),
+  ipcMain.handle(`runtime:${action}`, async (event, { projectRoot, attempt_id, decision_id }) =>
+    runtimeProxy(event, projectRoot, `/runtime/runs/${encodeURIComponent(attempt_id)}/${action}`, 'POST', { decision_id }),
   );
 }
-ipcMain.handle('runtime:resume', async (event, { projectRoot, attempt_id }) =>
-  runtimeProxy(event, projectRoot, `/runtime/runs/${encodeURIComponent(attempt_id)}/resume`, 'POST', getRuntimeResumeCredentials()),
+ipcMain.handle('runtime:resume', async (event, { projectRoot, attempt_id, decision_id }) =>
+  runtimeProxy(event, projectRoot, `/runtime/runs/${encodeURIComponent(attempt_id)}/resume`, 'POST', { ...getRuntimeResumeCredentials(), decision_id }),
 );
 ipcMain.handle('runtime:fork', async (event, { projectRoot, attempt_id, checkpoint_id, decision_id }) =>
   runtimeProxy(event, projectRoot, `/runtime/runs/${encodeURIComponent(attempt_id)}/fork`, 'POST', { checkpoint_id, decision_id }),

@@ -67,6 +67,11 @@ const W1_ABSOLUTE_TIMEOUT_MS = 4 * 60 * 60 * 1000;
 const W1_RUNTIME_SSE_MAX_FAILURES = 3;
 const W1_RUNTIME_SSE_RECONNECT_MS = 150;
 
+// This ID belongs to one explicit user action. It is safe to retry across an
+// uncertain IPC response, but a later click deliberately receives a new ID.
+const runtimeDecisionId = (action: 'pause' | 'resume' | 'cancel', attemptId: string) =>
+  `runtime:${action}:${attemptId}:${crypto.randomUUID()}`;
+
 // Demo projects use URI roots and must stay renderer-only until a filesystem project is selected.
 export const isFilesystemProjectRoot = (projectRoot: unknown): projectRoot is string =>
   typeof projectRoot === 'string' && pathIsAbsolute(projectRoot) && !/^[a-z][a-z0-9+.-]*:\/\//i.test(projectRoot);
@@ -2212,7 +2217,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const hasUnresolvedUnknownCall = run.unknown_calls?.some((call) => call.decision_state !== 'authorize_retry_once');
     if (!projectRoot || w1RuntimeAction || run.source_compatible === false || !run.attempt_id || hasUnresolvedUnknownCall) return;
     set({ w1RuntimeAction: 'resume' });
-    const result: RuntimeRun = await electronApi.runtimeAction(projectRoot, 'resume', run.attempt_id).catch(() => ({ lineage_id: run.lineage_id, attempt_id: run.attempt_id, status: 'error' }));
+    const result: RuntimeRun = await electronApi.runtimeAction(projectRoot, 'resume', run.attempt_id, runtimeDecisionId('resume', run.attempt_id)).catch(() => ({ lineage_id: run.lineage_id, attempt_id: run.attempt_id, status: 'error' }));
     const nextAttemptId = result.attempt_id ?? run.attempt_id;
     if (nextAttemptId !== get().w1RuntimeAttemptId) get().disconnectW1RuntimeStream();
     set({ w1RuntimeAction: null, w1RuntimeLineageId: run.lineage_id, w1RuntimeAttemptId: nextAttemptId, w1RuntimeEvents: nextAttemptId !== run.attempt_id ? [] : get().w1RuntimeEvents, w1RuntimeSequence: nextAttemptId !== run.attempt_id ? 0 : get().w1RuntimeSequence, w1RuntimeGapWarning: false, w1RuntimeStreamFailures: 0, w1RuntimeError: result.status === 'needs_credentials' ? 'needs_credentials' : result.status === 'error' ? 'runtime_action_failed' : null });
@@ -2251,7 +2256,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
 
     const result: RuntimeRun = await electronApi
-      .runtimeAction(projectRoot, 'resume', run.attempt_id)
+      .runtimeAction(projectRoot, 'resume', run.attempt_id, runtimeDecisionId('resume', run.attempt_id))
       .catch(() => ({ lineage_id: run.lineage_id, attempt_id: run.attempt_id, status: 'error' }));
     const nextAttemptId = result.attempt_id ?? run.attempt_id;
     if (nextAttemptId !== get().w1RuntimeAttemptId) get().disconnectW1RuntimeStream();
@@ -2278,14 +2283,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const { projectRoot, w1RuntimeAttemptId, w1RuntimeAction } = get();
     if (!projectRoot || !w1RuntimeAttemptId || w1RuntimeAction) return;
     set({ w1RuntimeAction: 'pause' });
-    await electronApi.runtimeAction(projectRoot, 'pause', w1RuntimeAttemptId).catch(() => null);
+    await electronApi.runtimeAction(projectRoot, 'pause', w1RuntimeAttemptId, runtimeDecisionId('pause', w1RuntimeAttemptId)).catch(() => null);
     set({ w1RuntimeAction: null });
   },
   cancelW1Runtime: async () => {
     const { projectRoot, w1RuntimeAttemptId, w1RuntimeAction } = get();
     if (!projectRoot || !w1RuntimeAttemptId || w1RuntimeAction) return;
     set({ w1RuntimeAction: 'cancel' });
-    await electronApi.runtimeAction(projectRoot, 'cancel', w1RuntimeAttemptId).catch(() => null);
+    await electronApi.runtimeAction(projectRoot, 'cancel', w1RuntimeAttemptId, runtimeDecisionId('cancel', w1RuntimeAttemptId)).catch(() => null);
     set({ w1RuntimeAction: null });
   },
   forkW1Checkpoint: async (checkpointId) => {
