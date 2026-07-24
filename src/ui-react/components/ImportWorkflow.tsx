@@ -402,7 +402,7 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
     w1RuntimeStatus?.orchestrator_phase || w1CurrentStep || w1Status,
   );
   const acceptSafeAll = useCallback(() => {
-    resolveProposals(safeAcceptIds, "accepted");
+    resolveProposals(safeAcceptIds, "accepted", "automatic");
     setAcceptResult({
       accepted: safeAcceptIds.length,
       remaining: proposals.length - safeAcceptIds.length,

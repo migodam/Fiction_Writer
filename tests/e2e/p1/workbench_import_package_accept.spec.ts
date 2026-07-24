@@ -37,6 +37,50 @@ const makePackageProposal = (
   packageId,
 });
 
+const makeSemanticCoverage = (packageId: string, verdict: 'pass' | 'warning' | 'blocked', attemptId = 'attempt_01') => {
+  const relativePath = `system/imports/${packageId}/attempts/${attemptId}/semantic_coverage_report.json`;
+  const inputHash = sha256(`semantic-input:${packageId}:${attemptId}:${verdict}`);
+  const report = {
+    contract_version: 'w1-semantic-coverage-report/v1',
+    import_run_id: packageId,
+    lineage_id: packageId,
+    attempt_id: attemptId,
+    input_hash: inputHash,
+    verdict,
+    artifact_paths: { report: relativePath },
+  };
+  const reportText = JSON.stringify(report);
+  const ref = {
+    relativePath,
+    sha256: sha256(reportText),
+    verdict,
+    input_hash: inputHash,
+    attempt_id: attemptId,
+  };
+  return {
+    reportText,
+    ref,
+    policy: {
+      verdict,
+      automatic_acceptance: verdict === 'pass',
+      requires_human_review: verdict === 'warning',
+      report_path: relativePath,
+      input_hash: inputHash,
+      ref,
+    },
+  };
+};
+
+const attachSemanticCoverage = (
+  proposals: ReturnType<typeof makePackageProposal>[],
+  coverage: ReturnType<typeof makeSemanticCoverage>,
+) => proposals.map((proposal) => {
+  (proposal as any).semanticCoverageRef = coverage.ref;
+  (proposal as any).semanticCoverage = coverage.policy;
+  proposal.proposedOperations[0].semanticCoverageRef = coverage.ref;
+  return proposal;
+});
+
 const makeStagedProjectionPackage = (packageId: string, artifactPath: string, chapterId = 'chap_projection', sceneId = 'scene_projection') => [
   makePackageProposal(packageId, `${packageId}_chapter`, 'chapter', {
     id: chapterId, title: 'Projection Chapter', summary: '', goal: '', notes: '', sceneIds: [], orderIndex: 0, status: 'draft',
@@ -121,6 +165,8 @@ async function installProjectionFilesystem(
   sourcePathOverride?: string,
   escapedSourcePath?: string,
   artifactSourcePathOverride?: string,
+  extraFiles: Record<string, string> = {},
+  realpathOverrides: Record<string, string> = {},
 ) {
   const manifestPath = artifactPath.replace(/staged_manuscript_projection\.json$/, 'manifest.json');
   const runDirectory = artifactPath.replace(/\/staged_manuscript_projection\.json$/, '');
@@ -145,11 +191,12 @@ async function installProjectionFilesystem(
     for (const document of projectionPayload.scene_documents ?? []) normalizeSpan(document.source_span);
   }
   await page.addInitScript(
-    ({ artifactPath, manifestPath, runDirectory, projectionPayload, manifestPayload, escapedArtifactPath, sourcePath, escapedSourcePath, sourceText, sourceHash }) => {
+    ({ artifactPath, manifestPath, runDirectory, projectionPayload, manifestPayload, escapedArtifactPath, sourcePath, escapedSourcePath, sourceText, sourceHash, extraFiles, realpathOverrides }) => {
       const files = new Map<string, string>([
         [artifactPath, JSON.stringify(projectionPayload)],
         [manifestPath, JSON.stringify(manifestPayload)],
         [sourcePath, sourceText],
+        ...Object.entries(extraFiles),
       ]);
       const directories = new Set([runDirectory]);
       const writes: string[] = [];
@@ -169,14 +216,36 @@ async function installProjectionFilesystem(
         projectFileMkdir: ({ path }: any) => { directories.add(path); },
         projectFileReaddir: ({ path }: any) => directChildren(path),
         projectFileUnlink: ({ path }: any) => { files.delete(path); },
-        projectFileRealpath: ({ path }: any) => path === artifactPath && escapedArtifactPath
+        projectFileRealpath: ({ path }: any) => realpathOverrides[path]
+          ?? (path === artifactPath && escapedArtifactPath
           ? escapedArtifactPath
-          : path === sourcePath && escapedSourcePath ? escapedSourcePath : path,
+          : path === sourcePath && escapedSourcePath ? escapedSourcePath : path),
         projectFileCopy: ({ path }: any) => { throw new Error(`Unexpected copy: ${path}`); },
         projectFileRename: ({ path, destination }: any) => { files.set(destination, files.get(path) ?? ''); files.delete(path); writes.push(destination); },
       };
     },
-    { artifactPath, manifestPath, runDirectory, projectionPayload, manifestPayload, escapedArtifactPath, sourcePath, escapedSourcePath, sourceText, sourceHash },
+    { artifactPath, manifestPath, runDirectory, projectionPayload, manifestPayload, escapedArtifactPath, sourcePath, escapedSourcePath, sourceText, sourceHash, extraFiles, realpathOverrides },
+  );
+}
+
+async function installSemanticCoverageFilesystem(
+  page: import('@playwright/test').Page,
+  coverage: ReturnType<typeof makeSemanticCoverage>,
+  realpathOverrides: Record<string, string> = {},
+) {
+  const reportPath = `/project/${coverage.ref.relativePath}`;
+  await installProjectionFilesystem(
+    page,
+    '/project/system/imports/fixture/staged_manuscript_projection.json',
+    makeProjection('fixture', 'fixture-source'),
+    { import_run_id: 'fixture', source_hash: 'fixture-source' },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { [reportPath]: coverage.reportText },
+    realpathOverrides,
   );
 }
 
@@ -479,6 +548,226 @@ test.describe('Workbench import package accept', () => {
     expect(state.characters).toHaveLength(89);
     expect(state.proposalHistory).toHaveLength(89);
     expect(state.proposals).toEqual([]);
+  });
+
+  test('accepts a pass semantic report emitted with policy only on the proposal', async ({ page }) => {
+    const packageId = 'pkg_semantic_pass';
+    const coverage = makeSemanticCoverage(packageId, 'pass');
+    await installSemanticCoverageFilesystem(page, coverage);
+    await injectImportPackage(page, attachSemanticCoverage([
+      makePackageProposal(packageId, 'semantic_pass_character', 'character', {
+        id: 'char_semantic_pass', name: 'Verified Hero', summary: '', background: '', aliases: [], birthdayText: '',
+        tagIds: [], organizationIds: [], linkedSceneIds: [], linkedEventIds: [], linkedWorldItemIds: [], statusFlags: {},
+      }),
+    ], coverage));
+    await page.evaluate(() => {
+      const store = (window as any).__narrativeStore;
+      store.setState((state: any) => ({ ...state, projectRoot: '/project', currentProject: { ...state.currentProject, metadata: { ...state.currentProject.metadata, rootPath: '/project', storageMode: 'nodefs' } } }));
+    });
+
+    await page.getByTestId(`accept-import-package-${packageTestId(packageId)}`).click();
+    const state = await page.evaluate(() => (window as any).__narrativeStore.getState());
+    expect(state.characters).toEqual([expect.objectContaining({ id: 'char_semantic_pass' })]);
+    expect(state.proposals).toEqual([]);
+  });
+
+  test('fails closed when new W1 semantic policy lacks a report reference', async ({ page }) => {
+    const packageId = 'pkg_semantic_missing_ref';
+    const coverage = makeSemanticCoverage(packageId, 'pass');
+    const proposal = makePackageProposal(packageId, 'semantic_missing_ref_character', 'character', {
+      id: 'char_semantic_missing_ref', name: 'Missing Receipt', summary: '', background: '', aliases: [], birthdayText: '',
+      tagIds: [], organizationIds: [], linkedSceneIds: [], linkedEventIds: [], linkedWorldItemIds: [], statusFlags: {},
+    });
+    (proposal as any).semanticCoverage = coverage.policy;
+    await injectImportPackage(page, [proposal]);
+
+    await page.getByTestId(`accept-import-package-${packageTestId(packageId)}`).click();
+    const state = await page.evaluate(() => (window as any).__narrativeStore.getState());
+    expect(state.characters).toEqual([]);
+    expect(state.proposals[0].lastBlockReason).toContain('missing its immutable report reference');
+  });
+
+  test('fails closed when proposal and operation semantic references disagree', async ({ page }) => {
+    const packageId = 'pkg_semantic_ref_mismatch';
+    const coverage = makeSemanticCoverage(packageId, 'pass');
+    await installSemanticCoverageFilesystem(page, coverage);
+    const proposals = attachSemanticCoverage([
+      makePackageProposal(packageId, 'semantic_ref_mismatch_a', 'character', {
+        id: 'char_semantic_ref_mismatch_a', name: 'Reference A', summary: '', background: '', aliases: [], birthdayText: '',
+        tagIds: [], organizationIds: [], linkedSceneIds: [], linkedEventIds: [], linkedWorldItemIds: [], statusFlags: {},
+      }),
+      makePackageProposal(packageId, 'semantic_ref_mismatch_b', 'character', {
+        id: 'char_semantic_ref_mismatch_b', name: 'Reference B', summary: '', background: '', aliases: [], birthdayText: '',
+        tagIds: [], organizationIds: [], linkedSceneIds: [], linkedEventIds: [], linkedWorldItemIds: [], statusFlags: {},
+      }),
+    ], coverage);
+    proposals[1].proposedOperations[0].semanticCoverageRef = { ...coverage.ref, sha256: sha256('different receipt') };
+    await injectImportPackage(page, proposals);
+    await page.evaluate(() => {
+      const store = (window as any).__narrativeStore;
+      store.setState((state: any) => ({ ...state, projectRoot: '/project', currentProject: { ...state.currentProject, metadata: { ...state.currentProject.metadata, rootPath: '/project', storageMode: 'nodefs' } } }));
+    });
+
+    await page.getByTestId(`accept-import-package-${packageTestId(packageId)}`).click();
+    const state = await page.evaluate(() => (window as any).__narrativeStore.getState());
+    expect(state.characters).toEqual([]);
+    expect(state.proposals[0].lastBlockReason).toContain('references disagree');
+  });
+
+  test('fails closed when a semantic report hash, attempt, or relative path is tampered', async ({ page }) => {
+    const packageId = 'pkg_semantic_tamper';
+    const coverage = makeSemanticCoverage(packageId, 'pass');
+    coverage.ref.sha256 = sha256('different report');
+    await installSemanticCoverageFilesystem(page, coverage);
+    const proposals = attachSemanticCoverage([
+      makePackageProposal(packageId, 'semantic_tamper_character', 'character', {
+        id: 'char_semantic_tamper', name: 'Must Stay Pending', summary: '', background: '', aliases: [], birthdayText: '',
+        tagIds: [], organizationIds: [], linkedSceneIds: [], linkedEventIds: [], linkedWorldItemIds: [], statusFlags: {},
+      }),
+    ], coverage);
+    await injectImportPackage(page, proposals);
+    await page.evaluate(() => {
+      const store = (window as any).__narrativeStore;
+      store.setState((state: any) => ({ ...state, projectRoot: '/project', currentProject: { ...state.currentProject, metadata: { ...state.currentProject.metadata, rootPath: '/project', storageMode: 'nodefs' } } }));
+    });
+
+    await page.getByTestId(`accept-import-package-${packageTestId(packageId)}`).click();
+    const state = await page.evaluate(() => (window as any).__narrativeStore.getState());
+    expect(state.characters).toEqual([]);
+    expect(state.proposals[0].lastBlockReason).toContain('report hash');
+
+    const traversalPackageId = 'pkg_semantic_traversal';
+    const traversalCoverage = makeSemanticCoverage(traversalPackageId, 'pass');
+    traversalCoverage.ref.relativePath = `system/imports/${traversalPackageId}/attempts/attempt_01/../semantic_coverage_report.json`;
+    traversalCoverage.policy.report_path = traversalCoverage.ref.relativePath;
+    await injectImportPackage(page, attachSemanticCoverage([
+      makePackageProposal(traversalPackageId, 'semantic_traversal_character', 'character', {
+        id: 'char_semantic_traversal', name: 'Path Escape', summary: '', background: '', aliases: [], birthdayText: '',
+        tagIds: [], organizationIds: [], linkedSceneIds: [], linkedEventIds: [], linkedWorldItemIds: [], statusFlags: {},
+      }),
+    ], traversalCoverage));
+    await page.getByTestId(`accept-import-package-${packageTestId(traversalPackageId)}`).click();
+    const traversalState = await page.evaluate(() => (window as any).__narrativeStore.getState());
+    expect(traversalState.characters).toEqual([]);
+    expect(traversalState.proposals[0].lastBlockReason).toContain('inconsistent or unsafe');
+  });
+
+  test('rejects a semantic report from another attempt', async ({ page }) => {
+    const packageId = 'pkg_semantic_attempt';
+    const coverage = makeSemanticCoverage(packageId, 'pass', 'attempt_02');
+    const mismatchedReport = JSON.parse(coverage.reportText);
+    mismatchedReport.attempt_id = 'attempt_01';
+    coverage.reportText = JSON.stringify(mismatchedReport);
+    coverage.ref.sha256 = sha256(coverage.reportText);
+    await installSemanticCoverageFilesystem(page, coverage);
+    await injectImportPackage(page, attachSemanticCoverage([
+      makePackageProposal(packageId, 'semantic_attempt_character', 'character', {
+        id: 'char_semantic_attempt', name: 'Wrong Attempt', summary: '', background: '', aliases: [], birthdayText: '',
+        tagIds: [], organizationIds: [], linkedSceneIds: [], linkedEventIds: [], linkedWorldItemIds: [], statusFlags: {},
+      }),
+    ], coverage));
+    await page.evaluate(() => {
+      const store = (window as any).__narrativeStore;
+      store.setState((state: any) => ({ ...state, projectRoot: '/project', currentProject: { ...state.currentProject, metadata: { ...state.currentProject.metadata, rootPath: '/project', storageMode: 'nodefs' } } }));
+    });
+
+    await page.getByTestId(`accept-import-package-${packageTestId(packageId)}`).click();
+    const state = await page.evaluate(() => (window as any).__narrativeStore.getState());
+    expect(state.characters).toEqual([]);
+    expect(state.proposals[0].lastBlockReason).toContain('does not match this package, attempt');
+  });
+
+  test('rejects a semantic report that resolves through a symlink', async ({ page }) => {
+    const packageId = 'pkg_semantic_symlink';
+    const coverage = makeSemanticCoverage(packageId, 'pass');
+    await installSemanticCoverageFilesystem(page, coverage, { [`/project/${coverage.ref.relativePath}`]: '/outside/semantic_coverage_report.json' });
+    await injectImportPackage(page, attachSemanticCoverage([
+      makePackageProposal(packageId, 'semantic_symlink_character', 'character', {
+        id: 'char_semantic_symlink', name: 'Escaped Report', summary: '', background: '', aliases: [], birthdayText: '',
+        tagIds: [], organizationIds: [], linkedSceneIds: [], linkedEventIds: [], linkedWorldItemIds: [], statusFlags: {},
+      }),
+    ], coverage));
+    await page.evaluate(() => {
+      const store = (window as any).__narrativeStore;
+      store.setState((state: any) => ({ ...state, projectRoot: '/project', currentProject: { ...state.currentProject, metadata: { ...state.currentProject.metadata, rootPath: '/project', storageMode: 'nodefs' } } }));
+    });
+
+    await page.getByTestId(`accept-import-package-${packageTestId(packageId)}`).click();
+    const state = await page.evaluate(() => (window as any).__narrativeStore.getState());
+    expect(state.characters).toEqual([]);
+    expect(state.proposals[0].lastBlockReason).toContain('resolves through a symlink');
+  });
+
+  test('allows a warning through an explicit single PackageCard acceptance', async ({ page }) => {
+    const packageId = 'pkg_semantic_warning_manual';
+    const coverage = makeSemanticCoverage(packageId, 'warning');
+    await installSemanticCoverageFilesystem(page, coverage);
+    await injectImportPackage(page, attachSemanticCoverage([
+      makePackageProposal(packageId, 'semantic_warning_manual_character', 'character', {
+        id: 'char_semantic_warning_manual', name: 'Manual Only', summary: '', background: '', aliases: [], birthdayText: '',
+        tagIds: [], organizationIds: [], linkedSceneIds: [], linkedEventIds: [], linkedWorldItemIds: [], statusFlags: {},
+      }),
+    ], coverage));
+    await page.evaluate(() => {
+      const store = (window as any).__narrativeStore;
+      store.setState((state: any) => ({ ...state, projectRoot: '/project', currentProject: { ...state.currentProject, metadata: { ...state.currentProject.metadata, rootPath: '/project', storageMode: 'nodefs' } } }));
+    });
+
+    await page.getByTestId(`accept-import-package-${packageTestId(packageId)}`).click();
+    const state = await page.evaluate(() => (window as any).__narrativeStore.getState());
+    expect(state.characters).toEqual([expect.objectContaining({ id: 'char_semantic_warning_manual' })]);
+    expect(state.proposals).toEqual([]);
+  });
+
+  test('rejects warning semantic coverage through a bulk acceptance path', async ({ page }) => {
+    const firstPackageId = 'pkg_semantic_warning_a';
+    const secondPackageId = 'pkg_semantic_warning_b';
+    const firstCoverage = makeSemanticCoverage(firstPackageId, 'warning');
+    const secondCoverage = makeSemanticCoverage(secondPackageId, 'warning');
+    await installProjectionFilesystem(
+      page,
+      '/project/system/imports/fixture/staged_manuscript_projection.json',
+      makeProjection('fixture', 'fixture-source'),
+      { import_run_id: 'fixture', source_hash: 'fixture-source' },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        [`/project/${firstCoverage.ref.relativePath}`]: firstCoverage.reportText,
+        [`/project/${secondCoverage.ref.relativePath}`]: secondCoverage.reportText,
+      },
+    );
+    const firstProposal = attachSemanticCoverage([
+      makePackageProposal(firstPackageId, 'semantic_warning_a_character', 'character', {
+        id: 'char_semantic_warning_a', name: 'Manual A', summary: '', background: '', aliases: [], birthdayText: '',
+        tagIds: [], organizationIds: [], linkedSceneIds: [], linkedEventIds: [], linkedWorldItemIds: [], statusFlags: {},
+      }),
+    ], firstCoverage);
+    const secondProposal = attachSemanticCoverage([
+      makePackageProposal(secondPackageId, 'semantic_warning_b_character', 'character', {
+        id: 'char_semantic_warning_b', name: 'Manual B', summary: '', background: '', aliases: [], birthdayText: '',
+        tagIds: [], organizationIds: [], linkedSceneIds: [], linkedEventIds: [], linkedWorldItemIds: [], statusFlags: {},
+      }),
+    ], secondCoverage);
+    await injectImportPackage(page, [...firstProposal, ...secondProposal]);
+    await page.evaluate(() => {
+      const store = (window as any).__narrativeStore;
+      store.setState((state: any) => ({ ...state, projectRoot: '/project', currentProject: { ...state.currentProject, metadata: { ...state.currentProject.metadata, rootPath: '/project', storageMode: 'nodefs' } } }));
+    });
+
+    await page.evaluate(async () => {
+      const store = (window as any).__narrativeStore;
+      await store.getState().resolveProposals(['semantic_warning_a_character', 'semantic_warning_b_character'], 'accepted', 'bulk');
+    });
+    let state = await page.evaluate(() => (window as any).__narrativeStore.getState());
+    expect(state.characters).toEqual([]);
+    expect(state.proposals.find((proposal: any) => proposal.id === 'semantic_warning_a_character').lastBlockReason).toContain('bulk acceptance is blocked');
+    expect(state.proposals.map((proposal: any) => proposal.id)).toEqual([
+      'semantic_warning_a_character',
+      'semantic_warning_b_character',
+    ]);
   });
 
   test('rolls back an import package when its staged manuscript projection is invalid', async ({ page }) => {

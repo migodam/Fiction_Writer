@@ -21,6 +21,7 @@ import type {
   NarrativeProject,
   PromptTemplate,
   Proposal,
+  ProposalAcceptanceIntent,
   RagChunk,
   RagDocument,
   Relationship,
@@ -349,7 +350,7 @@ interface ProjectState {
   updateGraphEdge: (boardId: string, edge: Partial<GraphBoard['edges'][number]> & { id: string }) => void;
   setGraphBoardView: (boardId: string, view: GraphBoard['view']) => void;
   resolveProposal: (proposalId: string, status: Proposal['status']) => void;
-  resolveProposals: (proposalIds: string[], status: Proposal['status']) => Promise<void>;
+  resolveProposals: (proposalIds: string[], status: Proposal['status'], acceptanceIntent?: ProposalAcceptanceIntent) => Promise<void>;
   repairImportPackage: (proposalIds: string[]) => Promise<void>;
   retryImportPackage: (proposalIds: string[]) => Promise<void>;
   resolveAllProposals: (status: Proposal['status']) => Promise<void>;
@@ -1642,8 +1643,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   resolveProposal: (proposalId, status) => {
     set((state) => withDirtyState(projectService.resolveProposal(cloneProject(state, useUIStore.getState().locale), proposalId, status)));
   },
-  resolveProposals: async (proposalIds, status) => {
-    const project = await projectService.resolveProposals(cloneProject(get(), useUIStore.getState().locale), proposalIds, status);
+  resolveProposals: async (proposalIds, status, acceptanceIntent = 'bulk') => {
+    const project = await projectService.resolveProposals(cloneProject(get(), useUIStore.getState().locale), proposalIds, status, acceptanceIntent);
     set(withDirtyState(project));
   },
   repairImportPackage: async (proposalIds) => {
@@ -1661,6 +1662,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       cloneProject(get(), useUIStore.getState().locale),
       pending.map((proposal) => proposal.id),
       status,
+      'bulk',
     );
     set(withDirtyState(project));
   },
@@ -2046,7 +2048,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   w1ProposalCount: 0,
   w1ExtractionCounts: null,
   w1ImportReviewReport: null,
-  w1UseSupervisor: false,
+  w1UseSupervisor: true,
   w1SupervisorDecisions: [],
   w1GateFailures: [],
   w1SupervisorIteration: 0,
@@ -2066,7 +2068,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   w1RuntimeStreamFailures: 0,
   setW1ImportMode: (mode) => set({ w1ImportMode: mode }),
   setW1PromptProfile: (profile) => set((state) => {
-    const supervisorDefault = profile === 'deep' || profile === 'custom';
+    const supervisorDefault = true;
     return {
       w1PromptProfile: profile,
       w1UseSupervisor: supervisorDefault,
@@ -2082,7 +2084,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     nextConfig.max_rerun_iterations = nextConfig.rerun_budget;
     return {
       w1CustomProfileConfig: nextConfig,
-      w1OrchestratorOverrides: buildW1OrchestratorOverrides(nextConfig, state.w1PromptProfile === 'deep' || state.w1PromptProfile === 'custom' || state.w1UseSupervisor),
+      w1OrchestratorOverrides: buildW1OrchestratorOverrides(nextConfig, true),
     };
   }),
   setW1UseSupervisor: (v) => set({ w1UseSupervisor: v }),
@@ -2358,11 +2360,13 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     let sessionId: string | null = null;
     // Retry start up to 3 times with delay (sidecar may still be booting)
     let result: any = null;
-    const shouldUseSupervisor = w1PromptProfile === 'deep' || w1PromptProfile === 'custom' || w1UseSupervisor;
+    // Product imports always use the quality path. content-only is an explicit
+    // deterministic mode and intentionally bypasses extraction orchestration.
+    const shouldUseSupervisor = mode === 'import_all';
     const customProfileConfig = payload.customProfileConfig ?? w1CustomProfileConfig;
     const orchestratorOverrides = payload.orchestratorOverrides ?? buildW1OrchestratorOverrides(
       customProfileConfig,
-      shouldUseSupervisor || w1OrchestratorOverrides.use_orchestrator,
+      shouldUseSupervisor,
     );
     for (let attempt = 0; attempt < 3; attempt++) {
       try {

@@ -12,8 +12,11 @@ import type {
   PackageSource,
   ProjectTemplate,
   Proposal,
+  ProposalAcceptanceIntent,
   ProposalOperation,
   ProposalPackage,
+  SemanticCoveragePolicy,
+  SemanticCoverageRef,
   StorageMode,
   WorldCategoryNode,
 } from '../models/project';
@@ -1491,14 +1494,19 @@ export const projectService = {
     return withHistory;
   },
 
-  async resolveProposals(project: NarrativeProject, proposalIds: string[], nextStatus: Proposal['status']): Promise<NarrativeProject> {
+  async resolveProposals(
+    project: NarrativeProject,
+    proposalIds: string[],
+    nextStatus: Proposal['status'],
+    acceptanceIntent: ProposalAcceptanceIntent = 'bulk',
+  ): Promise<NarrativeProject> {
     const idSet = new Set(proposalIds);
     const targets = project.proposals.filter((proposal) => idSet.has(proposal.id));
     if (!targets.length) return project;
     if (nextStatus !== 'accepted') {
       return targets.reduce((draft, proposal) => projectService.resolveProposal(draft, proposal.id, nextStatus), project);
     }
-    return await applyImportPackageBatches(project, targets);
+    return await applyImportPackageBatches(project, targets, acceptanceIntent);
   },
 
   async repairImportPackage(project: NarrativeProject, proposalIds: string[]): Promise<NarrativeProject> {
@@ -1548,7 +1556,7 @@ export const projectService = {
     // A retry is a fresh package transaction, never a partial continuation.
     // applyImportPackageBatches re-runs reference, duplicate-ID, SourceSpan,
     // projection, and durability checks before it makes any canonical write.
-    return applyImportPackageBatches(repaired, retryTargets);
+    return applyImportPackageBatches(repaired, retryTargets, 'bulk');
   },
 };
 
@@ -2048,7 +2056,11 @@ const applyProposalBatch = (project: NarrativeProject, proposals: Proposal[]): N
   };
 };
 
-const applyImportPackageBatches = async (project: NarrativeProject, targets: Proposal[]): Promise<NarrativeProject> => {
+const applyImportPackageBatches = async (
+  project: NarrativeProject,
+  targets: Proposal[],
+  acceptanceIntent: ProposalAcceptanceIntent,
+): Promise<NarrativeProject> => {
   const selectedIds = new Set(targets.map((proposal) => proposal.id));
   const packageKeys = uniqueStrings(targets.map(getProposalPackageKey));
   const packageGroups: Proposal[][] = [];
@@ -2067,6 +2079,36 @@ const applyImportPackageBatches = async (project: NarrativeProject, targets: Pro
     packageGroups.push(completePackage);
   }
   const nonPackageTargets = targets.filter((proposal) => !getProposalPackageKey(proposal));
+
+  // Validate every selected package before applying the first one. A semantic
+  // warning is a human decision for exactly one complete package, never a
+  // cross-package or mixed bulk operation.
+  const semanticChecks = await Promise.all(packageGroups.map(async (group) => ({
+    group,
+    validation: await validateSemanticCoveragePackage(project, group),
+  })));
+  const invalidSemanticCheck = semanticChecks.find(({ validation }) => validation.blockedReason);
+  if (invalidSemanticCheck?.validation.blockedReason) {
+    return blockImportPackage(
+      project,
+      invalidSemanticCheck.group,
+      invalidSemanticCheck.validation.culprit,
+      invalidSemanticCheck.validation.blockedReason,
+    );
+  }
+  const warningSemanticCheck = semanticChecks.find(({ validation }) => validation.ref?.verdict === 'warning');
+  if (warningSemanticCheck && (
+    acceptanceIntent !== 'manual_package'
+    || packageGroups.length !== 1
+    || nonPackageTargets.length > 0
+  )) {
+    return blockImportPackage(
+      project,
+      warningSemanticCheck.group,
+      warningSemanticCheck.validation.culprit,
+      'W1 semantic coverage warning requires an explicit acceptance of this one complete package; bulk acceptance is blocked.',
+    );
+  }
 
   let draft = project;
   for (const group of packageGroups) draft = await applyProposalPackageTransaction(draft, group);
@@ -2091,6 +2133,10 @@ const applyProposalPackageTransaction = async (project: NarrativeProject, propos
   const initialOperationValidation = validateProposalPackageOperations(project, proposals);
   if (initialOperationValidation.blockedReason) {
     return blockImportPackage(project, proposals, initialOperationValidation.culprit, initialOperationValidation.blockedReason);
+  }
+  const semanticValidation = await validateSemanticCoveragePackage(project, proposals);
+  if (semanticValidation.blockedReason) {
+    return blockImportPackage(project, proposals, semanticValidation.culprit, semanticValidation.blockedReason);
   }
   const projectionValidation = await validateStagedManuscriptProjections(project, proposals);
   if (projectionValidation.blockedReason) {
@@ -2359,6 +2405,171 @@ const isArtifactRef = (value: unknown): value is ArtifactRef => {
 
 const isSafeArtifactSegment = (value: string) => /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value)
   && value !== '.' && value !== '..';
+
+type SemanticCoverageValidation = {
+  policy: SemanticCoveragePolicy | null;
+  ref: SemanticCoverageRef | null;
+  culprit: Proposal;
+  blockedReason: string | null;
+};
+
+const semanticCoverageRefKey = (ref: SemanticCoverageRef) => [
+  ref.relativePath,
+  ref.sha256,
+  ref.verdict,
+  ref.input_hash,
+  ref.attempt_id,
+].join('\u0000');
+
+const isSemanticCoverageRef = (value: unknown): value is SemanticCoverageRef => {
+  if (!value || typeof value !== 'object') return false;
+  const ref = value as Record<string, unknown>;
+  return typeof ref.relativePath === 'string'
+    && typeof ref.sha256 === 'string'
+    && (ref.verdict === 'pass' || ref.verdict === 'warning' || ref.verdict === 'blocked')
+    && typeof ref.input_hash === 'string'
+    && typeof ref.attempt_id === 'string';
+};
+
+const isProjectRootRelativeArtifactPath = (value: string) => {
+  if (!value || value.includes('\\') || value.startsWith('/') || value.startsWith('\\')) return false;
+  if (/^[A-Za-z]:[\\/]/.test(value)) return false;
+  return value.split('/').every((segment) => segment && segment !== '.' && segment !== '..');
+};
+
+const semanticPolicyFrom = (value: unknown): SemanticCoveragePolicy | null => {
+  if (!value || typeof value !== 'object') return null;
+  const policy = value as SemanticCoveragePolicy;
+  return policy.verdict === 'pass' || policy.verdict === 'warning' || policy.verdict === 'blocked'
+    ? policy
+    : null;
+};
+
+const semanticCoverageEntries = (proposal: Proposal) => {
+  const operations = getProposalOperations(proposal);
+  return {
+    proposalRef: proposal.semanticCoverageRef,
+    proposalPolicy: proposal.semanticCoverage,
+    operationRefs: operations.map((operation) => operation.semanticCoverageRef),
+    operationPolicies: operations.map((operation) => operation.semanticCoverage).filter((policy) => policy !== undefined),
+    operations,
+  };
+};
+
+const validateSemanticCoveragePackage = async (
+  project: NarrativeProject,
+  proposals: Proposal[],
+): Promise<SemanticCoverageValidation> => {
+  const culprit = proposals[0];
+  const metadataPresent = proposals.some((proposal) => {
+    const entries = semanticCoverageEntries(proposal);
+    return entries.proposalRef !== undefined
+      || entries.proposalPolicy !== undefined
+      || entries.operationRefs.some((entry) => entry !== undefined)
+      || entries.operationPolicies.length > 0;
+  });
+  if (!metadataPresent) return { policy: null, ref: null, culprit, blockedReason: null };
+
+  const refs: SemanticCoverageRef[] = [];
+  const policies: SemanticCoveragePolicy[] = [];
+  for (const proposal of proposals) {
+    const entries = semanticCoverageEntries(proposal);
+    if (entries.proposalRef === undefined || entries.proposalPolicy === undefined) {
+      return { policy: null, ref: null, culprit: proposal, blockedReason: 'W1 semantic coverage metadata is missing its immutable report reference or policy.' };
+    }
+    if (entries.operationRefs.length !== entries.operations.length || entries.operationRefs.some((ref) => ref === undefined)) {
+      return { policy: null, ref: null, culprit: proposal, blockedReason: 'W1 semantic coverage reference must be present on every proposal operation in the package.' };
+    }
+    const rawProposalRefs: unknown[] = [entries.proposalRef, ...entries.operationRefs];
+    const rawProposalPolicies: unknown[] = [entries.proposalPolicy, ...entries.operationPolicies];
+    if (rawProposalRefs.some((ref) => !isSemanticCoverageRef(ref))) {
+      return { policy: null, ref: null, culprit: proposal, blockedReason: 'W1 semantic coverage reference has an invalid shape.' };
+    }
+    if (rawProposalPolicies.some((policy) => !semanticPolicyFrom(policy))) {
+      return { policy: null, ref: null, culprit: proposal, blockedReason: 'W1 semantic coverage policy has an invalid verdict.' };
+    }
+    const proposalRefs = rawProposalRefs.filter(isSemanticCoverageRef);
+    const proposalPolicies = rawProposalPolicies.map(semanticPolicyFrom).filter((policy): policy is SemanticCoveragePolicy => policy !== null);
+    refs.push(...proposalRefs);
+    policies.push(...proposalPolicies);
+  }
+
+  const referenceKeys = new Set(refs.map(semanticCoverageRefKey));
+  if (referenceKeys.size !== 1) {
+    return { policy: null, ref: null, culprit, blockedReason: 'W1 semantic coverage references disagree within this import package.' };
+  }
+  const policyVerdicts = new Set(policies.map((policy) => policy.verdict));
+  const policyInputHashes = new Set(policies.map((policy) => String(policy.input_hash || '')));
+  if (policyVerdicts.size !== 1 || policyInputHashes.size !== 1) {
+    return { policy: null, ref: null, culprit, blockedReason: 'W1 semantic coverage policies disagree within this import package.' };
+  }
+
+  const ref = refs[0];
+  const policy = policies[0];
+  if (
+    !isProjectRootRelativeArtifactPath(ref.relativePath)
+    || !isSafeArtifactSegment(ref.attempt_id)
+    || !/^[a-f0-9]{64}$/i.test(ref.sha256)
+    || !/^[a-f0-9]{64}$/i.test(ref.input_hash)
+    || policy.verdict !== ref.verdict
+    || String(policy.input_hash || '') !== ref.input_hash
+    || (policy.ref !== undefined && (!isSemanticCoverageRef(policy.ref) || semanticCoverageRefKey(policy.ref) !== semanticCoverageRefKey(ref)))
+  ) {
+    return { policy: null, ref: null, culprit, blockedReason: 'W1 semantic coverage policy and reference are inconsistent or unsafe.' };
+  }
+
+  const importRunIds = uniqueStrings(proposals.flatMap(getImportRunIds));
+  if (importRunIds.length !== 1 || !isSafeArtifactSegment(importRunIds[0])) {
+    return { policy: null, ref: null, culprit, blockedReason: 'W1 semantic coverage validation requires one safe importRunId for the package.' };
+  }
+  const runtime = getNodeRuntime();
+  if (!runtime || project.metadata.rootPath.startsWith('memory://') || typeof runtime.fs.realpathSync !== 'function') {
+    return { policy: null, ref: null, culprit, blockedReason: 'W1 semantic coverage validation requires a realpath-capable local project filesystem.' };
+  }
+
+  const projectRoot = runtime.path.resolve(project.metadata.rootPath);
+  const reportPath = runtime.path.resolve(projectRoot, ref.relativePath);
+  if (!isPathInside(runtime.path, projectRoot, reportPath) || !runtime.fs.existsSync(reportPath)) {
+    return { policy: null, ref: null, culprit, blockedReason: 'W1 semantic coverage report is not a project-root-contained artifact.' };
+  }
+  try {
+    const resolvedProjectRoot = runtime.fs.realpathSync(projectRoot);
+    const resolvedReportPath = runtime.fs.realpathSync(reportPath);
+    if (resolvedProjectRoot !== projectRoot || resolvedReportPath !== reportPath || !isPathInside(runtime.path, resolvedProjectRoot, resolvedReportPath)) {
+      return { policy: null, ref: null, culprit, blockedReason: 'W1 semantic coverage report resolves through a symlink or outside the project root.' };
+    }
+    const reportText = runtime.fs.readFileSync(reportPath, 'utf8');
+    if ((await sha256Text(reportText)) !== ref.sha256) {
+      return { policy: null, ref: null, culprit, blockedReason: 'W1 semantic coverage report hash does not match its reference.' };
+    }
+    const report = JSON.parse(reportText) as Record<string, unknown>;
+    const expectedRelativePath = `system/imports/${importRunIds[0]}/attempts/${ref.attempt_id}/semantic_coverage_report.json`;
+    const artifactPaths = report.artifact_paths as Record<string, unknown> | undefined;
+    if (
+      report.contract_version !== 'w1-semantic-coverage-report/v1'
+      || report.import_run_id !== importRunIds[0]
+      || report.lineage_id !== importRunIds[0]
+      || report.attempt_id !== ref.attempt_id
+      || report.input_hash !== ref.input_hash
+      || report.verdict !== ref.verdict
+      || ref.relativePath !== expectedRelativePath
+      || artifactPaths?.report !== ref.relativePath
+      || (typeof policy.report_path === 'string' && policy.report_path && policy.report_path !== ref.relativePath)
+    ) {
+      return { policy: null, ref: null, culprit, blockedReason: 'W1 semantic coverage report does not match this package, attempt, or immutable reference.' };
+    }
+  } catch {
+    return { policy: null, ref: null, culprit, blockedReason: 'W1 semantic coverage report is unreadable.' };
+  }
+
+  if (ref.verdict === 'blocked') {
+    return { policy, ref, culprit, blockedReason: 'W1 semantic coverage report is blocked; this package cannot be accepted.' };
+  }
+  if (ref.verdict === 'warning' && (policy.requires_human_review !== true || policy.automatic_acceptance === true)) {
+    return { policy, ref, culprit, blockedReason: 'W1 semantic coverage warning is missing its required human-review policy.' };
+  }
+  return { policy, ref, culprit, blockedReason: null };
+};
 
 const resolveProjectionArtifactPath = (
   runtime: NodeRuntime,

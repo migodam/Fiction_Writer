@@ -35,6 +35,8 @@ export type StorageMode = 'memory' | 'nodefs';
 export type ProjectTemplate = 'blank' | 'starter-demo';
 export type Locale = 'en' | 'zh-CN';
 export type ProposalStatus = 'pending' | 'accepted' | 'rejected' | 'archived';
+/** The only accepted authority for package acceptance is an explicit PackageCard click. */
+export type ProposalAcceptanceIntent = 'manual_package' | 'bulk' | 'automatic';
 export type IssueStatus = 'open' | 'resolved' | 'ignored';
 export type TaskStatus = 'queued' | 'running' | 'awaiting_user_input' | 'completed' | 'failed' | 'canceled';
 export type ProposalSource =
@@ -388,6 +390,8 @@ export interface ProposalOperation {
   new_category?: string;
   new_container_key?: string;
   new_category_path?: string[];
+  semanticCoverageRef?: SemanticCoverageRef;
+  semanticCoverage?: SemanticCoveragePolicy;
 }
 
 /** A project-root-contained reference to an immutable workflow artifact. */
@@ -397,6 +401,25 @@ export interface ArtifactRef {
   contractVersion: string;
   lineageId: string;
   attemptId: string;
+}
+
+/** Immutable receipt for the W1 semantic compiler report that gated a package. */
+export interface SemanticCoverageRef {
+  relativePath: string;
+  sha256: string;
+  verdict: 'pass' | 'warning' | 'blocked';
+  input_hash: string;
+  attempt_id: string;
+}
+
+/** Package-local semantic policy emitted by the W1 package graph compiler. */
+export interface SemanticCoveragePolicy {
+  verdict: 'pass' | 'warning' | 'blocked';
+  automatic_acceptance?: boolean;
+  requires_human_review?: boolean;
+  report_path?: string;
+  input_hash?: string;
+  ref?: SemanticCoverageRef;
 }
 
 export interface ArtifactMigrationReceipt {
@@ -429,6 +452,10 @@ export interface Proposal {
   createdAt: string;
   resolvedAt?: string;
   data?: Record<string, unknown>;
+  semanticCoverageRef?: SemanticCoverageRef;
+  semanticCoverage?: SemanticCoveragePolicy;
+  requiresManualReview?: boolean;
+  automaticAcceptance?: boolean;
   entityType?: string;
   packageCompiler?: {
     contractVersion: 'w1-package-graph-v2';

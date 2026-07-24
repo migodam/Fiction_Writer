@@ -126,7 +126,7 @@ export const WorkbenchWorkspace = () => {
                     pkg={pkg}
                     expanded={expandedPackageIds.has(pkg.id)}
                     onToggle={() => togglePackage(pkg.id)}
-                    onAccept={() => resolveProposals(pkg.proposals.map((p) => p.id), 'accepted')}
+                    onAccept={() => resolveProposals(pkg.proposals.map((p) => p.id), 'accepted', 'manual_package')}
                     onRepair={() => repairPackage(pkg)}
                     onRetry={() => retryPackage(pkg)}
                     onReject={() => resolveProposals(pkg.proposals.map((p) => p.id), 'rejected')}
