@@ -433,9 +433,7 @@ test("world folder menu is complete and world UI uses folder language", async ({
   await expect(page.getByTestId("global-context-menu")).toBeHidden();
   await expect(page.locator("body")).not.toContainText("Categories");
   await expect(page.locator("body")).not.toContainText("Add Category");
-  await expect(page.getByTestId("world-category-tree-toggle")).toContainText(
-    "Folders",
-  );
+  await expect(page.getByTestId("world-folder-tree")).toBeVisible();
 });
 
 test("cut and paste move the stable world item once and undo restores the complete graph", async ({

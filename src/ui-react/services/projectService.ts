@@ -491,26 +491,42 @@ const parseChapterNumber = (title: string): number => {
   return result + current;
 };
 
-const isBlankStarterChapter = (chapter: NarrativeProject['chapters'][number], scenes: NarrativeProject['scenes']) =>
-  chapter.id === 'chap_1'
-  && /^chapter 1$/i.test(chapter.title || '')
-  && (chapter.summary || '').trim() === 'Starting chapter.'
-  && scenes.some((scene) =>
-    scene.id === 'scene_1'
-    && scene.chapterId === 'chap_1'
+const isBlankStarterChapter = (chapter: NarrativeProject['chapters'][number], scenes: NarrativeProject['scenes']) => {
+  const sceneIds = chapter.sceneIds || [];
+  const chapterScenes = scenes.filter((scene) => scene.chapterId === chapter.id || sceneIds.includes(scene.id));
+  if (chapterScenes.length !== 1 || sceneIds.length > 1) return false;
+  const scene = chapterScenes[0];
+  const chapterSummary = (chapter.summary || '').trim();
+  const chapterGoal = (chapter.goal || '').trim();
+  const chapterNotes = (chapter.notes || '').trim();
+  const sceneSummary = (scene.summary || '').trim();
+  return /^chapter 1$/i.test(chapter.title || '')
+    && (!chapterSummary || chapterSummary === 'Starting chapter.')
+    && (!chapterGoal || chapterGoal === 'Draft the first scenes.')
+    && (!chapterNotes || chapterNotes === 'Use this chapter as your entry point.')
+    && chapter.status === 'draft'
+    && scene.chapterId === chapter.id
+    && (!sceneIds.length || sceneIds[0] === scene.id)
     && /^scene 1$/i.test(scene.title || '')
+    && (!sceneSummary || ['Empty starter scene.', 'An empty starting scene.'].includes(sceneSummary))
     && !(scene.content || '').trim()
-  );
+    && !scene.povCharacterId
+    && !(scene.linkedCharacterIds || []).length
+    && !(scene.linkedEventIds || []).length
+    && !(scene.linkedWorldItemIds || []).length
+    && scene.status === 'draft';
+};
 
 const cleanupImportedWritingArtifacts = (project: NarrativeProject): NarrativeProject => {
-  const importedChapters = project.chapters.filter((chapter) => chapter.id !== 'chap_1');
-  if (!importedChapters.length) return project;
-
   const starterChapterIds = new Set(
-    project.chapters
+    ['blank', 'starter-demo'].includes(project.metadata.template || '')
+      ? project.chapters
       .filter((chapter) => isBlankStarterChapter(chapter, project.scenes))
       .map((chapter) => chapter.id)
+      : []
   );
+  const importedChapters = project.chapters.filter((chapter) => !starterChapterIds.has(chapter.id));
+  if (!starterChapterIds.size || !importedChapters.length) return project;
   const starterSceneIds = new Set(
     project.scenes
       .filter((scene) => starterChapterIds.has(scene.chapterId) && !(scene.content || '').trim())
@@ -1393,6 +1409,21 @@ export const projectService = {
     if (!target) {
       return project;
     }
+    const packageKey = getProposalPackageKey(target);
+    if (nextStatus === 'accepted' && packageKey) {
+      const blockedReason = `Proposal belongs to ${packageKey} and must be accepted through its complete package transaction.`;
+      const annotatedProposal: Proposal = {
+        ...target,
+        lastBlockReason: blockedReason,
+        lastBlockedAt: new Date().toISOString(),
+      };
+      return {
+        ...project,
+        proposals: project.proposals.map((proposal) => proposal.id === proposalId ? annotatedProposal : proposal),
+        issues: upsertProposalBlockedIssue(project.issues, target, blockedReason),
+        unreadUpdates: markProposalUnread(project.unreadUpdates, proposalId),
+      };
+    }
 
     const preparedProject = nextStatus === 'accepted' ? prepareProjectForImportApply(project, [target]) : project;
     const applyResult = nextStatus === 'accepted'
@@ -1492,6 +1523,32 @@ export const projectService = {
         ? { ...proposal, lastBlockReason: undefined, lastBlockedAt: undefined }
         : proposal),
     };
+  },
+
+  async retryImportPackage(project: NarrativeProject, proposalIds: string[]): Promise<NarrativeProject> {
+    const idSet = new Set(proposalIds);
+    const selected = project.proposals.filter((proposal) => idSet.has(proposal.id));
+    if (!selected.length) return project;
+    const hasLegacyProjection = selected.some((proposal) =>
+      getStagedManuscriptProjectionDescriptors(proposal).some((descriptor) =>
+        descriptor.artifactRef === undefined && typeof descriptor.artifact_path === 'string'
+      )
+    );
+    const repaired = hasLegacyProjection
+      ? await projectService.repairImportPackage(project, proposalIds)
+      : {
+          ...project,
+          proposals: project.proposals.map((proposal) => idSet.has(proposal.id)
+            ? { ...proposal, lastBlockReason: undefined, lastBlockedAt: undefined }
+            : proposal),
+        };
+    const retryTargets = repaired.proposals.filter((proposal) => idSet.has(proposal.id));
+    if (!retryTargets.length || retryTargets.some((proposal) => proposal.lastBlockReason)) return repaired;
+
+    // A retry is a fresh package transaction, never a partial continuation.
+    // applyImportPackageBatches re-runs reference, duplicate-ID, SourceSpan,
+    // projection, and durability checks before it makes any canonical write.
+    return applyImportPackageBatches(repaired, retryTargets);
   },
 };
 
@@ -1826,28 +1883,15 @@ const prepareProjectForImportApply = (project: NarrativeProject, proposals: Prop
   const importsWritingTree = proposals.some((proposal) => getProposalOperations(proposal).some(
     (operation) => operation.op === 'create' && operation.entityType === 'chapter',
   ));
-  const starterChapterIds = new Set(draft.chapters.map((chapter) => chapter.id));
+  // This exact pair is generated only by the blank/starter project template.  Do
+  // not infer emptiness from a missing body alone: an author may intentionally
+  // keep a short chapter or a placeholder scene in a real project.
   const hasOnlyStarterWriting =
     importsWritingTree &&
     ['blank', 'starter-demo'].includes(draft.metadata.template || '') &&
-    draft.chapters.length > 0 &&
-    draft.chapters.every((chapter) =>
-      /^chapter 1$/i.test(chapter.title || '') &&
-      !(chapter.summary || '').trim() &&
-      !(chapter.goal || '').trim() &&
-      !(chapter.notes || '').trim() &&
-      chapter.status === 'draft'
-    ) &&
-    draft.scenes.every((scene) =>
-      starterChapterIds.has(scene.chapterId) &&
-      /^scene 1$/i.test(scene.title || '') &&
-      !(scene.summary || '').trim() &&
-      !(scene.content || '').trim() &&
-      scene.status === 'draft' &&
-      !(scene.linkedCharacterIds || []).length &&
-      !(scene.linkedEventIds || []).length &&
-      !(scene.linkedWorldItemIds || []).length
-    );
+    draft.chapters.length === 1 &&
+    draft.scenes.length === 1 &&
+    isBlankStarterChapter(draft.chapters[0], draft.scenes);
   if (hasOnlyStarterWriting) {
     draft = { ...draft, chapters: [], scenes: [] };
   }

@@ -95,3 +95,21 @@ def test_unsafe_relocation_stays_quarantined():
     result = asyncio.run(repair_import_artifacts(state, [action]))
     assert "w" in result["entity_registry"]["world_detailed"]
     assert result["quarantine_candidates"][0]["candidate_id"] == "w"
+
+
+def test_organizer_holds_relation_bearing_appellation_for_human_review():
+    output = organize_project_content(_input(world_candidates={
+        "续弦夫人": {"id": "world_spouse", "category": "concept", "confidence": 0.7},
+    }))
+
+    assert output["world_items"] == []
+    assert output["quarantine_items"][0]["reason_codes"] == ["person_or_relationship_phrase"]
+
+
+def test_organizer_routes_described_branch_hall_as_a_location():
+    output = organize_project_content(_input(world_candidates={
+        "七玄门分堂": {"id": "world_branch", "category": "location", "confidence": 0.7, "description": "各个堂口占据彩霞山大小山峰。"},
+    }))
+
+    assert output["quarantine_items"] == []
+    assert output["world_items"][0]["container_key"] == "locations"

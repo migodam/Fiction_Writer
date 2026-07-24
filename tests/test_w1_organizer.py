@@ -504,6 +504,14 @@ def test_classify_world_item_direct_call():
     assert classify_world_item("项甲功", "rule", "") == "cultivation_method"
 
 
+def test_location_facilities_override_generic_organization_or_rule_fallbacks():
+    from sidecar.supervisor.organizer import classify_world_item
+
+    assert classify_world_item("七玄门总堂", "location", "七玄门的总部，位于落日峰。") == "location"
+    assert classify_world_item("七玄门分堂", "location", "各个堂口占据彩霞山大小山峰。") == "location"
+    assert classify_world_item("十三个哨卡", "rule", "唯一通道上的防御体系。") == "location"
+
+
 # ---------------------------------------------------------------------------
 # Task C — Legacy LangGraph path includes organize_world_items node
 # ---------------------------------------------------------------------------

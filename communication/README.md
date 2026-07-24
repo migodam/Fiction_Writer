@@ -1,6 +1,6 @@
 # Narrative IDE Communication Index
 
-Last updated: 2026-07-21
+Last updated: 2026-07-25
 Owner: Codex / W4 QA + Communication Merge
 
 This folder is the evidence and handoff layer for Narrative IDE work. It is not the canonical product source of truth. When docs conflict, use `dev_docs/README.md` to identify the winning canonical document, then use the files here as reports, prompt packages, QA evidence, and historical context.
@@ -9,6 +9,8 @@ This folder is the evidence and handoff layer for Narrative IDE work. It is not 
 
 | Status | File | Why it matters |
 |---|---|---|
+| Current World/Harness closeout | `2026-07-25-world-model-harness-reviewer-redesign-report.md` | Notebook/folder UI, concrete narrative links, semantic reviewer/mover, benchmark reconciliation, Agent Dock, tests, and residual gates. |
+| Current Harness research | `2026-07-25-agent-harness-open-source-architecture-research.md` | Public Claude Code/Codex and OneNote architecture references, limits, and the adopted runtime design. |
 | Current implementation truth | `2026-07-15-agent-runtime-resilience-and-recovery-report.md` | Durable runtime, recovery, Time Travel, real-fixture acceptance, paid recovery outcome, human gate, and final test matrix. |
 | Previous reviewer-ready baseline | `2026-07-11-w1-reviewer-ready-orchestrator-report.md` | Pre-resilience W1 outcome, earlier paid-run ledger, residual P2 risks, and Git merge sequence. |
 | Current plan | `2026-06-06-w1-next-wave-multiagent-claude-plan.md` | Single-file Claude workflow for the next investigation/repair wave; includes execution steps and hardening addendum. |
@@ -25,13 +27,30 @@ This folder is the evidence and handoff layer for Narrative IDE work. It is not 
 
 ## Current Verdict
 
-- The Agent Runtime resilience wave passes the established Playwright/Electron gates; the current W1/runtime regression is 782 passed and UI lint/build are clean.
+- The 2026-07-25 World Model/Harness wave adds stable Notebook/Folder/Item ownership, semantic
+  relocation review, accepted-project reconciliation, and a normalized Agent execution surface.
+  PM closeout: `2026-07-25-world-model-harness-reviewer-redesign-report.md`.
+- The 2026-07-14 accepted-project audit improved from 1 error/19 warnings to 0/0 after offline
+  reconciliation: 9 event-scene links, 13 event-world links, 7 scene-world inverse links, 10
+  high-confidence reclassifications, and 2 quarantined candidates.
+- Concrete World-to-event timeline deep links are committed and verified in Playwright and an
+  actual 1280px browser pass: the event title/time/branch banner and centered focus ring are visible.
+- Current active W1/runtime regression: 817 passed. Full-repo pytest additionally reports 842
+  passes plus 11 failures and 7 errors isolated to reference-only V2/V3 `src/core` tests and
+  their missing `tests/api_key.txt`; those are recorded as legacy debt, not hidden.
+
+- The Agent Runtime resilience wave passes the established Playwright/Electron gates; the current W1/runtime regression is 817 passed and UI lint/build are clean.
 - Import Text 18 completed the authorized DeepSeek V4 Flash 10/10 resume for `$0.014351`. Its 108 proposals remain pending. Offline provenance/profile repair completed with backups, and final diagnostics report every symptom flag false.
 - Provider response recovery uses a stable sequence-independent operation key excluding `attemptId`, project-local `0700`/`0600` content-addressed artifacts, verified cross-attempt reuse, per-process singleflight, human-gated unknown outcomes on cache and network paths, and unique-operation usage-ledger rebuilds without session double counting.
-- Current verified baselines are 659 W1 backend tests, 230 full P0/P1 Playwright tests, Electron runtime smoke, UI lint/build, Python compileall, and diff/secret checks.
+- The previous 2026-07-21 baseline included Electron runtime smoke and the broader P0/P1 suite.
+  This wave reverified UI lint/build, 817 active W1/runtime tests, the complete 276-test P0/P1
+  Playwright suite, timeline drag stability, and a headed Electron actual-fixture run covering
+  package acceptance, restart persistence, and interrupted-run recovery. The deterministic
+  Electron runtime smoke also passed after rerunning outside the network-restricted sandbox.
 - Final Flash artifact `/tmp/.../20260713_033431` passes every extraction and semantic gate except the now-fixed 张铁 serializer boundary. Exact production-code replay passes diagnostics with every symptom flag false.
 - Six ledger-backed Flash runs cost `$0.439420`. One Pro attempt was stopped after 12 minutes with zero settled calls/tokens/cost because provider latency made completion inside the 30-minute gate impossible.
-- W1 is merged to canonical `main` through PR #2. All merged branches/worktrees were removed after ancestor and clean-worktree verification; only `main` plus the backup/release tags remain. Character-thin-card, bundle-size, Electron cleanup, and Pro-latency items are documented P2/external risks.
+- The previous reviewer-ready W1 baseline was merged through PR #2. The 2026-07-25 World/Harness
+  wave remains on `codex/agent-runtime-resilience` until its final Git/push gate.
 - Existing reports are retained as provenance. Older worker reports and prompt packages are `merged-retained`, not deleted. Do not move or archive old communication files without Lead approval.
 
 ## Status Labels

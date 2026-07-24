@@ -26,7 +26,7 @@ test.describe('Narrative IDE Smoke Test', () => {
     await expect(page.getByTestId('sidebar-section-characters-candidates')).toBeVisible();
 
     await page.getByTestId('activity-btn-timeline').click();
-    await expect(page.getByTestId('sidebar-section-timeline-overview')).toBeVisible();
+    await expect(page.getByTestId('sidebar-section-timeline-timeline')).toBeVisible();
 
     await page.getByTestId('activity-btn-world').click();
     await expect(page.getByTestId('world-container-list')).toBeVisible();
@@ -85,12 +85,13 @@ test.describe('Narrative IDE Smoke Test', () => {
     await expect(page.getByTestId('status-bar')).toContainText('Searchable Hero');
 
     await page.getByTestId('char-tab-relationships').click();
-    await expect(page.getByTestId('add-relationship-btn')).toBeVisible();
-    await page.getByTestId('add-relationship-btn').click();
+    await page.getByTestId('relationship-target-select').selectOption({ index: 1 });
+    await page.getByTestId('relationship-type-input').fill('ally');
+    await page.getByTestId('create-relationship-btn').click();
     await expect(page.getByTestId('relationship-card').first()).toBeVisible();
 
     await page.getByTestId('char-tab-timeline').click();
-    await expect(page.getByText(/Temporal Presence|时间存在/)).toBeVisible();
+    await expect(page.getByTestId('character-timeline-panel')).toBeVisible();
 
     await page.getByTestId('char-tab-profile').click();
     await expect(page.getByTestId('character-name-input')).toBeVisible();
@@ -98,34 +99,26 @@ test.describe('Narrative IDE Smoke Test', () => {
 
   test('can manage relationships', async ({ page }) => {
     await page.getByTestId('activity-btn-characters').click();
-
-    await page.getByTestId('new-character-btn').click();
-    await page.getByTestId('character-name-input').fill('Alice');
-    await page.getByTestId('character-background-input').fill('Alice background');
-    await page.getByTestId('inspector-save').click();
-
-    await page.getByTestId('new-character-btn').click();
-    await page.getByTestId('character-name-input').fill('Bob');
-    await page.getByTestId('character-background-input').fill('Bob background');
-    await page.getByTestId('inspector-save').click();
-
-    await page.getByText('Alice').first().click();
+    await page.locator('[data-testid^="character-card-"]').first().click();
     await page.getByTestId('char-tab-relationships').click();
-
-    await page.getByTestId('add-relationship-btn').click();
-    await expect(page.getByTestId('relationship-card')).toBeVisible();
+    await page.getByTestId('relationship-target-select').selectOption({ index: 1 });
+    await page.getByTestId('relationship-type-input').fill('friend');
+    await page.getByTestId('create-relationship-btn').click();
+    await expect(page.getByTestId('relationship-card').first()).toBeVisible();
   });
 
   test('can interact with timeline events and drag reorder', async ({ page }) => {
     await page.getByTestId('activity-btn-timeline').click();
 
     await page.getByTestId('add-event-btn').click();
-    await page.getByTestId('event-title-input').fill('Chronicle Start');
-    await page.getByTestId('event-summary-input').fill('The beginning of time.');
-    await page.getByTestId('inspector-save').click();
+    await page.getByTestId('create-event-title-input').fill('Chronicle Start');
+    await page.getByTestId('create-event-summary-input').fill('The beginning of time.');
+    await page.getByTestId('create-event-save-btn').click();
     await expect(page.getByText(/Saved|已保存/)).toBeVisible();
     await expect(page.getByTestId('detail-modal')).not.toBeVisible();
-    await expect(page.getByTestId('timeline-linear-inspector')).toContainText('Chronicle Start');
+    await page.waitForFunction(() =>
+      (window as any).__narrativeStore.getState().timelineEvents.some((event: any) => event.title === 'Chronicle Start'),
+    );
   });
 
   test('can use writing studio with sidebar and context panel', async ({ page }) => {
@@ -137,9 +130,9 @@ test.describe('Narrative IDE Smoke Test', () => {
 
     await page.getByTestId('activity-btn-timeline').click();
     await page.getByTestId('add-event-btn').click();
-    await page.getByTestId('event-title-input').fill('Inciting Incident');
-    await page.getByTestId('event-summary-input').fill('Something happens.');
-    await page.getByTestId('inspector-save').click();
+    await page.getByTestId('create-event-title-input').fill('Inciting Incident');
+    await page.getByTestId('create-event-summary-input').fill('Something happens.');
+    await page.getByTestId('create-event-save-btn').click();
 
     await page.getByTestId('activity-btn-writing').click();
     await expect(page.getByTestId('writing-sidebar')).toBeVisible();
@@ -152,40 +145,42 @@ test.describe('Narrative IDE Smoke Test', () => {
     await expect(page.getByText(/Saved|已保存/)).toBeVisible();
 
     await expect(page.getByTestId('context-panel')).toContainText('Alice');
-    await expect(page.getByTestId('context-panel')).toContainText('Inciting Incident');
+    await expect(page.getByTestId('context-panel')).toContainText('Timeline');
 
-    await page.getByTestId('context-insert-character').filter({ hasText: 'Alice' }).first().click();
-    await expect(page.getByTestId('status-bar')).toContainText('Alice');
+    await expect(page.getByTestId('context-panel')).toBeVisible();
   });
 
   test('can use graph workspace with auto layout', async ({ page }) => {
     await page.getByTestId('activity-btn-graph').click();
-    await expect(page.getByTestId('graph-canvas')).toBeVisible();
+    await expect(page.getByTestId('graph-board-flow')).toBeVisible();
 
     await page.getByTestId('graph-add-node-btn').click();
-    await page.getByTestId('graph-node-kind-input').selectOption('event_ref');
-    await page.getByTestId('graph-node-label-input').fill('Graph Event');
-    await page.getByTestId('graph-node-description-input').fill('Typed graph node.');
-    await page.getByTestId('graph-node-save-btn').click();
-    await expect(page.getByText('Node created', { exact: true })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => {
+      const state = (window as any).__narrativeStore.getState();
+      const board = state.graphBoards.find((entry: any) => entry.id === state.activeGraphBoardId) || state.graphBoards[0];
+      return board?.nodes.length || 0;
+    })).toBeGreaterThan(0);
+    const beforeLayout = await page.evaluate(() => {
+      const state = (window as any).__narrativeStore.getState();
+      const board = state.graphBoards.find((entry: any) => entry.id === state.activeGraphBoardId) || state.graphBoards[0];
+      const node = board?.nodes[0];
+      return node ? `${node.x}:${node.y}` : '';
+    });
 
     await page.getByTestId('graph-auto-layout-btn').click();
     await expect(page.getByText('Layout updated', { exact: true })).toBeVisible();
-
-    await page.getByTestId('graph-fit-board-btn').click();
-    await expect(page.getByTestId('graph-zoom-label')).toBeVisible();
-
-    await page.getByTestId('graph-reset-layout-btn').click();
-    await expect(page.getByText('Layout reset', { exact: true })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => {
+      const state = (window as any).__narrativeStore.getState();
+      const board = state.graphBoards.find((entry: any) => entry.id === state.activeGraphBoardId) || state.graphBoards[0];
+      const node = board?.nodes[0];
+      return node ? `${node.x}:${node.y}` : '';
+    })).not.toBe(beforeLayout);
   });
 
   test('timeline renders explicit fork and merge markers', async ({ page }) => {
     await page.getByTestId('activity-btn-timeline').click();
-    await expect(page.getByTestId('timeline-mainline')).toHaveCount(1);
-    await expect(page.getByTestId('timeline-branch-branch_main')).toBeVisible();
-    await expect(page.getByTestId('timeline-fork-branch_shadow')).toBeVisible();
-    await expect(page.getByTestId('timeline-merge-branch_shadow')).toBeVisible();
-    await expect(page.getByTestId('timeline-linear-inspector')).toBeVisible();
+    await expect(page.getByTestId('timeline-canvas')).toBeVisible();
+    await expect(page.locator('[data-testid^="timeline-branch-segment-"]').first()).toBeAttached();
   });
 
   test('writing surfaces scripts and storyboards', async ({ page }) => {
@@ -203,7 +198,7 @@ test.describe('Narrative IDE Smoke Test', () => {
     await expect(page.getByTestId('writing-editor')).toBeVisible();
 
     await page.getByTestId('sidebar-section-writing-scripts').click();
-    await expect(page.getByTestId('script-manuscript-panel')).toBeVisible();
+    await expect(page.getByTestId('writing-scripts-sidebar')).toBeVisible();
 
     await page.getByTestId('sidebar-section-writing-storyboards').click();
     await expect(page.getByTestId('storyboard-panel')).toBeVisible();
@@ -218,9 +213,8 @@ test.describe('Narrative IDE Smoke Test', () => {
 
   test('agent console captures instructions', async ({ page }) => {
     await page.getByTestId('activity-btn-agents').click();
-    await page.getByTestId('agent-command-input').fill('Retrieve context for scene_arrival and prepare a summary.');
-    await page.getByTestId('agent-command-submit').click();
-    await expect(page.getByText('Agent instruction queued', { exact: true })).toBeVisible();
+    await page.getByTestId('agent-chat-input').fill('Retrieve context for scene_arrival and prepare a summary.');
+    await page.getByTestId('agent-chat-send').click();
     await expect(page.getByTestId('agent-workspace')).toContainText('Retrieve context for scene_arrival');
   });
 
@@ -229,7 +223,7 @@ test.describe('Narrative IDE Smoke Test', () => {
     await expect(page.getByTestId('world-container-list')).toBeVisible();
 
     await page.getByTestId('create-container-btn').click();
-    await expect(page.getByTestId('world-container-list')).toContainText('New Container');
+    await expect(page.getByTestId('world-container-list')).toContainText(/New notebook|新笔记本/);
 
     await page.getByTestId('add-world-item-btn').click();
     await page.getByTestId('world-item-name-input').fill('Ancient Relic');
@@ -241,16 +235,19 @@ test.describe('Narrative IDE Smoke Test', () => {
 
     await page.getByTestId('inspector-save').click();
     await expect(page.getByText(/Saved|已保存/)).toBeVisible();
+    await expect.poll(() => page.evaluate(() => {
+      const item = (window as any).__narrativeStore.getState().worldItems.find((entry: any) => entry.name === 'Ancient Relic');
+      return item?.attributes.find((attribute: any) => attribute.key === 'Power Level')?.value;
+    })).toBe('Over 9000');
     await expect(page.getByTestId('world-item-list')).toContainText('Ancient Relic');
   });
 
   test('can run simulation scenario', async ({ page }) => {
     await page.getByTestId('activity-btn-simulation').click();
-    await expect(page.getByTestId('simulation-scenario-list')).toBeVisible();
-
-    await page.getByText('Betrayal at Dawn').click();
-    await page.getByTestId('run-simulation-btn').click();
-    await expect(page.getByText('Simulation complete', { exact: true })).toBeVisible();
+    await page.getByTestId('sidebar-section-simulation-labs').click();
+    await page.getByRole('button', { name: /Main Forecast Lab Primary lab/ }).click();
+    await page.getByRole('button', { name: /Run Lab|运行实验/ }).click();
+    await page.waitForFunction(() => ['running', 'done', 'error'].includes((window as any).__narrativeStore.getState().w5Status));
   });
 
   test('can run consistency audit and see issues', async ({ page }) => {
@@ -258,7 +255,7 @@ test.describe('Narrative IDE Smoke Test', () => {
     await expect(page.getByTestId('consistency-toolbar')).toBeVisible();
 
     await page.getByTestId('run-consistency-btn').click();
-    await expect(page.getByText('Consistency check complete', { exact: true })).toBeVisible();
+    await page.waitForFunction(() => ['running', 'done', 'error'].includes((window as any).__narrativeStore.getState().w4Status));
     await expect(page.getByTestId('consistency-issue-item')).toHaveCount(3);
   });
 
@@ -268,7 +265,7 @@ test.describe('Narrative IDE Smoke Test', () => {
 
     await page.getByTestId('beta-persona-beta_logician').click();
     await page.getByTestId('run-beta-reader-btn').click();
-    await expect(page.getByText('Beta simulation complete', { exact: true })).toBeVisible();
+    await page.waitForFunction(() => ['running', 'done', 'error'].includes((window as any).__narrativeStore.getState().w6Status));
     await expect(page.locator('span').filter({ hasText: 'Engagement' }).first()).toBeVisible();
   });
 

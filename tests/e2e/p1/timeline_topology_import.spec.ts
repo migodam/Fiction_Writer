@@ -457,14 +457,26 @@ test.describe('Timeline topology: proposal acceptance path', () => {
       });
     }
 
-    // Add a user-named empty planning branch (name NOT in the generic deletion list)
+    // Add through the real store mutation so the product save lifecycle is exercised.
+    // Direct Zustand setState bypasses withDirtyState and cannot validate save-status behavior.
     await page.evaluate(() => {
-      (window as any).__narrativeStore.setState((s: any) => ({
-        timelineBranches: [
-          ...s.timelineBranches,
-          { id: 'branch_w3_user_plan', name: '未来规划', mode: 'independent', sortOrder: 999, endMode: 'open' },
-        ],
-      }));
+      const store = (window as any).__narrativeStore;
+      store.getState().addTimelineBranch({
+        id: 'branch_w3_user_plan',
+        name: '未来规划',
+        description: '用户规划中的空分支',
+        mode: 'independent',
+        sortOrder: 999,
+        color: '#38bdf8',
+        collapsed: false,
+        parentBranchId: null,
+        forkEventId: null,
+        mergeEventId: null,
+        mergeTargetBranchId: null,
+        endMode: 'open',
+        startAnchor: null,
+        endAnchor: null,
+      });
     });
 
     // Two-phase save wait

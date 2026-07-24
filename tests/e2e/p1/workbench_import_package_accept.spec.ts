@@ -659,6 +659,38 @@ test.describe('Workbench import package accept', () => {
     expect(accepted).toEqual(['chap_singleton']);
   });
 
+  test('blocks direct single-proposal acceptance for a package-scoped proposal', async ({ page }) => {
+    const packageId = 'pkg_direct_accept_guard';
+    await injectImportPackage(page, [
+      makePackageProposal(packageId, 'pkg_direct_accept_chapter', 'chapter', {
+        id: 'chap_direct_accept',
+        title: 'Package-only Chapter',
+        summary: '',
+        goal: '',
+        notes: '',
+        sceneIds: [],
+        orderIndex: 0,
+        status: 'draft',
+      }),
+    ]);
+
+    const result = await page.evaluate(() => {
+      const store = (window as any).__narrativeStore;
+      store.getState().resolveProposal('pkg_direct_accept_chapter', 'accepted');
+      const state = store.getState();
+      return {
+        chapters: state.chapters,
+        history: state.proposalHistory,
+        proposal: state.proposals[0],
+      };
+    });
+
+    expect(result.chapters).toEqual([]);
+    expect(result.history).toEqual([]);
+    expect(result.proposal.status).toBe('pending');
+    expect(result.proposal.lastBlockReason).toContain('complete package transaction');
+  });
+
   test('rejecting one package does not resolve a different import run', async ({ page }) => {
     await injectImportPackage(page, [
       makePackageProposal('pkg_reject_a', 'pkg_reject_a_chapter', 'chapter', {

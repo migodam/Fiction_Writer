@@ -120,11 +120,15 @@ Narrative IDE stores each project as a folder.
 - categoryPath
 - parentId
 
-`parentId` is the stable notebook/folder relationship key. UI hierarchy must use this ID rather than container display names, and each container must appear once in the projection.
+`parentId` is the stable notebook/folder relationship key. World navigation is a single
+`Notebook -> Folder -> Item` tree. UI hierarchy must use stable IDs rather than display names,
+and each folder must appear once in the projection. `categoryPath` is a legacy migration input,
+not a runtime grouping rule.
 
 ### World Item
 - id
 - containerId
+- folderId (canonical parent folder; `containerId` remains compatibility-only)
 - type
 - name
 - description
@@ -135,6 +139,18 @@ Narrative IDE stores each project as a folder.
 - linkedEventIds
 - linkedSceneIds
 - mapMarkers
+
+World folders are semantic boundaries. Organizations, locations, rules, and techniques must be
+routed to compatible folders. Ambiguous candidates remain quarantined for review.
+
+### Import review and relocation
+- `CandidateLedgerEntry`: candidate identity, source evidence, inferred type, confidence, and review status
+- `WorldReviewDecision`: accepted type, target folder, evidence, and rationale
+- `RelocationPlan`: source candidate, target entity, field merge plan, and idempotency key
+
+Relocation is single-writer and idempotent. Character-like candidates such as `正门主王六` can
+be merged into `王六` in staged review; uncertain candidates are not forced into `门派组织`.
+Canonical changes still require package-scoped proposal acceptance.
 
 ### Graph Board
 - id

@@ -351,6 +351,7 @@ interface ProjectState {
   resolveProposal: (proposalId: string, status: Proposal['status']) => void;
   resolveProposals: (proposalIds: string[], status: Proposal['status']) => Promise<void>;
   repairImportPackage: (proposalIds: string[]) => Promise<void>;
+  retryImportPackage: (proposalIds: string[]) => Promise<void>;
   resolveAllProposals: (status: Proposal['status']) => Promise<void>;
   resolveIssue: (issueId: string, resolution: 'resolved' | 'ignored') => void;
   dismissIssue: (issueId: string) => void;
@@ -1647,6 +1648,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
   repairImportPackage: async (proposalIds) => {
     const project = await projectService.repairImportPackage(cloneProject(get(), useUIStore.getState().locale), proposalIds);
+    set(withDirtyState(project));
+  },
+  retryImportPackage: async (proposalIds) => {
+    const project = await projectService.retryImportPackage(cloneProject(get(), useUIStore.getState().locale), proposalIds);
     set(withDirtyState(project));
   },
   resolveAllProposals: async (status) => {

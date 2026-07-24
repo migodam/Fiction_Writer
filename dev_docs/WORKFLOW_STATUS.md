@@ -52,6 +52,29 @@ receipts are in the 2026-07-21 dev log.
 | W6 Beta Reader | Persona-based reading feedback | Verified and wired | Triggered from Beta Reader workspace | `active` | `FRONTEND_BACKEND_CHECKLIST.md` | Persona authoring and comparative review need more product closure |
 | W7 Metadata Ingestion | Reference library ingestion and style grounding | Verified and wired | Metadata workspace supports import and status | `active` | `FRONTEND_BACKEND_CHECKLIST.md` | Style extraction quality still uneven for some genres |
 
+## World Model and semantic review (2026-07-25)
+
+The World Model now projects a stable Notebook/Folder/Item tree using `folderId` ownership.
+Legacy `categoryPath` inference is not a runtime grouping rule. W1 emits a candidate ledger and
+semantic relocation plans; ambiguous candidates are quarantined, and all changes stop at the
+package proposal gate before canonical acceptance.
+
+The accepted-project reconcile tool is dry-run by default and creates a backup and receipt when
+applied. The 2026-07-14 benchmark moved from 1 semantic error and 19 linkage warnings to 0/0 in
+the offline audit: 9 event-scene links, 13 event-world links, 7 scene-world inverse links, 10
+high-confidence reclassifications, and 2 quarantined candidates. This is not a new paid run.
+
+## Agent execution surface (2026-07-25)
+
+Agent Dock projects durable execution into plan, agent, tool call/result, review, approval,
+artifact, checkpoint, error, and result states. It shows auditable summaries, progress, cost, and
+human actions without exposing hidden chain-of-thought. Research references live in
+`communication/2026-07-25-agent-harness-open-source-architecture-research.md`.
+
+Concrete World-to-event deep links now select the event and branch, show a title/time/branch
+focus banner, center and highlight the event once, and preserve later manual panning. This path
+is committed and verified in Playwright plus an actual 1280px browser pass.
+
 ## Current Product Gaps That Are Real
 - W2 now has a canonical Writing Chapters trigger and status/result path; proposal acceptance safety remains a Workbench closure item.
 - W0 now has a canonical Agents workspace control surface for goal composition, permissions, status, and results.

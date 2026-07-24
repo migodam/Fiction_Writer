@@ -88,25 +88,20 @@ test('moveCharacterTag rejects cycle and leaves state unchanged', async ({ page 
   expect(result).toBeNull();
 });
 
-// ─── Test 4: World category tree renders ─────────────────────────────────────
-test('world category tree renders with 3-level categories', async ({ page }) => {
-  const worldCategories = [
-    { id: 'wcat_root', name: '世界模型', parentId: null,        sortOrder: 0, scope: 'world' as const },
-    { id: 'wcat_loc',  name: '地理位置', parentId: 'wcat_root', sortOrder: 0, scope: 'world' as const },
-    { id: 'wcat_city', name: '城镇',     parentId: 'wcat_loc',  sortOrder: 0, scope: 'world' as const },
+// ─── Test 4: World folder tree renders ──────────────────────────────────────
+test('world folder tree renders from stable parent IDs', async ({ page }) => {
+  const worldContainers = [
+    { id: 'folder_root', name: 'Atlas', type: 'notebook' as const, parentId: null, sortOrder: 0 },
+    { id: 'folder_places', name: 'Places', type: 'notebook' as const, parentId: 'folder_root', sortOrder: 1 },
+    { id: 'folder_city', name: 'Cities', type: 'notebook' as const, parentId: 'folder_places', sortOrder: 2 },
   ];
 
-  await injectAt(page, 'http://localhost:3000/world', { worldCategories });
+  await injectAt(page, 'http://localhost:3000/world', { worldContainers, worldCategories: [] });
 
-  await expect(page.getByTestId('world-category-tree-toggle')).toBeVisible({ timeout: 10000 });
-
-  // Tree is visible by default.
-  await expect(page.getByTestId('world-category-tree')).toBeVisible();
-
-  // The virtual World root is hidden in the Folder UI; its children are promoted.
-  await expect(page.getByTestId('world-category-node-wcat_root')).not.toBeVisible();
-  await expect(page.getByTestId('world-category-node-wcat_loc')).toBeVisible();
-  await expect(page.getByTestId('world-category-node-wcat_city')).toBeVisible();
+  await expect(page.getByTestId('world-folder-tree')).toBeVisible();
+  await expect(page.getByTestId('world-folder-folder_root')).toBeVisible();
+  await expect(page.getByTestId('world-folder-folder_places')).toBeVisible();
+  await expect(page.getByTestId('world-folder-folder_city')).toBeVisible();
 });
 
 // ─── Test 5: World category cycle prevention ──────────────────────────────────

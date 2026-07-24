@@ -31,7 +31,7 @@ test.describe('Cross-page links', () => {
     await page.getByTestId('world-item-loc_glass_bridge').click();
     await page.getByTestId('open-world-timeline-btn').click();
 
-    await expect(page).toHaveURL(/\/timeline\/timeline\?location=loc_glass_bridge/);
+    await expect(page).toHaveURL(/\/timeline\/timeline\?worldItem=loc_glass_bridge/);
     await expect(page.getByTestId('timeline-filter-state')).toContainText('Glass Bridge');
 
     await page.getByTestId('timeline-event-node-event_bridge').first().click();

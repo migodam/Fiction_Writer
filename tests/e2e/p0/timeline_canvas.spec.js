@@ -47,7 +47,9 @@ test.describe('Timeline canvas', () => {
 
     const initialArrival = await getPoint(arrivalNode);
 
-    await dragLocator(page, mainStartHandle, -28, 82);
+    // Keep the gesture well outside canvas/transform rounding boundaries so
+    // this asserts propagation behavior rather than a near-5px pixel tie.
+    await dragLocator(page, mainStartHandle, -64, 120);
 
     const movedArrival = await getPoint(arrivalNode);
     expect(Math.abs(movedArrival.x - initialArrival.x)).toBeGreaterThan(5);

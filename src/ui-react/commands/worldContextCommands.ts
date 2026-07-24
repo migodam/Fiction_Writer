@@ -33,6 +33,7 @@ export const getWorldItemContextCommands = (
       addWorldItem({
         ...item,
         id: `world_${Date.now()}`,
+        folderId: containerId,
         containerId,
         name: `${item.name} (copy)`,
       }),
@@ -69,6 +70,7 @@ export const getWorldItemContextCommands = (
         addWorldItem({
           ...entry.value,
           id: `world_${Date.now()}`,
+          folderId: containerId,
           containerId,
           name: `${entry.value.name} (copy)`,
         });
@@ -131,6 +133,7 @@ export const getWorldFolderContextCommands =
           addWorldItem({
             ...entry.value,
             id: `world_${Date.now()}`,
+            folderId: folder.id,
             containerId: folder.id,
             name: `${entry.value.name} (copy)`,
           });

@@ -9,7 +9,7 @@ test.describe('World map and publish exports', () => {
     await expect(page.getByTestId('world-map-marker')).toHaveCount(4);
 
     await page.getByTestId('world-map-marker').first().click();
-    await expect(page).toHaveURL(/\/timeline\/timeline\?location=/);
+    await expect(page).toHaveURL(/\/timeline\/timeline\?worldItem=/);
 
     await page.getByTestId('activity-btn-publish').click();
     await expect(page.getByTestId('publish-preview-panel')).toContainText('#');

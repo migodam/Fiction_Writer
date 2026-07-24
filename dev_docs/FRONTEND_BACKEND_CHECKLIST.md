@@ -2,7 +2,7 @@
 
 > Integration source of truth for UI action -> store -> Electron bridge -> sidecar/workflow mapping.
 > Update this file whenever a bridge, trigger, store action, endpoint, or verification state changes.
-> Last updated: 2026-07-15
+> Last updated: 2026-07-25
 >
 > **Status legend:**
 > - ✅ COMPLETE — full chain verified end-to-end
@@ -60,6 +60,7 @@ coverage only; exact commands and outcomes are in
 |---|---|---|---|---|---|---|---|---|
 | Create event | TimelineWorkspace.tsx | createTimelineEvent | — | — | — | — | 🔵 FRONTEND_ONLY | |
 | Edit event | TimelineWorkspace.tsx | updateTimelineEvent | — | — | — | — | 🔵 FRONTEND_ONLY | |
+| Focus concrete linked event | TimelineWorkspace.tsx + TimelineCanvas.tsx | setSelectedEntity | — | — | — | — | ✅ COMPLETE | `?event=<id>` selects its branch, shows title/time/branch, centers once, highlights the node, and does not reclaim manual pan; verified by Playwright and actual browser. |
 
 ### Graph
 
@@ -73,6 +74,8 @@ coverage only; exact commands and outcomes are in
 |---|---|---|---|---|---|---|---|---|
 | Create world entry | WorldWorkspace.tsx | addWorldEntry | — | — | — | — | 🔵 FRONTEND_ONLY | |
 | Edit world entry | WorldWorkspace.tsx | updateWorldEntry | — | — | — | — | 🔵 FRONTEND_ONLY | |
+| Notebook/folder ownership and move | WorldWorkspace.tsx | moveWorldItem | — | — | — | — | ✅ COMPLETE | Stable `folderId`, droppable folder IDs, one undo transaction, responsive 1280px layout. |
+| Open linked event/scene/timeline | WorldWorkspace.tsx | route-backed selection | — | — | — | — | ✅ COMPLETE | Shows concrete titles and metadata, exposes broken references, and opens specific `event`/`scene` targets. |
 
 ### Consistency
 
@@ -176,9 +179,21 @@ coverage only; exact commands and outcomes are in
 
 ## Gap Summary
 
+### 2026-07-25 verification notes
+- World UI uses stable Notebook/Folder/Item ownership through `folderId`; legacy `categoryPath`
+  is not used for runtime placement.
+- The semantic reviewer/organizer contract supports candidate ledger, relocation plans, and
+  package-scoped proposal acceptance. Accepted-project offline audit is 0 errors/0 warnings;
+  see the reconcile and audit tools for receipts and evidence.
+- The Agent Dock has a normalized durable execution projection for plan, agent, tool call/result,
+  review, approval, artifact, checkpoint, error, and result states.
+- Concrete timeline deep-link behavior is committed and verified. Electron runtime smoke passed;
+  a full user-project headed replay and a new real package-acceptance UI pass were not rerun.
+
 ### ❌ GAP items (missing chain layers)
 
-_(none — all gaps resolved in Phase 7)_
+_No missing implementation layer is claimed for the existing Phase 7 baseline; the remaining
+wave-specific checks are listed below._
 
 ### ⚠️ STUB items (chain exists but workflow is placeholder or not triggered from UI)
 
@@ -186,7 +201,8 @@ _(none currently tracked in this file)_
 
 ### 🧪 UNTESTED items (need runtime verification)
 
-_(none currently tracked in this file)_
+- Full Agent execution replay in a user-project headed Electron session (deterministic runtime smoke passed).
+- Real Workbench package acceptance with reviewer quarantine and relocation visible.
 
 ### Historical Phase 7 Record (2026-04-06)
 

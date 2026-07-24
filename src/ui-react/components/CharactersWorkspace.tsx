@@ -116,7 +116,7 @@ export const CharactersWorkspace = () => {
     if (characterId && foundCharacter) {
       setSelectedEntity("character", characterId);
     }
-  }, [characterId, foundCharacter?.id, setSelectedEntity]);
+  }, [characterId, foundCharacter?.id, characters, setSelectedEntity]);
 
   const handleAddPartition = () => {
     const name = newPartitionName.trim();
@@ -707,6 +707,7 @@ const CharacterDetail = ({ character, tab, setConfirmArchiveId }: any) => {
           <button
             key={id}
             type="button"
+            data-testid={`char-tab-${id}`}
             className={cn(
               "rounded-full px-4 py-2 text-[11px] font-black uppercase tracking-[0.2em]",
               tab === id ? "bg-brand text-white" : "text-text-2 hover:bg-hover",
@@ -761,6 +762,7 @@ const CharacterDetail = ({ character, tab, setConfirmArchiveId }: any) => {
                     return (
                       <div
                         key={rel.id}
+                        data-testid="relationship-card"
                         className={`mb-2 rounded-2xl border p-4 ${statusCls[rel.status || "unknown"]}`}
                       >
                         <div className="flex items-center justify-between gap-3">
@@ -798,6 +800,7 @@ const CharacterDetail = ({ character, tab, setConfirmArchiveId }: any) => {
             </div>
             <div className="grid gap-3">
               <select
+                data-testid="relationship-target-select"
                 value={relationTargetId}
                 onChange={(event) => setRelationTargetId(event.target.value)}
                 className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none"
@@ -814,6 +817,7 @@ const CharacterDetail = ({ character, tab, setConfirmArchiveId }: any) => {
                   ))}
               </select>
               <input
+                data-testid="relationship-type-input"
                 value={relationType}
                 onChange={(event) => setRelationType(event.target.value)}
                 className="rounded-2xl border border-border bg-bg px-4 py-3 outline-none"
@@ -855,7 +859,7 @@ const CharacterDetail = ({ character, tab, setConfirmArchiveId }: any) => {
           </div>
         </div>
       ) : tab === "timeline" ? (
-        <div className="rounded-3xl border border-border bg-card p-6">
+        <div className="rounded-3xl border border-border bg-card p-6" data-testid="character-timeline-panel">
           <div className="mb-4 flex items-center justify-between">
             <div className="text-[10px] font-black uppercase tracking-[0.18em] text-text-3">
               {t("characters.characterTimeline")}

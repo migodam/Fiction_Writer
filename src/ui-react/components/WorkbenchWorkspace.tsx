@@ -21,6 +21,7 @@ export const WorkbenchWorkspace = () => {
     resolveProposal,
     resolveProposals,
     repairImportPackage,
+    retryImportPackage,
     createTodo,
     updateTodo,
     deleteTodo,
@@ -71,6 +72,21 @@ export const WorkbenchWorkspace = () => {
       });
     }
   };
+  const retryPackage = async (pkg: ProposalPackage) => {
+    if (repairingPackageIdsRef.current.has(pkg.id)) return;
+    repairingPackageIdsRef.current.add(pkg.id);
+    setRepairingPackageIds((current) => new Set(current).add(pkg.id));
+    try {
+      await retryImportPackage(pkg.proposals.map((proposal) => proposal.id));
+    } finally {
+      repairingPackageIdsRef.current.delete(pkg.id);
+      setRepairingPackageIds((current) => {
+        const next = new Set(current);
+        next.delete(pkg.id);
+        return next;
+      });
+    }
+  };
 
   return (
     <div className="flex h-full bg-bg">
@@ -112,6 +128,7 @@ export const WorkbenchWorkspace = () => {
                     onToggle={() => togglePackage(pkg.id)}
                     onAccept={() => resolveProposals(pkg.proposals.map((p) => p.id), 'accepted')}
                     onRepair={() => repairPackage(pkg)}
+                    onRetry={() => retryPackage(pkg)}
                     onReject={() => resolveProposals(pkg.proposals.map((p) => p.id), 'rejected')}
                     isRepairing={repairingPackageIds.has(pkg.id)}
                     t={t}
@@ -831,6 +848,7 @@ const PackageCard = ({
   onToggle,
   onAccept,
   onRepair,
+  onRetry,
   onReject,
   isRepairing,
   t,
@@ -840,6 +858,7 @@ const PackageCard = ({
   onToggle: () => void;
   onAccept: () => void;
   onRepair: () => void;
+  onRetry: () => void;
   onReject: () => void;
   isRepairing: boolean;
   t: (key: string, fallback?: string) => string;
@@ -891,16 +910,28 @@ const PackageCard = ({
             {expanded ? t('workbench.collapse', 'Collapse') : t('workbench.expand', 'Expand')}
           </button>
           {isBlocked ? (
-            <button
-              type="button"
-              data-testid={`repair-blocked-package-${pkg.id}`}
-              disabled={isRepairing}
-              className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-amber px-5 py-2 text-[11px] font-black uppercase tracking-widest text-text-invert disabled:cursor-not-allowed disabled:opacity-60"
-              onClick={onRepair}
-            >
-              <RefreshCw size={14} />
-              {isRepairing ? t('workbench.repairingPackage', 'Repairing') : t('workbench.repairBlockedPackage', 'Repair')}
-            </button>
+            <>
+              <button
+                type="button"
+                data-testid={`repair-blocked-package-${pkg.id}`}
+                disabled={isRepairing}
+                className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg border border-amber/50 px-3 py-2 text-[11px] font-black uppercase tracking-widest text-amber disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={onRepair}
+              >
+                <ShieldAlert size={14} />
+                {isRepairing ? t('workbench.repairingPackage', 'Repairing') : t('workbench.repairBlockedPackage', 'Repair')}
+              </button>
+              <button
+                type="button"
+                data-testid={`retry-blocked-package-${pkg.id}`}
+                disabled={isRepairing}
+                className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-amber px-5 py-2 text-[11px] font-black uppercase tracking-widest text-text-invert disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={onRetry}
+              >
+                <RefreshCw size={14} />
+                {isRepairing ? t('workbench.repairingPackage', 'Retrying') : t('workbench.retryPackage', 'Retry')}
+              </button>
+            </>
           ) : (
             <>
               <button

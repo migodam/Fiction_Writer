@@ -124,6 +124,8 @@ _LOC_HINTS: tuple[str, ...] = (
 )
 # Suffixes that disambiguate 堂/院/阁 as location rather than rank
 _LOC_AMBIGUOUS_SUFFIXES: tuple[str, ...] = ("堂", "峰", "谷", "院", "阁", "殿", "宫", "楼", "台")
+_LOCATION_FACILITY_HINTS: tuple[str, ...] = ("哨卡", "岗哨", "关卡", "关隘", "通道", "入口")
+_INSTITUTION_LOCATION_SUFFIXES: tuple[str, ...] = ("总堂", "分堂")
 
 # Module contamination: these strings are not world-model entities
 _CONTAMINATION_NAMES: frozenset[str] = frozenset({
@@ -321,15 +323,15 @@ def _is_identity_rank(name: str) -> bool:
 
 
 def _is_role_rank_misrouted(name: str, raw_category: str) -> bool:
-    """True when a rank title is incorrectly assigned cultivation_method."""
+    """True when a bare institutional title is incorrectly staged as World."""
     stripped = name.strip()
     normalized_cat = str(raw_category or "").lower().strip()
-    if normalized_cat != "cultivation_method":
-        return False
     # Allow if name ends with a place suffix (e.g. "执法堂" is a hall, not a rank)
     if any(stripped.endswith(suffix) for suffix in _LOC_AMBIGUOUS_SUFFIXES):
         return False
-    return any(rank in stripped for rank in _ROLE_RANK_NAMES)
+    if stripped in _ROLE_RANK_NAMES:
+        return True
+    return normalized_cat == "cultivation_method" and any(rank in stripped for rank in _ROLE_RANK_NAMES)
 
 
 def classify_world_item(name: str, raw_category: str, description: str = "") -> str:
@@ -354,6 +356,16 @@ def classify_world_item(name: str, raw_category: str, description: str = "") -> 
     # 1. Person/character markers in raw → custom (defensive; exclusion handles this upstream)
     if any(t in raw for t in ("person", "character", "人物", "角色", "人名")):
         return "custom"
+
+    # A headquarters/branch hall or a defensive facility can belong to an
+    # organization, but is itself a visitable place.  This check deliberately
+    # precedes the generic 门/堂 organization fallback below.
+    if any(token in clean for token in _LOCATION_FACILITY_HINTS):
+        return "location"
+    if clean.endswith(_INSTITUTION_LOCATION_SUFFIXES) and any(
+        token in desc_lower for token in ("位于", "坐落", "山峰", "山上", "建筑", "地点", "占据", "通道")
+    ):
+        return "location"
 
     # 2. Terminal cultivation-method suffix in name → cultivation_method
     #    "项甲功" ends in "功" — overrides raw rule/system signal unless desc says rank/realm

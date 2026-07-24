@@ -67,7 +67,8 @@ _TITLE_TOKENS = (
     "供奉", "护法", "执事", "师父", "师傅", "师兄", "师姐", "师弟", "师妹",
 )
 _STRONG_ORG_DESCRIPTION = ("门派", "宗门", "帮派", "组织", "势力", "议事机构", "长老组成", "公会", "分堂")
-_STRONG_LOCATION_DESCRIPTION = ("地点", "建筑", "位于", "坐落", "入口", "山谷", "大殿")
+_STRONG_LOCATION_DESCRIPTION = ("地点", "建筑", "位于", "坐落", "入口", "山谷", "山峰", "占据", "通道", "大殿")
+_PERSON_OR_RELATIONSHIP_PHRASES = ("夫人", "表姐夫", "表姐", "妻子", "丈夫", "岳父", "岳母")
 
 
 def normalize_candidate_name(value: Any) -> str:
@@ -157,6 +158,19 @@ def assess_world_candidate(
             "status": "approved", "deterministic": True,
         }
         return {"ledger": ledger, "decision": decision, "relocation_plan": plan}
+
+    # A relation-bearing appellation without a stable person identity is not
+    # durable World lore.  Keep it for the reviewer instead of inventing a
+    # concept node that can later be accepted as canonical data.
+    if any(token in normalized for token in _PERSON_OR_RELATIONSHIP_PHRASES):
+        ledger["candidate_kind"] = "unknown"
+        ledger["status"] = "quarantined"
+        ledger["reason_codes"] = ["person_or_relationship_phrase"]
+        return {"ledger": ledger, "decision": {
+            "item_id": candidate_id, "proposed_type": "unknown", "target_folder_id": None,
+            "confidence": confidence, "evidence_refs": evidence_refs,
+            "reason": "亲属或配偶称谓缺少可确认的人物身份，需人工归属到人物或关系证据", "action": "hold",
+        }}
 
     ambiguous_name = normalized in {"正门", "主门", "大门"}
     ambiguous_hall = normalized.endswith(("堂", "院")) and not any(

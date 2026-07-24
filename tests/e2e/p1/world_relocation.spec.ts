@@ -17,7 +17,7 @@ test('approved world-to-character relocation is atomic, preserves profile data, 
       proposalHistory: [], issues: [],
     }));
   });
-  await page.evaluate(() => (window as any).__narrativeStore.getState().resolveProposal('proposal_relocate', 'accepted'));
+  await page.evaluate(async () => (window as any).__narrativeStore.getState().resolveProposals(['proposal_relocate'], 'accepted'));
   const state = await page.evaluate(() => (window as any).__narrativeStore.getState());
   expect(state.worldItems.find((item: any) => item.id === 'world_wang')).toBeUndefined();
   const character = state.characters.find((item: any) => item.id === 'char_wang');
@@ -41,7 +41,7 @@ test('relocation proposal stays pending when its target character is missing', a
       proposals: [{ id: 'proposal_missing_target', title: '无效搬运', source: 'quality_reviewer', kind: 'import_review', description: '', targetEntityType: 'world_item', targetEntityId: 'world_missing', preview: '', reviewPolicy: 'manual_workbench', status: 'pending', createdAt: '2026-07-25T00:00:00.000Z', proposedOperations: [{ op: 'relocate_world_item_to_character', entityType: 'world_item', entityId: 'world_missing', fields: { targetCharacterId: 'char_not_found' } }] }],
     }));
   });
-  await page.evaluate(() => (window as any).__narrativeStore.getState().resolveProposal('proposal_missing_target', 'accepted'));
+  await page.evaluate(async () => (window as any).__narrativeStore.getState().resolveProposals(['proposal_missing_target'], 'accepted'));
   const state = await page.evaluate(() => (window as any).__narrativeStore.getState());
   expect(state.proposals.find((proposal: any) => proposal.id === 'proposal_missing_target')).toMatchObject({
     status: 'pending',
@@ -93,7 +93,7 @@ test('reviewer relocation_plan wire format is accepted by the canonical applier'
     }));
   });
 
-  await page.evaluate(() => (window as any).__narrativeStore.getState().resolveProposal('proposal_wire', 'accepted'));
+  await page.evaluate(async () => (window as any).__narrativeStore.getState().resolveProposals(['proposal_wire'], 'accepted'));
   const state = await page.evaluate(() => (window as any).__narrativeStore.getState());
   expect(state.worldItems.some((item: any) => item.id === 'world_wire')).toBe(false);
   expect(state.characters.find((item: any) => item.id === 'char_wire')).toMatchObject({
