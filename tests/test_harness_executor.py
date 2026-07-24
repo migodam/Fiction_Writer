@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import time
+import threading
+import subprocess
+import sys
 
 import pytest
 
@@ -240,6 +243,109 @@ def test_plan_time_budget_caps_local_tool(tmp_path):
             )
         )
     assert runtime.list_tool_calls(ex.attempt_id)[0]["status"] == "failed"
+
+
+def test_timeout_worker_is_daemon_and_late_result_is_never_recorded(tmp_path):
+    worker_daemon = []
+
+    def slow_handler(task, arguments):
+        worker_daemon.append(threading.current_thread().daemon)
+        time.sleep(0.08)
+        return {"task": task.task_id, "late": True}
+
+    ex, runtime = setup(
+        tmp_path, fn=slow_handler, timeout_seconds=0.005,
+    )
+    started = time.monotonic()
+    with pytest.raises(HarnessExecutionError, match="tool_timeout"):
+        ex.execute(plan(PlanTask("a", "A", "echo")))
+    elapsed = time.monotonic() - started
+    assert elapsed < 0.05
+    assert worker_daemon == [True]
+
+    time.sleep(0.1)
+    tool_call = runtime.list_tool_calls(ex.attempt_id)[0]
+    assert tool_call["status"] == "failed"
+    assert tool_call["result_payload"] == {"failure_type": "HarnessExecutionError"}
+    event_types = [event["event_type"] for event in runtime.list_events(ex.attempt_id)]
+    assert "tool.completed" not in event_types
+    assert "run.completed" not in event_types
+
+
+def test_timed_out_worker_does_not_block_python_process_exit():
+    script = """
+import tempfile
+import time
+from sidecar.harness.contracts import Budget, ExecutionPlan, PlanTask, ToolSpec
+from sidecar.harness.executor import HarnessExecutionError, HarnessExecutor
+from sidecar.harness.registry import HarnessRegistry
+from sidecar.runtime.agent_runtime import RuntimeStore
+
+class Adapter:
+    workflow_id = "exit-test"
+    def validate_plan(self, plan): pass
+    def execute_tool(self, task, arguments):
+        time.sleep(5)
+        return {"late": True}
+    def evaluate_completion(self, plan, observations): return True
+
+store = RuntimeStore(tempfile.mkdtemp())
+run = store.create_run(workflow_id="exit-test")
+attempt = store.create_attempt(run["run_id"])
+lease = store.acquire_lease(attempt["attempt_id"], "worker", ttl_seconds=30)
+registry = HarnessRegistry()
+registry.register_workflow(Adapter())
+registry.register_tool(ToolSpec(
+    name="slow", version="1", description="slow", input_schema={},
+    output_schema={}, handler_ref="test.slow", timeout_seconds=0.005,
+))
+executor = HarnessExecutor(
+    registry=registry, runtime=store, run=run, attempt=attempt,
+    owner_id="worker", fence_token=lease["fence_token"],
+)
+plan = ExecutionPlan(
+    plan_id="exit", workflow_id="exit-test",
+    tasks=(PlanTask("slow", "Slow", "slow"),),
+    budget=Budget(2, 0, 0, 10), completion_predicate="done",
+    available_tools=frozenset({"slow"}),
+)
+try:
+    executor.execute(plan)
+except HarnessExecutionError:
+    pass
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=str(__file__).rsplit("/tests/", 1)[0],
+        capture_output=True,
+        text=True,
+        timeout=2,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_canonical_write_requires_cancellable_transaction_executor(tmp_path):
+    invoked = []
+    ex, runtime = setup(
+        tmp_path,
+        fn=lambda task, arguments: invoked.append(task.task_id) or {"ok": True},
+        risk="canonical_write",
+        approval_policy="before_commit",
+        write_set=("canonical",),
+    )
+    with pytest.raises(
+        HarnessExecutionError,
+        match="canonical_write requires a cancellable transaction executor",
+    ):
+        ex.execute(
+            plan(PlanTask(
+                "a", "A", "echo", write_set=("canonical",),
+                approval_mode="before_commit",
+            ))
+        )
+    assert invoked == []
+    assert runtime.list_tool_calls(ex.attempt_id) == []
 
 
 def test_events_are_redacted(tmp_path):

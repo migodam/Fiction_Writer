@@ -6,8 +6,9 @@ events and explicit human gates. It has no network or model-calling behavior.
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 import hashlib
+from queue import Empty, Queue
+from threading import Thread
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
@@ -147,6 +148,10 @@ class HarnessExecutor:
             enforce_scopes(task, tool)
             enforce_budget(plan, steps=self.state.steps, tokens=self.state.tokens + tool.estimated_tokens, cost_usd=self.state.cost_usd + tool.estimated_cost_usd, elapsed_seconds=self.clock() - self.state.started_at)
             validate_json_schema(tool_arguments, tool.input_schema, label="input")
+            if tool.risk == "canonical_write":
+                raise HarnessPolicyError(
+                    "canonical_write requires a cancellable transaction executor"
+                )
         except HarnessPolicyError as exc:
             self._event("policy.rejected", "system", "harness", {"task_id": task.task_id, "reason": str(exc)}, key=f"policy:{plan.plan_id}:{task.task_id}:{hashlib.sha256(str(exc).encode()).hexdigest()}")
             raise HarnessExecutionError(str(exc)) from exc
@@ -317,17 +322,31 @@ class HarnessExecutor:
     ) -> Mapping[str, Any]:
         if timeout_seconds <= 0:
             return adapter.execute_tool(task, arguments)
-        pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="harness-tool")
-        future = pool.submit(adapter.execute_tool, task, arguments)
+        outcome: Queue[tuple[str, Any]] = Queue(maxsize=1)
+
+        def run_tool() -> None:
+            try:
+                result = adapter.execute_tool(task, arguments)
+            except Exception as exc:
+                outcome.put(("error", exc))
+            else:
+                outcome.put(("result", result))
+
+        worker = Thread(
+            target=run_tool,
+            name=f"harness-tool-{task.task_id}",
+            daemon=True,
+        )
+        worker.start()
         try:
-            return future.result(timeout=timeout_seconds)
-        except FutureTimeoutError as exc:
-            future.cancel()
+            kind, value = outcome.get(timeout=timeout_seconds)
+        except Empty as exc:
             if tool.risk == "external_call":
                 raise UnknownToolOutcome("tool_timeout") from exc
             raise HarnessExecutionError("tool_timeout") from exc
-        finally:
-            pool.shutdown(wait=False, cancel_futures=True)
+        if kind == "error":
+            raise value
+        return value
 
     @staticmethod
     def _event_key(prefix: str, value: str) -> str:
