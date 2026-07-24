@@ -71,6 +71,7 @@ def test_pass_report_is_atomic_and_traceable(tmp_path: Path) -> None:
     assert report["input_hash"]
     assert report["semantic_coverage_ref"]["relativePath"] == "system/imports/run_gate/attempts/attempt_gate/semantic_coverage_report.json"
     assert report["semantic_coverage_ref"]["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert all(not str(value).startswith("/") for value in report["artifact_paths"].values())
     assert path.exists()
     assert json.loads(path.read_text(encoding="utf-8"))["input_hash"] == report["input_hash"]
 
@@ -153,3 +154,14 @@ def test_missing_legacy_truth_fails_closed_with_migration_status(tmp_path: Path)
     assert report["verdict"] == "blocked"
     assert report["migration_status"] == "legacy_truth_migration_required"
     assert "chunk_not_semantically_complete" in {item["code"] for item in report["blocking_findings"]}
+
+
+def test_manifest_chapter_count_without_durable_chunk_chapter_ids_blocks(tmp_path: Path) -> None:
+    state = _state(tmp_path, _complete())
+    state["import_run_manifest"]["chapter_count"] = 2
+    state["chunks"] = [{"chunk_id": 0, "chapter_hint": "Chapter 1"}]
+
+    report = asyncio.run(w1_import.node_review_import(state))["semantic_coverage_report"]
+
+    assert report["verdict"] == "blocked"
+    assert "chapter_coverage_missing_chunk_ids" in {item["code"] for item in report["blocking_findings"]}

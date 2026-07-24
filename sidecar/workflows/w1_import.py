@@ -5252,6 +5252,12 @@ def _semantic_chunk_records(state: ImportState | dict) -> tuple[list[dict[str, A
     chunks = [item for item in state.get("chunks", []) if isinstance(item, dict)]
     extractions = [item for item in state.get("chunk_extractions", []) if isinstance(item, dict)]
     by_chunk_id = {item.get("chunk_id"): item for item in extractions if isinstance(item.get("chunk_id"), int)}
+    chapter_ids_by_chunk: dict[Any, list[str]] = {}
+    for chapter in state.get("manuscript_chapters", []) or []:
+        if not isinstance(chapter, dict) or not chapter.get("chapter_id"):
+            continue
+        for chunk_id in chapter.get("chunk_ids", []) or []:
+            chapter_ids_by_chunk.setdefault(chunk_id, []).append(str(chapter["chapter_id"]))
     if not chunks:
         chunks = [{"chunk_id": item.get("chunk_id"), "chapter_hint": item.get("chapter_hint", "")} for item in extractions]
     if not chunks and state.get("import_run_id"):
@@ -5266,6 +5272,8 @@ def _semantic_chunk_records(state: ImportState | dict) -> tuple[list[dict[str, A
         chapter_ids = [str(value) for value in chunk.get("chapter_ids", chunk.get("chapterIds", [])) if str(value)]
         if not chapter_ids and chunk.get("chapter_id"):
             chapter_ids = [str(chunk["chapter_id"])]
+        if not chapter_ids:
+            chapter_ids = sorted(set(chapter_ids_by_chunk.get(chunk_id, [])))
         if extraction is None:
             missing_truth = True
             records.append({
@@ -5432,6 +5440,11 @@ def _semantic_coverage_ref(state: ImportState | dict, report: dict[str, Any], pa
     }
 
 
+def _project_relative_artifact_path(state: ImportState | dict, path: Path) -> str:
+    """Artifact metadata survives project moves; never persist host absolute paths."""
+    return path.resolve().relative_to(Path(state["project_path"]).resolve()).as_posix()
+
+
 def _load_or_compile_semantic_coverage(state: ImportState | dict) -> dict[str, Any] | None:
     """Reuse a matching durable report after restart, otherwise deterministically replace it."""
     if not _semantic_gate_required(state):
@@ -5454,10 +5467,10 @@ def _load_or_compile_semantic_coverage(state: ImportState | dict) -> dict[str, A
     report["migration_status"] = migration_status
     report["source_manifest_hash"] = _sha256_text(manifest_bytes)
     report["artifact_paths"] = {
-        "report": str(path),
-        "manifest": str(_state_artifact_dir(state) / "manifest.json"),
-        "chunk_truth": str(_state_artifact_dir(state) / "checkpoint.json"),
-        "proposal_graph": str(_state_artifact_dir(state) / "proposal_graph.json"),
+        "report": _project_relative_artifact_path(state, path),
+        "manifest": _project_relative_artifact_path(state, _state_artifact_dir(state) / "manifest.json"),
+        "chunk_truth": _project_relative_artifact_path(state, _state_artifact_dir(state) / "checkpoint.json"),
+        "proposal_graph": _project_relative_artifact_path(state, _state_artifact_dir(state) / "proposal_graph.json"),
     }
     _atomic_write_state_artifact(state, "semantic_coverage_report.json", report)
     return {**report, "semantic_coverage_ref": _semantic_coverage_ref(state, report, path)}

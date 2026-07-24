@@ -125,11 +125,35 @@ def _candidate_id(candidate: dict[str, Any]) -> str:
     return _text(candidate.get("candidate_id") or candidate.get("id"))
 
 
-def _coverage(chunks: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _coverage(chunks: list[dict[str, Any]], source_manifest: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     findings: list[dict[str, Any]] = []
     rows: list[dict[str, Any]] = []
     chapter_ids = sorted({_text(chapter) for chunk in chunks for chapter in _values(chunk, "chapter_ids", "chapterIds") if _text(chapter)})
-    rows.append({"domain": "chapters", "expected": len(chapter_ids), "observed": len(chapter_ids), "complete": len(chapter_ids), "failed": 0, "unknown": 0, "coverage_ratio": 1.0 if chapter_ids else 0.0})
+    declared_chapter_count = source_manifest.get("chapter_count") if isinstance(source_manifest, dict) else None
+    try:
+        expected_chapters = int(declared_chapter_count) if declared_chapter_count is not None else len(chapter_ids)
+    except (TypeError, ValueError):
+        expected_chapters = len(chapter_ids)
+    expected_chapters = max(expected_chapters, 0)
+    observed_chapters = len(chapter_ids)
+    rows.append({
+        "domain": "chapters", "expected": expected_chapters, "observed": observed_chapters,
+        "complete": min(expected_chapters, observed_chapters),
+        "failed": max(expected_chapters - observed_chapters, 0), "unknown": 0,
+        "coverage_ratio": round(min(observed_chapters / expected_chapters, 1.0), 4) if expected_chapters else 1.0,
+    })
+    if expected_chapters > 0 and not chapter_ids:
+        findings.append(_finding(
+            "chapter_coverage_missing_chunk_ids", "blocking",
+            message="The source manifest declares chapters, but no chunk has durable chapter IDs.",
+            repair_action="rerun_chunk",
+        ))
+    elif observed_chapters < expected_chapters:
+        findings.append(_finding(
+            "chapter_coverage_incomplete", "blocking", chapter_ids=chapter_ids,
+            message="Durable chunk chapter coverage is smaller than the source manifest chapter count.",
+            repair_action="rerun_chunk",
+        ))
     for domain in _DOMAINS:
         complete = failed = unknown = 0
         for chunk in chunks:
@@ -292,7 +316,8 @@ def compile_semantic_coverage(payload: SemanticCoverageInput | dict[str, Any]) -
             blocking.append(_finding("chunk_not_semantically_complete", "blocking", entity_ids=[_text(chunk.get("chunk_id"))], chapter_ids=_values(chunk, "chapter_ids", "chapterIds"), message=f"Chunk truth is '{truth or 'missing'}', not semantic_complete.", repair_action="rerun_chunk"))
         if truth == "manuscript_only":
             infos.append(_finding("chunk_manuscript_preserved_only", "info", entity_ids=[_text(chunk.get("chunk_id"))], chapter_ids=_values(chunk, "chapter_ids", "chapterIds"), message="Manuscript text is preserved but semantic data is not acceptable for canonical commit.", repair_action="rerun_chunk"))
-    coverage, coverage_findings = _coverage(chunks)
+    source_manifest = normalized.get("source_manifest") if isinstance(normalized.get("source_manifest"), dict) else {}
+    coverage, coverage_findings = _coverage(chunks, source_manifest)
     blocking.extend(coverage_findings)
     character_report, character_findings = _character_checks(candidates)
     blocking.extend(character_findings)
