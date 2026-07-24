@@ -125,6 +125,10 @@ export interface Character {
   arc?: string;
   experience?: CharacterExperienceEntry[];
   customAttributes?: CharacterCustomAttribute[];
+  /** Reviewer-owned provenance for imported profile fields. */
+  evidenceRefs?: string[];
+  /** A role/title confirmed during reviewer relocation. */
+  role?: string;
   tagIds: string[];
   organizationIds: string[];
   linkedSceneIds: string[];
@@ -297,6 +301,11 @@ export interface WorldMapMarker {
 
 export interface WorldItem {
   id: string;
+  /**
+   * Canonical World Model owner. Legacy projects may only have containerId;
+   * project loading backfills this field before the item reaches the UI.
+   */
+  folderId?: string;
   containerId: string;
   type: string;
   name: string;
@@ -371,7 +380,7 @@ export interface GraphBoard {
 }
 
 export interface ProposalOperation {
-  op: 'create' | 'update' | 'delete' | 'link' | 'unlink' | 'reclassify_world_item';
+  op: 'create' | 'update' | 'delete' | 'link' | 'unlink' | 'reclassify_world_item' | 'relocate_world_item_to_character';
   entityType: EntityKind;
   entityId?: string | null;
   fields?: Record<string, unknown>;

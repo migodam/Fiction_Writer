@@ -33,6 +33,7 @@ export const TimelineWorkspace = () => {
   const [activeEventId, setActiveEventId] = useState<string | null>(timelineEvents[0]?.id || null);
   const [characterFilter, setCharacterFilter] = useState(searchParams.get('character') || '');
   const [locationFilter, setLocationFilter] = useState(searchParams.get('location') || '');
+  const [worldItemFilter, setWorldItemFilter] = useState(searchParams.get('worldItem') || '');
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [drawModeBranchId, setDrawModeBranchId] = useState<string | null>(null);
 
@@ -42,10 +43,11 @@ export const TimelineWorkspace = () => {
     () =>
       timelineEvents.filter((event) => {
         if (characterFilter && !event.participantCharacterIds.includes(characterFilter)) return false;
-        if (locationFilter && !event.locationIds.includes(locationFilter)) return false;
+        const worldReference = worldItemFilter || locationFilter;
+        if (worldReference && !event.locationIds.includes(worldReference) && !event.linkedWorldItemIds.includes(worldReference)) return false;
         return true;
       }),
-    [characterFilter, locationFilter, timelineEvents],
+    [characterFilter, locationFilter, timelineEvents, worldItemFilter],
   );
 
   const branchEventsMap = useMemo(() => {
@@ -61,15 +63,17 @@ export const TimelineWorkspace = () => {
   const activeEvent = timelineEvents.find((entry) => entry.id === activeEventId) || null;
   const activeBranch = sortedBranches.find((b) => b.id === activeBranchId) || sortedBranches[0] || null;
   const activeCharacterFilterName = characters.find((entry) => entry.id === characterFilter)?.name;
-  const activeLocationFilterName = worldItems.find((entry) => entry.id === locationFilter)?.name;
+  const activeLocationFilterName = worldItems.find((entry) => entry.id === (worldItemFilter || locationFilter))?.name;
 
   useEffect(() => {
     const eventId = searchParams.get('event');
     const characterId = searchParams.get('character');
     const locationId = searchParams.get('location');
+    const worldItemId = searchParams.get('worldItem');
     if (eventId) setActiveEventId(eventId);
     if (characterId !== null) setCharacterFilter(characterId);
     if (locationId !== null) setLocationFilter(locationId);
+    if (worldItemId !== null) setWorldItemFilter(worldItemId);
   }, [searchParams]);
 
   const addForkBranch = () => {
@@ -309,7 +313,7 @@ export const TimelineWorkspace = () => {
             <option key={location.id} value={location.id}>{location.name}</option>
           ))}
         </select>
-        {(characterFilter || locationFilter) && (
+        {(characterFilter || locationFilter || worldItemFilter) && (
           <div data-testid="timeline-filter-state" className="flex items-center gap-2 rounded-xl border border-brand/30 bg-brand/10 px-3 py-2 text-[11px] font-bold text-brand-2">
             <span>{[activeCharacterFilterName, activeLocationFilterName].filter(Boolean).join(' / ')}</span>
             <button
@@ -319,6 +323,7 @@ export const TimelineWorkspace = () => {
               onClick={() => {
                 setCharacterFilter('');
                 setLocationFilter('');
+                setWorldItemFilter('');
               }}
             >
               <X size={12} />

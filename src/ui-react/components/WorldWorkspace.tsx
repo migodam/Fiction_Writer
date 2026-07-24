@@ -2,12 +2,18 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Clock3,
+  ChevronDown,
+  ChevronRight,
   ExternalLink,
+  FileText,
+  Folder,
   Globe,
   GripVertical,
   Map as MapIcon,
+  NotebookTabs,
   Plus,
   Trash2,
+  TriangleAlert,
 } from "lucide-react";
 import {
   DndContext,
@@ -24,7 +30,7 @@ import { useProjectStore, useUIStore } from "../store";
 import { cn } from "../utils";
 import { useI18n } from "../i18n";
 import { TagTreePanel } from "./TagTreePanel";
-import type { WorldCategoryNode, WorldItem } from "../models/project";
+import type { WorldCategoryNode, WorldContainer, WorldItem } from "../models/project";
 import { commandClipboard } from "../commands/clipboard";
 import { toMenuItem } from "../commands/menu";
 import {
@@ -73,6 +79,7 @@ function DraggableWorldItem({
       onContextMenu={onContextMenu}
     >
       <span
+        data-testid={`world-item-drag-handle-${item.id}`}
         {...listeners}
         {...attributes}
         className="absolute left-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-40 cursor-grab active:cursor-grabbing"
@@ -113,6 +120,221 @@ function DroppableCategoryHeader({
     </div>
   );
 }
+
+const CONTAMINATION_CONTAINER_IDS = new Set([
+  "world_container_timeline",
+  "world_container_relationships",
+]);
+
+function folderOwner(item: WorldItem) {
+  return item.folderId ?? item.containerId;
+}
+
+function WorldNotebookWorkspace() {
+  const navigate = useNavigate();
+  const { locale, openContextMenu, setLastActionStatus } = useUIStore();
+  const { t } = useI18n();
+  const {
+    worldContainers,
+    worldItems,
+    timelineEvents,
+    timelineBranches,
+    scenes,
+    chapters,
+    characters,
+    addWorldContainer,
+    addWorldItem,
+    updateWorldContainer,
+    updateWorldItem,
+    deleteWorldContainer,
+    deleteWorldItem,
+    moveWorldItem,
+  } = useProjectStore();
+  const tr = useCallback((english: string, chinese: string) => locale === "zh-CN" ? chinese : english, [locale]);
+  const containers = useMemo(
+    () => worldContainers
+      .filter((container) => !CONTAMINATION_CONTAINER_NAMES.has(container.name.trim()))
+      .filter((container) => !CONTAMINATION_CONTAINER_IDS.has(container.id))
+      .sort((left, right) => (left.sortOrder ?? 0) - (right.sortOrder ?? 0)),
+    [worldContainers],
+  );
+  const notebooks = useMemo(
+    () => containers.filter((container) => !container.parentId),
+    [containers],
+  );
+  const [activeNotebookId, setActiveNotebookId] = useState<string | null>(notebooks[0]?.id ?? null);
+  const [activeFolderId, setActiveFolderId] = useState<string | null>(notebooks[0]?.id ?? null);
+  const [activeItemId, setActiveItemId] = useState<string | null>(null);
+  const [draggingItemId, setDraggingItemId] = useState<string | null>(null);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  useEffect(() => {
+    const notebook = notebooks.find((entry) => entry.id === activeNotebookId) ?? notebooks[0] ?? null;
+    if (notebook && notebook.id !== activeNotebookId) setActiveNotebookId(notebook.id);
+    if (notebook && !containers.some((entry) => entry.id === activeFolderId)) setActiveFolderId(notebook.id);
+  }, [activeFolderId, activeNotebookId, containers, notebooks]);
+
+  const activeNotebook = notebooks.find((entry) => entry.id === activeNotebookId) ?? null;
+  const activeFolder = containers.find((entry) => entry.id === activeFolderId) ?? activeNotebook;
+  const activeItem = worldItems.find((entry) => entry.id === activeItemId) ?? null;
+  const folderItems = useMemo(
+    () => worldItems.filter((item) => folderOwner(item) === activeFolder?.id),
+    [activeFolder?.id, worldItems],
+  );
+  const childrenFor = useCallback((parentId: string) => containers.filter((entry) => entry.parentId === parentId), [containers]);
+  const branchById = useMemo(() => new Map(timelineBranches.map((branch) => [branch.id, branch])), [timelineBranches]);
+
+  const linkedEvents = useMemo(() => {
+    if (!activeItem) return [];
+    const ids = new Set(activeItem.linkedEventIds);
+    timelineEvents.forEach((event) => {
+      if (event.locationIds.includes(activeItem.id) || event.linkedWorldItemIds.includes(activeItem.id)) ids.add(event.id);
+    });
+    return Array.from(ids).map((id) => ({ id, event: timelineEvents.find((entry) => entry.id === id) ?? null }));
+  }, [activeItem, timelineEvents]);
+  const linkedScenes = useMemo(() => {
+    if (!activeItem) return [];
+    const ids = new Set(activeItem.linkedSceneIds);
+    scenes.forEach((scene) => { if (scene.linkedWorldItemIds.includes(activeItem.id)) ids.add(scene.id); });
+    return Array.from(ids).map((id) => ({ id, scene: scenes.find((entry) => entry.id === id) ?? null }));
+  }, [activeItem, scenes]);
+
+  const createNotebook = () => {
+    const id = `world_notebook_${Date.now()}`;
+    addWorldContainer({ id, name: tr("New notebook", "新笔记本"), type: "notebook", sortOrder: containers.length, parentId: null, isCollapsed: false });
+    setActiveNotebookId(id);
+    setActiveFolderId(id);
+  };
+  const createFolder = () => {
+    if (!activeFolder) return;
+    const id = `world_folder_${Date.now()}`;
+    addWorldContainer({ id, name: tr("New folder", "新文件夹"), type: "notebook", sortOrder: containers.length, parentId: activeFolder.id, isCollapsed: false });
+    setActiveFolderId(id);
+  };
+  const createItem = () => {
+    if (!activeFolder) return;
+    const id = `world_item_${Date.now()}`;
+    addWorldItem({
+      id,
+      folderId: activeFolder.id,
+      containerId: activeFolder.id,
+      type: "note",
+      name: tr("New entry", "新条目"),
+      description: "",
+      attributes: [],
+      linkedCharacterIds: [],
+      linkedEventIds: [],
+      linkedSceneIds: [],
+      mapMarkers: [],
+      tagIds: [],
+    });
+    setActiveItemId(id);
+  };
+  const finishDrag = () => setDraggingItemId(null);
+  const handleDragEnd = ({ active, over }: DragEndEvent) => {
+    finishDrag();
+    const targetId = String(over?.id ?? "");
+    if (!targetId.startsWith("world-folder-drop-")) return;
+    const folderId = targetId.slice("world-folder-drop-".length);
+    const itemId = String(active.id);
+    const item = worldItems.find((entry) => entry.id === itemId);
+    if (!item || !containers.some((entry) => entry.id === folderId) || folderOwner(item) === folderId) return;
+    moveWorldItem(itemId, folderId);
+    setActiveFolderId(folderId);
+    setLastActionStatus(tr("Entry moved", "条目已移动"));
+  };
+  const openItemContextMenu = (item: WorldItem, event: React.MouseEvent) => {
+    event.preventDefault();
+    const context = {
+      target: { kind: "world-item" as const, id: item.id }, source: "context-menu" as const, item,
+      containerId: folderOwner(item), addWorldItem, deleteWorldItem,
+      rename: () => setActiveItemId(item.id), open: () => setActiveItemId(item.id),
+      remove: () => { deleteWorldItem(item.id); if (activeItemId === item.id) setActiveItemId(null); },
+    };
+    openContextMenu({
+      x: event.clientX, y: event.clientY, returnFocus: event.currentTarget as HTMLElement,
+      items: getWorldItemContextCommands(Boolean(commandClipboard.get<WorldItem>("world-item"))).map((command) => toMenuItem(command, context, t)),
+    });
+  };
+
+  const renderFolder = (folder: WorldContainer, depth: number): React.ReactNode => (
+    <FolderTreeNode
+      key={folder.id}
+      folder={folder}
+      depth={depth}
+      active={folder.id === activeFolder?.id}
+      onSelect={() => setActiveFolderId(folder.id)}
+      onToggle={() => updateWorldContainer({ ...folder, isCollapsed: !folder.isCollapsed })}
+    >
+      {!folder.isCollapsed && childrenFor(folder.id).map((child) => renderFolder(child, depth + 1))}
+    </FolderTreeNode>
+  );
+
+  return (
+    <div className="flex h-full min-w-0 overflow-hidden bg-bg" data-testid="world-notebook-workspace">
+      <aside className="flex w-56 shrink-0 flex-col border-r border-border bg-bg-elev-1">
+        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+          <div><div className="text-[10px] font-black uppercase tracking-[0.18em] text-brand-2">{tr("Notebooks", "笔记本")}</div></div>
+          <button type="button" data-testid="create-container-btn" title={tr("New notebook", "新建笔记本")} className="rounded border border-border p-1.5 text-brand hover:border-brand" onClick={createNotebook}><Plus size={15} /></button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-2" data-testid="world-container-list">
+          {notebooks.map((notebook) => (
+            <button key={notebook.id} type="button" data-testid={`world-container-${notebook.id}`} className={cn("mb-1 flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm", notebook.id === activeNotebook?.id ? "bg-selected text-text" : "text-text-2 hover:bg-hover")} onClick={() => { setActiveNotebookId(notebook.id); setActiveFolderId(notebook.id); }}>
+              <NotebookTabs size={15} className="shrink-0 text-brand" />{notebook.name}
+            </button>
+          ))}
+          {!notebooks.length && <EmptyWorldState text={tr("Create a notebook to begin organizing the world.", "新建笔记本以开始整理世界观。")} />}
+        </div>
+      </aside>
+
+      <aside className="flex w-72 shrink-0 flex-col border-r border-border bg-bg">
+        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+          <div><div className="text-[10px] font-black uppercase tracking-[0.18em] text-brand-2">{tr("Folders", "文件夹")}</div><div className="mt-0.5 truncate text-sm font-bold text-text">{activeNotebook?.name ?? tr("No notebook", "未选择笔记本")}</div></div>
+          <button type="button" data-testid="add-world-folder-btn" title={tr("New folder", "新建文件夹")} className="rounded border border-border p-1.5 text-brand hover:border-brand" onClick={createFolder} disabled={!activeFolder}><Plus size={15} /></button>
+        </div>
+        <DndContext sensors={sensors} onDragStart={({ active }) => setDraggingItemId(String(active.id))} onDragEnd={handleDragEnd} onDragCancel={finishDrag}>
+          <div className="min-h-0 flex-1 overflow-y-auto p-2" data-testid="world-folder-tree">
+            {activeNotebook && renderFolder(activeNotebook, 0)}
+          </div>
+          <div className="border-t border-border px-4 py-3"><button type="button" data-testid="add-world-item-btn" className="flex w-full items-center justify-center gap-2 rounded bg-brand px-3 py-2 text-xs font-bold text-white disabled:opacity-50" onClick={createItem} disabled={!activeFolder}><Plus size={14} />{tr("New entry", "新建条目")}</button></div>
+          <div className="max-h-[38%] overflow-y-auto border-t border-border" data-testid="world-item-list">
+            {folderItems.map((item) => <DraggableWorldItem key={item.id} item={item} isActive={item.id === activeItem?.id} onClick={() => setActiveItemId(item.id)} onContextMenu={(event) => openItemContextMenu(item, event)} />)}
+            {!folderItems.length && <EmptyWorldState text={tr("No entries in this folder.", "此文件夹暂无条目。")} />}
+          </div>
+          <DragOverlay>{draggingItemId ? <div className="rounded border border-border bg-card px-3 py-2 text-sm shadow-lg">{worldItems.find((item) => item.id === draggingItemId)?.name}</div> : null}</DragOverlay>
+        </DndContext>
+      </aside>
+
+      <main className="min-w-0 flex-1 overflow-y-auto p-8">
+        {activeItem ? <WorldItemDetail item={activeItem} events={linkedEvents} scenes={linkedScenes} chapters={chapters} characters={characters} branches={branchById} locale={locale} onUpdate={updateWorldItem} onOpenEvent={(id) => navigate(`/timeline/timeline?event=${id}`)} onOpenAll={() => navigate(`/timeline/timeline?worldItem=${activeItem.id}`)} onOpenScene={(id) => navigate(`/writing/scenes?scene=${id}`)} /> : <div className="flex h-full min-h-72 items-center justify-center"><EmptyWorldState text={tr("Select an entry to view its evidence and narrative links.", "选择条目以查看证据和叙事关联。")} /></div>}
+      </main>
+    </div>
+  );
+}
+
+function FolderTreeNode({ folder, depth, active, onSelect, onToggle, children }: { folder: WorldContainer; depth: number; active: boolean; onSelect: () => void; onToggle: () => void; children: React.ReactNode }) {
+  const { setNodeRef, isOver } = useDroppable({ id: `world-folder-drop-${folder.id}` });
+  return <div ref={setNodeRef} data-testid={`world-folder-drop-${folder.id}`} className={cn("rounded", isOver && "bg-brand/15")}>
+    <div className={cn("flex items-center gap-1 rounded px-1 py-1 text-sm", active ? "bg-selected text-text" : "text-text-2 hover:bg-hover")} style={{ paddingLeft: `${depth * 14 + 4}px` }}>
+      <button type="button" title={folder.isCollapsed ? "Expand" : "Collapse"} className="rounded p-0.5" onClick={onToggle}>{folder.isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}</button>
+      <button type="button" data-testid={`world-folder-${folder.id}`} className="flex min-w-0 flex-1 items-center gap-2 truncate text-left" onClick={onSelect}><Folder size={14} className="shrink-0 text-brand" /><span className="truncate">{folder.name}</span></button>
+    </div>
+    {children}
+  </div>;
+}
+
+function WorldItemDetail({ item, events, scenes, chapters, characters, branches, locale, onUpdate, onOpenEvent, onOpenAll, onOpenScene }: { item: WorldItem; events: { id: string; event: import("../models/project").TimelineEvent | null }[]; scenes: { id: string; scene: import("../models/project").Scene | null }[]; chapters: import("../models/project").Chapter[]; characters: import("../models/project").Character[]; branches: Map<string, import("../models/project").TimelineBranch>; locale: string; onUpdate: (item: WorldItem) => void; onOpenEvent: (id: string) => void; onOpenAll: () => void; onOpenScene: (id: string) => void }) {
+  const tr = (english: string, chinese: string) => locale === "zh-CN" ? chinese : english;
+  return <div className="mx-auto max-w-5xl space-y-7" data-testid={`world-item-detail-${item.id}`}>
+    <div><div className="mb-2 text-[10px] font-black uppercase tracking-[0.18em] text-text-3">{tr("World entry", "世界条目")}</div><input data-testid="world-item-name-input" value={item.name} onChange={(event) => onUpdate({ ...item, name: event.target.value })} className="w-full bg-transparent text-3xl font-black text-text outline-none" /></div>
+    <textarea data-testid="world-item-description-input" value={item.description} onChange={(event) => onUpdate({ ...item, description: event.target.value })} className="h-36 w-full rounded border border-border bg-bg p-4 text-sm leading-relaxed text-text outline-none" placeholder={tr("Description", "描述")} />
+    <section className="border-y border-border py-5"><div className="mb-3 flex items-center justify-between"><h2 className="text-sm font-bold text-text">{tr("Timeline events", "关联事件")}</h2><button type="button" data-testid="open-world-timeline-btn" onClick={onOpenAll} className="inline-flex items-center gap-1 text-xs font-bold text-brand hover:underline"><Clock3 size={14} />{tr("View timeline", "查看时间线")}</button></div><div className="space-y-2">{events.map(({ id, event }) => event ? <button key={id} type="button" data-testid={`world-link-event-${id}`} onClick={() => onOpenEvent(id)} className="flex w-full items-start justify-between rounded border border-border bg-card px-4 py-3 text-left hover:border-brand"><span><span className="block text-sm font-bold text-text">{event.title}</span><span className="mt-1 block text-xs text-text-3">{event.time || tr("Time unknown", "时间未知")} · {branches.get(event.branchId)?.name || tr("Missing branch", "缺失分支")}</span></span><ExternalLink size={14} className="mt-1 text-text-3" /></button> : <BrokenWorldReference key={id} testId={`world-broken-event-${id}`} text={`${tr("Missing event", "缺失事件")}: ${id}`} />)}{!events.length && <EmptyWorldState text={tr("No linked timeline events.", "没有关联时间线事件。")} />}</div></section>
+    <section className="border-b border-border pb-5"><h2 className="mb-3 text-sm font-bold text-text">{tr("Scenes", "关联场景")}</h2><div className="space-y-2">{scenes.map(({ id, scene }) => { if (!scene) return <BrokenWorldReference key={id} testId={`world-broken-scene-${id}`} text={`${tr("Missing scene", "缺失场景")}: ${id}`} />; const chapter = chapters.find((entry) => entry.id === scene.chapterId); const pov = characters.find((entry) => entry.id === scene.povCharacterId); return <button key={id} type="button" data-testid={`world-link-scene-${id}`} onClick={() => onOpenScene(id)} className="flex w-full items-start justify-between rounded border border-border bg-card px-4 py-3 text-left hover:border-brand"><span><span className="block text-sm font-bold text-text">{scene.title}</span><span className="mt-1 block text-xs text-text-3">{chapter?.title || tr("Missing chapter", "缺失章节")} · {pov?.name || tr("No POV", "无 POV")}</span><span className="mt-1 line-clamp-2 block text-xs text-text-2">{scene.summary || tr("No summary", "暂无摘要")}</span></span><FileText size={14} className="mt-1 text-text-3" /></button>; })}{!scenes.length && <EmptyWorldState text={tr("No linked scenes.", "没有关联场景。")} />}</div></section>
+  </div>;
+}
+
+function EmptyWorldState({ text }: { text: string }) { return <div className="px-4 py-6 text-center text-xs leading-relaxed text-text-3">{text}</div>; }
+function BrokenWorldReference({ testId, text }: { testId: string; text: string }) { return <div data-testid={testId} className="flex items-center gap-2 rounded border border-red/30 bg-red/5 px-3 py-2 text-xs text-red"><TriangleAlert size={14} />{text}</div>; }
 
 // ---------------------------------------------------------------------------
 // Main workspace
@@ -560,6 +782,11 @@ export const WorldWorkspace = () => {
       </div>
     );
   }
+
+  // Notebook/folder/item is the only interactive World Model projection. The
+  // category tree below remains in this file temporarily for legacy map and
+  // settings compatibility, but it is not used to organize or move items.
+  if (sidebarSection !== "legacy-world-categories") return <WorldNotebookWorkspace />;
 
   return (
     <div className="flex h-full overflow-hidden bg-bg">

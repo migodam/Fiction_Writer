@@ -1585,7 +1585,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       }
       const deletedItemIds = new Set(
         state.worldItems
-          .filter((item) => deletedContainerIds.has(item.containerId))
+          .filter((item) => deletedContainerIds.has(item.folderId ?? item.containerId))
           .map((item) => item.id),
       );
       return withDirtyState({
@@ -1594,8 +1594,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       });
     });
   },
-  addWorldItem: (item) => { get().captureUndoSnapshot('Add world item'); set((state) => withDirtyState({ worldItems: [...state.worldItems, item] })); },
-  updateWorldItem: (item) => { get().captureUndoSnapshot('Edit world item'); set((state) => withDirtyState({ worldItems: state.worldItems.map((entry) => entry.id === item.id ? item : entry) })); },
+  addWorldItem: (item) => { get().captureUndoSnapshot('Add world item'); set((state) => withDirtyState({ worldItems: [...state.worldItems, { ...item, folderId: item.folderId ?? item.containerId }] })); },
+  updateWorldItem: (item) => { get().captureUndoSnapshot('Edit world item'); set((state) => withDirtyState({ worldItems: state.worldItems.map((entry) => entry.id === item.id ? { ...item, folderId: item.folderId ?? item.containerId } : entry) })); },
   deleteWorldItem: (id) => {
     get().captureUndoSnapshot('Delete world item');
     set((state) => withDirtyState(removeWorldItemReferences(state, new Set([id]))));
@@ -1603,7 +1603,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   moveWorldItem: (id, containerId) => {
     if (!get().pendingUndoTransaction) get().captureUndoSnapshot('Move world item');
     set((state) => withDirtyState({
-      worldItems: state.worldItems.map((item) => item.id === id ? { ...item, containerId } : item),
+      worldItems: state.worldItems.map((item) => item.id === id ? { ...item, folderId: containerId, containerId } : item),
     }));
   },
   moveWorldItemToCategory: (itemId, newCategory, newContainerId, newCategoryPath, newCategoryId?, newParentId?) => {
@@ -1613,6 +1613,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         item.id === itemId
           ? {
               ...item,
+              folderId: newContainerId,
               containerId: newContainerId,
               category: newCategory,
               categoryPath: newCategoryPath,

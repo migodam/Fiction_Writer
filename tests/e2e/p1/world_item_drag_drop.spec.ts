@@ -1,10 +1,10 @@
 /**
- * E2E tests for world item drag/drop and moveWorldItemToCategory.
+ * E2E tests for world item drag/drop and canonical folder moves.
  * No live API calls. Store state injected via window.__narrativeStore.
  *
  * Covers:
- *   - moveWorldItemToCategory updates containerId, category, categoryPath
- *   - moveWorldItemToCategory is undoable (undoAction restores original container)
+ *   - moveWorldItem writes folderId and legacy containerId together
+ *   - moveWorldItem is undoable (undoAction restores original folder)
  *   - World item rows are draggable (drag handle present in DOM)
  */
 import { expect, test } from '@playwright/test';
@@ -61,8 +61,8 @@ async function injectFixture(page: import('@playwright/test').Page) {
   );
 }
 
-// Test 1: moveWorldItemToCategory updates containerId, category, categoryPath
-test('moveWorldItemToCategory store action moves item to new container', async ({ page }) => {
+// Test 1: canonical move writes stable folderId and legacy containerId.
+test('moveWorldItem store action moves item by folder ID', async ({ page }) => {
   await injectFixture(page);
 
   const before = await page.evaluate(() => {
@@ -70,16 +70,11 @@ test('moveWorldItemToCategory store action moves item to new container', async (
     return store.getState().worldItems.find((i: any) => i.id === 'wi_xjg');
   });
   expect(before.containerId).toBe('wc_rules');
-  expect(before.categoryPath[1]).toBe('修炼境界与制度');
+  expect(before.folderId ?? before.containerId).toBe('wc_rules');
 
   await page.evaluate(() => {
     const store = (window as any).__narrativeStore;
-    store.getState().moveWorldItemToCategory(
-      'wi_xjg',
-      'cultivation_method',
-      'wc_methods',
-      ['世界模型', '功法与术法', '项甲功'],
-    );
+    store.getState().moveWorldItem('wi_xjg', 'wc_methods');
   });
 
   const after = await page.evaluate(() => {
@@ -87,12 +82,11 @@ test('moveWorldItemToCategory store action moves item to new container', async (
     return store.getState().worldItems.find((i: any) => i.id === 'wi_xjg');
   });
   expect(after.containerId).toBe('wc_methods');
-  expect(after.category).toBe('cultivation_method');
-  expect(after.categoryPath[1]).toBe('功法与术法');
+  expect(after.folderId).toBe('wc_methods');
 });
 
 // Test 2: moveWorldItemToCategory is undoable
-test('moveWorldItemToCategory retains references and is one undo transaction', async ({ page }) => {
+test('moveWorldItem retains references and is one undo transaction', async ({ page }) => {
   await injectFixture(page);
 
   await page.evaluate(() => {
@@ -105,12 +99,7 @@ test('moveWorldItemToCategory retains references and is one undo transaction', a
   });
 
   await page.evaluate(() => {
-    (window as any).__narrativeStore.getState().moveWorldItemToCategory(
-      'wi_xjg',
-      'cultivation_method',
-      'wc_methods',
-      ['世界模型', '功法与术法', '项甲功'],
-    );
+    (window as any).__narrativeStore.getState().moveWorldItem('wi_xjg', 'wc_methods');
   });
 
   await expect.poll(() => page.evaluate(() => (window as any).__narrativeStore.getState().undoStack.length)).toBe(1);
@@ -137,7 +126,7 @@ test('moveWorldItemToCategory retains references and is one undo transaction', a
     return (window as any).__narrativeStore.getState().worldItems.find((i: any) => i.id === 'wi_xjg');
   });
   expect(restored.containerId).toBe('wc_rules');
-  expect(restored.categoryPath[1]).toBe('修炼境界与制度');
+  expect(restored.folderId ?? restored.containerId).toBe('wc_rules');
   await expect.poll(() => page.evaluate(() => (window as any).__narrativeStore.getState().undoStack.length)).toBe(0);
 });
 

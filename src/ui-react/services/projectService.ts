@@ -202,11 +202,15 @@ function buildDefaultWorldCategories(worldItems: NarrativeProject['worldItems'])
 }
 
 function normalizeWorldItem(item: NarrativeProject['worldItems'][number]): NarrativeProject['worldItems'][number] {
-  if (item.categoryPath && item.categoryPath.length > 0) return item;
+  const folderId = item.folderId || item.containerId;
+  if (item.categoryPath && item.categoryPath.length > 0) {
+    return { ...item, folderId };
+  }
   const category = (item as unknown as Record<string, unknown>).category as string | undefined;
   const root = (category && WORLD_CATEGORY_PATH_MAP[category]) ?? WORLD_CATEGORY_PATH_MAP['concept'];
   return {
     ...item,
+    folderId,
     categoryPath: [...root, item.name],
     parentId: item.parentId ?? null,
     importCategoryKey: item.importCategoryKey ?? category ?? '',
@@ -2668,6 +2672,13 @@ const applyProposalOperations = (project: NarrativeProject, proposal: Proposal, 
   let applied = false;
 
   for (const operation of operations) {
+    if (operation.op === 'relocate_world_item_to_character') {
+      const result = applyWorldItemRelocationOperation(draft, operation);
+      if (result.blockedReason) return { project, applied: false, blockedReason: result.blockedReason };
+      draft = result.project;
+      applied = applied || result.applied;
+      continue;
+    }
     const entityType = operation.entityType as EntityKind | undefined;
     const collectionKey = entityType ? proposalEntityCollections[entityType] : undefined;
     if (!entityType) {
@@ -2701,6 +2712,86 @@ const applyProposalOperations = (project: NarrativeProject, proposal: Proposal, 
   }
 
   return { project: draft, applied, blockedReason: null };
+};
+
+const relocationAttributes = (value: unknown, idPrefix: string) => {
+  if (Array.isArray(value)) {
+    return value.flatMap((entry, index) => {
+      if (!entry || typeof entry !== 'object') return [];
+      const record = entry as Record<string, unknown>;
+      const label = String(record.label || record.key || '').trim();
+      const attributeValue = String(record.value || '').trim();
+      return label ? [{ id: String(record.id || `${idPrefix}_${index}`), label, value: attributeValue }] : [];
+    });
+  }
+  if (value && typeof value === 'object') {
+    return Object.entries(value as Record<string, unknown>)
+      .filter(([label]) => label.trim())
+      .map(([label, attributeValue], index) => ({ id: `${idPrefix}_${index}`, label, value: String(attributeValue ?? '') }));
+  }
+  return [];
+};
+
+const applyWorldItemRelocationOperation = (
+  project: NarrativeProject,
+  operation: RawProposalOperation,
+): ProposalApplyResult => {
+  const fields = operation.fields || {};
+  const sourceId = String(fields.sourceWorldItemId || fields.source_world_item_id || operation.entityId || '');
+  const targetId = String(fields.targetCharacterId || fields.target_character_id || fields.targetEntityId || '');
+  if (!sourceId) return { project, applied: false, blockedReason: 'relocate_world_item_to_character is missing sourceWorldItemId.' };
+  if (!targetId) return { project, applied: false, blockedReason: `relocate_world_item_to_character ${sourceId} is missing targetCharacterId.` };
+  const source = project.worldItems.find((item) => item.id === sourceId);
+  if (!source) return { project, applied: false, blockedReason: `Cannot relocate missing world item ${sourceId}.` };
+  const target = project.characters.find((character) => character.id === targetId);
+  if (!target) return { project, applied: false, blockedReason: `Cannot relocate world item ${sourceId}: target character ${targetId} does not exist.` };
+  if (project.worldItems.some((item) => item.id !== sourceId && item.parentId === sourceId)) {
+    return { project, applied: false, blockedReason: `Cannot relocate world item ${sourceId}: child world items must be moved first.` };
+  }
+
+  const reciprocalEventIds = project.timelineEvents
+    .filter((event) => event.locationIds.includes(sourceId) || event.linkedWorldItemIds.includes(sourceId))
+    .map((event) => event.id);
+  const reciprocalSceneIds = project.scenes
+    .filter((scene) => scene.linkedWorldItemIds.includes(sourceId))
+    .map((scene) => scene.id);
+  const sourceAttributes = source.attributes
+    .filter((attribute) => attribute.key.trim())
+    .map((attribute, index) => ({ id: `relocation_${sourceId}_${index}`, label: attribute.key, value: attribute.value }));
+  const incomingAliases = Array.isArray(fields.aliases) ? fields.aliases.map(String) : [];
+  const incomingEvidence = Array.isArray(fields.evidenceRefs) ? fields.evidenceRefs.map(String) : (Array.isArray(fields.evidence_refs) ? fields.evidence_refs.map(String) : []);
+  const incomingAttributes = relocationAttributes(fields.customAttributes, `relocation_input_${sourceId}`);
+  const role = typeof fields.role === 'string' && fields.role.trim() ? fields.role.trim() : undefined;
+  const existingEvidence = target.evidenceRefs || [];
+  const customAttributesByLabel = new Map((target.customAttributes || []).map((attribute) => [attribute.label, attribute]));
+  [...sourceAttributes, ...incomingAttributes].forEach((attribute) => customAttributesByLabel.set(attribute.label, attribute));
+  const updatedTarget = {
+    ...target,
+    aliases: uniqueStrings([...target.aliases, source.name, ...incomingAliases]).filter((alias) => alias !== target.name),
+    linkedEventIds: uniqueStrings([...target.linkedEventIds, ...source.linkedEventIds, ...reciprocalEventIds]),
+    linkedSceneIds: uniqueStrings([...target.linkedSceneIds, ...source.linkedSceneIds, ...reciprocalSceneIds]),
+    linkedWorldItemIds: target.linkedWorldItemIds.filter((id) => id !== sourceId),
+    ...(role ? { role } : {}),
+    evidenceRefs: uniqueStrings([...existingEvidence, ...incomingEvidence]),
+    customAttributes: Array.from(customAttributesByLabel.values()),
+  };
+
+  const relocated: NarrativeProject = {
+    ...project,
+    characters: project.characters.map((character) => character.id === targetId
+      ? updatedTarget
+      : { ...character, linkedWorldItemIds: character.linkedWorldItemIds.filter((id) => id !== sourceId) }),
+    timelineEvents: project.timelineEvents.map((event) => ({
+      ...event,
+      locationIds: event.locationIds.filter((id) => id !== sourceId),
+      linkedWorldItemIds: event.linkedWorldItemIds.filter((id) => id !== sourceId),
+    })),
+    scenes: project.scenes.map((scene) => ({ ...scene, linkedWorldItemIds: scene.linkedWorldItemIds.filter((id) => id !== sourceId) })),
+    worldItems: project.worldItems.filter((item) => item.id !== sourceId),
+  };
+  const dangling = hasEntityReferences(relocated, 'world_item', sourceId);
+  if (dangling) return { project, applied: false, blockedReason: `Cannot relocate world item ${sourceId}: relocation would leave dangling references.` };
+  return { project: relocated, applied: true, blockedReason: null };
 };
 
 const applyWorldSettingsProposalOperation = (
