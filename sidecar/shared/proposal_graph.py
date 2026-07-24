@@ -199,6 +199,7 @@ def compile_import_run_package(
     existing_ids: dict[str, Iterable[str]] | None = None,
     *,
     remove_invalid_package: bool = False,
+    semantic_coverage_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Compile one W1 inbox package and atomically rewrite only that package.
 
@@ -211,7 +212,28 @@ def compile_import_run_package(
     inbox = _read_json_list(inbox_path)
     package = [proposal for proposal in inbox if _belongs_to_import_run(proposal, import_run_id)]
     compilation = compile_proposal_graph(package, existing_ids)
+    semantic_policy = _semantic_coverage_policy(semantic_coverage_report)
+    if semantic_policy["verdict"] == "blocked":
+        compilation["blockingErrors"].append({
+            "code": "semantic_coverage_blocked",
+            "reportPath": semantic_policy["report_path"],
+            "inputHash": semantic_policy["input_hash"],
+            "findings": semantic_policy["blocking_codes"],
+        })
+        compilation["blockingErrors"].sort(key=_stable_value)
+        compilation["atomic"] = False
+    elif semantic_policy["verdict"] == "warning":
+        for proposal in compilation["normalizedProposals"]:
+            proposal["requiresManualReview"] = True
+            proposal["automaticAcceptance"] = False
+            proposal["semanticCoverage"] = semantic_policy
+            _attach_semantic_coverage_ref(proposal, semantic_policy["ref"])
+    elif semantic_policy["verdict"] == "pass":
+        for proposal in compilation["normalizedProposals"]:
+            proposal["semanticCoverage"] = semantic_policy
+            _attach_semantic_coverage_ref(proposal, semantic_policy["ref"])
     compilation["importRunId"] = import_run_id
+    compilation["semanticCoverage"] = semantic_policy
     compilation["inboxUpdated"] = False
     compilation["packageRemoved"] = False
     if compilation["atomic"]:
@@ -229,6 +251,51 @@ def compile_import_run_package(
     _atomic_write_json(artifact_path, _artifact_metadata(compilation))
     compilation["artifactPath"] = str(artifact_path)
     return compilation
+
+
+def _semantic_coverage_policy(report: dict[str, Any] | None) -> dict[str, Any]:
+    """Normalize the semantic gate without trusting arbitrary proposal metadata."""
+    if not isinstance(report, dict):
+        return {
+            "verdict": "not_evaluated",
+            "automatic_acceptance": False,
+            "requires_human_review": True,
+            "report_path": "",
+            "input_hash": "",
+            "blocking_codes": [],
+            "ref": {},
+        }
+    verdict = str(report.get("verdict") or "").strip().lower()
+    if verdict not in {"pass", "warning", "blocked"}:
+        verdict = "blocked"
+    ref = report.get("semantic_coverage_ref") if isinstance(report.get("semantic_coverage_ref"), dict) else {}
+    required_ref = ("relativePath", "sha256", "verdict", "input_hash", "attempt_id")
+    valid_ref = (
+        all(str(ref.get(key) or "").strip() for key in required_ref)
+        and str(ref.get("verdict")) == verdict
+        and str(ref.get("input_hash")) == str(report.get("input_hash") or "")
+        and not str(ref.get("relativePath")).startswith(("/", "\\"))
+        and ".." not in Path(str(ref.get("relativePath"))).parts
+    )
+    if verdict in {"pass", "warning"} and not valid_ref:
+        verdict = "blocked"
+    acceptance = report.get("acceptance_policy") if isinstance(report.get("acceptance_policy"), dict) else {}
+    return {
+        "verdict": verdict,
+        "automatic_acceptance": bool(acceptance.get("automatic_acceptance")) and verdict == "pass",
+        "requires_human_review": bool(acceptance.get("requires_human_review")) or verdict != "pass",
+        "report_path": str((report.get("artifact_paths") or {}).get("report") or report.get("artifact_path") or ""),
+        "input_hash": str(report.get("input_hash") or ""),
+        "blocking_codes": sorted({str(item.get("code")) for item in report.get("blocking_findings", []) if isinstance(item, dict) and item.get("code")}),
+        "ref": dict(ref) if valid_ref else {},
+    }
+
+
+def _attach_semantic_coverage_ref(proposal: dict[str, Any], ref: dict[str, Any]) -> None:
+    """Copy the immutable semantic artifact reference onto proposal and operation metadata."""
+    proposal["semanticCoverageRef"] = dict(ref)
+    for operation in _operations(proposal):
+        operation["semanticCoverageRef"] = dict(ref)
 
 
 def _compile_depends_on(proposal: dict[str, Any], proposal_id: str, proposal_by_id: dict[str, dict[str, Any]], producers: dict[tuple[str, str], str], existing: dict[str, set[str]], edges: list[dict[str, Any]], diagnostics: list[dict[str, Any]]) -> None:

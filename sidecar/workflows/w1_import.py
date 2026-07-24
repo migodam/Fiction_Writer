@@ -5233,6 +5233,236 @@ def _reviewer_proposals_from_state(state: ImportState | dict) -> list[dict]:
     return [{"id": f"{state.get('import_run_id', 'w1')}_review_batch", "operations": operations}]
 
 
+def _semantic_evidence_refs(entry: dict[str, Any], candidate_id: str) -> list[dict[str, Any] | str]:
+    """Normalize staged evidence into the compiler's portable candidate shape."""
+    refs: list[dict[str, Any] | str] = []
+    for raw in entry.get("evidence_refs", []) or []:
+        if isinstance(raw, dict):
+            refs.append(dict(raw))
+        elif str(raw).strip():
+            refs.append(str(raw).strip())
+    source_span = entry.get("source_span") or entry.get("sourceSpan")
+    if isinstance(source_span, dict):
+        refs.append({"evidence_id": f"source:{candidate_id}", "source_span": dict(source_span)})
+    return refs
+
+
+def _semantic_chunk_records(state: ImportState | dict) -> tuple[list[dict[str, Any]], str]:
+    """Build total chunk records; historical data without receipts fails closed."""
+    chunks = [item for item in state.get("chunks", []) if isinstance(item, dict)]
+    extractions = [item for item in state.get("chunk_extractions", []) if isinstance(item, dict)]
+    by_chunk_id = {item.get("chunk_id"): item for item in extractions if isinstance(item.get("chunk_id"), int)}
+    if not chunks:
+        chunks = [{"chunk_id": item.get("chunk_id"), "chapter_hint": item.get("chapter_hint", "")} for item in extractions]
+    if not chunks and state.get("import_run_id"):
+        # A historical import with no durable chunk receipts is never assumed
+        # complete merely because a later stage happened to have empty data.
+        chunks = [{"chunk_id": 0, "chapter_hint": "legacy"}]
+    records: list[dict[str, Any]] = []
+    missing_truth = False
+    for index, chunk in enumerate(chunks):
+        chunk_id = chunk.get("chunk_id", index)
+        extraction = by_chunk_id.get(chunk_id)
+        chapter_ids = [str(value) for value in chunk.get("chapter_ids", chunk.get("chapterIds", [])) if str(value)]
+        if not chapter_ids and chunk.get("chapter_id"):
+            chapter_ids = [str(chunk["chapter_id"])]
+        if extraction is None:
+            missing_truth = True
+            records.append({
+                "chunk_id": chunk_id,
+                "chapter_ids": chapter_ids,
+                "semantic_status": "unknown_outcome",
+                "domain_status": {domain: "unknown" for domain in w1_truth.SEMANTIC_DOMAINS},
+                "failure_refs": ["legacy_truth_migration_required"],
+            })
+            continue
+        try:
+            receipt = w1_truth.truth_receipt(extraction)
+        except ValueError:
+            missing_truth = True
+            records.append({
+                "chunk_id": chunk_id,
+                "chapter_ids": chapter_ids,
+                "semantic_status": "unknown_outcome",
+                "domain_status": {domain: "unknown" for domain in w1_truth.SEMANTIC_DOMAINS},
+                "failure_refs": ["legacy_truth_migration_required"],
+            })
+            continue
+        domain_status = {
+            domain: "empty_valid" if status == "not_applicable" else status
+            for domain, status in receipt["domain_receipts"].items()
+        }
+        records.append({
+            "chunk_id": chunk_id,
+            "chapter_ids": chapter_ids,
+            "semantic_status": receipt["truth"],
+            "domain_status": domain_status,
+            "failure_refs": list(receipt.get("failure_codes") or []),
+            "candidate_ids": [],
+        })
+    return records, "legacy_truth_migration_required" if missing_truth else "current"
+
+
+def _semantic_coverage_input(state: ImportState | dict) -> tuple[dict[str, Any], str]:
+    """Project finalized staged W1 state into the deterministic coverage contract."""
+    registry = state.get("entity_registry", {}) or {}
+    candidates: list[dict[str, Any]] = []
+    for candidate_id, entry in (registry.get("characters", {}) or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        candidates.append({
+            "candidate_id": str(candidate_id), "entity_type": "character",
+            "name": entry.get("canonical_name") or entry.get("name") or "",
+            "fields": dict(entry), "evidence_refs": _semantic_evidence_refs(entry, str(candidate_id)),
+            "source_chunk_ids": list(entry.get("source_chunk_ids", []) or []),
+            "confidence": entry.get("confidence", 0),
+        })
+    for event_id, event in (registry.get("events", {}) or {}).items():
+        if not isinstance(event, dict):
+            continue
+        fields = dict(event)
+        if "linked_scene_ids" not in fields and "linkedSceneIds" not in fields and fields.get("scene_ids") is not None:
+            fields["linked_scene_ids"] = fields.get("scene_ids")
+        candidates.append({
+            "candidate_id": str(event_id), "entity_type": "timeline_event",
+            "name": event.get("title") or event.get("name") or "",
+            "fields": fields, "evidence_refs": _semantic_evidence_refs(event, str(event_id)),
+            "source_chunk_ids": list(event.get("source_chunk_ids", []) or []),
+            "confidence": event.get("confidence", 0),
+        })
+    for world_key, detail in (registry.get("world_detailed", {}) or {}).items():
+        if not isinstance(detail, dict):
+            continue
+        candidate_id = str(detail.get("id") or world_key)
+        fields = dict(detail)
+        fields.setdefault("target_folder_id", detail.get("containerId") or detail.get("container_id") or detail.get("parentId"))
+        candidates.append({
+            "candidate_id": candidate_id, "entity_type": "world_item",
+            "name": detail.get("name") or world_key, "fields": fields,
+            "evidence_refs": _semantic_evidence_refs(detail, candidate_id),
+            "source_chunk_ids": list(detail.get("source_chunk_ids", []) or []),
+            "confidence": detail.get("confidence", 0),
+        })
+    for index, relationship in enumerate(state.get("relationships", []) or []):
+        if not isinstance(relationship, dict):
+            continue
+        candidate_id = str(relationship.get("id") or relationship.get("relationship_id") or f"relationship_{index}")
+        candidates.append({
+            "candidate_id": candidate_id, "entity_type": "relationship",
+            "name": relationship.get("type") or "", "fields": dict(relationship),
+            "evidence_refs": _semantic_evidence_refs(relationship, candidate_id),
+            "source_chunk_ids": list(relationship.get("source_chunk_ids", []) or []),
+            "confidence": relationship.get("confidence", 0),
+        })
+    for index, chapter in enumerate(state.get("manuscript_chapters", []) or []):
+        if not isinstance(chapter, dict):
+            continue
+        scene_id = str(chapter.get("scene_id") or f"scene_from_chapter_{index}")
+        fields = dict(chapter)
+        fields.setdefault("chapter_id", chapter.get("chapter_id"))
+        candidates.append({
+            "candidate_id": scene_id, "entity_type": "scene",
+            "name": chapter.get("title") or "", "fields": fields,
+            "evidence_refs": _semantic_evidence_refs(chapter, scene_id),
+            "source_chunk_ids": list(chapter.get("chunk_ids", []) or []),
+            "confidence": chapter.get("confidence", 0.9),
+        })
+    chunks, migration_status = _semantic_chunk_records(state)
+    manifest = state.get("import_run_manifest") if isinstance(state.get("import_run_manifest"), dict) else {}
+    reducer = state.get("reducer_artifact") if isinstance(state.get("reducer_artifact"), dict) else {}
+    decisions = list(reducer.get("entity_merge_decisions", []) or [])
+    decisions.extend(
+        entry.get("entity_merge_decision") for entry in (registry.get("characters", {}) or {}).values()
+        if isinstance(entry, dict) and isinstance(entry.get("entity_merge_decision"), dict)
+    )
+    return {
+        "contract_version": "w1-semantic-coverage/v1",
+        "import_run_id": str(state.get("import_run_id") or manifest.get("import_run_id") or ""),
+        "lineage_id": str(state.get("lineage_id") or manifest.get("lineage_id") or state.get("import_run_id") or ""),
+        "attempt_id": _state_attempt_id(state),
+        "source_manifest": dict(manifest), "chunks": chunks, "candidates": candidates,
+        "entity_merge_decisions": decisions,
+        "organizer_output": dict(state.get("organizer_output") or {}),
+        "timeline_architecture": dict(state.get("timeline_architecture") or {}),
+        "manuscript_projection": {"chapters": list(state.get("manuscript_chapters", []) or [])},
+        "existing_project_digest": dict(state.get("project_structure_digest") or {}),
+        "profile": str(state.get("prompt_profile") or "balanced"),
+    }, migration_status
+
+
+def _atomic_write_state_artifact(state: ImportState | dict, filename: str, payload: dict) -> str:
+    path = _state_artifact_dir(state) / filename
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary_path = tempfile.mkstemp(prefix=f".{filename}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+    except BaseException:
+        try:
+            os.unlink(temporary_path)
+        except FileNotFoundError:
+            pass
+        raise
+    return str(path)
+
+
+def _semantic_gate_required(state: ImportState | dict) -> bool:
+    """Do not reinterpret isolated legacy writer fixtures as a complete import attempt."""
+    if not state.get("import_run_id"):
+        return False
+    manifest = state.get("import_run_manifest") if isinstance(state.get("import_run_manifest"), dict) else {}
+    if manifest.get("attempt_id"):
+        return True
+    context = state.get("context", {}) or {}
+    return bool(context.get("w1_recovery_identity") or context.get("w1_recovery_attempt"))
+
+
+def _semantic_coverage_ref(state: ImportState | dict, report: dict[str, Any], path: Path) -> dict[str, Any]:
+    project_root = Path(state["project_path"]).resolve()
+    relative_path = path.resolve().relative_to(project_root).as_posix()
+    return {
+        "relativePath": relative_path,
+        "sha256": _sha256_text(path.read_text(encoding="utf-8")),
+        "verdict": str(report.get("verdict") or ""),
+        "input_hash": str(report.get("input_hash") or ""),
+        "attempt_id": _state_attempt_id(state),
+    }
+
+
+def _load_or_compile_semantic_coverage(state: ImportState | dict) -> dict[str, Any] | None:
+    """Reuse a matching durable report after restart, otherwise deterministically replace it."""
+    if not _semantic_gate_required(state):
+        return None
+    from sidecar.supervisor.semantic_coverage import compile_semantic_coverage, semantic_coverage_input_hash
+
+    payload, migration_status = _semantic_coverage_input(state)
+    input_hash = semantic_coverage_input_hash(payload)
+    path = _state_artifact_dir(state) / "semantic_coverage_report.json"
+    if path.exists():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(existing, dict) and existing.get("input_hash") == input_hash:
+                return {**existing, "semantic_coverage_ref": _semantic_coverage_ref(state, existing, path)}
+        except (OSError, json.JSONDecodeError):
+            pass
+    report = dict(compile_semantic_coverage(payload))
+    manifest_bytes = json.dumps(payload["source_manifest"], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    report["run_id"] = str(state.get("workflow_id") or state.get("context", {}).get("session_id") or "W1")
+    report["migration_status"] = migration_status
+    report["source_manifest_hash"] = _sha256_text(manifest_bytes)
+    report["artifact_paths"] = {
+        "report": str(path),
+        "manifest": str(_state_artifact_dir(state) / "manifest.json"),
+        "chunk_truth": str(_state_artifact_dir(state) / "checkpoint.json"),
+        "proposal_graph": str(_state_artifact_dir(state) / "proposal_graph.json"),
+    }
+    _atomic_write_state_artifact(state, "semantic_coverage_report.json", report)
+    return {**report, "semantic_coverage_ref": _semantic_coverage_ref(state, report, path)}
+
+
 async def node_review_import(state: ImportState) -> dict:
     """Validate pre-proposal compiler outputs; final proposal receipts are not available yet."""
     # Review the same deterministic entity set that proposal staging will write.
@@ -5243,6 +5473,13 @@ async def node_review_import(state: ImportState) -> dict:
     timeline = state.get("timeline_architecture", {})
     warnings: list[str] = list(reducer.get("warnings", [])) + list(timeline.get("warnings", []))
     errors: list[str] = list(finalized_state.get("errors", []))
+    semantic_coverage = _load_or_compile_semantic_coverage(finalized_state)
+    if semantic_coverage:
+        if semantic_coverage["verdict"] == "blocked":
+            codes = ", ".join(item["code"] for item in semantic_coverage.get("blocking_findings", [])[:8])
+            errors.append(f"Semantic coverage gate blocked proposal package: {codes or 'unknown finding'}")
+        elif semantic_coverage["verdict"] == "warning":
+            warnings.append("Semantic coverage requires human review; automatic acceptance is disabled.")
     low_confidence_items: list[dict] = []
     durable_failed_chunks: list[dict] = []
     if state.get("import_run_id"):
@@ -5333,10 +5570,12 @@ async def node_review_import(state: ImportState) -> dict:
             "reducer": str(_state_artifact_dir(state) / "reducer_artifact.json") if state.get("import_run_id") else "",
             "timeline": str(_state_artifact_dir(state) / "timeline_architecture.json") if state.get("import_run_id") else "",
             "review": str(_state_artifact_dir(state) / "review_report.json") if state.get("import_run_id") else "",
+            "semantic_coverage": str(_state_artifact_dir(state) / "semantic_coverage_report.json") if state.get("import_run_id") else "",
         },
         "duplicate_merges": timeline.get("discarded_duplicates", []) + reducer.get("duplicate_candidates", []),
         "low_confidence_items": low_confidence_items,
         "reviewer_reports": reviewer_reports,
+        "semantic_coverage": semantic_coverage,
     }
     if finalized_state.get("import_run_id"):
         _write_state_artifact(finalized_state, "review_report.json", report)
@@ -5345,6 +5584,7 @@ async def node_review_import(state: ImportState) -> dict:
         "relationships": finalized_state.get("relationships", []),
         "evidence_cards": finalized_state.get("evidence_cards", state.get("evidence_cards", [])),
         "import_review_report": report,
+        "semantic_coverage_report": semantic_coverage,
         "errors": errors,
         "progress": max(float(finalized_state.get("progress", 0.91)), 0.92),
     }
@@ -5535,6 +5775,37 @@ async def node_write_to_project(state: ImportState) -> dict:
         finalized_staging["entity_registry"] = original_registry
     state = {**state, **finalized_staging}
     project_path = Path(state["project_path"])
+    import_run_id = str(state.get("import_run_id", "") or "")
+    semantic_coverage = _load_or_compile_semantic_coverage(state)
+    if semantic_coverage and semantic_coverage["verdict"] == "blocked":
+        from sidecar.shared.proposal_graph import compile_import_run_package
+
+        graph_result = compile_import_run_package(
+            project_path,
+            import_run_id,
+            _proposal_graph_existing_ids(_load_existing_project_snapshot(project_path)),
+            remove_invalid_package=True,
+            semantic_coverage_report=semantic_coverage,
+        )
+        errors = list(state.get("errors", [])) + [
+            "Semantic coverage gate blocked proposal publication: "
+            + ", ".join(item["code"] for item in semantic_coverage.get("blocking_findings", [])[:8])
+        ]
+        review_report = dict(state.get("import_review_report", {}))
+        review_report.update({
+            "status": "fail",
+            "errors": errors,
+            "semantic_coverage": semantic_coverage,
+            "safe_accept_ids": [],
+            "blocked_ids": [],
+            "proposal_graph": graph_result,
+        })
+        _write_state_artifact(state, "review_report.json", review_report)
+        return {
+            "proposals": [], "import_review_report": review_report,
+            "semantic_coverage_report": semantic_coverage,
+            "errors": errors, "status": "blocked", "progress": 1.0,
+        }
     registry = state.get("entity_registry", {})
     manuscript_chapters = state.get("manuscript_chapters", [])
     relationships = state.get("relationships", [])
@@ -5542,7 +5813,6 @@ async def node_write_to_project(state: ImportState) -> dict:
     world_settings = state.get("world_settings", {})
     timeline_branches = state.get("timeline_branches", [])
     source_language = state.get("source_language", "en")
-    import_run_id = str(state.get("import_run_id", "") or "")
     raw_source_evidence_path = _stage_raw_source_evidence(state)
     staged_state = {**state, "source_file_path": str(raw_source_evidence_path)}
     world_containers = list(state.get("world_containers", []))
@@ -6214,6 +6484,7 @@ async def node_write_to_project(state: ImportState) -> dict:
             import_run_id,
             _proposal_graph_existing_ids(_load_existing_project_snapshot(project_path)),
             remove_invalid_package=True,
+            semantic_coverage_report=semantic_coverage,
         )
         if not graph_result["atomic"]:
             errors.append(
@@ -6250,6 +6521,12 @@ async def node_write_to_project(state: ImportState) -> dict:
         review_report["safe_accept_ids"] = safe_accept_ids
         review_report["blocked_ids"] = blocked_ids
         review_report["proposal_ids"] = all_proposal_ids
+        review_report["semantic_coverage"] = semantic_coverage
+        if semantic_coverage and semantic_coverage["verdict"] == "warning":
+            review_report["safe_accept_ids"] = []
+            review_report["automatic_acceptance"] = False
+        elif semantic_coverage:
+            review_report["automatic_acceptance"] = bool(semantic_coverage["acceptance_policy"].get("automatic_acceptance"))
         if state.get("import_run_id"):
             _write_state_artifact(state, "review_report.json", review_report)
 
