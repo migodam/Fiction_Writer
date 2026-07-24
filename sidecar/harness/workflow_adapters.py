@@ -1,8 +1,8 @@
-"""Declarative adapters for the W0-W7 workflow harness.
+"""Declarative W0-W7 adapters for the durable Harness kernel.
 
-The adapters are deliberately thin.  They expose the existing workflow node
-boundaries as typed tools and produce deterministic plans; execution remains
-owned by the Harness executor and the injected node handlers.
+Each adapter exposes existing workflow boundaries as typed tools. Handlers are
+dependency-injected; this module neither copies workflow logic nor performs
+network calls.
 """
 
 from __future__ import annotations
@@ -16,6 +16,24 @@ from .registry import HarnessRegistry
 
 
 Handler = Callable[[Mapping[str, Any]], Mapping[str, Any]]
+TERMINAL_FAILURES = {"failed", "blocked", "unknown_outcome", "cancelled"}
+
+
+class WorkflowGateBlocked(RuntimeError):
+    """Raised when a deterministic workflow gate refuses downstream work."""
+
+
+@dataclass(frozen=True)
+class WorkflowStepDefinition:
+    task_id: str
+    title: str
+    tool_name: str
+    dependencies: tuple[str, ...]
+    read_set: tuple[str, ...]
+    write_set: tuple[str, ...]
+    risk: str = "draft"
+    approval_policy: str = "never"
+    idempotency: str = "optional"
 
 
 @dataclass(frozen=True)
@@ -25,20 +43,20 @@ class WorkflowAdapterDefinition:
     description: str
     read_scope: tuple[str, ...]
     write_scope: tuple[str, ...]
-    risk: str
-    approval_policy: str
-    steps: tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...]], ...]
+    steps: tuple[WorkflowStepDefinition, ...]
     completion_predicate: str
     handlers: Mapping[str, Handler] = field(default_factory=dict, compare=False, repr=False)
+    risk: str = "draft"
+    approval_policy: str = "before_commit"
 
 
 class RegisteredWorkflowAdapter:
-    """A deterministic WorkflowAdapter backed by injected existing handlers."""
+    """Deterministic WorkflowAdapter backed only by injected node handlers."""
 
     def __init__(self, definition: WorkflowAdapterDefinition) -> None:
         self.definition = definition
         self.workflow_id = definition.workflow_id
-        self._tools = _tool_specs(definition)
+        self._tools = tuple(_tool_spec(definition, step) for step in definition.steps)
 
     def describe(self) -> Mapping[str, Any]:
         return {
@@ -49,6 +67,7 @@ class RegisteredWorkflowAdapter:
             "write_scope": list(self.definition.write_scope),
             "risk": self.definition.risk,
             "approval_policy": self.definition.approval_policy,
+            "canonical_commit_owner": "human_acceptance_adapter",
             "tools": [tool.to_dict() for tool in self._tools],
         }
 
@@ -60,16 +79,16 @@ class RegisteredWorkflowAdapter:
         plan_id = sha256(plan_key.encode("utf-8")).hexdigest()[:24]
         tasks = tuple(
             PlanTask(
-                task_id=task_id,
-                title=title,
-                tool_name=tool_name,
-                dependencies=dependencies,
-                read_set=self.definition.read_scope,
-                write_set=write_set,
-                approval_mode=("before_commit" if tool_name.endswith("canonical_commit") else "never"),
-                artifact_contract=f"{self.workflow_id}/{task_id}/v1",
+                task_id=step.task_id,
+                title=step.title,
+                tool_name=step.tool_name,
+                dependencies=step.dependencies,
+                read_set=step.read_set,
+                write_set=step.write_set,
+                approval_mode=step.approval_policy,
+                artifact_contract=f"{self.workflow_id}/{step.task_id}/v1",
             )
-            for task_id, title, tool_name, dependencies, write_set in self.definition.steps
+            for step in self.definition.steps
         )
         return ExecutionPlan(
             plan_id=plan_id,
@@ -77,8 +96,8 @@ class RegisteredWorkflowAdapter:
             tasks=tasks,
             budget=Budget(
                 max_steps=max(1, len(tasks) * 2),
-                max_tokens=int(context.get("max_tokens", 100_000)),
-                max_cost_usd=float(context.get("max_cost_usd", 10.0)),
+                max_tokens=int(context.get("max_tokens", 0)),
+                max_cost_usd=float(context.get("max_cost_usd", 0.0)),
                 max_seconds=float(context.get("max_seconds", 3_600)),
             ),
             completion_predicate=self.definition.completion_predicate,
@@ -90,8 +109,8 @@ class RegisteredWorkflowAdapter:
         if plan.workflow_id != self.workflow_id:
             raise ValueError(f"plan belongs to {plan.workflow_id}, not {self.workflow_id}")
         allowed = {tool.name for tool in self._tools}
-        if not set(plan.available_tools) <= allowed:
-            raise ValueError("plan contains tools outside the adapter registry")
+        if set(plan.available_tools) != allowed:
+            raise ValueError("plan tool set differs from the adapter registry")
         for task in plan.tasks:
             if set(task.read_set) - set(self.definition.read_scope):
                 raise ValueError(f"task {task.task_id} reads outside adapter scope")
@@ -102,78 +121,200 @@ class RegisteredWorkflowAdapter:
         handler = self.definition.handlers.get(task.tool_name)
         if handler is None:
             raise ValueError(f"no injected handler for {task.tool_name}")
-        return handler(arguments)
+        raw_result = handler(arguments)
+        if not isinstance(raw_result, Mapping):
+            raise TypeError(f"handler for {task.tool_name} must return a mapping")
+        result = dict(raw_result)
+        result.setdefault("_harness_task_id", task.task_id)
+        result.setdefault("status", "success")
+        self._enforce_runtime_gate(task.task_id, result)
+        return result
+
+    def _enforce_runtime_gate(self, task_id: str, result: Mapping[str, Any]) -> None:
+        status = str(result.get("status", "")).lower()
+        if status in TERMINAL_FAILURES:
+            raise WorkflowGateBlocked(f"{self.workflow_id} {task_id} returned {status}")
+        if self.workflow_id != "W1":
+            return
+        if task_id == "semantic_coverage":
+            verdict = str(result.get("verdict", "")).lower()
+            warning_approved = bool(result.get("warning_approved"))
+            if verdict == "warning" and not warning_approved:
+                raise WorkflowGateBlocked("W1 semantic coverage warning requires human approval")
+            if verdict not in {"pass", "warning"}:
+                raise WorkflowGateBlocked("W1 semantic coverage did not pass")
+        if task_id == "package_graph":
+            if result.get("atomic") is not True:
+                raise WorkflowGateBlocked("W1 package graph is not atomic")
+            if result.get("valid") is not True:
+                raise WorkflowGateBlocked("W1 package graph is invalid")
 
     def observe_artifact(self, artifact: Mapping[str, Any]) -> Mapping[str, Any]:
         return {"workflow_id": self.workflow_id, "observed": dict(artifact)}
 
     def evaluate_completion(self, plan: ExecutionPlan, observations: Sequence[Mapping[str, Any]]) -> bool:
-        return bool(observations) and all(observation.get("status") not in {"failed", "blocked", "unknown_outcome"} for observation in observations)
+        by_task = {
+            str(observation.get("_harness_task_id")): observation
+            for observation in observations
+            if isinstance(observation, Mapping)
+        }
+        if set(by_task) != {task.task_id for task in plan.tasks}:
+            return False
+        if any(str(item.get("status", "")).lower() in TERMINAL_FAILURES for item in by_task.values()):
+            return False
+        if self.workflow_id != "W1":
+            return True
+        semantic = by_task.get("semantic_coverage", {})
+        package = by_task.get("package_graph", {})
+        verdict = str(semantic.get("verdict", "")).lower()
+        semantic_ok = verdict == "pass" or (
+            verdict == "warning" and bool(semantic.get("warning_approved"))
+        )
+        return semantic_ok and package.get("valid") is True and package.get("atomic") is True
 
     def publish_proposal(self, proposal: Mapping[str, Any]) -> Mapping[str, Any]:
         if proposal.get("canonical_write"):
-            raise ValueError("canonical writes must be committed through before_commit approval")
+            raise ValueError("canonical writes belong to the human acceptance adapter")
         return {"workflow_id": self.workflow_id, "proposal": dict(proposal), "status": "staged"}
 
 
-def _tool_specs(definition: WorkflowAdapterDefinition) -> tuple[ToolSpec, ...]:
-    specs: list[ToolSpec] = []
-    for _, title, tool_name, _, _ in definition.steps:
-        canonical = tool_name.endswith("canonical_commit")
-        specs.append(ToolSpec(
-            name=tool_name,
-            version="v2",
-            description=title,
-            input_schema={"type": "object"},
-            output_schema={"type": "object"},
-            handler_ref=f"injected:{definition.workflow_id}:{tool_name}",
-            read_set=definition.read_scope,
-            write_set=definition.write_scope if canonical else (),
-            risk="canonical_write" if canonical else ("external_call" if "extract" in tool_name or "generate" in tool_name else "draft"),
-            approval_policy="before_commit" if canonical else "never",
-            idempotency="required" if canonical or "extract" in tool_name else "optional",
-        ))
-    specs.append(ToolSpec(
-        name=f"{definition.workflow_id.lower()}.canonical_commit",
+def _tool_spec(definition: WorkflowAdapterDefinition, step: WorkflowStepDefinition) -> ToolSpec:
+    return ToolSpec(
+        name=step.tool_name,
         version="v2",
-        description="Commit an approved proposal package to canonical storage",
+        description=step.title,
         input_schema={"type": "object"},
         output_schema={"type": "object"},
-        handler_ref=f"injected:{definition.workflow_id}:canonical_commit",
-        read_set=("runtime:proposal",),
-        write_set=("project:canonical",),
-        risk="canonical_write",
-        approval_policy="before_commit",
-        idempotency="required",
-    ))
-    return tuple(specs)
-
-
-def _definition(workflow_id: str, title: str, description: str, read_scope: tuple[str, ...], write_scope: tuple[str, ...], steps: tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...]], ...], predicate: str) -> WorkflowAdapterDefinition:
-    return WorkflowAdapterDefinition(workflow_id, title, description, read_scope, write_scope, "canonical_write", "before_commit", steps, predicate)
-
-
-def build_workflow_adapters(handlers: Mapping[str, Mapping[str, Handler]] | None = None) -> dict[str, RegisteredWorkflowAdapter]:
-    """Build all adapters.  ``handlers`` is dependency injection only."""
-    handlers = handlers or {}
-    common = {
-        "read": ("project:source", "project:canonical", "runtime:checkpoint"),
-        "proposal": ("runtime:proposal",),
-    }
-    definitions = (
-        _definition("W0", "Orchestrator", "Plan and dispatch child workflows", common["read"], ("runtime:proposal",), (("parse_goal", "Parse goal", "w0.parse_goal", (), ()), ("validate_plan", "Validate plan", "w0.validate_plan", ("parse_goal",), ("runtime:proposal",))), "all_steps_valid"),
-        _definition("W1", "Import", "Extract evidence and stage an import package", common["read"], ("runtime:proposal", "runtime:semantic_coverage", "runtime:package_graph"), (("extract", "Extract source windows", "w1.extract", (), ()), ("semantic_coverage", "Compile semantic coverage", "w1.semantic_coverage_compiler", ("extract",), ("runtime:semantic_coverage",)), ("package_graph", "Compile package graph", "w1.package_graph_compiler", ("semantic_coverage",), ("runtime:package_graph",)), ("proposal_write", "Stage proposal package", "w1.proposal_write", ("package_graph",), ("runtime:proposal",))), "semantic_coverage_passed_and_package_graph_valid"),
-        _definition("W2", "Manuscript sync", "Sync manuscript drafts and stage proposals", common["read"], common["proposal"], (("load", "Load manuscript", "w2.load", (), ()), ("diff", "Diff project", "w2.diff", ("load",), ("runtime:proposal",)), ("proposal", "Stage proposals", "w2.proposal", ("diff",), common["proposal"])), "proposal_gate_ready"),
-        _definition("W3", "Writing assistant", "Generate draft content and stage entities", common["read"], common["proposal"], (("context", "Build context", "w3.context", (), ()), ("generate", "Generate draft", "w3.generate", ("context",), ("runtime:proposal",)), ("proposal", "Stage proposals", "w3.proposal", ("generate",), common["proposal"])), "proposal_gate_ready"),
-        _definition("W4", "Consistency check", "Find consistency issues and stage fixes", common["read"], common["proposal"], (("context", "Build context", "w4.context", (), ()), ("check", "Check consistency", "w4.check", ("context",), ("runtime:proposal",)), ("proposal", "Stage fix proposals", "w4.proposal", ("check",), common["proposal"])), "proposal_gate_ready"),
-        _definition("W5", "Simulation", "Run scenario analysis and stage report", common["read"], common["proposal"], (("context", "Load affected context", "w5.context", (), ()), ("simulate", "Run simulation", "w5.simulate", ("context",), ("runtime:proposal",)), ("proposal", "Stage simulation report", "w5.proposal", ("simulate",), common["proposal"])), "proposal_gate_ready"),
-        _definition("W6", "Beta reader", "Run reader analysis and stage feedback", common["read"], common["proposal"], (("context", "Build reader context", "w6.context", (), ()), ("analyze", "Analyze manuscript", "w6.analyze", ("context",), ("runtime:proposal",)), ("proposal", "Stage feedback", "w6.proposal", ("analyze",), common["proposal"])), "proposal_gate_ready"),
-        _definition("W7", "Metadata ingestion", "Extract metadata and stage updates", common["read"], common["proposal"], (("parse", "Parse metadata", "w7.parse", (), ()), ("proposal", "Stage metadata proposals", "w7.proposal", ("parse",), common["proposal"])), "proposal_gate_ready"),
+        handler_ref=f"injected:{definition.workflow_id}:{step.tool_name}",
+        read_set=step.read_set,
+        write_set=step.write_set,
+        risk=step.risk,
+        approval_policy=step.approval_policy,
+        idempotency=step.idempotency,
+        estimated_cost_usd=0.000001 if step.risk == "external_call" else 0.0,
+        estimated_tokens=1 if step.risk == "external_call" else 0,
     )
-    return {definition.workflow_id: RegisteredWorkflowAdapter(WorkflowAdapterDefinition(**{**definition.__dict__, "handlers": handlers.get(definition.workflow_id, {})})) for definition in definitions}
 
 
-def register_workflow_adapters(registry: HarnessRegistry, handlers: Mapping[str, Mapping[str, Handler]] | None = None) -> HarnessRegistry:
+def _step(
+    task_id: str,
+    title: str,
+    tool_name: str,
+    dependencies: tuple[str, ...],
+    read_set: tuple[str, ...],
+    write_set: tuple[str, ...] = (),
+    *,
+    external: bool = False,
+) -> WorkflowStepDefinition:
+    return WorkflowStepDefinition(
+        task_id=task_id,
+        title=title,
+        tool_name=tool_name,
+        dependencies=dependencies,
+        read_set=read_set,
+        write_set=write_set,
+        risk="external_call" if external else "draft",
+        idempotency="required" if external else "optional",
+    )
+
+
+def _definitions() -> tuple[WorkflowAdapterDefinition, ...]:
+    read = ("project:source", "project:canonical", "runtime:checkpoint")
+    proposal = ("runtime:proposal",)
+    return (
+        WorkflowAdapterDefinition(
+            "W0", "Orchestrator", "Plan and dispatch child workflows", read, proposal,
+            (
+                _step("parse_goal", "Parse goal", "w0.parse_goal", (), read, external=True),
+                _step("validate_plan", "Validate plan", "w0.validate_plan", ("parse_goal",), read, proposal),
+            ),
+            "all_steps_succeeded",
+        ),
+        WorkflowAdapterDefinition(
+            "W1", "Import", "Extract evidence and stage an import package", read,
+            ("runtime:proposal", "runtime:semantic_coverage", "runtime:package_graph"),
+            (
+                _step("extract", "Extract source windows", "w1.extract", (), read, external=True),
+                _step("semantic_coverage", "Compile semantic coverage", "w1.semantic_coverage_compiler", ("extract",), read, ("runtime:semantic_coverage",)),
+                _step("package_graph", "Compile package graph", "w1.package_graph_compiler", ("semantic_coverage",), read, ("runtime:package_graph",)),
+                _step("proposal_write", "Stage proposal package", "w1.proposal_write", ("package_graph",), read, proposal),
+            ),
+            "all_tasks_succeeded_and_w1_gates_passed",
+        ),
+        WorkflowAdapterDefinition(
+            "W2", "Manuscript sync", "Sync manuscript drafts and stage proposals", read, proposal,
+            (
+                _step("load", "Load manuscript", "w2.load", (), read),
+                _step("diff", "Extract and diff project entities", "w2.diff", ("load",), read, proposal, external=True),
+                _step("proposal", "Stage proposals", "w2.proposal", ("diff",), read, proposal),
+            ),
+            "all_tasks_succeeded_at_proposal_gate",
+        ),
+        WorkflowAdapterDefinition(
+            "W3", "Writing assistant", "Generate draft content and stage entities", read, proposal,
+            (
+                _step("context", "Build context", "w3.context", (), read),
+                _step("generate", "Generate draft", "w3.generate", ("context",), read, proposal, external=True),
+                _step("proposal", "Stage proposals", "w3.proposal", ("generate",), read, proposal),
+            ),
+            "all_tasks_succeeded_at_proposal_gate",
+        ),
+        WorkflowAdapterDefinition(
+            "W4", "Consistency check", "Find consistency issues and stage fixes", read, proposal,
+            (
+                _step("context", "Build context", "w4.context", (), read),
+                _step("check", "Check consistency", "w4.check", ("context",), read, proposal, external=True),
+                _step("proposal", "Stage fix proposals", "w4.proposal", ("check",), read, proposal),
+            ),
+            "all_tasks_succeeded_at_proposal_gate",
+        ),
+        WorkflowAdapterDefinition(
+            "W5", "Simulation", "Run scenario analysis and stage report", read, proposal,
+            (
+                _step("context", "Load affected context", "w5.context", (), read),
+                _step("simulate", "Run simulation", "w5.simulate", ("context",), read, proposal, external=True),
+                _step("proposal", "Stage simulation report", "w5.proposal", ("simulate",), read, proposal),
+            ),
+            "all_tasks_succeeded_at_proposal_gate",
+        ),
+        WorkflowAdapterDefinition(
+            "W6", "Beta reader", "Run reader analysis and stage feedback", read, proposal,
+            (
+                _step("context", "Build reader context", "w6.context", (), read),
+                _step("analyze", "Analyze manuscript", "w6.analyze", ("context",), read, proposal, external=True),
+                _step("proposal", "Stage feedback", "w6.proposal", ("analyze",), read, proposal),
+            ),
+            "all_tasks_succeeded_at_proposal_gate",
+        ),
+        WorkflowAdapterDefinition(
+            "W7", "Metadata ingestion", "Extract metadata and stage updates", read, proposal,
+            (
+                _step("parse", "Parse metadata", "w7.parse", (), read, proposal, external=True),
+                _step("proposal", "Stage metadata proposals", "w7.proposal", ("parse",), read, proposal),
+            ),
+            "all_tasks_succeeded_at_proposal_gate",
+        ),
+    )
+
+
+def build_workflow_adapters(
+    handlers: Mapping[str, Mapping[str, Handler]] | None = None,
+) -> dict[str, RegisteredWorkflowAdapter]:
+    """Build all adapters with optional dependency-injected node handlers."""
+    handlers = handlers or {}
+    adapters: dict[str, RegisteredWorkflowAdapter] = {}
+    for definition in _definitions():
+        configured = WorkflowAdapterDefinition(
+            **{**definition.__dict__, "handlers": handlers.get(definition.workflow_id, {})}
+        )
+        adapters[definition.workflow_id] = RegisteredWorkflowAdapter(configured)
+    return adapters
+
+
+def register_workflow_adapters(
+    registry: HarnessRegistry,
+    handlers: Mapping[str, Mapping[str, Handler]] | None = None,
+) -> HarnessRegistry:
     """Register W0-W7 and their ToolSpec/v2 capabilities, failing closed."""
     for adapter in build_workflow_adapters(handlers).values():
         registry.register_workflow(adapter)
@@ -182,5 +323,7 @@ def register_workflow_adapters(registry: HarnessRegistry, handlers: Mapping[str,
     return registry
 
 
-def create_default_harness_registry(handlers: Mapping[str, Mapping[str, Handler]] | None = None) -> HarnessRegistry:
+def create_default_harness_registry(
+    handlers: Mapping[str, Mapping[str, Handler]] | None = None,
+) -> HarnessRegistry:
     return register_workflow_adapters(HarnessRegistry(), handlers)
