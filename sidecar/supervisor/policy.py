@@ -7,9 +7,12 @@ Entry points:
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import re
 import uuid
 from datetime import datetime, timezone
-from typing import AsyncGenerator
+from pathlib import Path
+from typing import Any, AsyncGenerator, Mapping
 
 from sidecar.models.state import (
     PROFILE_CONFIGS,
@@ -23,6 +26,8 @@ from sidecar.models.state import (
     plan_tool_operating_spec,
     select_granularity_profile,
     validate_import_plan,
+    reconstruct_source_span,
+    validate_source_span,
 )
 from sidecar.supervisor.planner import (
     planner_proposal_to_import_plan,
@@ -74,6 +79,183 @@ _PROGRESS_ARCHITECT = 0.80
 _PROGRESS_QA_REVIEW = 0.88
 _PROGRESS_PROPOSAL = 0.95
 _PROGRESS_DONE = 1.0
+
+_SNAPSHOT_RESUME_ORDER = {
+    "segment_manifest": 0,
+    "extract_window": 1,
+    "reduce_repair": 2,
+    "architect_timeline": 3,
+    "qa_review": 4,
+    "judge_import": 5,
+    "proposal_write": 6,
+}
+_SNAPSHOT_BOUNDARY_NEXT_NODE = {
+    "reduce_repair": "architect_timeline",
+    "architect_timeline": "qa_review",
+    "qa_review": "judge_import",
+    "judge_import": "proposal_write",
+    "proposal_write": None,
+}
+_SNAPSHOT_PRIVATE_KEY = "_w1_supervisor_snapshot"
+_SNAPSHOT_UNSAFE_KEY = re.compile(
+    r"(?:api[_-]?key|secret|password|authorization|access[_-]?token|refresh[_-]?token|private[_-]?key|"
+    r"prompt|source_(?:body|text|content)|raw_(?:content|text)|chain_?of_?thought|hidden_?reasoning|"
+    r"reasoning_trace|callback|client|runtime|(?:^|_)(?:content|text)(?:$|_))",
+    re.I,
+)
+
+
+def _snapshot_value(value: Any) -> Any:
+    """Return JSON-only derived state without source/prompt material or secrets."""
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        # File paths and source bodies are never recovery state.  Relative
+        # artifact IDs remain useful; absolute paths are rejected by v1 too.
+        return "" if value.startswith("/") or re.match(r"^[A-Za-z]:[\\\\/]", value) else value
+    if isinstance(value, (list, tuple)):
+        return [_snapshot_value(item) for item in value]
+    if isinstance(value, Mapping):
+        return {
+            str(key): _snapshot_value(item)
+            for key, item in value.items()
+            if isinstance(key, str) and not _SNAPSHOT_UNSAFE_KEY.search(key)
+        }
+    # Unknown runtime objects make a snapshot preview-only rather than trying
+    # to serialize them.  The codec remains the final fail-closed validator.
+    raise TypeError("supervisor_snapshot_state_is_not_json")
+
+
+def _snapshot_state(state: Mapping[str, Any]) -> dict[str, Any]:
+    """Project the Supervisor's derived artifacts onto the v1 allowlist."""
+    chunk_fields = {
+        "id", "chunk_id", "segment_id", "chapter_id", "chapter_number", "chapterNumber",
+        "source_span", "raw_source_hash", "substring_hash", "absolute_start", "absolute_end",
+        "source_tokens", "source_chars", "token_count", "char_count", "title",
+    }
+    compact_chunks = [
+        {key: value for key, value in chunk.items() if key in chunk_fields}
+        for chunk in state.get("chunks", [])
+        if isinstance(chunk, Mapping)
+    ]
+    if state.get("chunks") and (
+        len(compact_chunks) != len(state.get("chunks", []))
+        or any(not isinstance(chunk.get("source_span"), Mapping) for chunk in compact_chunks)
+    ):
+        raise ValueError("supervisor_snapshot_requires_source_spans")
+    projected = {
+        "chunks": compact_chunks,
+        # Prompt windows intentionally do not cross a restart boundary: they
+        # contain the source/prompt body. QA reruns are completed before a
+        # checkpoint; a future per-window contract can store span-only input.
+        "chunk_extractions": state.get("chunk_extractions", []),
+        "entity_registry": state.get("entity_registry", {}),
+        "relationships": state.get("relationships", []),
+        "world": {
+            "world_settings": state.get("world_settings", {}),
+            "world_containers": state.get("world_containers", []),
+        },
+        "timeline": {
+            "timeline_architecture": state.get("timeline_architecture", {}),
+            "timeline_branches": state.get("timeline_branches", []),
+        },
+        "organizer": {"organizer": state.get("organizer", {})},
+        "reducer": {"reducer_artifact": state.get("reducer_artifact", {})},
+        "cross_validation": state.get("cross_validation", {}),
+        "reviewer": {"import_review_report": state.get("import_review_report", {})},
+        "judge": {
+            "judge_artifact": state.get("judge_artifact", {}),
+            "gate_failures": state.get("gate_failures", []),
+            "supervisor_iteration": state.get("supervisor_iteration", 0),
+        },
+        "proposal": {"proposals": state.get("proposals", []), "evidence_cards": state.get("evidence_cards", [])},
+        "operations": state.get("operations", {}),
+        "import_manifest": state.get("import_run_manifest", {}),
+        "project_structure_digest": state.get("project_structure_digest", {}),
+    }
+    return {key: _snapshot_value(value) for key, value in projected.items()}
+
+
+def _rehydrate_snapshot_chunks(state: ImportSupervisorState, source_file_path: str) -> ImportSupervisorState:
+    """Rebuild transient chunk bodies solely from verified SourceSpan records."""
+    source_path = Path(source_file_path)
+    raw_source = source_path.read_text(encoding="utf-8")
+    restored_chunks: list[dict[str, Any]] = []
+    for compact in state.get("chunks", []):
+        if not isinstance(compact, Mapping):
+            raise ValueError("snapshot_chunk_is_invalid")
+        span = compact.get("source_span")
+        if not isinstance(span, Mapping):
+            raise ValueError("snapshot_chunk_source_span_missing")
+        valid, _errors = validate_source_span(dict(span), raw_source)
+        if not valid:
+            raise ValueError("snapshot_chunk_source_span_mismatch")
+        body = reconstruct_source_span(dict(span), raw_source)
+        restored_chunks.append({
+            **dict(compact),
+            "content": body,
+            "raw_content": body,
+            "manuscript_content": body,
+        })
+    return {**state, "chunks": restored_chunks, "source_text": raw_source}  # type: ignore[return-value]
+
+
+def _restore_snapshot_state(state: ImportSupervisorState, snapshot_state: Mapping[str, Any]) -> ImportSupervisorState:
+    """Restore only v1-derived state; source text and transient clients stay live."""
+    restored = dict(state)
+    for key in ("chunks", "chunk_extractions", "entity_registry", "relationships", "cross_validation", "operations", "project_structure_digest"):
+        if key in snapshot_state:
+            restored[key] = snapshot_state[key]
+    world = snapshot_state.get("world")
+    if isinstance(world, Mapping):
+        restored["world_settings"] = world.get("world_settings", {})
+        restored["world_containers"] = world.get("world_containers", [])
+    timeline = snapshot_state.get("timeline")
+    if isinstance(timeline, Mapping):
+        restored["timeline_architecture"] = timeline.get("timeline_architecture", {})
+        restored["timeline_branches"] = timeline.get("timeline_branches", [])
+    reducer = snapshot_state.get("reducer")
+    if isinstance(reducer, Mapping):
+        restored["reducer_artifact"] = reducer.get("reducer_artifact", {})
+    reviewer = snapshot_state.get("reviewer")
+    if isinstance(reviewer, Mapping):
+        restored["import_review_report"] = reviewer.get("import_review_report", {})
+    judge = snapshot_state.get("judge")
+    if isinstance(judge, Mapping):
+        restored["judge_artifact"] = judge.get("judge_artifact", {})
+        restored["gate_failures"] = judge.get("gate_failures", [])
+        restored["supervisor_iteration"] = judge.get("supervisor_iteration", 0)
+    proposal = snapshot_state.get("proposal")
+    if isinstance(proposal, Mapping):
+        restored["proposals"] = proposal.get("proposals", [])
+        restored["evidence_cards"] = proposal.get("evidence_cards", [])
+    if "import_manifest" in snapshot_state:
+        restored["import_run_manifest"] = snapshot_state["import_manifest"]
+    return restored  # type: ignore[return-value]
+
+
+def _resume_budget_is_compatible(config: Mapping[str, Any], snapshot: Mapping[str, Any]) -> bool:
+    budget = snapshot.get("budget_snapshot")
+    if not isinstance(budget, Mapping):
+        return True
+    spent = float(budget.get("spent_usd", 0.0) or 0.0)
+    policy = config.get("budget_policy") or config.get("budget_config") or {}
+    if not isinstance(policy, Mapping):
+        return False
+    limit = policy.get("budget_limit_usd", policy.get("max_cost_usd"))
+    return limit is None or float(limit) >= spent
+
+
+def _snapshot_budget(config: Mapping[str, Any], state: Mapping[str, Any]) -> dict[str, float]:
+    policy = config.get("budget_policy") or config.get("budget_config") or {}
+    policy = policy if isinstance(policy, Mapping) else {}
+    ledger = state.get("usage_ledger") if isinstance(state.get("usage_ledger"), Mapping) else {}
+    limit = policy.get("budget_limit_usd", policy.get("max_cost_usd", 0.0))
+    spent = ledger.get("spent_usd", ledger.get("cost_usd", 0.0)) if isinstance(ledger, Mapping) else 0.0
+    return {
+        "budget_limit_usd": max(0.0, float(limit or 0.0)),
+        "spent_usd": max(0.0, float(spent or 0.0)),
+    }
 
 
 def _now_iso() -> str:
@@ -1368,11 +1550,13 @@ async def run_supervisor_streaming(
         "converge_status": "not_started",
     }
 
+    resume_next_node = ""
+
     def _emit(progress: float, node: str, errors: list | None = None) -> dict:
         chunks_done = len(state.get("chunk_extractions", []))
         total = len(state.get("chunks", [])) or 1
         _chunk_progress[project_path] = {"completed": chunks_done, "total": total}
-        return {
+        update = {
             "progress": progress,
             "errors": errors or [],
             "completed_chunks": chunks_done,
@@ -1388,6 +1572,32 @@ async def run_supervisor_streaming(
             "import_review_report": state.get("import_review_report", {}),
             "proposals_count": len(state.get("proposals", [])),
         }
+        if node in _SNAPSHOT_BOUNDARY_NEXT_NODE:
+            try:
+                completed = [
+                    boundary for boundary, order in _SNAPSHOT_RESUME_ORDER.items()
+                    if order <= _SNAPSHOT_RESUME_ORDER[node]
+                ]
+                completed_windows = [
+                    str(item.get("window_id") or item.get("id"))
+                    for item in state.get("chunk_extractions", [])
+                    if isinstance(item, Mapping) and isinstance(item.get("window_id") or item.get("id"), str)
+                ]
+                update[_SNAPSHOT_PRIVATE_KEY] = {
+                    "state": _snapshot_state(state),
+                    "completed_nodes": completed,
+                    "completed_window_ids": list(dict.fromkeys(completed_windows)),
+                    "repeatable_node_counts": {"qa_review": int(state.get("supervisor_iteration", 0) or 0) + 1},
+                    "budget_snapshot": _snapshot_budget(config, state),
+                    # The adapter cross-checks this against RuntimeStore before
+                    # publishing a resumable checkpoint.
+                    "unknown_tool_call_ids": [],
+                }
+            except (TypeError, ValueError):
+                # A normal import may still finish, but its checkpoint remains
+                # preview-only when derived state cannot satisfy v1.
+                pass
+        return update
 
     # Supervisor only runs for import_all
     if import_mode != "import_all":
@@ -1397,8 +1607,65 @@ async def run_supervisor_streaming(
             yield update
         return
 
+    resume_reference = config.get("w1_supervisor_resume_snapshot_ref")
+    if isinstance(resume_reference, Mapping):
+        from sidecar.runtime.w1_supervisor_snapshot import (
+            SnapshotValidationError,
+            load_w1_supervisor_snapshot,
+        )
+        from sidecar.workflows.w1_agentic_adapter import build_supervisor_snapshot_identities
+
+        lineage_id = str(resume_reference.get("lineage_id") or "")
+        source_attempt_id = str(resume_reference.get("attempt_id") or "")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", lineage_id) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", source_attempt_id):
+            raise SnapshotValidationError("snapshot_reference_identity_is_invalid")
+        config.setdefault(
+            "w1_supervisor_staged_source_relative_path",
+            f"system/imports/{lineage_id}/attempts/{source_attempt_id}/raw_source.txt",
+        )
+        config.setdefault("snapshot_source_attempt_id", source_attempt_id)
+        source_identity, config_identity = build_supervisor_snapshot_identities(config, project_path=project_path)
+        loaded = load_w1_supervisor_snapshot(
+            project_path,
+            resume_reference,
+            expected_source_identity=source_identity,
+            expected_config_identity=config_identity,
+        )
+        snapshot = loaded["snapshot"]
+        expected_attempt_id = str(config.get("snapshot_source_attempt_id") or config.get("attempt_id") or "")
+        if snapshot.get("attempt_id") != expected_attempt_id:
+            raise SnapshotValidationError("snapshot_attempt_provenance_mismatch")
+        runtime_store = config.get("runtime_store")
+        current_attempt_id = str(config.get("attempt_id") or "")
+        actual_unknown = []
+        if runtime_store is not None and current_attempt_id:
+            actual_unknown = [str(item.get("tool_call_id")) for item in runtime_store.list_unknown_call_summaries(current_attempt_id)]
+        if sorted(actual_unknown) != sorted(str(item) for item in snapshot.get("unknown_tool_call_ids", [])):
+            raise SnapshotValidationError("snapshot_unknown_tool_calls_mismatch")
+        if actual_unknown:
+            raise SnapshotValidationError("snapshot_unknown_tool_calls_require_human_confirmation")
+        if not _resume_budget_is_compatible(config, snapshot):
+            raise SnapshotValidationError("snapshot_budget_is_not_compatible")
+        state = _restore_snapshot_state(state, loaded["state"])
+        source_for_rebuild = Path(str(config.get("source_file_path") or ""))
+        if not source_for_rebuild.is_file():
+            source_for_rebuild = Path(project_path) / str(config["w1_supervisor_staged_source_relative_path"])
+        state = _rehydrate_snapshot_chunks(state, str(source_for_rebuild))
+        resume_next_node = str(snapshot.get("next_node") or "proposal_gate")
+        if resume_next_node not in {*_SNAPSHOT_RESUME_ORDER, "proposal_gate"}:
+            raise SnapshotValidationError("snapshot_next_node_is_not_resumable")
+        state = _with_status(
+            state,
+            current_tool=resume_next_node,
+            orchestrator_phase="resuming",
+            converge_status="resuming",
+        )
+
     # ── Validate file + split chunks ─────────────────────────────────────────
-    try:
+    # A v1 snapshot starts *after* one of the complete Supervisor boundaries.
+    # It never resumes inside a provider call or an extraction window.
+    if not resume_next_node:
+      try:
         _emit_activity(state, phase="validate", tool="validate_file", status="start", message="Validating source file and workflow lock.")
         validate_result = await node_validate_file(state)
         state = {**state, **validate_result}
@@ -1421,7 +1688,7 @@ async def run_supervisor_streaming(
             total=len(state.get("prompt_windows", [])),
         )
         yield _emit(0.05, "split_chunks", state.get("errors", []))
-    except Exception as exc:
+      except Exception as exc:
         _emit_activity(state, phase="error", tool="split_chunks", status="fail", level="error", message="Failed before extraction.", error=str(exc))
         yield _emit(0.0, "error", [str(exc)])
         return
@@ -1434,16 +1701,26 @@ async def run_supervisor_streaming(
 
     async def _policy_with_progress():
         nonlocal state
-        _emit_activity(state, phase="planning", tool="planner", status="start", message="Preparing orchestrator import plan.")
-        state = _ensure_orchestrator_plan(state)
-        _emit_activity(
+        def _should_run(stage: str) -> bool:
+            return (
+                not resume_next_node
+                or (
+                    resume_next_node in _SNAPSHOT_RESUME_ORDER
+                    and _SNAPSHOT_RESUME_ORDER[stage] >= _SNAPSHOT_RESUME_ORDER[resume_next_node]
+                )
+            )
+        if not resume_next_node:
+            _emit_activity(state, phase="planning", tool="planner", status="start", message="Preparing orchestrator import plan.")
+            state = _ensure_orchestrator_plan(state)
+        if not resume_next_node:
+          _emit_activity(
             state,
             phase="planning",
             tool="planner",
             status="success" if state.get("import_plan_validation", {}).get("ok", True) else "fail",
             level="info" if state.get("import_plan_validation", {}).get("ok", True) else "error",
             message=f"Planner selected {state.get('import_granularity_profile', {}).get('profile_name', 'unknown')} granularity.",
-        )
+          )
         planner_action = resolve_planner_next_action(
             state.get("planner_proposal") or state.get("context", {}).get("planner_proposal") or {},
             registered_tools=set(tools),
@@ -1452,8 +1729,9 @@ async def run_supervisor_streaming(
             max_iterations=int(state.get("max_supervisor_iterations", 0) or 0),
             budget_exhausted=bool(state.get("budget_exhausted")),
         )
-        state = {**state, "planner_next_action": planner_action}
-        if planner_action["kind"] == "stop":
+        if not resume_next_node:
+          state = {**state, "planner_next_action": planner_action}
+        if not resume_next_node and planner_action["kind"] == "stop":
             state = _with_status(
                 state,
                 current_tool="planner_stop",
@@ -1463,13 +1741,14 @@ async def run_supervisor_streaming(
             _emit_activity(state, phase="planning", tool="planner_stop", status="success", message="Planner requested a bounded stop.")
             _emit(1.0, "planner_stop", state.get("errors", []))
             return
-        if state.get("budget_exhausted"):
+        if not resume_next_node and state.get("budget_exhausted"):
             state = _with_status(state, current_tool="budget_stop", orchestrator_phase="stopped", converge_status="hard_fail")
             _emit(1.0, "budget_stop", state.get("errors", []))
             return
-        state = await _apply_initial_planner_action(state, tools, planner_action)
-        persist_w1_usage_ledger(state)
-        planner_consumed_segment_manifest = state.get("current_stage") == "segment_manifest"
+        if not resume_next_node:
+            state = await _apply_initial_planner_action(state, tools, planner_action)
+            persist_w1_usage_ledger(state)
+        planner_consumed_segment_manifest = bool(resume_next_node) or state.get("current_stage") == "segment_manifest"
         profile_config_local = state.get("profile_config") or profile_config
         tool_operating_spec_local = state.get("tool_operating_spec", {})
 
@@ -1481,14 +1760,15 @@ async def run_supervisor_streaming(
             state = {**state, **seg_update, "current_stage": "segment_manifest"}
             _emit_activity(state, phase="planning", tool="segment_manifest", status="success", message="Segment manifest ready.")
             persist_w1_usage_ledger(state)
-        _emit(_PROGRESS_SEGMENT_MANIFEST, "segment_manifest")
+        if not resume_next_node:
+            _emit(_PROGRESS_SEGMENT_MANIFEST, "segment_manifest")
 
         # Extract windows (batches of 3, progress linearly from 0.10 → 0.65)
         windows_local = list(state.get("prompt_windows", []))
         total_w = max(len(windows_local), 1)
         batch_size = 3
         window_idx = 0
-        for batch_start in range(0, len(windows_local), batch_size):
+        for batch_start in ([] if resume_next_node else range(0, len(windows_local), batch_size)):
             if state.get("budget_exhausted") or _cancel_requested(state):
                 persist_w1_usage_ledger(state)
                 break
@@ -1539,21 +1819,23 @@ async def run_supervisor_streaming(
             _chunk_progress[project_path] = {"completed": window_idx, "total": total_w}
             yield progress, "extract_windows", state.get("errors", [])
 
-        state = {**state, "current_stage": "extract_windows"}
-        if _cancel_requested(state):
+        if not resume_next_node:
+            state = {**state, "current_stage": "extract_windows"}
+        if not resume_next_node and _cancel_requested(state):
             persist_w1_usage_ledger(state)
             _emit_activity(state, phase="cancelled", tool="workflow", status="cancelled", level="warning", message="Import cancelled after extraction loop.")
             return
 
         # Reduce entities
-        state = _with_status(state, current_tool="reduce_entities", orchestrator_phase="reducing")
-        _emit_activity(state, phase="reducing", tool="reduce_entities", status="start", message="Reducing extracted entities.")
-        reduce_update = await tools["reduce_entities"](state)
-        state = {**state, **reduce_update, "current_stage": "reduce_entities"}
-        _emit_activity(state, phase="reducing", tool="reduce_entities", status="success", message="Entity reduction complete.")
+        if not resume_next_node:
+          state = _with_status(state, current_tool="reduce_entities", orchestrator_phase="reducing")
+          _emit_activity(state, phase="reducing", tool="reduce_entities", status="start", message="Reducing extracted entities.")
+          reduce_update = await tools["reduce_entities"](state)
+          state = {**state, **reduce_update, "current_stage": "reduce_entities"}
+          _emit_activity(state, phase="reducing", tool="reduce_entities", status="success", message="Entity reduction complete.")
 
         # ── 3b. Reduce world entities (streaming path) ───────────────────────
-        if "reduce_world_entities" in tools:
+        if not resume_next_node and "reduce_world_entities" in tools:
             state = _with_status(state, current_tool="reduce_world_entities", orchestrator_phase="reducing")
             _emit_activity(state, phase="reducing", tool="reduce_world_entities", status="start", message="Reducing world entities.")
             rwe_update = tools["reduce_world_entities"](state)
@@ -1561,66 +1843,76 @@ async def run_supervisor_streaming(
             _emit_activity(state, phase="reducing", tool="reduce_world_entities", status="success", message="World entity reduction complete.")
 
         # ── 3c. Content organizer (streaming path) ───────────────────────────
-        _emit_activity(state, phase="reducing", tool="organizer", status="start", message="Running content organizer to filter world candidates.")
-        state = await _organize_staged_world_candidates(state)
-        _emit_activity(state, phase="reducing", tool="organizer", status="success", message="Content organizer complete.")
+        if not resume_next_node:
+          _emit_activity(state, phase="reducing", tool="organizer", status="start", message="Running content organizer to filter world candidates.")
+          state = await _organize_staged_world_candidates(state)
+          _emit_activity(state, phase="reducing", tool="organizer", status="success", message="Content organizer complete.")
 
         # ── 4. Minor repair (streaming path) ─────────────────────────────────
-        state = _with_status(state, current_tool="minor_repair", orchestrator_phase="repairing")
-        _emit_activity(state, phase="repairing", tool="minor_repair", status="start", message="Running deterministic repair.")
-        repair_update = await tools["minor_repair"](state)
-        state = {**state, **repair_update, "current_stage": "minor_repair"}
-        _emit_activity(state, phase="repairing", tool="minor_repair", status="success", message="Deterministic repair complete.")
-        state = _persist_supervisor_evidence_cards(state)
-        yield _PROGRESS_REDUCE_REPAIR, "reduce_repair", state.get("errors", [])
+        if not resume_next_node:
+          state = _with_status(state, current_tool="minor_repair", orchestrator_phase="repairing")
+          _emit_activity(state, phase="repairing", tool="minor_repair", status="start", message="Running deterministic repair.")
+          repair_update = await tools["minor_repair"](state)
+          state = {**state, **repair_update, "current_stage": "minor_repair"}
+          _emit_activity(state, phase="repairing", tool="minor_repair", status="success", message="Deterministic repair complete.")
+          state = _persist_supervisor_evidence_cards(state)
+          yield _PROGRESS_REDUCE_REPAIR, "reduce_repair", state.get("errors", [])
 
         # Architect
-        state = _with_status(state, current_tool="architect_timeline", orchestrator_phase="architecting")
-        _emit_activity(state, phase="architecting", tool="architect_timeline", status="start", message="Architecting timeline topology.")
-        arch_update = await tools["architect_timeline"](state)
-        state = {**state, **arch_update, "current_stage": "architect_timeline"}
-        state = _prepare_reviewer_staging_state(enforce_timeline_density(state))
-        _emit_activity(state, phase="architecting", tool="architect_timeline", status="success", message="Timeline architecture complete.")
-        yield _PROGRESS_ARCHITECT, "architect_timeline", state.get("errors", [])
+        if resume_next_node in {"", "architect_timeline"}:
+          state = _with_status(state, current_tool="architect_timeline", orchestrator_phase="architecting")
+          _emit_activity(state, phase="architecting", tool="architect_timeline", status="start", message="Architecting timeline topology.")
+          arch_update = await tools["architect_timeline"](state)
+          state = {**state, **arch_update, "current_stage": "architect_timeline"}
+          state = _prepare_reviewer_staging_state(enforce_timeline_density(state))
+          _emit_activity(state, phase="architecting", tool="architect_timeline", status="success", message="Timeline architecture complete.")
+          yield _PROGRESS_ARCHITECT, "architect_timeline", state.get("errors", [])
 
-        # QA + optional reruns
-        max_sup_iters = state.get("max_supervisor_iterations", 3)
-        for sup_iter in range(max_sup_iters):
-            state = {**state, "supervisor_iteration": sup_iter}
-            state = _with_status(state, current_tool="qa_review", orchestrator_phase="reviewing")
-            _emit_activity(state, phase="reviewing", tool="qa_review", status="start", message=f"Running QA review iteration {sup_iter + 1}.")
-            qa_update = await tools["qa_review"](state)
-            state = {**state, **qa_update, "current_stage": "qa_review"}
-            _emit_activity(state, phase="reviewing", tool="qa_review", status="success", message=f"QA review iteration {sup_iter + 1} complete.")
-            gate_failures = list(state.get("gate_failures", []))
-            if not gate_failures:
-                break
-            failing_ids = list({f["window_id"] for f in gate_failures if "window_id" in f})
-            for wid in failing_ids:
-                if _cancel_requested(state):
+        # QA + optional reruns.  A later snapshot resumes at the next complete
+        # boundary, never inside these rerun/provider loops.
+        if _should_run("qa_review"):
+            max_sup_iters = state.get("max_supervisor_iterations", 3)
+            for sup_iter in range(max_sup_iters):
+                state = {**state, "supervisor_iteration": sup_iter}
+                state = _with_status(state, current_tool="qa_review", orchestrator_phase="reviewing")
+                _emit_activity(state, phase="reviewing", tool="qa_review", status="start", message=f"Running QA review iteration {sup_iter + 1}.")
+                qa_update = await tools["qa_review"](state)
+                state = {**state, **qa_update, "current_stage": "qa_review"}
+                _emit_activity(state, phase="reviewing", tool="qa_review", status="success", message=f"QA review iteration {sup_iter + 1} complete.")
+                gate_failures = list(state.get("gate_failures", []))
+                if not gate_failures:
                     break
-                state = await _process_window(state, tools, wid, profile_config_local, tool_operating_spec_local)
-            reduce_u = await tools["reduce_entities"](state)
-            state = {**state, **reduce_u}
-            repair_u = await tools["minor_repair"](state)
-            state = {**state, **repair_u}
-        yield _PROGRESS_QA_REVIEW, "qa_review", state.get("errors", [])
+                failing_ids = list({f["window_id"] for f in gate_failures if "window_id" in f})
+                for wid in failing_ids:
+                    if _cancel_requested(state):
+                        break
+                    state = await _process_window(state, tools, wid, profile_config_local, tool_operating_spec_local)
+                reduce_u = await tools["reduce_entities"](state)
+                state = {**state, **reduce_u}
+                repair_u = await tools["minor_repair"](state)
+                state = {**state, **repair_u}
+            yield _PROGRESS_QA_REVIEW, "qa_review", state.get("errors", [])
 
-        if "judge_import" in tools:
+        if _should_run("judge_import") and "judge_import" in tools:
             _emit_activity(state, phase="judging", tool="judge_import", status="start", message="Judging import quality.")
             state = await _run_judge_import(state, tools)
             _active_tos_local = state.get("tool_operating_spec") or tool_operating_spec_local
             state = await _apply_thematic_reruns(state, tools, profile_config_local, _active_tos_local)
             _emit_activity(state, phase="judging", tool="judge_import", status="success", message="Import quality judgment complete.")
-        yield _PROGRESS_QA_REVIEW, "judge_import", state.get("errors", [])
+            yield _PROGRESS_QA_REVIEW, "judge_import", state.get("errors", [])
 
-        # Proposal write
-        state = _with_status(state, current_tool="proposal_write", orchestrator_phase="writing", converge_status="writing")
-        _emit_activity(state, phase="writing", tool="proposal_write", status="start", message="Writing import proposals and artifacts.")
-        proposal_update = await tools["proposal_write"](state)
-        state = {**state, **proposal_update, "current_stage": "proposal_write"}
-        _emit_activity(state, phase="writing", tool="proposal_write", status="success", message="Import proposals written.")
-        yield _PROGRESS_PROPOSAL, "proposal_write", state.get("errors", [])
+        # proposal_gate is terminal from a persisted proposal.  It deliberately
+        # does not call proposal_write or accept canonical data again.
+        if _should_run("proposal_write"):
+            state = _with_status(state, current_tool="proposal_write", orchestrator_phase="writing", converge_status="writing")
+            _emit_activity(state, phase="writing", tool="proposal_write", status="start", message="Writing import proposals and artifacts.")
+            proposal_update = await tools["proposal_write"](state)
+            state = {**state, **proposal_update, "current_stage": "proposal_write"}
+            _emit_activity(state, phase="writing", tool="proposal_write", status="success", message="Import proposals written.")
+            yield _PROGRESS_PROPOSAL, "proposal_write", state.get("errors", [])
+        elif resume_next_node == "proposal_gate":
+            state = _with_status(state, current_tool="proposal_gate", orchestrator_phase="proposal_gate", converge_status="awaiting_acceptance")
+            yield _PROGRESS_PROPOSAL, "proposal_write", state.get("errors", [])
 
     async for progress, node, errors in _policy_with_progress():
         # Propagate supervisor decisions back to session if session_id provided

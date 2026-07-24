@@ -7920,6 +7920,35 @@ def _runtime_checkpoint_summary(
     }
 
 
+def _attach_supervisor_resume_snapshot(config: dict[str, Any]) -> None:
+    """Attach an already-durable v1 reference for direct/restarted W1 workers.
+
+    The runtime API validates the same reference before launch.  This fallback
+    keeps process-restart recovery correct when a worker is reconstructed by a
+    lifecycle owner rather than through the HTTP endpoint.
+    """
+    if isinstance(config.get("w1_supervisor_resume_snapshot_ref"), dict):
+        return
+    runtime_store = config.get("runtime_store")
+    attempt_id = str(config.get("attempt_id") or "")
+    if runtime_store is None or not attempt_id:
+        return
+    fork = runtime_store.get_fork_snapshot(attempt_id)
+    state_reference = fork.get("state_reference") if isinstance(fork, dict) and isinstance(fork.get("state_reference"), dict) else {}
+    reference = state_reference.get("snapshot_ref") if isinstance(state_reference, dict) else None
+    if isinstance(reference, dict) and bool(fork.get("resumable")):
+        config["w1_supervisor_resume_snapshot_ref"] = dict(reference)
+        config["snapshot_source_attempt_id"] = str(state_reference.get("source_attempt_id") or "")
+        return
+    for checkpoint in reversed(runtime_store.list_checkpoint_metadata(attempt_id)):
+        metadata = checkpoint.get("metadata") if isinstance(checkpoint.get("metadata"), dict) else {}
+        reference = metadata.get("snapshot_ref")
+        if metadata.get("recovery_mode") == "resumable" and isinstance(reference, dict):
+            config["w1_supervisor_resume_snapshot_ref"] = dict(reference)
+            config["snapshot_source_attempt_id"] = attempt_id
+            return
+
+
 async def run(project_path: str, config: dict) -> dict:
     """Convenience entry point — creates state from config and runs graph."""
     project_path = str(_canonical_project_path(project_path))
@@ -8003,6 +8032,7 @@ async def run_streaming(project_path: str, config: dict):
         use_supervisor = False
     if use_supervisor:
         from sidecar.supervisor.policy import run_supervisor_streaming
+        _attach_supervisor_resume_snapshot(config)
         supervisor_stream = run_supervisor_streaming(project_path, config)
         # The router marks product runs explicitly. Keep older internal callers
         # functional while ensuring every new product supervisor run is observed

@@ -11,12 +11,18 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, AsyncIterable, AsyncIterator, Iterable, Mapping
 from uuid import uuid4
 
 from sidecar.harness.contracts import AgentEvent, Budget, ExecutionPlan, PlanTask, ToolSpec
 from sidecar.runtime.agent_runtime import LeaseLostError, RuntimeStore
+from sidecar.runtime.w1_supervisor_snapshot import (
+    SnapshotValidationError,
+    write_w1_supervisor_snapshot,
+)
 
 
 CONTENT_ONLY = "content_only"
@@ -49,10 +55,110 @@ _REPEATABLE_NODES = frozenset({"extract_windows", "qa_review", "judge_import"})
 # Older supervisor builds may surface these as progress-only events. They are
 # not stable graph boundaries, so observing them must not impose dependencies.
 _OPTIONAL_SUPERVISOR_OBSERVATIONS = frozenset({"split_chunks", "segment_manifest"})
+_SNAPSHOT_BOUNDARY_NEXT_NODE = {
+    "reduce_repair": "architect_timeline",
+    "architect_timeline": "qa_review",
+    "qa_review": "judge_import",
+    "judge_import": "proposal_write",
+    "proposal_write": None,
+}
 
 
 class W1AgenticTransitionError(RuntimeError):
     """A stream update fell outside the declared W1 Harness route."""
+
+
+def build_supervisor_snapshot_identities(
+    config: Mapping[str, Any], *, project_path: str | Path | None = None,
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """Build redacted, stable identities for Supervisor snapshot validation.
+
+    The selected source can live outside a project.  Its on-disk location is
+    deliberately never persisted in a snapshot; external sources use a stable
+    hash-derived logical path instead.  The runtime still validates the actual
+    source path separately before a resumed worker is launched.
+    """
+    root = Path(project_path or config.get("project_path") or ".").resolve()
+    source = Path(str(config.get("source_file_path") or ""))
+    source_hash = str(config.get("source_hash") or "")
+    source_size: int | None = None
+    if source.is_file():
+        data = source.read_bytes()
+        source_hash = hashlib.sha256(data).hexdigest()
+        source_size = len(data)
+    if len(source_hash) != 64 or any(char not in "0123456789abcdef" for char in source_hash):
+        raise SnapshotValidationError("supervisor_snapshot_source_hash_missing")
+    staged_relative = str(config.get("w1_supervisor_staged_source_relative_path") or "")
+    if not staged_relative:
+        raise SnapshotValidationError("supervisor_snapshot_staged_source_missing")
+    staged_path = (root / staged_relative).resolve()
+    try:
+        staged_path.relative_to(root)
+    except ValueError as exc:
+        raise SnapshotValidationError("supervisor_snapshot_staged_source_outside_project") from exc
+    if staged_path.is_symlink() or not staged_path.is_file() or hashlib.sha256(staged_path.read_bytes()).hexdigest() != source_hash:
+        raise SnapshotValidationError("supervisor_snapshot_staged_source_hash_mismatch")
+    relative_source = staged_path.relative_to(root).as_posix()
+    context = config.get("context") if isinstance(config.get("context"), Mapping) else {}
+    profile = str(config.get("prompt_profile") or config.get("profile") or context.get("prompt_profile") or "balanced")
+    identity = {
+        "model": str(config.get("model") or context.get("model") or "deepseek-v4-flash"),
+        "prompt_profile": profile,
+        "prompt_version": str(config.get("prompt_version") or "w1-supervisor-v1"),
+        "schema_version": str(config.get("schema_version") or "w1-schema-v4"),
+        "tool_registry_version": str(config.get("tool_registry_version") or "w1-tools-v2"),
+        "policy_version": str(config.get("policy_version") or "w1-policy-v1"),
+        "execution_mode": str(config.get("execution_mode") or SUPERVISOR),
+        "import_mode": str(config.get("import_mode") or IMPORT_ALL),
+    }
+    source_identity: dict[str, Any] = {
+        "source_relative_path": relative_source,
+        "source_sha256": source_hash,
+    }
+    if source_size is not None:
+        source_identity["source_size"] = source_size
+    return source_identity, identity
+
+
+def _stage_source_for_supervisor_snapshot(
+    project_path: str, source_file_path: str, *, lineage_id: str | None, attempt_id: str | None,
+) -> str:
+    """Persist an immutable, project-contained source copy for v1 snapshots."""
+    if not project_path or not source_file_path or not lineage_id or not attempt_id:
+        raise SnapshotValidationError("supervisor_snapshot_stage_identity_missing")
+    root = Path(project_path).resolve(strict=True)
+    source = Path(source_file_path)
+    if not source.is_file():
+        raise SnapshotValidationError("supervisor_snapshot_source_missing")
+    target = root / "system" / "imports" / lineage_id / "attempts" / attempt_id / "raw_source.txt"
+    try:
+        target.relative_to(root)
+    except ValueError as exc:
+        raise SnapshotValidationError("supervisor_snapshot_stage_outside_project") from exc
+    if any(parent.is_symlink() for parent in (target.parent, *target.parent.parents) if parent.exists()):
+        raise SnapshotValidationError("supervisor_snapshot_stage_symlink")
+    source_bytes = source.read_bytes()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        if target.is_symlink() or target.read_bytes() != source_bytes:
+            raise SnapshotValidationError("supervisor_snapshot_stage_conflict")
+        return target.relative_to(root).as_posix()
+    temporary = target.with_name(f".{target.name}.{uuid4().hex}.tmp")
+    try:
+        with temporary.open("xb") as handle:
+            handle.write(source_bytes)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
+        descriptor = os.open(target.parent, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+    return target.relative_to(root).as_posix()
 
 
 @dataclass(frozen=True)
@@ -207,6 +313,38 @@ class W1AgenticAdapter:
         self._parent_checkpoint_id: str | None = None
         self._last_node = ""
         self._decisions = 0
+        self._resume_snapshot_ref = _.get("w1_supervisor_resume_snapshot_ref")
+        self.project_path = str(config_project_path) if (config_project_path := _.get("project_path")) else ""
+        self._source_identity: dict[str, Any] | None = None
+        self._config_identity: dict[str, str] | None = None
+        if self.route == SUPERVISOR and self.project_path:
+            try:
+                if isinstance(self._resume_snapshot_ref, Mapping):
+                    snapshot_lineage = str(self._resume_snapshot_ref.get("lineage_id") or "")
+                    snapshot_attempt = str(self._resume_snapshot_ref.get("attempt_id") or "")
+                    _.setdefault(
+                        "w1_supervisor_staged_source_relative_path",
+                        f"system/imports/{snapshot_lineage}/attempts/{snapshot_attempt}/raw_source.txt",
+                    )
+                else:
+                    _.setdefault(
+                        "w1_supervisor_staged_source_relative_path",
+                        _stage_source_for_supervisor_snapshot(
+                            self.project_path,
+                            str(_.get("source_file_path") or ""),
+                            lineage_id=self.lineage_id,
+                            attempt_id=self.attempt_id,
+                        ),
+                    )
+                self._source_identity, self._config_identity = build_supervisor_snapshot_identities(
+                    _, project_path=self.project_path,
+                )
+            except SnapshotValidationError:
+                # Snapshotting is optional for a run; the observer records an
+                # explicit preview-only checkpoint rather than persisting an
+                # incomplete identity.
+                self._source_identity = None
+                self._config_identity = None
         self._initialize_durable_state()
 
     @classmethod
@@ -234,6 +372,16 @@ class W1AgenticAdapter:
             checkpoint_observer=_route(import_mode, execution_mode) == SUPERVISOR,
             lease_ttl_seconds=float(config.get("runtime_lease_ttl_seconds", 60)),
             window_ids=config.get("prompt_window_ids") or (),
+            project_path=str(config.get("project_path") or ""),
+            source_file_path=str(config.get("source_file_path") or ""),
+            source_hash=str(config.get("source_hash") or ""),
+            model=str(config.get("model") or context.get("model") or ""),
+            prompt_profile=str(config.get("prompt_profile") or context.get("prompt_profile") or ""),
+            prompt_version=str(config.get("prompt_version") or ""),
+            schema_version=str(config.get("schema_version") or ""),
+            tool_registry_version=str(config.get("tool_registry_version") or ""),
+            policy_version=str(config.get("policy_version") or ""),
+            w1_supervisor_resume_snapshot_ref=config.get("w1_supervisor_resume_snapshot_ref"),
         )
 
     def before_run(self) -> ExecutionPlan:
@@ -260,7 +408,10 @@ class W1AgenticAdapter:
                 if node_name:
                     self._last_node = node_name
                     self.on_node_yielded(node_name, update)
-                yield update
+                # Snapshot material is an internal, redacted handoff between
+                # the policy and the durable observer.  It must never become a
+                # UI/SSE payload or a persisted AgentEvent payload.
+                yield {key: value for key, value in update.items() if key != "_w1_supervisor_snapshot"}
             self.on_completion()
         except BaseException as error:
             self.on_failure(self._last_node, error)
@@ -294,12 +445,15 @@ class W1AgenticAdapter:
         task = self._validate_transition(node_name)
         occurrence = self._next_occurrence(node_name)
         key = f"w1-observer:{self.attempt_id or 'local'}:{node_name}:{occurrence}"
-        self._emit("tool.started", task, {"node": node_name, "route": self.route}, f"{key}:start")
         summary = _summary(payload or {})
-        self._emit("tool.result", task, {"node": node_name, "route": self.route, **summary}, f"{key}:result")
         self._completed.add(node_name)
         if self.checkpoint_observer:
-            self._record_checkpoint(node_name, summary)
+            self._record_checkpoint(node_name, summary, payload or {})
+        # A yielded node has already completed in the business executor.  Keep
+        # the durable observation after the snapshot/checkpoint commit so a
+        # recovered attempt never sees a result without its recovery material.
+        self._emit("tool.started", task, {"node": node_name, "route": self.route}, f"{key}:start")
+        self._emit("tool.result", task, {"node": node_name, "route": self.route, **summary}, f"{key}:result")
 
     def _observe_optional_node(self, node_name: str, payload: Mapping[str, Any]) -> None:
         """Persist compatibility progress without making it a DAG prerequisite."""
@@ -365,6 +519,24 @@ class W1AgenticAdapter:
             latest = max(checkpoints, key=lambda item: int(item.get("sequence", 0)))
             self._checkpoint_sequence = int(latest.get("sequence", 0))
             self._parent_checkpoint_id = str(latest["checkpoint_id"])
+        self._restore_completed_snapshot_boundary()
+
+    def _restore_completed_snapshot_boundary(self) -> None:
+        """Seed dependency checks from an immutable snapshot, never UI input."""
+        if self.route != SUPERVISOR or not self.project_path or not isinstance(self._resume_snapshot_ref, Mapping):
+            return
+        try:
+            from sidecar.runtime.w1_supervisor_snapshot import load_w1_supervisor_snapshot
+
+            loaded = load_w1_supervisor_snapshot(self.project_path, self._resume_snapshot_ref)
+            for completed in loaded["snapshot"].get("completed_nodes", []):
+                node = "extract_windows" if completed == "extract_window" else completed
+                if any(task.task_id == node for task in self.plan.tasks):
+                    self._completed.add(node)
+        except (OSError, SnapshotValidationError, TypeError, ValueError):
+            # The policy validates identities before execution.  Leaving this
+            # empty here makes an invalid reference fail closed at that layer.
+            return
 
     def _node_name(self, update: Mapping[str, Any]) -> str:
         node = update.get("current_node")
@@ -414,18 +586,63 @@ class W1AgenticAdapter:
             event, owner_id=self.worker_id, fence_token=self.fence_token,
         )
 
-    def _record_checkpoint(self, node_name: str, summary: Mapping[str, Any]) -> None:
+    def _record_checkpoint(self, node_name: str, summary: Mapping[str, Any], payload: Mapping[str, Any]) -> None:
         if not self.runtime_store or not self.attempt_id:
             return
         self._checkpoint_sequence += 1
         checkpoint_id = "w1observer_" + hashlib.sha256(
             f"{self.attempt_id}\0{self._checkpoint_sequence}\0{node_name}".encode()
         ).hexdigest()
+        metadata: dict[str, Any] = {"route": self.route, **summary, "recovery_mode": "preview_only"}
+        snapshot_payload = payload.get("_w1_supervisor_snapshot")
+        if node_name in _SNAPSHOT_BOUNDARY_NEXT_NODE and isinstance(snapshot_payload, Mapping):
+            try:
+                if not self.project_path or self._source_identity is None or self._config_identity is None:
+                    raise SnapshotValidationError("supervisor_snapshot_identity_unavailable")
+                snapshot_state = snapshot_payload.get("state")
+                if not isinstance(snapshot_state, Mapping):
+                    raise SnapshotValidationError("supervisor_snapshot_state_missing")
+                actual_unknown = [
+                    str(item.get("tool_call_id"))
+                    for item in self.runtime_store.list_unknown_call_summaries(self.attempt_id)
+                ]
+                declared_unknown = [str(item) for item in snapshot_payload.get("unknown_tool_call_ids") or ()]
+                if sorted(actual_unknown) != sorted(declared_unknown):
+                    raise SnapshotValidationError("supervisor_snapshot_unknown_tool_calls_mismatch")
+                if actual_unknown:
+                    raise SnapshotValidationError("supervisor_snapshot_unknown_tool_calls_present")
+                snapshot_ref = write_w1_supervisor_snapshot(
+                    self.project_path,
+                    lineage_id=str(self.lineage_id or ""),
+                    attempt_id=self.attempt_id,
+                    checkpoint_id=checkpoint_id,
+                    node=node_name,
+                    next_node=_SNAPSHOT_BOUNDARY_NEXT_NODE[node_name],
+                    source_identity=self._source_identity,
+                    config_identity=self._config_identity,
+                    state=snapshot_state,
+                    parent_checkpoint_id=self._parent_checkpoint_id,
+                    completed_nodes=tuple(snapshot_payload.get("completed_nodes") or ()),
+                    completed_window_ids=tuple(snapshot_payload.get("completed_window_ids") or ()),
+                    repeatable_node_counts=snapshot_payload.get("repeatable_node_counts"),
+                    budget_snapshot=snapshot_payload.get("budget_snapshot"),
+                    unknown_tool_call_ids=tuple(actual_unknown),
+                )
+                metadata.update({
+                    "recovery_mode": "resumable",
+                    "snapshot_ref": snapshot_ref.to_dict(),
+                    "snapshot_node": node_name,
+                    "next_node": _SNAPSHOT_BOUNDARY_NEXT_NODE[node_name],
+                })
+            except (OSError, SnapshotValidationError, ValueError, TypeError):
+                metadata.update({"recovery_mode": "preview_only", "snapshot_error": "snapshot_write_failed"})
+        elif node_name == "extract_windows":
+            metadata["preview_reason"] = "per_window_state_is_not_yet_safe_to_resume"
         self.runtime_store.record_checkpoint_metadata(
             self.attempt_id, checkpoint_id, node=node_name,
             sequence=self._checkpoint_sequence,
             parent_checkpoint_id=self._parent_checkpoint_id,
-            metadata={"route": self.route, **summary},
+            metadata=metadata,
         )
         self._parent_checkpoint_id = checkpoint_id
 

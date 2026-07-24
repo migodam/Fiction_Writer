@@ -41,6 +41,42 @@ def _now(value: float | None = None) -> float:
     return time.time() if value is None else value
 
 
+def _snapshot_artifact_refs_are_valid(project_root: Path, snapshot: dict[str, Any]) -> bool:
+    """Fail closed for optional snapshot artifact references until v1 has a resolver.
+
+    Current Supervisor snapshots do not emit these references.  When a future
+    producer does, a fork must verify containment, symlink safety, bytes hash,
+    and source-attempt provenance before it can become resumable.
+    """
+    root = project_root.resolve(strict=True)
+    expected_attempt_id = str(snapshot.get("attempt_id") or "")
+    for key in ("usage_ledger_ref", "semantic_coverage_ref"):
+        reference = snapshot.get(key)
+        if reference is None:
+            continue
+        if not isinstance(reference, dict) or reference.get("attempt_id") != expected_attempt_id:
+            return False
+        relative_path = reference.get("relative_path")
+        checksum = reference.get("sha256")
+        if not isinstance(relative_path, str) or not isinstance(checksum, str) or len(checksum) != 64:
+            return False
+        candidate = root / relative_path
+        try:
+            candidate.resolve(strict=True).relative_to(root)
+        except (OSError, ValueError):
+            return False
+        cursor = root
+        for part in Path(relative_path).parts:
+            if part in {"", ".", ".."}:
+                return False
+            cursor = cursor / part
+            if cursor.is_symlink():
+                return False
+        if not candidate.is_file() or hashlib.sha256(candidate.read_bytes()).hexdigest() != checksum:
+            return False
+    return True
+
+
 def _identifier(value: str | None, field: str, *, required: bool = False) -> str | None:
     if value is None:
         if required:
@@ -396,29 +432,83 @@ class RuntimeStore:
             checkpoint_metadata = json.loads(checkpoint["metadata_json"])
             run = connection.execute("SELECT workflow_id, lineage_id, thread_id FROM agent_runs WHERE run_id = ?", (parent["run_id"],)).fetchone()
             assert run is not None
-            # The current W1 supervisor persists summaries, not a serializable
-            # execution state.  This snapshot is therefore useful for review and
-            # future migration only; resume must fail closed until a workflow
-            # adapter can restore a selected node boundary without replaying work.
-            state_reference = {
-                "kind": "external_checkpoint_reference/v1",
-                "workflow_id": run["workflow_id"],
-                "lineage_id": run["lineage_id"],
-                "thread_id": run["thread_id"],
-                "checkpoint_id": checkpoint_id,
-                "immutable": True,
-                "mode": "preview_only",
-                "resumable": False,
-            }
+            snapshot_ref = checkpoint_metadata.get("snapshot_ref") if isinstance(checkpoint_metadata, dict) else None
+            resumable = False
+            non_resumable_reason = "fork_snapshot_not_resumable"
+            state_reference: dict[str, Any]
+            if run["workflow_id"] == "W1" and checkpoint_metadata.get("recovery_mode") == "resumable" and isinstance(snapshot_ref, dict):
+                try:
+                    from sidecar.runtime.w1_supervisor_snapshot import load_w1_supervisor_snapshot
+
+                    loaded = load_w1_supervisor_snapshot(self.project_root, snapshot_ref)
+                    snapshot = loaded["snapshot"]
+                    actual_unknown = [
+                        row[0]
+                        for row in connection.execute(
+                            "SELECT tool_call_id FROM tool_calls WHERE attempt_id = ? AND status = 'unknown_outcome' ORDER BY tool_call_id",
+                            (attempt_id,),
+                        )
+                    ]
+                    declared_unknown = sorted(str(item) for item in snapshot.get("unknown_tool_call_ids", []))
+                    if (
+                        snapshot.get("lineage_id") != run["lineage_id"]
+                        or snapshot.get("attempt_id") != attempt_id
+                        or snapshot.get("checkpoint_id") != checkpoint_id
+                    ):
+                        non_resumable_reason = "fork_snapshot_provenance_mismatch"
+                    elif actual_unknown != declared_unknown:
+                        non_resumable_reason = "fork_snapshot_unknown_tool_calls_mismatch"
+                    elif actual_unknown:
+                        non_resumable_reason = "fork_snapshot_unknown_tool_calls_present"
+                    elif not _snapshot_artifact_refs_are_valid(self.project_root, snapshot):
+                        non_resumable_reason = "fork_snapshot_artifact_reference_invalid"
+                    else:
+                        resumable = True
+                        non_resumable_reason = ""
+                    state_reference = {
+                        "kind": "w1_supervisor_snapshot/v1",
+                        "workflow_id": run["workflow_id"],
+                        "lineage_id": run["lineage_id"],
+                        "source_attempt_id": attempt_id,
+                        "checkpoint_id": checkpoint_id,
+                        "snapshot_ref": loaded["reference"],
+                        "immutable": True,
+                        "mode": "resumable" if resumable else "preview_only",
+                        "resumable": resumable,
+                    }
+                except Exception:
+                    non_resumable_reason = "fork_snapshot_validation_failed"
+                    state_reference = {
+                        "kind": "external_checkpoint_reference/v1",
+                        "workflow_id": run["workflow_id"],
+                        "lineage_id": run["lineage_id"],
+                        "thread_id": run["thread_id"],
+                        "checkpoint_id": checkpoint_id,
+                        "immutable": True,
+                        "mode": "preview_only",
+                        "resumable": False,
+                    }
+            else:
+                state_reference = {
+                    "kind": "external_checkpoint_reference/v1",
+                    "workflow_id": run["workflow_id"],
+                    "lineage_id": run["lineage_id"],
+                    "thread_id": run["thread_id"],
+                    "checkpoint_id": checkpoint_id,
+                    "immutable": True,
+                    "mode": "preview_only",
+                    "resumable": False,
+                }
+
             connection.execute(
                 "INSERT INTO attempt_fork_snapshots("
                 "snapshot_id, attempt_id, parent_attempt_id, source_checkpoint_id, checkpoint_sequence, "
                 "checkpoint_node, checkpoint_parent_id, checkpoint_metadata_json, state_reference_json, resumable, non_resumable_reason, created_at"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'fork_snapshot_not_resumable', ?)",
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     snapshot_id, child_id, attempt_id, checkpoint_id, checkpoint["sequence"],
                     checkpoint["node"], checkpoint["parent_checkpoint_id"], _dump(checkpoint_metadata),
-                    _dump(state_reference), now,
+                    _dump(state_reference), 1 if resumable else 0, non_resumable_reason or None, now,
                 ),
             )
             self._copy_checkpoint_scoped_receipts(
@@ -443,8 +533,9 @@ class RuntimeStore:
             )
             self._append_event_in_transaction(
                 connection, child_id, "fork_snapshot", {
-                    "snapshot_id": snapshot_id, "parent_attempt_id": attempt_id,
-                    "checkpoint_id": checkpoint_id,
+                "snapshot_id": snapshot_id, "parent_attempt_id": attempt_id,
+                "checkpoint_id": checkpoint_id,
+                "resumable": resumable,
                 }, timestamp=now, contract_version="AgentEvent/v1",
                 actor={"kind": "system", "id": "runtime_store"},
                 idempotency_key="fork_snapshot", causation_id=None, correlation_id=snapshot_id,
@@ -1504,10 +1595,19 @@ class RuntimeStore:
         source_hash = config.get("source_hash")
         if not isinstance(source_path, str) or not source_path or not isinstance(source_hash, str) or not source_hash:
             return False
-        try:
-            return hashlib.sha256(Path(source_path).resolve(strict=True).read_bytes()).hexdigest() == source_hash
-        except OSError:
-            return False
+        candidates = [Path(source_path)]
+        staged_relative = config.get("w1_supervisor_staged_source_relative_path")
+        if isinstance(staged_relative, str) and staged_relative:
+            candidates.append(self.project_root / staged_relative)
+        for candidate in candidates:
+            try:
+                resolved = candidate.resolve(strict=True)
+                resolved.relative_to(self.project_root) if candidate != Path(source_path) else None
+                if hashlib.sha256(resolved.read_bytes()).hexdigest() == source_hash:
+                    return True
+            except (OSError, ValueError):
+                continue
+        return False
 
     def _load_usage_ledger(self, lineage_id: str, attempt_id: str) -> dict[str, Any]:
         path = self.project_root / "system" / "imports" / lineage_id / "attempts" / attempt_id / "usage_ledger.json"

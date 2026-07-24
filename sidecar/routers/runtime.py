@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -44,6 +45,72 @@ def _attempt_or_404(request: Request, attempt_id: str) -> dict[str, Any]:
     if attempt is None:
         raise HTTPException(status_code=404, detail="attempt_not_found")
     return attempt
+
+
+def _resume_snapshot_reference(store: Any, attempt: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+    """Return the immutable v1 ref and the attempt that owns its source state."""
+    fork = store.get_fork_snapshot(attempt["attempt_id"])
+    if isinstance(fork, dict):
+        reference = fork.get("state_reference", {}).get("snapshot_ref") if isinstance(fork.get("state_reference"), dict) else None
+        source_attempt = str(fork.get("state_reference", {}).get("source_attempt_id") or "") if isinstance(fork.get("state_reference"), dict) else ""
+        return (dict(reference), source_attempt) if isinstance(reference, dict) and source_attempt else (None, "")
+    checkpoints = store.list_checkpoint_metadata(attempt["attempt_id"])
+    for checkpoint in reversed(checkpoints):
+        metadata = checkpoint.get("metadata") if isinstance(checkpoint.get("metadata"), dict) else {}
+        reference = metadata.get("snapshot_ref")
+        if metadata.get("recovery_mode") == "resumable" and isinstance(reference, dict):
+            return dict(reference), attempt["attempt_id"]
+    return None, ""
+
+
+def _validate_resume_snapshot(store: Any, attempt: dict[str, Any], config: dict[str, Any]) -> None:
+    """Validate a real Supervisor snapshot before scheduling any recovered worker."""
+    reference, source_attempt_id = _resume_snapshot_reference(store, attempt)
+    if reference is None:
+        return
+    from sidecar.runtime.agent_runtime import _snapshot_artifact_refs_are_valid
+    from sidecar.runtime.w1_supervisor_snapshot import SnapshotValidationError, load_w1_supervisor_snapshot
+    from sidecar.workflows.w1_agentic_adapter import build_supervisor_snapshot_identities
+
+    lineage_id = str(reference.get("lineage_id") or "")
+    reference_attempt_id = str(reference.get("attempt_id") or "")
+    safe_id = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
+    if not safe_id.fullmatch(lineage_id) or not safe_id.fullmatch(reference_attempt_id):
+        raise ValueError("fork_snapshot_reference_identity_invalid")
+    config["w1_supervisor_resume_snapshot_ref"] = reference
+    config["snapshot_source_attempt_id"] = source_attempt_id
+    config["w1_supervisor_staged_source_relative_path"] = (
+        f"system/imports/{lineage_id}/attempts/{reference_attempt_id}/raw_source.txt"
+    )
+    source_identity, config_identity = build_supervisor_snapshot_identities(
+        config, project_path=str(config.get("project_path") or store.project_root),
+    )
+    try:
+        loaded = load_w1_supervisor_snapshot(
+            store.project_root,
+            reference,
+            expected_source_identity=source_identity,
+            expected_config_identity=config_identity,
+        )
+    except SnapshotValidationError as exc:
+        raise ValueError(f"fork_snapshot_validation_failed:{exc}") from exc
+    snapshot = loaded["snapshot"]
+    if snapshot.get("attempt_id") != source_attempt_id:
+        raise ValueError("fork_snapshot_provenance_mismatch")
+    actual_unknown = sorted(str(item.get("tool_call_id")) for item in store.list_unknown_call_summaries(attempt["attempt_id"]))
+    declared_unknown = sorted(str(item) for item in snapshot.get("unknown_tool_call_ids", []))
+    if actual_unknown != declared_unknown:
+        raise ValueError("fork_snapshot_unknown_tool_calls_mismatch")
+    if actual_unknown:
+        raise ValueError("fork_snapshot_unknown_tool_calls_present")
+    if not _snapshot_artifact_refs_are_valid(store.project_root, snapshot):
+        raise ValueError("fork_snapshot_artifact_reference_invalid")
+    budget = snapshot.get("budget_snapshot") if isinstance(snapshot.get("budget_snapshot"), dict) else {}
+    spent = float(budget.get("spent_usd", 0.0) or 0.0)
+    policy = config.get("budget_config") if isinstance(config.get("budget_config"), dict) else {}
+    limit = policy.get("budget_limit_usd", policy.get("max_cost_usd"))
+    if limit is not None and float(limit) < spent:
+        raise ValueError("fork_snapshot_budget_incompatible")
 
 
 class ResumeRequest(BaseModel):
@@ -198,8 +265,14 @@ async def resume(attempt_id: str, body: ResumeRequest, request: Request) -> dict
     config.update({key: value for key, value in {
         "provider": body.provider, "model": body.model, "profile": body.profile,
     }.items() if value is not None})
+    if body.profile is not None:
+        config["prompt_profile"] = body.profile
     if body.budget_config:
         config["budget_config"] = _merge_budget_config(dict(config.get("budget_config") or {}), body.budget_config)
+    try:
+        _validate_resume_snapshot(_store(request), attempt, config)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     source_compatible = _store(request)._source_is_compatible(config)
     if not source_compatible:
         raise HTTPException(status_code=409, detail="source_incompatible")
