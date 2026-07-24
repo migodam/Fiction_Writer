@@ -24,7 +24,7 @@ import uuid
 from json import JSONDecodeError
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from langgraph.graph import StateGraph, END
 import os
@@ -91,6 +91,18 @@ from sidecar.prompts.w1_prompts import (
 )
 # Deep extraction prompts (import_all only) — added in Step 3
 _HAS_DEEP_PROMPTS = True
+
+
+class W1DirectImportState(ImportState, total=False):
+    """Direct-graph-only review channels retained between organizer and writer."""
+
+    organizer_output: dict
+    candidate_ledger: list[dict]
+    quarantine_candidates: list[dict]
+    relocation_plans: list[dict]
+    applied_relocation_plan_ids: list[str]
+    minor_repair_log: list[str]
+    supervisor_log: list[str]
 
 # Module-level per-project chunk progress tracker.
 # node_process_chunks updates this after each chunk so that the polling
@@ -4982,11 +4994,18 @@ async def node_architect_timeline(state: ImportState) -> dict:
 
 
 async def node_organize_project(state: ImportState) -> dict:
-    """Deterministic world-item routing: filter module-contamination, enrich categoryPath/parentId.
+    """Route staged World candidates and apply safe cross-module repairs.
 
     Updates both entity_registry["world_detailed"] (full detail dicts) and
     entity_registry["world"] (name→category index) so that proposal_write
-    never sees excluded names in either structure.
+    never sees excluded names in either structure.  A deterministic relocation
+    is intentionally applied while data is still staged: it only changes the
+    proposal registry and remains behind the normal Workbench acceptance gate.
+
+    The order matters.  The Organizer identifies title-plus-person candidates
+    such as ``正门主王六`` as excluded World entries, but its relocation plan
+    needs the source candidate present in ``world_detailed`` to merge evidence
+    into the matching character.  Apply those plans before the exclusion pass.
     """
     registry = dict(state.get("entity_registry", {}))
     world_candidates: dict = {k: dict(v) for k, v in registry.get("world_detailed", {}).items()}
@@ -4994,11 +5013,20 @@ async def node_organize_project(state: ImportState) -> dict:
     if not world_candidates:
         return {}
 
+    # ``world_detailed`` is compatible with both historical name keys and
+    # newer stable entity-ID keys.  Semantic classification must always see a
+    # human-facing candidate name, never an implementation key such as
+    # ``world_583926df``.
+    organizer_candidates: dict[str, dict] = {}
+    for storage_key, detail in world_candidates.items():
+        display_name = str(detail.get("name") or storage_key).strip() or str(storage_key)
+        organizer_candidates.setdefault(display_name, detail)
+
     organizer_input = OrganizerInput(
         characters=registry.get("characters", {}),
         events=list(registry.get("events", {}).values()),
         relationships=state.get("relationships", []),
-        world_candidates=world_candidates,
+        world_candidates=organizer_candidates,
         manuscript_notes=[],
         timeline_architecture=dict(state.get("timeline_architecture") or {}),
         project_digest={},
@@ -5009,15 +5037,64 @@ async def node_organize_project(state: ImportState) -> dict:
     if state.get("import_run_id"):
         _write_state_artifact(state, "organizer_output.json", result)
 
+    # Avoid a module-level import: pipeline_tools imports node_write_to_project
+    # from this module, while this direct LangGraph node only needs the repair
+    # helper after w1_import has finished initializing.
+    from sidecar.supervisor.pipeline_tools import repair_import_artifacts
+
+    repair_actions = [
+        {
+            "action_type": "relocate",
+            "target_entity_ids": [
+                plan.get("source_candidate_id"),
+                plan.get("target_entity_id"),
+            ],
+            "description": "Apply deterministic staged World-to-Character relocation.",
+            "deterministic": bool(plan.get("deterministic")),
+            "proposed_operations": [{
+                "op": "relocate_world_item",
+                "relocation_plan": plan,
+            }],
+        }
+        for plan in result.get("relocation_plans", [])
+        if isinstance(plan, dict)
+    ]
+    repair_state = {
+        **state,
+        "entity_registry": registry,
+        # Organizer holds are durable review material too.  The repair helper
+        # can append an additional unsafe relocation hold without losing them.
+        "quarantine_candidates": list(result.get("quarantine_items", [])),
+        "applied_relocation_plan_ids": list(state.get("applied_relocation_plan_ids", [])),
+    }
+    repair_result = await repair_import_artifacts(repair_state, repair_actions)
+    registry = repair_result["entity_registry"]
+    # Continue from the repaired registry, rather than the pre-review snapshot.
+    # Otherwise the later exclusion pass would discard the source before its
+    # character evidence/role merge can reach proposal staging.
+    world_candidates = {
+        key: dict(value)
+        for key, value in registry.get("world_detailed", {}).items()
+        if isinstance(value, dict)
+    }
+
     excluded_names: set[str] = {item["name"] for item in result.get("excluded_items", [])}
+    excluded_entity_ids: set[str] = {
+        str(item.get("entity_id") or "")
+        for item in result.get("excluded_items", [])
+    }
     enrichments: dict[str, dict] = {item["name"]: item for item in result.get("world_items", [])}
 
     updated_world_detailed: dict = {}
-    for name, detail in world_candidates.items():
-        if name in excluded_names:
+    excluded_storage_keys: set[str] = set()
+    for storage_key, detail in world_candidates.items():
+        display_name = str(detail.get("name") or storage_key).strip() or str(storage_key)
+        entity_id = str(detail.get("entity_id") or detail.get("id") or "")
+        if display_name in excluded_names or entity_id in excluded_entity_ids:
+            excluded_storage_keys.add(str(storage_key))
             continue
-        if name in enrichments:
-            enriched = enrichments[name]
+        if display_name in enrichments:
+            enriched = enrichments[display_name]
             detail = {
                 **detail,
                 "categoryPath": enriched.get("categoryPath", []),
@@ -5025,13 +5102,13 @@ async def node_organize_project(state: ImportState) -> dict:
                 "container_key": enriched.get("container_key", ""),
                 "containerId": enriched.get("containerId", ""),
             }
-        updated_world_detailed[name] = detail
+        updated_world_detailed[storage_key] = detail
 
     # Mirror the exclusion filter onto the flat world index so proposal_write
     # does not iterate excluded names from entity_registry["world"].
     updated_world: dict = {}
     for name, cat in registry.get("world", {}).items():
-        if name in excluded_names:
+        if str(name) in excluded_names or str(name) in excluded_storage_keys or str(name) in excluded_entity_ids:
             continue
         enriched = enrichments.get(name)
         updated_world[name] = enriched.get("category") if enriched else cat
@@ -5049,7 +5126,19 @@ async def node_organize_project(state: ImportState) -> dict:
         }
         for container in result.get("world_containers", [])
     ]
-    return {"entity_registry": updated_registry, "world_containers": world_containers}
+    return {
+        "entity_registry": updated_registry,
+        "world_containers": world_containers,
+        # Keep the Organizer's review material available to the direct graph's
+        # reviewers and proposal writer; it is not a canonical mutation.
+        "organizer_output": result,
+        "candidate_ledger": result.get("candidate_ledger", []),
+        "quarantine_candidates": repair_result.get("quarantine_candidates", []),
+        "relocation_plans": result.get("relocation_plans", []),
+        "applied_relocation_plan_ids": repair_result.get("applied_relocation_plan_ids", []),
+        "minor_repair_log": repair_result.get("minor_repair_log", []),
+        "supervisor_log": repair_result.get("supervisor_log", []),
+    }
 
 
 def _reviewer_proposals_from_state(state: ImportState | dict) -> list[dict]:
@@ -7373,7 +7462,7 @@ def build_graph(checkpointer: Any) -> Any:
                        infer_world_settings → evidence → reconcile → timeline_architect →
                        todos → review → write
     """
-    builder: StateGraph = StateGraph(ImportState)
+    builder: StateGraph = StateGraph(W1DirectImportState)
 
     # Shared nodes
     builder.add_node("validate_file", node_validate_file)

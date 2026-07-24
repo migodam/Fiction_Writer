@@ -36,6 +36,7 @@ from sidecar.supervisor.prompt_policy import (
     prompt_policy_decision,
 )
 from sidecar.supervisor.organizer import OrganizerInput, organize_project_content
+from sidecar.supervisor.pipeline_tools import repair_import_artifacts
 from sidecar.supervisor.timeline_density import enforce_timeline_density
 from sidecar.supervisor.tool_registry import build_tool_registry
 from sidecar.workflows.w1_import import (
@@ -172,6 +173,88 @@ def _persist_supervisor_evidence_cards(state: ImportSupervisorState) -> ImportSu
     if project_path and import_run_id:
         _write_import_artifact(project_path, import_run_id, "evidence_cards.json", updated_state["evidence_cards"])
     return updated_state
+
+
+async def _organize_staged_world_candidates(state: ImportSupervisorState) -> ImportSupervisorState:
+    """Run Organizer and safe World-to-Character repairs for either supervisor path.
+
+    This is proposal staging only.  It never writes canonical project data and
+    therefore preserves the Workbench package acceptance gate.  In particular,
+    a title/person expression must be relocated while its source still exists
+    in the registry; rebuilding World from Organizer survivors first would
+    discard the evidence needed to enrich the target character.
+    """
+    registry = dict(state.get("entity_registry", {}))
+    world_detailed = registry.get("world_detailed", {}) or {}
+    organizer_candidates: dict[str, dict] = {}
+    if isinstance(world_detailed, dict):
+        for storage_key, detail in world_detailed.items():
+            if not isinstance(detail, dict):
+                continue
+            display_name = str(detail.get("name") or storage_key).strip() or str(storage_key)
+            organizer_candidates.setdefault(display_name, detail)
+
+    organizer_output = organize_project_content(OrganizerInput(
+        characters=registry.get("characters", {}),
+        events=list(registry.get("events", {}).values()),
+        relationships=state.get("relationships", []),
+        world_candidates=organizer_candidates,
+        manuscript_notes=[],
+        timeline_architecture=state.get("timeline_architecture", {}),
+        project_digest=state.get("project_structure_digest", {}),
+        source_language=state.get("source_language", "zh"),
+    ))
+
+    repair_actions = [
+        {
+            "action_type": "relocate",
+            "target_entity_ids": [
+                plan.get("source_candidate_id"),
+                plan.get("target_entity_id"),
+            ],
+            "description": "Apply deterministic staged World-to-Character relocation.",
+            "deterministic": bool(plan.get("deterministic")),
+            "proposed_operations": [{
+                "op": "relocate_world_item",
+                "relocation_plan": plan,
+            }],
+        }
+        for plan in organizer_output.get("relocation_plans", [])
+        if isinstance(plan, dict)
+    ]
+    repair_result = await repair_import_artifacts({
+        **state,
+        "entity_registry": registry,
+        "quarantine_candidates": list(organizer_output.get("quarantine_items", [])),
+        "applied_relocation_plan_ids": list(state.get("applied_relocation_plan_ids", [])),
+    }, repair_actions)
+
+    # Organizer survivors are the only World proposals.  Character changes
+    # from relocation come from the repaired registry before this rebuild.
+    repaired_registry = repair_result["entity_registry"]
+    organized_world_items = organizer_output["world_items"]
+    organized_registry = {
+        **repaired_registry,
+        "world": {item["name"]: item["category"] for item in organized_world_items},
+        "world_detailed": {item["name"]: item for item in organized_world_items},
+    }
+    project_path = state.get("project_path", "")
+    import_run_id = state.get("import_run_id", "")
+    if project_path and import_run_id:
+        _write_import_artifact(project_path, import_run_id, "organizer_output.json", dict(organizer_output))
+
+    return {
+        **state,
+        "entity_registry": organized_registry,
+        "world_containers": organizer_output["world_containers"],
+        "organizer_output": organizer_output,
+        "candidate_ledger": organizer_output.get("candidate_ledger", []),
+        "quarantine_candidates": repair_result.get("quarantine_candidates", []),
+        "relocation_plans": organizer_output.get("relocation_plans", []),
+        "applied_relocation_plan_ids": repair_result.get("applied_relocation_plan_ids", []),
+        "minor_repair_log": repair_result.get("minor_repair_log", []),
+        "supervisor_log": repair_result.get("supervisor_log", []),
+    }
 
 
 def _prepare_reviewer_staging_state(state: ImportSupervisorState) -> ImportSupervisorState:
@@ -1051,29 +1134,7 @@ async def run_supervisor_policy(
         )
 
     # ── 3c. Content organizer ────────────────────────────────────────────────
-    _org_input = OrganizerInput(
-        characters=state.get("entity_registry", {}).get("characters", {}),
-        events=list(state.get("entity_registry", {}).get("events", {}).values()),
-        relationships=state.get("relationships", []),
-        world_candidates=state.get("entity_registry", {}).get("world_detailed", {}),
-        manuscript_notes=[],
-        timeline_architecture=state.get("timeline_architecture", {}),
-        project_digest=state.get("project_structure_digest", {}),
-        source_language=state.get("source_language", "zh"),
-    )
-    _org_out = organize_project_content(_org_input)
-    _organized_world_items = _org_out["world_items"]
-    state = {**state, "world_containers": _org_out["world_containers"], "entity_registry": {
-        **state.get("entity_registry", {}),
-        # Proposal staging consumes the flat world index, so it must be rebuilt
-        # from the same final organizer survivors as the detailed registry.
-        "world": {item["name"]: item["category"] for item in _organized_world_items},
-        "world_detailed": {item["name"]: item for item in _organized_world_items},
-    }}
-    _project_path = state.get("project_path", "")
-    _import_run_id = state.get("import_run_id", "")
-    if _project_path and _import_run_id:
-        _write_import_artifact(_project_path, _import_run_id, "organizer_output.json", dict(_org_out))
+    state = await _organize_staged_world_candidates(state)
 
     # ── 4. Minor repair ──────────────────────────────────────────────────────
     state = _with_status(state, current_tool="minor_repair", orchestrator_phase="repairing")
@@ -1414,29 +1475,7 @@ async def run_supervisor_streaming(
 
         # ── 3c. Content organizer (streaming path) ───────────────────────────
         _emit_activity(state, phase="reducing", tool="organizer", status="start", message="Running content organizer to filter world candidates.")
-        _org_input_s = OrganizerInput(
-            characters=state.get("entity_registry", {}).get("characters", {}),
-            events=list(state.get("entity_registry", {}).get("events", {}).values()),
-            relationships=state.get("relationships", []),
-            world_candidates=state.get("entity_registry", {}).get("world_detailed", {}),
-            manuscript_notes=[],
-            timeline_architecture=state.get("timeline_architecture", {}),
-            project_digest=state.get("project_structure_digest", {}),
-            source_language=state.get("source_language", "zh"),
-        )
-        _org_out_s = organize_project_content(_org_input_s)
-        _organized_world_items_s = _org_out_s["world_items"]
-        state = {**state, "world_containers": _org_out_s["world_containers"], "entity_registry": {
-            **state.get("entity_registry", {}),
-            # Keep the streaming proposal path aligned with the organizer's
-            # final survivors; node_write_to_project iterates this flat index.
-            "world": {item["name"]: item["category"] for item in _organized_world_items_s},
-            "world_detailed": {item["name"]: item for item in _organized_world_items_s},
-        }}
-        _project_path_s = state.get("project_path", "")
-        _import_run_id_s = state.get("import_run_id", "")
-        if _project_path_s and _import_run_id_s:
-            _write_import_artifact(_project_path_s, _import_run_id_s, "organizer_output.json", dict(_org_out_s))
+        state = await _organize_staged_world_candidates(state)
         _emit_activity(state, phase="reducing", tool="organizer", status="success", message="Content organizer complete.")
 
         # ── 4. Minor repair (streaming path) ─────────────────────────────────
