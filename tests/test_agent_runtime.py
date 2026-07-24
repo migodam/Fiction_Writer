@@ -258,7 +258,12 @@ def test_reopen_preserves_runs_receipts_and_recoverable_attempts(tmp_path):
     first = RuntimeStore(tmp_path)
     run = first.create_run(workflow_id="W3", thread_id="thread-1")
     attempt = first.create_attempt(run["run_id"], checkpoint_id="checkpoint-1")
-    receipt = first.record_artifact_receipt(attempt["attempt_id"], "proposal", "artifacts/proposal.json", "abc123")
+    lease = first.acquire_lease(attempt["attempt_id"], "receipt-worker", ttl_seconds=30)
+    receipt = first.record_artifact_receipt(
+        attempt["attempt_id"], "proposal", "artifacts/proposal.json", "abc123",
+        owner_id="receipt-worker", fence_token=lease["fence_token"],
+    )
+    first.invalidate_leases_for_restart()
 
     reopened = RuntimeStore(tmp_path)
     assert reopened.get_run(run["run_id"])["thread_id"] == "thread-1"
@@ -305,6 +310,135 @@ def test_checkpoint_metadata_is_ordered_and_never_persists_state_blobs(runtime):
     checkpoints = runtime.list_checkpoint_metadata(attempt["attempt_id"])
     assert [item["checkpoint_id"] for item in checkpoints] == ["checkpoint-1", "checkpoint-2"]
     assert checkpoints[1]["metadata"] == {"state": {"api_key": "[REDACTED]"}, "summary": "two chunks"}
+
+
+def test_fork_creates_an_isolated_checkpoint_snapshot_and_scoped_receipt_copy(runtime):
+    run = runtime.create_run(workflow_id="W1", lineage_id="lineage-fork", thread_id="thread-parent")
+    parent = runtime.create_attempt(run["run_id"])
+    parent_id = parent["attempt_id"]
+    runtime.record_checkpoint_metadata(
+        parent_id, "checkpoint-1", node="split_chunks", sequence=1,
+        metadata={"summary": "one chunk", "api_key": "sk-never-persist"},
+    )
+    runtime.record_checkpoint_metadata(parent_id, "checkpoint-2", node="extract", sequence=2)
+    lease = runtime.acquire_lease(parent_id, "parent-worker", ttl_seconds=30)
+    included = runtime.record_artifact_receipt(
+        parent_id, "cache", "cache/chunk-1.json", "hash-1",
+        {"checkpoint_id": "checkpoint-1", "cache_key": "chunk-1"},
+        owner_id="parent-worker", fence_token=lease["fence_token"],
+    )
+    runtime.record_artifact_receipt(
+        parent_id, "cache", "cache/unscoped.json", "hash-unscoped",
+        owner_id="parent-worker", fence_token=lease["fence_token"],
+    )
+    runtime.record_artifact_receipt(
+        parent_id, "cache", "cache/future.json", "hash-2",
+        {"checkpoint_sequence": 2}, owner_id="parent-worker", fence_token=lease["fence_token"],
+    )
+    unknown = runtime.record_tool_intent(parent_id, "provider.call", {"operation": "unresolved"})
+    runtime.record_tool_unknown_outcome(unknown["tool_call_id"], "restart")
+    runtime.enqueue_outbox("proposal.publish", {"proposal": "parent"}, attempt_id=parent_id)
+
+    fork = runtime.fork_attempt(parent_id, checkpoint_id="checkpoint-1", decision_id="fork-at-one")
+    child_id = fork["attempt"]["attempt_id"]
+    repeated = runtime.fork_attempt(parent_id, checkpoint_id="checkpoint-1", decision_id="fork-at-one")
+    snapshot = runtime.get_fork_snapshot(child_id)
+
+    assert fork["idempotent"] is False
+    assert repeated["idempotent"] is True
+    assert repeated["attempt"]["attempt_id"] == child_id
+    assert fork["attempt"]["status"] == "paused"
+    assert snapshot is not None
+    assert snapshot["parent_attempt_id"] == parent_id
+    assert snapshot["source_checkpoint_id"] == "checkpoint-1"
+    assert snapshot["checkpoint_metadata"] == {"api_key": "[REDACTED]", "summary": "one chunk"}
+    assert snapshot["state_reference"] == {
+        "checkpoint_id": "checkpoint-1",
+        "immutable": True,
+        "kind": "external_checkpoint_reference/v1",
+        "lineage_id": "lineage-fork",
+        "thread_id": "thread-parent",
+        "workflow_id": "W1",
+    }
+    child_receipts = runtime.list_artifact_receipts(child_id)
+    assert len(child_receipts) == 1
+    assert child_receipts[0]["artifact_uri"] == "cache/chunk-1.json"
+    assert child_receipts[0]["metadata"]["fork_provenance"] == {
+        "snapshot_id": snapshot["snapshot_id"],
+        "source_attempt_id": parent_id,
+        "source_receipt_id": included["receipt_id"],
+        "source_checkpoint_id": "checkpoint-1",
+    }
+    assert runtime.list_tool_calls(child_id) == []
+    with sqlite3.connect(runtime.database_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM outbox WHERE attempt_id = ?", (child_id,)).fetchone()[0] == 0
+
+    child_lease = runtime.acquire_lease(child_id, "child-worker", ttl_seconds=30)
+    runtime.record_artifact_receipt(
+        child_id, "cache", "cache/child-only.json", "child-hash", {"checkpoint_id": "checkpoint-1"},
+        owner_id="child-worker", fence_token=child_lease["fence_token"],
+    )
+    child_tool = runtime.record_tool_intent(
+        child_id, "filesystem.read", {"path": "child-only"},
+        owner_id="child-worker", fence_token=child_lease["fence_token"],
+    )
+    runtime.enqueue_outbox("proposal.publish", {"proposal": "child"}, attempt_id=child_id)
+
+    assert len(runtime.list_artifact_receipts(parent_id)) == 3
+    assert [call["tool_call_id"] for call in runtime.list_tool_calls(parent_id)] == [unknown["tool_call_id"]]
+    assert [call["tool_call_id"] for call in runtime.list_tool_calls(child_id)] == [child_tool["tool_call_id"]]
+    with sqlite3.connect(runtime.database_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM outbox WHERE attempt_id = ?", (parent_id,)).fetchone()[0] == 1
+        assert connection.execute("SELECT COUNT(*) FROM outbox WHERE attempt_id = ?", (child_id,)).fetchone()[0] == 1
+
+
+def test_fork_decision_cannot_be_reused_for_a_different_checkpoint(runtime):
+    attempt = runtime.create_attempt(runtime.create_run(workflow_id="W1")["run_id"])
+    runtime.record_checkpoint_metadata(attempt["attempt_id"], "checkpoint-1", node="split", sequence=1)
+    runtime.record_checkpoint_metadata(attempt["attempt_id"], "checkpoint-2", node="extract", sequence=2)
+    runtime.fork_attempt(attempt["attempt_id"], checkpoint_id="checkpoint-1", decision_id="fork-key")
+
+    with pytest.raises(ValueError, match="fork_decision_conflict"):
+        runtime.fork_attempt(attempt["attempt_id"], checkpoint_id="checkpoint-2", decision_id="fork-key")
+
+
+def test_artifact_receipts_require_the_current_worker_lease(runtime):
+    attempt = runtime.create_attempt(runtime.create_run(workflow_id="W1")["run_id"])
+    lease = runtime.acquire_lease(attempt["attempt_id"], "current-worker", ttl_seconds=30)
+
+    with pytest.raises(LeaseLostError):
+        runtime.record_artifact_receipt(
+            attempt["attempt_id"], "proposal", "artifacts/stale.json",
+            owner_id="other-worker", fence_token=lease["fence_token"],
+        )
+    receipt = runtime.record_artifact_receipt(
+        attempt["attempt_id"], "proposal", "artifacts/current.json",
+        owner_id="current-worker", fence_token=lease["fence_token"],
+    )
+    migration = runtime.record_system_artifact_receipt(
+        attempt["attempt_id"], "migration", "artifacts/legacy.json", system_reason="legacy_import_migration",
+    )
+
+    assert receipt["artifact_uri"] == "artifacts/current.json"
+    assert migration["metadata"] == {"metadata": {}, "system_reason": "legacy_import_migration"}
+
+
+def test_control_events_are_durable_idempotent_and_conflict_safe(runtime):
+    attempt = runtime.create_attempt(runtime.create_run(workflow_id="W1")["run_id"])
+    first = runtime.append_control_event(
+        attempt["attempt_id"], "pause", {"reason": "user"}, decision_key="control-pause-1",
+    )
+    repeated = runtime.append_control_event(
+        attempt["attempt_id"], "pause", {"reason": "user"}, decision_key="control-pause-1",
+    )
+
+    assert repeated == first
+    assert len(runtime.list_human_decisions(attempt["attempt_id"])) == 1
+    assert len(runtime.list_events(attempt["attempt_id"])) == 1
+    with pytest.raises(ValueError, match="control_decision_conflict"):
+        runtime.append_control_event(
+            attempt["attempt_id"], "cancel", {"reason": "user"}, decision_key="control-pause-1",
+        )
 
 
 def test_resource_lease_is_single_writer_and_stale_fence_cannot_release(runtime):

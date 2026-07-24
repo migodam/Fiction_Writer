@@ -73,7 +73,11 @@ def test_checkpoints_endpoint_returns_checkpoint_metadata_not_artifact_receipts(
         attempt_id = _attempt(client)
         store = client.app.state.runtime_store
         store.record_checkpoint_metadata(attempt_id, "checkpoint-1", node="split_chunks", sequence=1, metadata={"summary": "split"})
-        store.record_artifact_receipt(attempt_id, "proposal", "artifacts/proposal.json")
+        lease = store.acquire_lease(attempt_id, "receipt-worker", ttl_seconds=30)
+        store.record_artifact_receipt(
+            attempt_id, "proposal", "artifacts/proposal.json",
+            owner_id="receipt-worker", fence_token=lease["fence_token"],
+        )
         response = client.get(f"/runtime/runs/{attempt_id}/checkpoints")
 
     assert response.json()["checkpoints"] == [{

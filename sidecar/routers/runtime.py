@@ -107,10 +107,13 @@ async def checkpoints(attempt_id: str, request: Request) -> dict[str, Any]:
 async def pause(attempt_id: str, request: Request) -> dict[str, Any]:
     attempt = _attempt_or_404(request, attempt_id)
     if attempt["status"] not in {"cancelled", "completed", "failed"}:
+        try:
+            _store(request).append_control_event(attempt_id, "pause", decision_key="runtime:pause")
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         attempt = _store(request).set_attempt_status(attempt_id, "paused")
         from sidecar.routers.workflows import apply_runtime_command
         apply_runtime_command(attempt_id, "pause")
-        _store(request).append_control_event(attempt_id, "pause")
     return {"attempt_id": attempt_id, "status": attempt["status"]}
 
 
@@ -118,10 +121,13 @@ async def pause(attempt_id: str, request: Request) -> dict[str, Any]:
 async def cancel(attempt_id: str, request: Request) -> dict[str, Any]:
     attempt = _attempt_or_404(request, attempt_id)
     if attempt["status"] != "cancelled":
+        try:
+            _store(request).append_control_event(attempt_id, "cancel", decision_key="runtime:cancel")
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         attempt = _store(request).set_attempt_status(attempt_id, "cancelled")
         from sidecar.routers.workflows import apply_runtime_command
         apply_runtime_command(attempt_id, "cancel")
-        _store(request).append_control_event(attempt_id, "cancel")
     return {"attempt_id": attempt_id, "status": attempt["status"]}
 
 
@@ -173,8 +179,13 @@ async def resume(attempt_id: str, body: ResumeRequest, request: Request) -> dict
         )
     except (ValueError, KeyError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    try:
+        _store(request).append_control_event(
+            attempt_id, "resume", {"requested": True}, decision_key="runtime:resume",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     attempt = _store(request).set_attempt_status(attempt_id, "running")
-    _store(request).append_control_event(attempt_id, "resume", {"restarted": launched})
     return {"attempt_id": attempt_id, "status": "resumed", "restarted": launched}
 
 

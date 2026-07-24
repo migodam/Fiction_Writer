@@ -248,6 +248,23 @@ class RuntimeStore:
                     )
                     connection.execute("CREATE INDEX IF NOT EXISTS run_events_correlation_id ON run_events(attempt_id, correlation_id)")
                     connection.execute("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (6, ?)", (_now(),))
+                if connection.execute("SELECT 1 FROM schema_migrations WHERE version = 7").fetchone() is None:
+                    # Forks point at an immutable external checkpoint reference.  The
+                    # metadata snapshot and copied receipt provenance make the
+                    # reference durable without copying or mutating the graph store.
+                    connection.execute(
+                        "CREATE TABLE IF NOT EXISTS attempt_fork_snapshots ("
+                        "snapshot_id TEXT PRIMARY KEY, attempt_id TEXT NOT NULL UNIQUE REFERENCES agent_attempts(attempt_id) ON DELETE CASCADE, "
+                        "parent_attempt_id TEXT NOT NULL REFERENCES agent_attempts(attempt_id) ON DELETE RESTRICT, "
+                        "source_checkpoint_id TEXT NOT NULL, checkpoint_sequence INTEGER NOT NULL, "
+                        "checkpoint_node TEXT NOT NULL, checkpoint_parent_id TEXT, checkpoint_metadata_json TEXT NOT NULL, "
+                        "state_reference_json TEXT NOT NULL, created_at REAL NOT NULL)"
+                    )
+                    connection.execute(
+                        "CREATE INDEX IF NOT EXISTS attempt_fork_snapshots_parent "
+                        "ON attempt_fork_snapshots(parent_attempt_id, source_checkpoint_id)"
+                    )
+                    connection.execute("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (7, ?)", (_now(),))
                 connection.execute("COMMIT")
             except BaseException:
                 connection.execute("ROLLBACK")
@@ -331,7 +348,14 @@ class RuntimeStore:
             return _row(connection.execute("SELECT * FROM agent_attempts WHERE attempt_id = ?", (attempt_id,)).fetchone())  # type: ignore[return-value]
 
     def fork_attempt(self, attempt_id: str, *, checkpoint_id: str, decision_id: str) -> dict[str, Any]:
-        """Create an idempotent child attempt from a checkpoint owned by its parent."""
+        """Create an idempotent, isolated child snapshot from a parent checkpoint.
+
+        Graph-state blobs remain in the configured checkpointer.  A fork therefore
+        records an immutable reference to that checkpoint and freezes the sanitized
+        metadata plus explicitly checkpoint-scoped artifact receipts in this store.
+        It never treats the parent's unscoped receipts, tool calls, or outbox as work
+        the child may resume.
+        """
         checkpoint_id = _identifier(checkpoint_id, "checkpoint_id", required=True)
         decision_id = _identifier(decision_id, "decision_id", required=True)
         with self.transaction() as connection:
@@ -342,32 +366,127 @@ class RuntimeStore:
             if existing is not None:
                 payload = json.loads(existing["payload_json"])
                 child_id = payload.get("child_attempt_id")
+                if existing["decision"] != "fork" or payload.get("checkpoint_id") != checkpoint_id:
+                    raise ValueError("fork_decision_conflict")
                 child = _row(connection.execute("SELECT * FROM agent_attempts WHERE attempt_id = ?", (child_id,)).fetchone())
                 if child is None:
                     raise RuntimeStoreError("fork decision references a missing child attempt")
                 return {"attempt": child, "idempotent": True}
-            checkpoint = connection.execute("SELECT 1 FROM checkpoint_metadata WHERE checkpoint_id = ? AND attempt_id = ?", (checkpoint_id, attempt_id)).fetchone()
+            checkpoint = connection.execute(
+                "SELECT * FROM checkpoint_metadata WHERE checkpoint_id = ? AND attempt_id = ?",
+                (checkpoint_id, attempt_id),
+            ).fetchone()
             if checkpoint is None:
                 raise ValueError("checkpoint_does_not_belong_to_parent_attempt")
             child_id = str(uuid4())
+            snapshot_id = str(uuid4())
             now = _now()
             number = connection.execute("SELECT COALESCE(MAX(attempt_number), 0) + 1 FROM agent_attempts WHERE run_id = ?", (parent["run_id"],)).fetchone()[0]
             connection.execute(
-                "INSERT INTO agent_attempts(attempt_id, run_id, attempt_number, checkpoint_id, parent_attempt_id, fork_checkpoint_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO agent_attempts(attempt_id, run_id, attempt_number, checkpoint_id, parent_attempt_id, fork_checkpoint_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'paused', ?, ?)",
                 (child_id, parent["run_id"], number, checkpoint_id, attempt_id, checkpoint_id, now, now),
             )
-            payload = {"checkpoint_id": checkpoint_id, "child_attempt_id": child_id}
+            checkpoint_metadata = json.loads(checkpoint["metadata_json"])
+            run = connection.execute("SELECT workflow_id, lineage_id, thread_id FROM agent_runs WHERE run_id = ?", (parent["run_id"],)).fetchone()
+            assert run is not None
+            state_reference = {
+                "kind": "external_checkpoint_reference/v1",
+                "workflow_id": run["workflow_id"],
+                "lineage_id": run["lineage_id"],
+                "thread_id": run["thread_id"],
+                "checkpoint_id": checkpoint_id,
+                "immutable": True,
+            }
+            connection.execute(
+                "INSERT INTO attempt_fork_snapshots("
+                "snapshot_id, attempt_id, parent_attempt_id, source_checkpoint_id, checkpoint_sequence, "
+                "checkpoint_node, checkpoint_parent_id, checkpoint_metadata_json, state_reference_json, created_at"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    snapshot_id, child_id, attempt_id, checkpoint_id, checkpoint["sequence"],
+                    checkpoint["node"], checkpoint["parent_checkpoint_id"], _dump(checkpoint_metadata),
+                    _dump(state_reference), now,
+                ),
+            )
+            self._copy_checkpoint_scoped_receipts(
+                connection, parent_attempt_id=attempt_id, child_attempt_id=child_id,
+                checkpoint_id=checkpoint_id, checkpoint_sequence=int(checkpoint["sequence"]),
+                snapshot_id=snapshot_id, timestamp=now,
+            )
+            payload = {
+                "checkpoint_id": checkpoint_id,
+                "child_attempt_id": child_id,
+                "snapshot_id": snapshot_id,
+            }
             connection.execute(
                 "INSERT INTO human_decisions(decision_id, attempt_id, decision_key, decision, payload_json, created_at) VALUES (?, ?, ?, 'fork', ?, ?)",
                 (str(uuid4()), attempt_id, decision_id, _dump(payload), now),
             )
-            sequence = connection.execute("SELECT COALESCE(MAX(sequence), 0) + 1 FROM run_events WHERE attempt_id = ?", (attempt_id,)).fetchone()[0]
-            connection.execute(
-                "INSERT INTO run_events(event_id, attempt_id, sequence, event_type, payload_json, created_at) VALUES (?, ?, ?, 'fork', ?, ?)",
-                (str(uuid4()), attempt_id, sequence, _dump(payload), now),
+            self._append_event_in_transaction(
+                connection, attempt_id, "fork", payload, timestamp=now,
+                contract_version="AgentEvent/v1", actor={"kind": "human", "id": "time_travel"},
+                idempotency_key=f"fork:{decision_id}", causation_id=None, correlation_id=snapshot_id,
+                event_id=None,
+            )
+            self._append_event_in_transaction(
+                connection, child_id, "fork_snapshot", {
+                    "snapshot_id": snapshot_id, "parent_attempt_id": attempt_id,
+                    "checkpoint_id": checkpoint_id,
+                }, timestamp=now, contract_version="AgentEvent/v1",
+                actor={"kind": "system", "id": "runtime_store"},
+                idempotency_key="fork_snapshot", causation_id=None, correlation_id=snapshot_id,
+                event_id=None,
             )
             child = _row(connection.execute("SELECT * FROM agent_attempts WHERE attempt_id = ?", (child_id,)).fetchone())
             return {"attempt": child, "idempotent": False}  # type: ignore[return-value]
+
+    @staticmethod
+    def _receipt_is_checkpoint_scoped(metadata: Any, checkpoint_id: str, checkpoint_sequence: int) -> bool:
+        """Receipts without explicit checkpoint scope are deliberately not inherited."""
+        if not isinstance(metadata, dict):
+            return False
+        if metadata.get("checkpoint_id") == checkpoint_id:
+            return True
+        if metadata.get("source_checkpoint_id") == checkpoint_id:
+            return True
+        sequence = metadata.get("checkpoint_sequence")
+        return isinstance(sequence, int) and not isinstance(sequence, bool) and sequence <= checkpoint_sequence
+
+    def _copy_checkpoint_scoped_receipts(
+        self, connection: sqlite3.Connection, *, parent_attempt_id: str, child_attempt_id: str,
+        checkpoint_id: str, checkpoint_sequence: int, snapshot_id: str, timestamp: float,
+    ) -> None:
+        rows = connection.execute(
+            "SELECT * FROM artifact_receipts WHERE attempt_id = ? ORDER BY created_at, receipt_id",
+            (parent_attempt_id,),
+        ).fetchall()
+        for row in rows:
+            metadata = json.loads(row["metadata_json"])
+            if not self._receipt_is_checkpoint_scoped(metadata, checkpoint_id, checkpoint_sequence):
+                continue
+            child_metadata = {
+                "fork_provenance": {
+                    "snapshot_id": snapshot_id,
+                    "source_attempt_id": parent_attempt_id,
+                    "source_receipt_id": row["receipt_id"],
+                    "source_checkpoint_id": checkpoint_id,
+                },
+                "source_metadata": metadata,
+            }
+            connection.execute(
+                "INSERT INTO artifact_receipts(receipt_id, attempt_id, artifact_type, artifact_uri, checksum, metadata_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    str(uuid4()), child_attempt_id, row["artifact_type"], row["artifact_uri"],
+                    row["checksum"], _dump(child_metadata), timestamp,
+                ),
+            )
+
+    def get_fork_snapshot(self, attempt_id: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            return _row(connection.execute(
+                "SELECT * FROM attempt_fork_snapshots WHERE attempt_id = ?", (attempt_id,)
+            ).fetchone())
 
     def acquire_lease(self, attempt_id: str, owner_id: str, *, ttl_seconds: float, now: float | None = None) -> dict[str, Any]:
         owner_id = _identifier(owner_id, "owner_id", required=True)
@@ -519,18 +638,76 @@ class RuntimeStore:
         assert result is not None
         return result
 
-    def append_control_event(self, attempt_id: str, command: str, payload: Any | None = None) -> dict[str, Any]:
-        """Record a user control command without taking ownership from a worker."""
+    def append_control_event(
+        self, attempt_id: str, command: str, payload: Any | None = None, *, decision_key: str,
+    ) -> dict[str, Any]:
+        """Durably record an idempotent human control command.
+
+        Human commands intentionally do not need a worker lease, but they must use a
+        caller-provided stable decision key.  Reusing that key for different command
+        content is rejected rather than silently creating an ambiguous control trail.
+        """
+        command = _identifier(command, "command", required=True)
+        decision_key = _identifier(decision_key, "decision_key", required=True)
+        command_payload = {"command": command, "payload": payload or {}}
+        payload_json = _dump(command_payload)
         with self.transaction() as connection:
             if connection.execute("SELECT 1 FROM agent_attempts WHERE attempt_id = ?", (attempt_id,)).fetchone() is None:
                 raise KeyError(attempt_id)
-            sequence = connection.execute("SELECT COALESCE(MAX(sequence), 0) + 1 FROM run_events WHERE attempt_id = ?", (attempt_id,)).fetchone()[0]
-            event_id = str(uuid4())
-            connection.execute(
-                "INSERT INTO run_events(event_id, attempt_id, sequence, event_type, payload_json, created_at) VALUES (?, ?, ?, 'control', ?, ?)",
-                (event_id, attempt_id, sequence, _dump({"command": command, **(payload or {})}), _now()),
+            existing = connection.execute(
+                "SELECT * FROM human_decisions WHERE attempt_id = ? AND decision_key = ?",
+                (attempt_id, decision_key),
+            ).fetchone()
+            if existing is not None:
+                if existing["decision"] != "control" or existing["payload_json"] != payload_json:
+                    raise ValueError("control_decision_conflict")
+            else:
+                connection.execute(
+                    "INSERT INTO human_decisions(decision_id, attempt_id, decision_key, decision, payload_json, created_at) "
+                    "VALUES (?, ?, ?, 'control', ?, ?)",
+                    (str(uuid4()), attempt_id, decision_key, payload_json, _now()),
+                )
+            return self._append_event_in_transaction(
+                connection, attempt_id, "control", command_payload, timestamp=_now(),
+                contract_version="AgentEvent/v1", actor={"kind": "human", "id": "runtime_control"},
+                idempotency_key=f"control:{decision_key}", causation_id=decision_key,
+                correlation_id=None, event_id=None,
             )
-            return _event_row(connection.execute("SELECT * FROM run_events WHERE event_id = ?", (event_id,)).fetchone())  # type: ignore[return-value]
+
+    def record_artifact_receipt(
+        self, attempt_id: str, artifact_type: str, artifact_uri: str, checksum: str | None = None,
+        metadata: Any | None = None, *, owner_id: str, fence_token: int,
+    ) -> dict[str, Any]:
+        """Record a worker-produced receipt only while its current lease is valid."""
+        receipt_id, timestamp = str(uuid4()), _now()
+        with self.transaction() as connection:
+            self._assert_lease(connection, attempt_id, owner_id, fence_token, timestamp)
+            connection.execute(
+                "INSERT INTO artifact_receipts(receipt_id, attempt_id, artifact_type, artifact_uri, checksum, metadata_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (receipt_id, attempt_id, artifact_type, artifact_uri, checksum, _dump(metadata or {}), timestamp),
+            )
+            return _row(connection.execute("SELECT * FROM artifact_receipts WHERE receipt_id = ?", (receipt_id,)).fetchone())  # type: ignore[return-value]
+
+    def record_system_artifact_receipt(
+        self, attempt_id: str, artifact_type: str, artifact_uri: str, checksum: str | None = None,
+        metadata: Any | None = None, *, system_reason: str,
+    ) -> dict[str, Any]:
+        """Explicit non-worker path for import migration and recovery bookkeeping."""
+        receipt_id, timestamp = str(uuid4()), _now()
+        system_reason = _identifier(system_reason, "system_reason", required=True)
+        with self.transaction() as connection:
+            if connection.execute("SELECT 1 FROM agent_attempts WHERE attempt_id = ?", (attempt_id,)).fetchone() is None:
+                raise KeyError(attempt_id)
+            connection.execute(
+                "INSERT INTO artifact_receipts(receipt_id, attempt_id, artifact_type, artifact_uri, checksum, metadata_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    receipt_id, attempt_id, artifact_type, artifact_uri, checksum,
+                    _dump({"system_reason": system_reason, "metadata": metadata or {}}), timestamp,
+                ),
+            )
+            return _row(connection.execute("SELECT * FROM artifact_receipts WHERE receipt_id = ?", (receipt_id,)).fetchone())  # type: ignore[return-value]
 
     def list_events(self, attempt_id: str, *, after_sequence: int = 0) -> list[dict[str, Any]]:
         with self._connect() as connection:
@@ -906,12 +1083,6 @@ class RuntimeStore:
             ).fetchone())
             assert row is not None
             return {**row, "idempotent": False}
-
-    def record_artifact_receipt(self, attempt_id: str, artifact_type: str, artifact_uri: str, checksum: str | None = None, metadata: Any | None = None) -> dict[str, Any]:
-        receipt_id, timestamp = str(uuid4()), _now()
-        with self.transaction() as connection:
-            connection.execute("INSERT INTO artifact_receipts(receipt_id, attempt_id, artifact_type, artifact_uri, checksum, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (receipt_id, attempt_id, artifact_type, artifact_uri, checksum, _dump(metadata or {}), timestamp))
-            return _row(connection.execute("SELECT * FROM artifact_receipts WHERE receipt_id = ?", (receipt_id,)).fetchone())  # type: ignore[return-value]
 
     def list_artifact_receipts(self, attempt_id: str) -> list[dict[str, Any]]:
         with self._connect() as connection:
