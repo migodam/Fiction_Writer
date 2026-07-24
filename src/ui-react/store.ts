@@ -2298,10 +2298,21 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     if (!projectRoot || !w1RuntimeAttemptId || w1RuntimeAction) return;
     set({ w1RuntimeAction: 'fork' });
     const decisionId = `fork:${w1RuntimeAttemptId}:${checkpointId}`;
-    const result: RuntimeForkResult = await electronApi.runtimeFork(projectRoot, w1RuntimeAttemptId, checkpointId, decisionId).catch(() => ({ attempt: { lineage_id: '', status: 'error' }, parent_attempt_id: w1RuntimeAttemptId }));
+    const result: RuntimeForkResult = await electronApi.runtimeFork(projectRoot, w1RuntimeAttemptId, checkpointId, decisionId).catch(() => ({ error: 'runtime_fork_failed', parent_attempt_id: w1RuntimeAttemptId }));
     const forkedAttemptId = result.attempt?.attempt_id;
-    if (forkedAttemptId) get().disconnectW1RuntimeStream();
-    set({ w1RuntimeAction: null, w1RuntimeAttemptId: forkedAttemptId ?? w1RuntimeAttemptId, w1RuntimeSequence: forkedAttemptId ? 0 : get().w1RuntimeSequence, w1RuntimeEvents: forkedAttemptId ? [] : get().w1RuntimeEvents, w1RuntimeGapWarning: false, w1RuntimeError: result.attempt?.status === 'error' ? 'runtime_action_failed' : null });
+    const snapshot = result.fork_snapshot ?? result.attempt?.fork_snapshot;
+    const childIsResumable = snapshot?.resumable === true || result.attempt?.resumable === true;
+    if (!forkedAttemptId || !childIsResumable || result.error || result.attempt?.status === 'error') {
+      set({
+        w1RuntimeAction: null,
+        w1RuntimeError: !forkedAttemptId || result.error || result.attempt?.status === 'error'
+          ? 'runtime_fork_failed'
+          : 'runtime_fork_not_resumable',
+      });
+      return;
+    }
+    get().disconnectW1RuntimeStream();
+    set({ w1RuntimeAction: null, w1RuntimeAttemptId: forkedAttemptId, w1RuntimeSequence: 0, w1RuntimeEvents: [], w1RuntimeGapWarning: false, w1RuntimeError: null });
     get().connectW1RuntimeStream();
     await get().syncW1Runtime();
   },

@@ -313,8 +313,22 @@ export interface RuntimeDecisionResult {
 }
 
 export interface RuntimeForkResult {
-  attempt: RuntimeRunResult;
-  parent_attempt_id: string;
+  attempt?: RuntimeRunResult & {
+    resumable?: boolean;
+    non_resumable_reason?: string;
+    fork_snapshot?: RuntimeForkSnapshot;
+  };
+  parent_attempt_id?: string;
+  fork_snapshot?: RuntimeForkSnapshot;
+  error?: string;
+  detail?: string | { code?: string; message?: string; detail?: string };
+}
+
+export interface RuntimeForkSnapshot {
+  resumable?: boolean;
+  non_resumable_reason?: string;
+  snapshot_ref?: Record<string, unknown> | string;
+  [key: string]: unknown;
 }
 
 export interface RuntimeEventResult {
@@ -356,6 +370,18 @@ export interface RuntimeCheckpointResult {
   label?: string;
   summary?: string;
   created_at?: string;
+  metadata?: {
+    resumable?: boolean;
+    non_resumable_reason?: string;
+    recovery_mode?: string;
+    preview_reason?: string;
+    snapshot_error?: string;
+    snapshot_ref?: Record<string, unknown> | string;
+    [key: string]: unknown;
+  } | string;
+  resumable?: boolean;
+  non_resumable_reason?: string;
+  snapshot_ref?: Record<string, unknown> | string;
 }
 
 // ── W2 Manuscript Sync ───────────────────────────────────────────────────────
