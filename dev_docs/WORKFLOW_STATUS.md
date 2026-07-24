@@ -35,16 +35,19 @@ an SSE bridge to legacy `/workflow/stream`, with cursor replay and polling
 fallback; no separately verified `/runtime` SSE endpoint exists. API, mocked
 IPC, real Electron restart recovery, disposable real-fixture acceptance, and
 provider recovery are covered. The authorized Import Text 18 resume completed
-10/10 with 8 calls costing `$0.014351`; all 108 proposals remain pending. The
-post-run offline evidence repair passed diagnostics with every symptom flag
-false. Current W1/runtime regression: **782 passed**. Exact commands and
-receipts are in the 2026-07-21 dev log.
+10/10 with 8 calls costing `$0.014351`. On 2026-07-25 its 108-proposal package
+was migrated to package graph contract v2, repaired, accepted, and verified
+after Electron restart with no additional provider call or cost. The final
+project has 0 pending proposals, 10 chapters, 10 scenes, and 20 manuscript
+nodes. Exact commands and receipts are in the 2026-07-21 and 2026-07-25 dev
+logs. The 2026-07-25 package-compiler gate passed 805 targeted backend tests,
+279 browser P0/P1/smoke tests, UI lint/build, and Electron runtime smoke.
 
 ## Workflow Matrix
 | Workflow | Purpose | Backend status | UI status | Current status | Integration source | Open gaps |
 |---|---|---|---|---|---|---|
 | W0 Orchestrator | Multi-step workflow planner/executor | Durable project checkpointer wired; automated coverage exists | Agents workspace control surface present for goal entry, status, permissions, and results | `partial` | `FRONTEND_BACKEND_CHECKLIST.md` | No live provider regression recorded for this baseline |
-| W1 Import | Novel/file import into proposals and project structure | Durable attempts, provider-response recovery, legacy validation, and completed 10/10 paid recovery covered | Import modal includes Recovery Center/runtime event and checkpoint surfaces alongside import observability | `partial` | `FRONTEND_BACKEND_CHECKLIST.md` | Import Text 18 has 108 pending proposals awaiting human review; thin supporting-character cards remain non-blocking |
+| W1 Import | Novel/file import into proposals and project structure | Durable attempts, provider-response recovery, package graph v2, legacy artifact repair, and completed 10/10 paid recovery covered | Import modal includes Recovery Center/runtime event and checkpoint surfaces alongside import observability; Workbench executes compiled package order atomically | `partial` | `FRONTEND_BACKEND_CHECKLIST.md` | Import Text 18 accepted 108/108 and persisted after restart; thin supporting-character cards remain non-blocking |
 | W2 Manuscript Sync | Sync writing content back into canonical/project data proposals | Verified in backend | Writing Chapters trigger with status/result path to Workbench Inbox | `active` | `FRONTEND_BACKEND_CHECKLIST.md` | Proposal acceptance safety remains owned by Workbench |
 | W3 Writing Assistant | Continue/rewrite/expand/improve-dialogue flows | Verified and wired | Available in writing flows | `active` | `FRONTEND_BACKEND_CHECKLIST.md` | Occasional preamble text still needs prompt hardening |
 | W4 Consistency Check | Detect contradictions and consistency issues | Verified and wired | Audit button and polling present | `active` | `FRONTEND_BACKEND_CHECKLIST.md` | Issue review/queue-fix closure still lighter than target product loop |
@@ -78,9 +81,9 @@ is committed and verified in Playwright plus an actual 1280px browser pass.
 ## Current Product Gaps That Are Real
 - W2 now has a canonical Writing Chapters trigger and status/result path; proposal acceptance safety remains a Workbench closure item.
 - W0 now has a canonical Agents workspace control surface for goal composition, permissions, status, and results.
-- Proposal acceptance now blocks unsupported canonical operations instead of accepting no-ops; dedicated link/unlink canonical mutators remain future work.
+- Proposal acceptance now blocks unsupported canonical operations instead of accepting no-ops. Package graph v2 closes the compiler/executor ordering split and partial package bypass; dedicated link/unlink canonical mutators remain future work.
 - Publish/export remains present as a workspace but is not yet a fully closed delivery surface.
-- Sidecar lifecycle now has durable runtime/checkpointer shutdown handling and restart lease invalidation. Real Electron restart recovery and the paid Import Text 18 resume pass; the remaining gate is human review of the pending package.
+- Sidecar lifecycle now has durable runtime/checkpointer shutdown handling and restart lease invalidation. Real Electron restart recovery, the paid Import Text 18 resume, and its 108-proposal package acceptance have passed.
 
 ## Workflow Ownership Boundaries
 - Status changes update this file.

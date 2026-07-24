@@ -87,7 +87,14 @@ def compile_proposal_graph(
         for operation in _operations(proposal):
             if operation.get("op") != "create":
                 continue
-            key = _entity_key(operation.get("entityType"), operation.get("entityId"))
+            key, explicit_ids = _producer_key(proposal, operation)
+            if len(explicit_ids) > 1:
+                errors.append(_error(
+                    "producer_id_mismatch",
+                    proposal_id=proposal_id,
+                    entity_type=_normalize_type(operation.get("entityType")),
+                    ids=explicit_ids,
+                ))
             if key is None:
                 errors.append(_error("invalid_create_producer", proposal_id=proposal_id))
             elif key in producers:
@@ -155,12 +162,25 @@ def compile_proposal_graph(
     edges = _unique_edges(edges)
     order, cycle_errors = _ordered_proposal_ids(proposal_by_id, edges)
     errors.extend(cycle_errors)
+    compiler_metadata = {
+        "contractVersion": "w1-package-graph-v2",
+        "order": 0,
+        "proposalCount": len(normalized),
+        "orderedProposalIds": list(order),
+    }
+    order_by_id = {proposal_id: index for index, proposal_id in enumerate(order)}
+    for proposal in normalized:
+        metadata = dict(compiler_metadata)
+        metadata["order"] = order_by_id.get(str(proposal["id"]), len(order))
+        proposal["packageCompiler"] = metadata
     errors.sort(key=_stable_value)
     diagnostics.sort(key=_stable_value)
     dropped.sort(key=_stable_value)
     result = {
+        "contractVersion": "w1-package-graph-v2",
         "normalizedProposals": normalized,
         "orderedProposalIds": order,
+        "executionPlan": [{"phase": "apply", "proposalIds": list(order)}],
         "edges": edges,
         "producers": _public_producers(producers),
         "remaps": _public_remaps(remaps),
@@ -369,14 +389,29 @@ def _belongs_to_import_run(proposal: dict[str, Any], import_run_id: str) -> bool
 
 
 def _artifact_metadata(compilation: dict[str, Any]) -> dict[str, Any]:
-    return {
+    metadata = {
         key: compilation[key]
         for key in (
             "importRunId", "atomic", "inboxUpdated", "packageRemoved",
-            "orderedProposalIds", "edges", "producers", "remaps",
+            "orderedProposalIds", "executionPlan", "edges", "producers", "remaps",
             "droppedRefs", "diagnostics", "blockingErrors",
         )
     }
+    metadata["contractVersion"] = compilation["contractVersion"]
+    return metadata
+
+
+def _producer_key(proposal: dict[str, Any], operation: dict[str, Any]) -> tuple[tuple[str, str] | None, list[str]]:
+    """Use the same producer-ID precedence as the frontend acceptance path."""
+    fields = operation.get("fields") if isinstance(operation.get("fields"), dict) else {}
+    candidates = [operation.get("entityId"), fields.get("id"), proposal.get("targetEntityId")]
+    explicit_ids: list[str] = []
+    for value in candidates:
+        value = str(value or "").strip()
+        if value and value not in explicit_ids:
+            explicit_ids.append(value)
+    selected = next((value for value in candidates if str(value or "").strip()), "")
+    return _entity_key(operation.get("entityType"), selected), explicit_ids
 
 
 def _normalize_existing_ids(existing_ids: dict[str, Iterable[str]] | None) -> dict[str, set[str]]:

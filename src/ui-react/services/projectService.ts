@@ -1730,32 +1730,46 @@ const extractIdRefs = (fields: Record<string, unknown>): Array<{ id: string; lab
 };
 
 export const buildDependencyGraph = (proposals: Proposal[]): DependencyEdge[] => {
-  const createdBy = new Map<string, string>();
+  const createdBy = new Map<string, Set<string>>();
   proposals.forEach((proposal) => {
     const ops = getProposalOperations(proposal);
     ops.forEach((op) => {
-      if (op.op === 'create' && op.entityId) createdBy.set(String(op.entityId), proposal.id);
+      if (op.op !== 'create') return;
+      const entityType = op.entityType as EntityKind | undefined;
+      if (!entityType) return;
+      const entityId = operationEntityId(proposal, op, entityType);
+      if (!entityId) return;
+      createdBy.set(entityId, new Set([...(createdBy.get(entityId) || []), proposal.id]));
     });
     // Fall back to targetEntityId for proposals with no explicit create op
     if (proposal.targetEntityId && !ops.length) {
-      createdBy.set(proposal.targetEntityId, proposal.id);
+      createdBy.set(proposal.targetEntityId, new Set([...(createdBy.get(proposal.targetEntityId) || []), proposal.id]));
     }
   });
 
   const edges: DependencyEdge[] = [];
   const seen = new Set<string>();
+  const addEdge = (creator: string, consumer: string, reason: string) => {
+    if (creator === consumer) return;
+    const edgeKey = `${creator}|${consumer}|${reason}`;
+    if (seen.has(edgeKey)) return;
+    seen.add(edgeKey);
+    edges.push({ fromId: creator, toId: consumer, reason });
+  };
   proposals.forEach((proposal) => {
     getProposalOperations(proposal).forEach((op) => {
+      if (op.op !== 'create') {
+        const entityType = op.entityType as EntityKind | undefined;
+        if (entityType) {
+          const targetId = operationEntityId(proposal, op, entityType);
+          const producers = createdBy.get(targetId);
+          if (producers?.size === 1) addEdge([...producers][0], proposal.id, `${op.op} target`);
+        }
+      }
       if (!op.fields) return;
       extractIdRefs(op.fields as Record<string, unknown>).forEach(({ id, label }) => {
-        const creator = createdBy.get(id);
-        if (creator && creator !== proposal.id) {
-          const edgeKey = `${creator}|${proposal.id}`;
-          if (!seen.has(edgeKey)) {
-            seen.add(edgeKey);
-            edges.push({ fromId: creator, toId: proposal.id, reason: `${label} referenced` });
-          }
-        }
+        const producers = createdBy.get(id);
+        if (producers?.size === 1) addEdge([...producers][0], proposal.id, `${label} referenced`);
       });
     });
   });
@@ -1809,35 +1823,82 @@ export const buildProposalPackages = (proposals: Proposal[]): ProposalPackage[] 
     });
 };
 
-const isFullImportPackageSelection = (
-  project: NarrativeProject,
-  targets: Proposal[],
-  packageKey: string,
-) => {
-  const selectedIds = new Set(targets.map((proposal) => proposal.id));
-  const pendingPackageIds = project.proposals
-    .filter((proposal) => (proposal.status === 'pending' || !proposal.status) && getProposalPackageKey(proposal) === packageKey)
-    .map((proposal) => proposal.id);
-  return pendingPackageIds.length > 0 && pendingPackageIds.every((id) => selectedIds.has(id));
-};
-
-const groupFullImportPackageSelections = (project: NarrativeProject, targets: Proposal[]) => {
-  const groups = new Map<string, Proposal[]>();
-  targets.forEach((proposal) => {
-    const packageKey = getProposalPackageKey(proposal);
-    if (!packageKey) return;
-    groups.set(packageKey, [...(groups.get(packageKey) || []), proposal]);
-  });
-  return [...groups.entries()]
-    .filter(([packageKey]) => isFullImportPackageSelection(project, targets, packageKey))
-    .map(([, proposals]) => proposals);
-};
+const pendingPackageProposals = (project: NarrativeProject, packageKey: string) =>
+  project.proposals.filter((proposal) =>
+    (proposal.status === 'pending' || !proposal.status)
+    && getProposalPackageKey(proposal) === packageKey
+  );
 
 const proposalScopedId = (proposal: Proposal, entityType: string) =>
   `${entityType}_${proposal.id.replace(/^proposal_/, '').replace(/[^a-zA-Z0-9_]+/g, '_')}`;
 
 const operationEntityId = (proposal: Proposal, operation: RawProposalOperation, entityType: EntityKind) =>
   String(operation.entityId || operation.fields?.id || proposal.targetEntityId || proposalScopedId(proposal, entityType));
+
+const proposalPriority = (proposal: Proposal) => {
+  const entityType = getProposalOperations(proposal)[0]?.entityType as EntityKind | undefined;
+  return proposalApplyPriority[entityType || 'proposal'] ?? 99;
+};
+
+const stableProposalOrder = (a: Proposal, b: Proposal) =>
+  proposalPriority(a) - proposalPriority(b) || a.id.localeCompare(b.id);
+
+const orderPackageProposals = (proposals: Proposal[]): Proposal[] => {
+  const ids = new Set(proposals.map((proposal) => proposal.id));
+  const compiled = proposals.map((proposal) => proposal.packageCompiler);
+  const compiledIds = compiled[0]?.orderedProposalIds || [];
+  const hasAuthoritativePlan =
+    compiled.length === proposals.length
+    && compiled.every((metadata, index) =>
+      metadata?.contractVersion === 'w1-package-graph-v2'
+      && metadata.proposalCount === proposals.length
+      && metadata.orderedProposalIds.length === proposals.length
+      && metadata.orderedProposalIds.every((id) => ids.has(id))
+      && metadata.orderedProposalIds.join('\u0000') === compiledIds.join('\u0000')
+      && metadata.order === compiledIds.indexOf(proposals[index].id)
+    )
+    && new Set(compiledIds).size === proposals.length;
+  if (hasAuthoritativePlan) {
+    const byId = new Map(proposals.map((proposal) => [proposal.id, proposal]));
+    return compiledIds.map((id) => byId.get(id)!).filter(Boolean);
+  }
+
+  // Compatibility compiler for packages created before package-graph-v2. The
+  // persisted Python plan remains authoritative for every newly written W1
+  // package; this fallback prevents legacy updates from running before their
+  // same-package create producer.
+  const edges = buildDependencyGraph(proposals);
+  const outgoing = new Map<string, Set<string>>();
+  const indegree = new Map(proposals.map((proposal) => [proposal.id, 0]));
+  for (const edge of edges) {
+    if (!ids.has(edge.fromId) || !ids.has(edge.toId) || edge.fromId === edge.toId) continue;
+    const consumers = outgoing.get(edge.fromId) || new Set<string>();
+    if (consumers.has(edge.toId)) continue;
+    consumers.add(edge.toId);
+    outgoing.set(edge.fromId, consumers);
+    indegree.set(edge.toId, (indegree.get(edge.toId) || 0) + 1);
+  }
+  const byId = new Map(proposals.map((proposal) => [proposal.id, proposal]));
+  const ready = proposals.filter((proposal) => indegree.get(proposal.id) === 0).sort(stableProposalOrder);
+  const ordered: Proposal[] = [];
+  while (ready.length) {
+    const proposal = ready.shift()!;
+    ordered.push(proposal);
+    for (const consumerId of outgoing.get(proposal.id) || []) {
+      const next = (indegree.get(consumerId) || 0) - 1;
+      indegree.set(consumerId, next);
+      if (next === 0) {
+        ready.push(byId.get(consumerId)!);
+        ready.sort(stableProposalOrder);
+      }
+    }
+  }
+  if (ordered.length < proposals.length) {
+    const emitted = new Set(ordered.map((proposal) => proposal.id));
+    ordered.push(...proposals.filter((proposal) => !emitted.has(proposal.id)).sort(stableProposalOrder));
+  }
+  return ordered;
+};
 
 const collectReferenceSets = (project: NarrativeProject, proposals: Proposal[] = []): ReferenceSets => {
   const refs: ReferenceSets = {
@@ -1988,9 +2049,24 @@ const applyProposalBatch = (project: NarrativeProject, proposals: Proposal[]): N
 };
 
 const applyImportPackageBatches = async (project: NarrativeProject, targets: Proposal[]): Promise<NarrativeProject> => {
-  const packageGroups = groupFullImportPackageSelections(project, targets);
-  const packageIds = new Set(packageGroups.flatMap((group) => group.map((proposal) => proposal.id)));
-  const nonPackageTargets = targets.filter((proposal) => !packageIds.has(proposal.id));
+  const selectedIds = new Set(targets.map((proposal) => proposal.id));
+  const packageKeys = uniqueStrings(targets.map(getProposalPackageKey));
+  const packageGroups: Proposal[][] = [];
+  for (const packageKey of packageKeys) {
+    const completePackage = pendingPackageProposals(project, packageKey);
+    const missing = completePackage.filter((proposal) => !selectedIds.has(proposal.id));
+    if (missing.length) {
+      const culprit = targets.find((proposal) => getProposalPackageKey(proposal) === packageKey) || completePackage[0];
+      return blockImportPackage(
+        project,
+        completePackage,
+        culprit,
+        `Package selection is incomplete; missing proposals: ${missing.map((proposal) => proposal.id).join(', ')}.`,
+      );
+    }
+    packageGroups.push(completePackage);
+  }
+  const nonPackageTargets = targets.filter((proposal) => !getProposalPackageKey(proposal));
 
   let draft = project;
   for (const group of packageGroups) draft = await applyProposalPackageTransaction(draft, group);
@@ -2001,11 +2077,7 @@ const applyImportPackageBatches = async (project: NarrativeProject, targets: Pro
 const validateProposalPackageOperations = (project: NarrativeProject, proposals: Proposal[]): ProposalApplyResult & { culprit: Proposal } => {
   const preparedProject = prepareProjectForImportApply(project, proposals);
   const references = collectReferenceSets(preparedProject, proposals);
-  const sorted = [...proposals].sort((a, b) => {
-    const aType = getProposalOperations(a)[0]?.entityType as EntityKind | undefined;
-    const bType = getProposalOperations(b)[0]?.entityType as EntityKind | undefined;
-    return (proposalApplyPriority[aType || 'proposal'] ?? 99) - (proposalApplyPriority[bType || 'proposal'] ?? 99);
-  });
+  const sorted = orderPackageProposals(proposals);
   let draft = preparedProject;
   for (const proposal of sorted) {
     const result = applyProposalOperations(draft, proposal, references);
@@ -2027,11 +2099,7 @@ const applyProposalPackageTransaction = async (project: NarrativeProject, propos
 
   const preparedProject = prepareProjectForImportApply(project, proposals);
   const references = collectReferenceSets(preparedProject, proposals);
-  const sorted = [...proposals].sort((a, b) => {
-    const aType = getProposalOperations(a)[0]?.entityType as EntityKind | undefined;
-    const bType = getProposalOperations(b)[0]?.entityType as EntityKind | undefined;
-    return (proposalApplyPriority[aType || 'proposal'] ?? 99) - (proposalApplyPriority[bType || 'proposal'] ?? 99);
-  });
+  const sorted = orderPackageProposals(proposals);
 
   let draft = preparedProject;
   const accepted: Proposal[] = [];
@@ -2127,20 +2195,56 @@ const repairLegacyProjectionDescriptors = async (project: NarrativeProject, prop
   if (runIds.length !== 1) return fail(proposals[0], 'Import package has conflicting or missing importRunId values.');
   const runId = runIds[0];
   if (!isSafeArtifactSegment(runId)) return fail(proposals[0], 'Import package has an invalid importRunId.');
-  const runDirectory = runtime.path.resolve(project.metadata.rootPath, 'system', 'imports', runId);
-  const artifactPath = runtime.path.resolve(runDirectory, 'staged_manuscript_projection.json');
-  const manifestPath = runtime.path.resolve(runDirectory, 'manifest.json');
-  const sourcePath = runtime.path.resolve(runDirectory, 'raw_source.txt');
+  const projectRoot = runtime.path.resolve(project.metadata.rootPath);
+  const runDirectory = runtime.path.resolve(projectRoot, 'system', 'imports', runId);
   const legacy = proposals.flatMap((proposal) => getStagedManuscriptProjectionDescriptors(proposal)
     .filter((descriptor) => descriptor.artifactRef === undefined && typeof descriptor.artifact_path === 'string')
     .map((descriptor) => ({ proposal, descriptor })));
   if (!legacy.length) return fail(proposals[0], 'Package is blocked, but does not contain a repairable legacy projection descriptor.');
-  if (legacy.every(({ descriptor }) => runtime.path.resolve(descriptor.artifact_path as string) === artifactPath)) {
-    return fail(legacy[0].proposal, 'Package is blocked, but does not contain a stale legacy projection descriptor.');
-  }
   try {
+    const legacyPaths = uniqueStrings(legacy.map(({ descriptor }) => descriptor.artifact_path));
+    const containedCandidates = legacyPaths
+      .map((path) => runtime.path.resolve(path))
+      .filter((path) =>
+        isPathInside(runtime.path, runDirectory, path)
+        && path.endsWith(`${runtime.path.sep}staged_manuscript_projection.json`)
+        && runtime.fs.existsSync(path)
+      );
+    const relocatedCandidates = new Set<string>();
+    relocatedCandidates.add(runtime.path.resolve(runDirectory, 'staged_manuscript_projection.json'));
+    for (const legacyPath of legacyPaths) {
+      const normalized = legacyPath.replaceAll('\\', '/');
+      const attempt = normalized.match(/\/attempts\/([^/]+)\/staged_manuscript_projection\.json$/)?.[1];
+      if (attempt && isSafeArtifactSegment(attempt)) {
+        relocatedCandidates.add(runtime.path.resolve(runDirectory, 'attempts', attempt, 'staged_manuscript_projection.json'));
+      }
+    }
+    const candidates = uniqueStrings(containedCandidates.length ? containedCandidates : [...relocatedCandidates])
+      .filter((path) => runtime.fs.existsSync(path));
+    if (candidates.length !== 1) {
+      return fail(
+        legacy[0].proposal,
+        candidates.length
+          ? 'Legacy projection repair found multiple possible staged artifacts; manual selection is required.'
+          : 'Legacy projection repair is missing its staged artifact, manifest, or source file.',
+      );
+    }
+    const artifactPath = candidates[0];
+    const artifactDirectory = runtime.path.dirname(artifactPath);
+    const manifestPath = runtime.path.resolve(artifactDirectory, 'manifest.json');
+    const sourcePath = runtime.path.resolve(artifactDirectory, 'raw_source.txt');
     if (![artifactPath, manifestPath, sourcePath].every((path) => runtime.fs.existsSync(path))) return fail(legacy[0].proposal, 'Legacy projection repair is missing its staged artifact, manifest, or source file.');
     if ([artifactPath, manifestPath, sourcePath].some((path) => runtime.fs.realpathSync(path) !== path)) return fail(legacy[0].proposal, 'Legacy projection repair rejected a symlinked artifact or source file.');
+    const artifactRelativeToRun = runtime.path.relative(runDirectory, artifactPath).split(runtime.path.sep).join('/');
+    const attemptMatch = artifactRelativeToRun.match(/^attempts\/([^/]+)\/staged_manuscript_projection\.json$/);
+    const attemptId = artifactRelativeToRun === 'staged_manuscript_projection.json'
+      ? 'legacy'
+      : attemptMatch?.[1];
+    if (!attemptId || !isSafeArtifactSegment(attemptId)) {
+      return fail(legacy[0].proposal, 'Legacy projection artifact is not in a supported import-run or attempt directory.');
+    }
+    const artifactRelativePath = runtime.path.relative(projectRoot, artifactPath).split(runtime.path.sep).join('/');
+    const sourceRelativePath = runtime.path.relative(projectRoot, sourcePath).split(runtime.path.sep).join('/');
     const artifactText = runtime.fs.readFileSync(artifactPath, 'utf8');
     const artifact = JSON.parse(artifactText) as Record<string, unknown>;
     const manifest = JSON.parse(runtime.fs.readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
@@ -2171,14 +2275,14 @@ const repairLegacyProjectionDescriptors = async (project: NarrativeProject, prop
     }
     if (documentScenes.size !== sourceByScene.size) return fail(legacy[0].proposal, 'Legacy projection scene documents do not exactly match the staged chapters.');
     const sourceRef: ArtifactRef = {
-      relativePath: `system/imports/${runId}/raw_source.txt`, sha256: sourceHash,
-      contractVersion: 'w1-raw-source-v1', lineageId: runId, attemptId: 'legacy',
+      relativePath: sourceRelativePath, sha256: sourceHash,
+      contractVersion: 'w1-raw-source-v1', lineageId: runId, attemptId,
     };
     const rewrittenArtifact = { ...artifact, source_file_path: undefined, source_ref: sourceRef };
     const replacementText = JSON.stringify(rewrittenArtifact, null, 2);
-    const ref: ArtifactRef = { relativePath: `system/imports/${runId}/staged_manuscript_projection.json`, sha256: await sha256Text(replacementText), contractVersion: 'w1-staged-manuscript-v2', lineageId: runId, attemptId: 'legacy' };
-    await commitProjectTransaction(runtime.fs, runtime.path.resolve(project.metadata.rootPath), `repair-package-${runId}`, [{
-      relativePath: `system/imports/${runId}/staged_manuscript_projection.json`,
+    const ref: ArtifactRef = { relativePath: artifactRelativePath, sha256: await sha256Text(replacementText), contractVersion: 'w1-staged-manuscript-v2', lineageId: runId, attemptId };
+    await commitProjectTransaction(runtime.fs, projectRoot, `repair-package-${runId}-${attemptId}`, [{
+      relativePath: artifactRelativePath,
       postimage: replacementText,
     }]);
     const legacyIds = new Set(legacy.map(({ proposal }) => proposal.id));

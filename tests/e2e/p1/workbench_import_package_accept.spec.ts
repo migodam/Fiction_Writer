@@ -385,6 +385,63 @@ test.describe('Workbench import package accept', () => {
     expect(result.transactions.length).toBeGreaterThan(0);
   });
 
+  test('repairs a legacy projection stored in an attempt directory and preserves the attempt identity', async ({ page }) => {
+    const packageId = 'pkg_attempt_legacy_repair';
+    const attemptId = 'legacy_attempt_02';
+    const artifactPath = `/project/system/imports/${packageId}/attempts/${attemptId}/staged_manuscript_projection.json`;
+    const sourceHash = 'source_hash_attempt_legacy_repair';
+    await installProjectionFilesystem(
+      page,
+      artifactPath,
+      makeProjection(packageId, sourceHash),
+      { import_run_id: packageId, source_hash: sourceHash, attempt_id: attemptId },
+    );
+    const proposals = makeStagedProjectionPackage(packageId, artifactPath).map((proposal) => ({
+      ...proposal,
+      lastBlockReason: 'Legacy package requires repair.',
+    }));
+    await injectImportPackage(page, proposals);
+    await page.evaluate(() => {
+      const store = (window as any).__narrativeStore;
+      store.setState((state: any) => ({
+        ...state,
+        projectRoot: '/project',
+        currentProject: {
+          ...state.currentProject,
+          metadata: { ...state.currentProject.metadata, rootPath: '/project', storageMode: 'nodefs' },
+        },
+      }));
+    });
+
+    await page.getByTestId(`repair-blocked-package-${packageTestId(packageId)}`).click();
+    const repaired = await page.evaluate(() => {
+      const state = (window as any).__narrativeStore.getState();
+      const descriptors = state.proposals.flatMap((proposal: any) => proposal.proposedOperations)
+        .map((operation: any) => operation.fields?.stagedManuscriptProjection);
+      return { proposals: state.proposals, descriptors };
+    });
+    expect(repaired.proposals.every((proposal: any) => !proposal.lastBlockReason)).toBe(true);
+    expect(repaired.descriptors.every((descriptor: any) =>
+      descriptor.artifactRef?.attemptId === attemptId
+      && descriptor.artifactRef?.relativePath === `system/imports/${packageId}/attempts/${attemptId}/staged_manuscript_projection.json`
+    )).toBe(true);
+
+    await page.getByTestId(`accept-import-package-${packageTestId(packageId)}`).click();
+    const accepted = await page.evaluate(() => {
+      const state = (window as any).__narrativeStore.getState();
+      const artifact = JSON.parse((window as any).__projectionFs.files.get(
+        '/project/system/imports/pkg_attempt_legacy_repair/attempts/legacy_attempt_02/staged_manuscript_projection.json',
+      ));
+      return { content: state.scenes[0]?.content, sourceRef: artifact.source_ref, pending: state.proposals.length };
+    });
+    expect(accepted.content).toBe('Projection-owned manuscript content.');
+    expect(accepted.pending).toBe(0);
+    expect(accepted.sourceRef).toEqual(expect.objectContaining({
+      attemptId,
+      relativePath: `system/imports/${packageId}/attempts/${attemptId}/raw_source.txt`,
+    }));
+  });
+
   test('failed legacy repair writes no receipt and leaves the projection artifact unchanged', async ({ page }) => {
     const packageId = 'pkg_legacy_repair_failure';
     const currentArtifactPath = `/project/system/imports/${packageId}/staged_manuscript_projection.json`;
@@ -689,6 +746,92 @@ test.describe('Workbench import package accept', () => {
     expect(result.history).toEqual([]);
     expect(result.proposal.status).toBe('pending');
     expect(result.proposal.lastBlockReason).toContain('complete package transaction');
+  });
+
+  test('blocks a partial package selection instead of falling back to a non-atomic batch', async ({ page }) => {
+    const packageId = 'pkg_partial_selection_guard';
+    await injectImportPackage(page, [
+      makePackageProposal(packageId, 'partial_chapter_a', 'chapter', {
+        id: 'chap_partial_a', title: 'Partial A', summary: '', goal: '', notes: '', sceneIds: [], orderIndex: 0, status: 'draft',
+      }),
+      makePackageProposal(packageId, 'partial_chapter_b', 'chapter', {
+        id: 'chap_partial_b', title: 'Partial B', summary: '', goal: '', notes: '', sceneIds: [], orderIndex: 1, status: 'draft',
+      }),
+    ]);
+
+    const result = await page.evaluate(async () => {
+      const store = (window as any).__narrativeStore;
+      await store.getState().resolveProposals(['partial_chapter_a'], 'accepted');
+      const state = store.getState();
+      return { chapters: state.chapters, proposals: state.proposals, history: state.proposalHistory };
+    });
+
+    expect(result.chapters).toEqual([]);
+    expect(result.history).toEqual([]);
+    expect(result.proposals).toHaveLength(2);
+    expect(result.proposals.every((proposal: any) => proposal.lastBlockReason?.includes('selection is incomplete'))).toBe(true);
+  });
+
+  test('uses the compiler execution plan when a same-package update arrives before its create', async ({ page }) => {
+    const packageId = 'pkg_compiler_order';
+    const create = makePackageProposal(packageId, 'compiler_create', 'world_container', {
+      id: 'container_compiler_order', name: 'Initial name', type: 'folder', isDefault: false, sortOrder: 0,
+    });
+    const update = makePackageProposal(packageId, 'compiler_update', 'world_container', {
+      id: 'container_compiler_order', name: 'Updated by compiler',
+    });
+    update.proposedOperations[0].op = 'update';
+    const orderedProposalIds = [create.id, update.id];
+    [create, update].forEach((proposal, order) => {
+      (proposal as any).packageCompiler = {
+        contractVersion: 'w1-package-graph-v2',
+        order,
+        proposalCount: 2,
+        orderedProposalIds,
+      };
+    });
+    await injectImportPackage(page, [update, create]);
+
+    await page.getByTestId(`accept-import-package-${packageTestId(packageId)}`).click();
+    await expect(page.getByTestId('workbench-inbox-list')).toContainText('Inbox clear');
+    const result = await page.evaluate(() => {
+      const state = (window as any).__narrativeStore.getState();
+      return { containers: state.worldContainers, pending: state.proposals.length, history: state.proposalHistory.map((proposal: any) => proposal.id) };
+    });
+    expect(result.containers).toEqual([expect.objectContaining({ id: 'container_compiler_order', name: 'Updated by compiler' })]);
+    expect(result.pending).toBe(0);
+    expect(result.history).toEqual(orderedProposalIds);
+  });
+
+  test('rejects inconsistent compiler order metadata and recompiles the legacy dependency order', async ({ page }) => {
+    const packageId = 'pkg_inconsistent_compiler_order';
+    const create = makePackageProposal(packageId, 'inconsistent_create', 'world_container', {
+      id: 'container_inconsistent_order', name: 'Initial name', type: 'folder', isDefault: false, sortOrder: 0,
+    });
+    const update = makePackageProposal(packageId, 'inconsistent_update', 'world_container', {
+      id: 'container_inconsistent_order', name: 'Updated after fallback compile',
+    });
+    update.proposedOperations[0].op = 'update';
+    const invalidOrder = [update.id, create.id];
+    [update, create].forEach((proposal) => {
+      (proposal as any).packageCompiler = {
+        contractVersion: 'w1-package-graph-v2',
+        order: 0,
+        proposalCount: 2,
+        orderedProposalIds: invalidOrder,
+      };
+    });
+    await injectImportPackage(page, [update, create]);
+
+    await page.getByTestId(`accept-import-package-${packageTestId(packageId)}`).click();
+    const result = await page.evaluate(() => {
+      const state = (window as any).__narrativeStore.getState();
+      return { containers: state.worldContainers, pending: state.proposals.length };
+    });
+    expect(result.containers).toEqual([
+      expect.objectContaining({ id: 'container_inconsistent_order', name: 'Updated after fallback compile' }),
+    ]);
+    expect(result.pending).toBe(0);
   });
 
   test('rejecting one package does not resolve a different import run', async ({ page }) => {

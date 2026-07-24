@@ -412,9 +412,10 @@ def rereview_pending_package(project: Path, *, import_run_id: str | None = None,
     compiled_graph = compile_proposal_graph(package, existing_ids={})
     if compiled_graph["blockingErrors"]:
         raise ValueError(f"Re-reviewed active proposal graph is blocked: {compiled_graph['blockingErrors']!r}")
+    compiled_package = compiled_graph["normalizedProposals"]
 
     rewritten_inbox = [
-        next((candidate for candidate in package if candidate.get("id") == proposal.get("id")), proposal)
+        next((candidate for candidate in compiled_package if candidate.get("id") == proposal.get("id")), proposal)
         if _belongs_to_run(proposal, selected_run_id) else proposal
         for proposal in inbox
     ]

@@ -11,6 +11,7 @@ This folder is the evidence and handoff layer for Narrative IDE work. It is not 
 |---|---|---|
 | Current World/Harness closeout | `2026-07-25-world-model-harness-reviewer-redesign-report.md` | Notebook/folder UI, concrete narrative links, semantic reviewer/mover, benchmark reconciliation, Agent Dock, tests, and residual gates. |
 | Current Harness research | `2026-07-25-agent-harness-open-source-architecture-research.md` | Public Claude Code/Codex and OneNote architecture references, limits, and the adopted runtime design. |
+| W1 package compiler repair | `2026-07-25-claude-code-harness-and-package-compiler-report.md` | Official Claude Code public-Harness research, package graph v2 root cause/fix, and Import Text 18 acceptance evidence. |
 | Current implementation truth | `2026-07-15-agent-runtime-resilience-and-recovery-report.md` | Durable runtime, recovery, Time Travel, real-fixture acceptance, paid recovery outcome, human gate, and final test matrix. |
 | Previous reviewer-ready baseline | `2026-07-11-w1-reviewer-ready-orchestrator-report.md` | Pre-resilience W1 outcome, earlier paid-run ledger, residual P2 risks, and Git merge sequence. |
 | Current plan | `2026-06-06-w1-next-wave-multiagent-claude-plan.md` | Single-file Claude workflow for the next investigation/repair wave; includes execution steps and hardening addendum. |
@@ -35,15 +36,15 @@ This folder is the evidence and handoff layer for Narrative IDE work. It is not 
   high-confidence reclassifications, and 2 quarantined candidates.
 - Concrete World-to-event timeline deep links are committed and verified in Playwright and an
   actual 1280px browser pass: the event title/time/branch banner and centered focus ring are visible.
-- Current active W1/runtime regression: 817 passed. Full-repo pytest additionally reports 842
+- Previous 2026-07-21 active W1/runtime regression: 817 passed. Full-repo pytest additionally reported 842
   passes plus 11 failures and 7 errors isolated to reference-only V2/V3 `src/core` tests and
   their missing `tests/api_key.txt`; those are recorded as legacy debt, not hidden.
 
-- The Agent Runtime resilience wave passes the established Playwright/Electron gates; the current W1/runtime regression is 817 passed and UI lint/build are clean.
-- Import Text 18 completed the authorized DeepSeek V4 Flash 10/10 resume for `$0.014351`. Its 108 proposals remain pending. Offline provenance/profile repair completed with backups, and final diagnostics report every symptom flag false.
+- The 2026-07-25 package-compiler gate passes 805 targeted W1/runtime tests, 279 browser P0/P1/smoke tests, 34 focused package tests, UI lint/build, and Electron runtime smoke.
+- Import Text 18 completed the authorized DeepSeek V4 Flash 10/10 resume for `$0.014351`. On 2026-07-25 its 108 proposals were recompiled, repaired, accepted, and verified after Electron restart with no additional provider calls or cost. A full pre-acceptance project backup remains available.
 - Provider response recovery uses a stable sequence-independent operation key excluding `attemptId`, project-local `0700`/`0600` content-addressed artifacts, verified cross-attempt reuse, per-process singleflight, human-gated unknown outcomes on cache and network paths, and unique-operation usage-ledger rebuilds without session double counting.
 - The previous 2026-07-21 baseline included Electron runtime smoke and the broader P0/P1 suite.
-  This wave reverified UI lint/build, 817 active W1/runtime tests, the complete 276-test P0/P1
+  That wave verified UI lint/build, 817 active W1/runtime tests, the complete 276-test P0/P1
   Playwright suite, timeline drag stability, and a headed Electron actual-fixture run covering
   package acceptance, restart persistence, and interrupted-run recovery. The deterministic
   Electron runtime smoke also passed after rerunning outside the network-restricted sandbox.

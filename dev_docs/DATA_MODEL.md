@@ -173,6 +173,7 @@ Canonical changes still require package-scoped proposal acceptance.
 - operations
 - source_workflow
 - importRunId / packageId (optional import package grouping)
+- packageCompiler (optional compiled package contract: version, order, proposal count, complete ordered proposal IDs)
 - lastBlockReason
 
 ### Consistency Issue
@@ -196,7 +197,7 @@ Canonical changes still require package-scoped proposal acceptance.
 ## Reference and Lifecycle Rules
 - Cross-page links are always stored by ID.
 - AI-originated changes enter Workbench as proposals.
-- W1 import proposals may be grouped into a package by `importRunId`; accepting the full package uses transaction-style draft apply so same-package IDs can satisfy character/event/branch/world/relationship references.
+- W1 import proposals may be grouped into a package by `importRunId`; only a complete pending package may be accepted. `w1-package-graph-v2` stores the authoritative topological order on every proposal, and validation plus application consume the same order in one transaction so same-package IDs can satisfy character/event/branch/world/relationship references.
 - Manual structured creation in Graph writes directly to canonical project state.
 - Accepted or rejected proposals move to history and stop contributing unread highlights.
 - Archive is the default delete behavior.

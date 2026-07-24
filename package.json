@@ -16,6 +16,7 @@
     "electron:smoke": "node tests/electron/runtime_smoke.mjs",
     "electron:sidecar-lifecycle": "node tests/electron/sidecar_lifecycle_smoke.mjs",
     "electron:w1-actual-fixture": "node tests/electron/w1_actual_fixture_recovery.mjs",
+    "electron:w1-package-compiler": "node tests/electron/w1_import_package_compiler_acceptance.mjs",
     "test:e2e": "npx playwright test --config tests/playwright.config.ts",
     "sidecar:test": "sidecar/.venv/bin/python -m pytest",
     "postinstall": "electron-rebuild",

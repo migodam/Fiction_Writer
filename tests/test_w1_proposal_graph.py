@@ -82,6 +82,58 @@ def test_order_is_deterministic_when_input_is_shuffled():
     assert first["edges"] == second["edges"]
 
 
+def test_fields_id_is_used_as_the_producer_identity():
+    result = compile_proposal_graph([
+        proposal("container", "world_container", None, {"id": "container_1"}),
+        proposal("item", "world_item", None, {"id": "item_1", "containerId": "container_1"}),
+    ])
+
+    assert result["atomic"] is True
+    assert result["producers"]["world_container"]["container_1"] == "container"
+    assert result["orderedProposalIds"] == ["container", "item"]
+
+
+def test_mismatched_explicit_producer_ids_block_the_batch():
+    result = compile_proposal_graph([
+        {
+            "id": "container",
+            "targetEntityId": "target_container",
+            "operations": [{
+                "op": "create",
+                "entityType": "world_container",
+                "entityId": "operation_container",
+                "fields": {"id": "field_container"},
+            }],
+        },
+    ])
+
+    assert result["atomic"] is False
+    mismatch = next(error for error in result["blockingErrors"] if error["code"] == "producer_id_mismatch")
+    assert mismatch["ids"] == ["operation_container", "field_container", "target_container"]
+
+
+def test_compiler_metadata_and_execution_plan_are_deterministic():
+    proposals = [
+        proposal("event", "timeline_event", "event_1", {"branchId": "main"}),
+        proposal("branch", "timeline_branch", "main"),
+    ]
+
+    first = compile_proposal_graph(proposals)
+    second = compile_proposal_graph(list(reversed(proposals)))
+
+    assert first["contractVersion"] == "w1-package-graph-v2"
+    assert first["executionPlan"] == [{"phase": "apply", "proposalIds": ["branch", "event"]}]
+    assert first["executionPlan"] == second["executionPlan"]
+    for proposal_record in first["normalizedProposals"]:
+        metadata = proposal_record["packageCompiler"]
+        assert metadata == {
+            "contractVersion": "w1-package-graph-v2",
+            "order": {"branch": 0, "event": 1}[proposal_record["id"]],
+            "proposalCount": 2,
+            "orderedProposalIds": ["branch", "event"],
+        }
+
+
 def test_optional_cycle_is_legal_and_has_stable_order():
     result = compile_proposal_graph([
         proposal("a", "character", "a", {"linkedEventIds": ["event_b"]}),

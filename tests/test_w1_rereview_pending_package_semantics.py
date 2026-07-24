@@ -99,6 +99,12 @@ def test_apply_backs_up_staging_rebuilds_graph_and_never_writes_canonical_entiti
     graph = json.loads(graph_path.read_text(encoding="utf-8"))
     assert graph["blockingErrors"] == []
     assert graph["producers"]["world_item"]["world_guard"] == "p_guard"
+    compiled_package = [item for item in inbox if item.get("operations")]
+    assert all(item["packageCompiler"]["contractVersion"] == "w1-package-graph-v2" for item in compiled_package)
+    assert all(item["packageCompiler"]["proposalCount"] == len(compiled_package) for item in compiled_package)
+    assert [
+        item["id"] for item in sorted(compiled_package, key=lambda item: item["packageCompiler"]["order"])
+    ] == graph["orderedProposalIds"]
     receipt = json.loads((tmp_path / report["migrationRoot"] / "receipt.json").read_text(encoding="utf-8"))
     assert receipt["phase"] == "completed"
     assert (tmp_path / report["migrationRoot"] / "backup/system/inbox.json").is_file()

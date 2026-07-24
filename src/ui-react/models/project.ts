@@ -430,6 +430,12 @@ export interface Proposal {
   resolvedAt?: string;
   data?: Record<string, unknown>;
   entityType?: string;
+  packageCompiler?: {
+    contractVersion: 'w1-package-graph-v2';
+    order: number;
+    proposalCount: number;
+    orderedProposalIds: string[];
+  };
   /** Set by resolveProposal when applyProposalOperations returns a blockedReason. Display-only; not canonical. */
   lastBlockReason?: string;
   lastBlockedAt?: string;
