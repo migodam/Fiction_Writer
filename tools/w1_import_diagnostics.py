@@ -432,21 +432,56 @@ def _timeline_metrics(timeline: dict[str, Any], operations: list[dict[str, Any]]
 
 
 def _canonical_manuscript_projection_metrics(project_path: Path) -> dict[str, Any]:
-    nodes = _safe_list(_read_json(project_path / "writing" / "manuscript" / "nodes.json", default=[]))
+    nodes_payload = _read_json(project_path / "writing" / "manuscript" / "nodes.json", default=[])
+    nodes = _safe_list(nodes_payload)
+    if isinstance(nodes_payload, dict):
+        nodes = _safe_list(nodes_payload.get("nodes") or nodes_payload.get("items"))
+
+    project_root = project_path.resolve()
+
+    def safe_content_path(raw_path: Any) -> Path | None:
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            return None
+        candidate = Path(raw_path)
+        if candidate.is_absolute() or ".." in candidate.parts:
+            return None
+        resolved = (project_root / candidate).resolve()
+        try:
+            resolved.relative_to(project_root)
+        except ValueError:
+            return None
+        return resolved if resolved.is_file() else None
+
+    def scene_content_path(node: dict[str, Any]) -> Path | None:
+        # Prefer an explicit project-relative content path, then support both
+        # the current split layout and the legacy manuscript-node layout.
+        explicit = safe_content_path(
+            node.get("contentPath") or node.get("content_path") or node.get("filePath")
+        )
+        if explicit:
+            return explicit
+        node_id = str(node.get("id") or "")
+        scene_id = str(node.get("linkedSceneId") or "")
+        candidates = []
+        if scene_id:
+            candidates.append(project_root / "writing" / "scenes" / f"{scene_id}.md")
+        if node_id:
+            candidates.append(project_root / "writing" / "manuscript" / f"{node_id}.md")
+        for candidate in candidates:
+            path = safe_content_path(str(candidate.relative_to(project_root)))
+            if path:
+                return path
+        return None
+
     chapter_node_count = sum(
         1 for n in nodes if isinstance(n, dict) and n.get("type") == "chapter_outline"
     )
-    scenes_dir = project_path / "writing" / "scenes"
     scene_nodes_with_content = 0
     for node in nodes:
         if not isinstance(node, dict) or node.get("type") != "scene_outline":
             continue
-        node_id = node.get("id")
-        if not node_id:
-            continue
-        scene_id = node.get("linkedSceneId")
-        md_path = scenes_dir / f"{scene_id}.md" if scene_id else None
-        if md_path and md_path.exists() and md_path.read_text(encoding="utf-8").strip():
+        md_path = scene_content_path(node)
+        if md_path and md_path.read_text(encoding="utf-8").strip():
             scene_nodes_with_content += 1
     return {
         "node_count": len(nodes),
