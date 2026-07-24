@@ -457,13 +457,9 @@ def test_organizer_full_acceptance_matrix():
     assert surviving["神手谷"]["container_key"] == "locations", \
         f"神手谷 must route to locations, got {surviving['神手谷']['container_key']}"
 
-    # Ambiguous 堂 suffix: must survive (not be excluded) as location or organization
-    assert "七玄堂" in surviving, "七玄堂 must survive as location/organization — not excluded"
-    assert surviving["七玄堂"]["container_key"] in ("locations", "organizations"), \
-        f"七玄堂 container_key must be locations or organizations, got {surviving['七玄堂']['container_key']}"
-    assert "供奉堂" in surviving, "供奉堂 must survive as location/organization — not excluded"
-    assert surviving["供奉堂"]["container_key"] in ("locations", "organizations"), \
-        f"供奉堂 container_key must be locations or organizations, got {surviving['供奉堂']['container_key']}"
+    # Ambiguous 堂 suffixes must not silently enter a canonical World folder.
+    quarantined = {item["raw_name"] for item in out["quarantine_items"]}
+    assert {"七玄堂", "供奉堂"}.issubset(quarantined)
 
 
 # ---------------------------------------------------------------------------

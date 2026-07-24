@@ -107,6 +107,8 @@ async def repair_import_artifacts(
     Supported action_types:
     - merge_duplicate: mark all but the first target_entity_id with skip_create=True
     - reclassify: update entity category field (world entities only)
+    - relocate: apply an approved/deterministic World -> Character plan.  The
+      plan is an in-memory proposal repair, never a direct canonical write.
     """
     if not repair_actions:
         return {"entity_registry": deepcopy(state.get("entity_registry", {}))}
@@ -118,6 +120,8 @@ async def repair_import_artifacts(
     chars: dict[str, dict] = {k: dict(v) for k, v in registry.get("characters", {}).items()}
     world_detailed: dict[str, dict] = {k: dict(v) for k, v in registry.get("world_detailed", {}).items()}
     repair_log: list[str] = list(state.get("minor_repair_log", []))
+    quarantine: list[dict] = list(state.get("quarantine_candidates", []))
+    applied_plan_ids: list[str] = list(state.get("applied_relocation_plan_ids", []))
 
     for action in repair_actions:
         action_type = str(action.get("action_type", ""))
@@ -151,6 +155,25 @@ async def repair_import_artifacts(
                         f"reclassify: {entity_id!r} → category={new_category!r} container={new_container_key!r}"
                     )
 
+        elif action_type in {"relocate", "relocation"}:
+            plans = [
+                operation.get("relocation_plan")
+                for operation in (action.get("proposed_operations") or [])
+                if isinstance(operation, dict) and isinstance(operation.get("relocation_plan"), dict)
+            ]
+            if not plans and isinstance(action.get("relocation_plan"), dict):
+                plans = [action["relocation_plan"]]
+            for plan in plans:
+                _apply_relocation_plan(
+                    plan=plan,
+                    chars=chars,
+                    world_detailed=world_detailed,
+                    world_registry=registry.get("world"),
+                    quarantine=quarantine,
+                    applied_plan_ids=applied_plan_ids,
+                    repair_log=repair_log,
+                )
+
     registry["characters"] = chars
     registry["world_detailed"] = world_detailed
     log = list(state.get("supervisor_log", []))
@@ -160,7 +183,69 @@ async def repair_import_artifacts(
         "entity_registry": registry,
         "minor_repair_log": repair_log,
         "supervisor_log": log,
+        "quarantine_candidates": quarantine,
+        "applied_relocation_plan_ids": applied_plan_ids,
     }
+
+
+def _find_world_key(world_detailed: dict[str, dict], candidate_id: str) -> str | None:
+    if candidate_id in world_detailed:
+        return candidate_id
+    for key, entry in world_detailed.items():
+        if str(entry.get("entity_id") or entry.get("id") or "") == candidate_id:
+            return key
+    return None
+
+
+def _append_unique(existing: Any, additions: Any) -> list:
+    values = list(existing) if isinstance(existing, list) else []
+    for item in additions if isinstance(additions, list) else []:
+        if item and item not in values:
+            values.append(item)
+    return values
+
+
+def _apply_relocation_plan(
+    *, plan: dict, chars: dict[str, dict], world_detailed: dict[str, dict],
+    world_registry: Any, quarantine: list[dict], applied_plan_ids: list[str], repair_log: list[str],
+) -> None:
+    """Apply one validated proposal relocation exactly once, or quarantine it."""
+    plan_id = str(plan.get("plan_id") or "")
+    if not plan_id:
+        quarantine.append({"candidate_id": str(plan.get("source_candidate_id") or ""), "reason": "missing_relocation_plan_id", "plan": plan})
+        return
+    if plan_id in applied_plan_ids:
+        return
+    allowed = plan.get("status") == "approved" or bool(plan.get("deterministic"))
+    target_id = str(plan.get("target_entity_id") or "")
+    source_id = str(plan.get("source_candidate_id") or "")
+    world_key = _find_world_key(world_detailed, source_id)
+    if not allowed or plan.get("target_kind") != "character" or target_id not in chars or not world_key:
+        quarantine.append({
+            "candidate_id": source_id, "reason": "unsafe_relocation",
+            "plan_id": plan_id, "plan": deepcopy(plan),
+        })
+        repair_log.append(f"relocate: quarantined plan={plan_id!r}")
+        return
+
+    source = world_detailed[world_key]
+    target = chars[target_id]
+    merge = plan.get("field_merge_plan") if isinstance(plan.get("field_merge_plan"), dict) else {}
+    target["aliases"] = _append_unique(target.get("aliases"), merge.get("aliases"))
+    role = str(merge.get("role") or "").strip()
+    if role and not target.get("role"):
+        target["role"] = role
+    target["evidence_refs"] = _append_unique(
+        _append_unique(target.get("evidence_refs"), source.get("evidence_refs") or source.get("evidenceRefs")),
+        merge.get("evidence_refs"),
+    )
+    del world_detailed[world_key]
+    if isinstance(world_registry, dict):
+        for key, value in list(world_registry.items()):
+            if key == world_key or key == source.get("name") or str(value) == source_id:
+                world_registry.pop(key, None)
+    applied_plan_ids.append(plan_id)
+    repair_log.append(f"relocate: applied plan={plan_id!r} source={source_id!r} target={target_id!r}")
 
 
 async def write_proposal_package(

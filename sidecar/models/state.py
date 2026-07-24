@@ -1258,6 +1258,10 @@ class ImportSupervisorState(TypedDict, total=False):
     source_profile: SourceProfile
     planner_proposal: PlannerProposal
     planner_proposal_validation: Dict[str, Any]
+    candidate_ledger: List[dict]
+    quarantine_candidates: List[dict]
+    relocation_plans: List[dict]
+    applied_relocation_plan_ids: List[str]
     planner_next_action: Dict[str, Any]
 
 

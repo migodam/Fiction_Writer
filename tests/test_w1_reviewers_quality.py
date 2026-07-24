@@ -322,6 +322,21 @@ class TestQualityReviewer(unittest.TestCase):
         has_correct_target = any(op.get("new_category") == "cultivation_method" for op in ops)
         self.assertTrue(has_correct_target, f"Expected new_category=cultivation_method in proposed_operations, got {ops}")
 
+    def test_quality_emits_relocation_plan_for_world_title_plus_character(self):
+        state = _make_state(
+            proposals=[
+                _make_char_proposal("char_wang", "王六"),
+                _make_world_proposal("world_wang", "正门主王6", category="organization"),
+            ],
+            entity_registry={"characters": {"char_wang": {"name": "王六"}}, "events": {}, "world": {}, "world_detailed": {}},
+        )
+        report = self.reviewer.review(state)
+        relocation = next(action for action in report["local_repair_actions"] if action["action_type"] == "relocate")
+        plan = relocation["proposed_operations"][0]["relocation_plan"]
+        self.assertEqual(plan["source_candidate_id"], "world_wang")
+        self.assertEqual(plan["target_entity_id"], "char_wang")
+        self.assertTrue(plan["deterministic"])
+
     def test_reclassify_repair_updates_container_key_and_category_path(self):
         """pipeline_tools reclassify also updates container_key and categoryPath when proposed_operations present."""
         import asyncio

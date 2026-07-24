@@ -18,6 +18,13 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from typing_extensions import TypedDict
+from sidecar.supervisor.semantic_review import (
+    CandidateLedgerEntry,
+    RelocationPlan,
+    WorldReviewDecision,
+    assess_world_candidate,
+    character_identity_index,
+)
 
 # ---------------------------------------------------------------------------
 # TypedDict contracts
@@ -85,6 +92,10 @@ class OrganizerOutput(TypedDict):
     merge_candidates: List[MergeCandidate]
     proposal_packages: List[ProposalPackage]
     warnings: List[str]
+    candidate_ledger: List[CandidateLedgerEntry]
+    quarantine_items: List[CandidateLedgerEntry]
+    review_decisions: List[WorldReviewDecision]
+    relocation_plans: List[RelocationPlan]
 
 
 # ---------------------------------------------------------------------------
@@ -356,29 +367,35 @@ def classify_world_item(name: str, raw_category: str, description: str = "") -> 
     ):
         return "rule"
 
-    # 4. Role/rank suffix in name AND name doesn't end in a location suffix → rule
+    # 4. A council is an organization even if its name includes a rank token.
+    if clean.endswith(("会", "盟")) and any(
+        token in desc_lower for token in ("组织", "势力", "议事机构", "长老组成", "council")
+    ):
+        return "organization"
+
+    # 5. Role/rank suffix in name AND name doesn't end in a location suffix → rule
     if any(t in clean for t in _ROLE_RANK_NAMES) and not any(
         clean.endswith(s) for s in _LOC_AMBIGUOUS_SUFFIXES
     ):
         return "rule"
 
-    # 5. Explicit cultivation hints in raw category
+    # 6. Explicit cultivation hints in raw category
     if any(t in raw for t in ("method", "spell", "cultivation", "功法", "法术", "术法", "法诀", "秘术", "修炼法门")):
         return "cultivation_method"
 
-    # 6. Name suffix → organization / location (higher priority than alias map).
+    # 7. Name suffix → organization / location (higher priority than alias map).
     # A sect such as 七玄门 contains a generic place-like character but is not a location.
     if any(t in clean for t in _ORG_HINTS):
         return "organization"
     if any(t in clean for t in _LOC_HINTS):
         return "location"
 
-    # 7. Alias map
+    # 8. Alias map
     alias = _CATEGORY_ALIASES.get(raw)
     if alias:
         return alias
 
-    # 8. Raw string substring matches
+    # 9. Raw string substring matches
     if any(t in raw for t in ("organization", "organisation", "sect", "clan", "guild", "组织", "门派", "宗门", "帮派")):
         return "organization"
     if any(t in raw for t in ("faction", "alliance", "势力", "阵营", "联盟", "派系")):
@@ -398,7 +415,7 @@ def classify_world_item(name: str, raw_category: str, description: str = "") -> 
     if any(t in raw for t in ("custom", "自定义")):
         return "custom"
 
-    # 9. Name suffix fallback (catch cases where raw was empty)
+    # 10. Name suffix fallback (catch cases where raw was empty)
     if any(t in clean for t in _LOC_HINTS):
         return "location"
     if any(t in clean for t in _ORG_HINTS):
@@ -472,10 +489,15 @@ def organize_project_content(organizer_input: OrganizerInput) -> OrganizerOutput
     # Reconciled registry evidence takes precedence, with narrow lexical
     # fallbacks for title-bearing people and event/episode phrases.
     character_names = _character_names(characters)
+    character_index = character_identity_index(characters)
     event_names = _event_names(organizer_input.get("events") or [])
 
     world_items: list[WorldItemProposal] = []
     excluded_items: list[ExcludedItem] = []
+    candidate_ledger: list[CandidateLedgerEntry] = []
+    quarantine_items: list[CandidateLedgerEntry] = []
+    review_decisions: list[WorldReviewDecision] = []
+    relocation_plans: list[RelocationPlan] = []
 
     emitted_keys: set[tuple[str, str]] = set()
     for name, candidate in world_candidates.items():
@@ -495,6 +517,78 @@ def organize_project_content(organizer_input: OrganizerInput) -> OrganizerOutput
                 original_category=raw_category,
                 reason="module_contamination",
                 suggested_module=suggested,
+            ))
+            continue
+
+        # Direct registry matches are not ambiguous and preserve the legacy
+        # Character/Timeline ownership behavior before semantic assessment.
+        if _is_person_name(name, candidate, character_names) and not _is_person_title(name):
+            excluded_items.append(ExcludedItem(
+                entity_id=entity_id, name=name, original_category=raw_category,
+                reason="person_name", suggested_module="character",
+            ))
+            continue
+        if _is_event_phrase(name, event_names):
+            excluded_items.append(ExcludedItem(
+                entity_id=entity_id, name=name, original_category=raw_category,
+                reason="event_phrase", suggested_module="timeline",
+            ))
+            continue
+        if _is_identity_rank(name):
+            excluded_items.append(ExcludedItem(
+                entity_id=entity_id, name=name, original_category=raw_category,
+                reason="identity_rank", suggested_module="manuscript",
+            ))
+            continue
+        if _is_role_rank_misrouted(name, raw_category):
+            excluded_items.append(ExcludedItem(
+                entity_id=entity_id, name=name, original_category=raw_category,
+                reason="role_rank", suggested_module="manuscript",
+            ))
+            continue
+
+        # Semantic review must run before legacy title/name filtering.  It
+        # recognizes title+person mixtures (for example 正门主王六) and emits a
+        # relocation plan rather than leaking the candidate into World.
+        description = str(
+            candidate.get("description")
+            or candidate.get("summary")
+            or candidate.get("notes")
+            or ""
+        )
+        category = classify_world_item(name, raw_category, description)
+        container_key = _container_key_for_category(category)
+        assessment = assess_world_candidate(
+            candidate_id=entity_id,
+            raw_name=name,
+            candidate=candidate,
+            character_index=character_index,
+            category=category,
+            container_id=_container_id(container_key),
+        )
+        candidate_ledger.append(assessment["ledger"])
+        review_decisions.append(assessment["decision"])
+        if "relocation_plan" in assessment:
+            relocation_plans.append(assessment["relocation_plan"])
+        if assessment["ledger"]["status"] == "quarantined":
+            quarantine_items.append(assessment["ledger"])
+            reason_codes = assessment["ledger"]["reason_codes"]
+            is_unresolved_person = "unresolved_person_title" in reason_codes
+            excluded_items.append(ExcludedItem(
+                entity_id=entity_id,
+                name=name,
+                original_category=raw_category,
+                reason="person_title" if is_unresolved_person else reason_codes[0] if reason_codes else "semantic_hold",
+                suggested_module="character" if is_unresolved_person else "none",
+            ))
+            continue
+        if assessment["ledger"]["status"] == "relocation_required":
+            excluded_items.append(ExcludedItem(
+                entity_id=entity_id,
+                name=name,
+                original_category=raw_category,
+                reason="person_title_mixed",
+                suggested_module="character",
             ))
             continue
 
@@ -554,14 +648,6 @@ def organize_project_content(organizer_input: OrganizerInput) -> OrganizerOutput
             continue
 
         # --- Classify and emit world item ---
-        description = str(
-            candidate.get("description")
-            or candidate.get("summary")
-            or candidate.get("notes")
-            or ""
-        )
-        category = classify_world_item(name, raw_category, description)
-        container_key = _container_key_for_category(category)
         dedupe_key = (name.strip(), category)
         if dedupe_key in emitted_keys:
             warnings.append(f"Duplicate world placement rejected: '{name}' already routes to {container_key}.")
@@ -630,6 +716,10 @@ def organize_project_content(organizer_input: OrganizerInput) -> OrganizerOutput
         merge_candidates=merge_candidates,
         proposal_packages=proposal_packages,
         warnings=warnings,
+        candidate_ledger=candidate_ledger,
+        quarantine_items=quarantine_items,
+        review_decisions=review_decisions,
+        relocation_plans=relocation_plans,
     )
 
 
