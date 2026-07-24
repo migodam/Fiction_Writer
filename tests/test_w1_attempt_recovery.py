@@ -8,6 +8,7 @@ import pytest
 
 from sidecar.workflows import w1_import
 from sidecar.workflows import w1_recovery
+from sidecar.workflows import w1_truth
 
 
 def _identity(source: str = "Chapter 1\nFirst.", **overrides):
@@ -54,7 +55,7 @@ def test_checkpoint_write_is_atomic_and_has_committed_receipt(tmp_path):
         attempt=attempt,
         total_chunks=2,
         entity_registry={"characters": {}, "events": {}, "world": {}},
-        chunk_extractions=[{"chunk_id": 0, "value": "done"}],
+        chunk_extractions=[w1_truth.semantic_complete({"chunk_id": 0, "value": "done"})],
         raw_relationships=[],
         committed_chunk_ids=[0],
     )
@@ -102,7 +103,7 @@ def test_checkpoint_recomputes_receipt_hashes_and_rejects_tampering(tmp_path, ta
     payload = w1_recovery.build_checkpoint(
         identity=identity, attempt=attempt, total_chunks=1,
         entity_registry={},
-        chunk_extractions=[{"chunk_id": 0, "manuscript_content": "Chapter 1\nFirst."}],
+        chunk_extractions=[w1_truth.semantic_complete({"chunk_id": 0, "manuscript_content": "Chapter 1\nFirst."})],
         raw_relationships=[], committed_chunk_ids=[0],
     )
     if tamper_target == "extraction":

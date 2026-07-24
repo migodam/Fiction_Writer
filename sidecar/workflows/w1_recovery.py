@@ -10,6 +10,8 @@ import tempfile
 import uuid
 from typing import Any
 
+from sidecar.workflows import w1_truth
+
 
 _CHECKPOINT_CONTRACT = "W1Checkpoint/v2"
 _LEGACY_BUDGET_DEFAULT = {
@@ -79,10 +81,14 @@ def cache_key(identity: dict[str, str], source_span: dict[str, Any]) -> str:
 def build_checkpoint(
     *, identity: dict[str, str], attempt: dict[str, str], total_chunks: int,
     entity_registry: dict, chunk_extractions: list[dict], raw_relationships: list[dict],
-    committed_chunk_ids: list[int], cross_validation: dict | None = None,
+    committed_chunk_ids: list[int] | None = None, cross_validation: dict | None = None,
 ) -> dict[str, Any]:
-    committed = sorted(set(int(chunk_id) for chunk_id in committed_chunk_ids))
-    extraction_by_id = {int(item.get("chunk_id")): item for item in chunk_extractions if item.get("chunk_id") is not None}
+    truth_receipts = [w1_truth.truth_receipt(item) for item in chunk_extractions]
+    committed = w1_truth.committed_chunk_ids(chunk_extractions)
+    if committed_chunk_ids is not None and sorted(set(int(chunk_id) for chunk_id in committed_chunk_ids)) != committed:
+        raise ValueError("Committed chunk ids must be derived from semantic_complete chunk truth")
+    extraction_by_id = {int(item["chunk_id"]): item for item in chunk_extractions}
+    committed_extractions = [extraction_by_id[chunk_id] for chunk_id in committed]
     receipts = []
     for chunk_id in committed:
         extraction = extraction_by_id.get(chunk_id, {})
@@ -96,8 +102,14 @@ def build_checkpoint(
         "total_chunks": total_chunks,
         "committed_chunk_ids": committed,
         "committed_chunk_receipts": receipts,
+        "chunk_truth_receipts": truth_receipts,
+        "failed_chunk_ids": [
+            receipt["chunk_id"]
+            for receipt in truth_receipts
+            if receipt["truth"] in {"failed", "unknown_outcome"}
+        ],
         "entity_registry": entity_registry,
-        "chunk_extractions": chunk_extractions,
+        "chunk_extractions": committed_extractions,
         "raw_relationships": raw_relationships,
         "cross_validation": cross_validation or {},
     }
@@ -155,18 +167,58 @@ def load_checkpoint(path: str | Path, identity: dict[str, str], attempt: dict[st
         return _recoverable_error("Checkpoint configuration does not match this import")
     committed = payload.get("committed_chunk_ids")
     receipts = payload.get("committed_chunk_receipts")
+    truth_receipts = payload.get("chunk_truth_receipts")
     if not isinstance(committed, list) or committed != list(range(len(committed))) or not isinstance(receipts, list):
         return _recoverable_error("Checkpoint is not committed at a contiguous chunk boundary")
+    if not isinstance(truth_receipts, list):
+        return _recoverable_error("Checkpoint is missing durable chunk truth receipts")
+    try:
+        normalized_truth = [
+            w1_truth.truth_receipt({
+                "chunk_id": receipt.get("chunk_id"),
+                "chunk_truth": receipt.get("truth"),
+                "domain_receipts": receipt.get("domain_receipts"),
+                "failure_codes": receipt.get("failure_codes", []),
+            })
+            for receipt in truth_receipts
+            if isinstance(receipt, dict)
+        ]
+        truth_by_id = {int(receipt["chunk_id"]): receipt for receipt in normalized_truth}
+        if len(truth_by_id) != len(truth_receipts):
+            raise ValueError("duplicate or invalid chunk truth receipts")
+        expected_committed = []
+        while True:
+            receipt = truth_by_id.get(len(expected_committed))
+            if receipt is None or receipt.get("truth") != "semantic_complete":
+                break
+            domains = receipt.get("domain_receipts")
+            if not isinstance(domains, dict) or any(value not in {"complete", "not_applicable"} for value in domains.values()):
+                raise ValueError("semantic-complete receipt has incomplete domains")
+            expected_committed.append(len(expected_committed))
+    except (TypeError, ValueError) as exc:
+        return _recoverable_error(f"Checkpoint chunk truth receipts are invalid: {exc}")
+    if committed != expected_committed:
+        return _recoverable_error("Checkpoint committed chunks are not the semantic-complete prefix")
     extractions = payload.get("chunk_extractions")
     if not isinstance(extractions, list) or any(not isinstance(item, dict) for item in extractions):
         return _recoverable_error("Checkpoint chunk extractions are invalid")
     extraction_ids = [item.get("chunk_id") for item in extractions]
     if extraction_ids != committed:
         return _recoverable_error("Checkpoint extractions do not match the committed chunk boundary")
+    try:
+        if any(w1_truth.truth_receipt(item) != truth_by_id.get(int(item["chunk_id"])) for item in extractions):
+            return _recoverable_error("Checkpoint committed extractions do not match durable chunk truth")
+    except (KeyError, TypeError, ValueError) as exc:
+        return _recoverable_error(f"Checkpoint committed extraction truth is invalid: {exc}")
     expected_receipts = [_chunk_receipt(chunk_id, extraction) for chunk_id, extraction in zip(committed, extractions)]
     if receipts != expected_receipts:
         return _recoverable_error("Checkpoint chunk receipt hashes do not match the committed extractions")
-    return {"status": "ok", "resume": True, **payload}
+    return {
+        "status": "ok",
+        "resume": True,
+        "failed_chunk_ids": payload.get("failed_chunk_ids", []),
+        **payload,
+    }
 
 
 def _reconstruct_registry(extractions: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:

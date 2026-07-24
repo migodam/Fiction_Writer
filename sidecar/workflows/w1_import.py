@@ -14,6 +14,7 @@ Entry point:
 from __future__ import annotations
 
 import asyncio
+import copy
 import difflib
 import hashlib
 import json
@@ -41,6 +42,7 @@ from sidecar.models.state import (
 from sidecar.supervisor.organizer import organize_project_content, OrganizerInput
 from sidecar.shared import s2_memory_writer, s3_chunk_manager
 from sidecar.utils.lock import acquire_lock, release_lock, WorkflowBusyError
+from sidecar.runtime.agent_runtime import LeaseLostError
 from sidecar.workflows.w1_run_events import (
     BudgetPolicy,
     ProviderCallRequiresHumanConfirmation,
@@ -68,6 +70,7 @@ from sidecar.workflows.w1_run_events import (
     settle_provider_unknown,
 )
 from sidecar.workflows import w1_recovery
+from sidecar.workflows import w1_truth
 from sidecar.runtime.checkpointer import aclose_checkpointer, close_checkpointer, create_sqlite_checkpointer
 from sidecar.prompts.w1_prompts import (
     W1_EXTRACT_CHARACTERS,
@@ -406,7 +409,7 @@ async def _invoke_json_prompt(
                 if _is_truncated_json_error(parse_exc) or isinstance(parse_exc, (JSONDecodeError, JsonPromptParseError, ValueError)):
                     return await _repair_json_response(llm, raw, parse_exc, session_id=session_id)
                 raise
-        except ProviderCallRequiresHumanConfirmation:
+        except (ProviderCallRequiresHumanConfirmation, LeaseLostError):
             raise
         except Exception as exc:
             err_str = str(exc).lower()
@@ -586,7 +589,7 @@ async def _ainvoke_provider_operation(
                 session_id, durable_call, reason="operation_cancelled",
             )
         raise
-    except ProviderCallRequiresHumanConfirmation:
+    except (ProviderCallRequiresHumanConfirmation, LeaseLostError):
         if session_id:
             release_call_reservation(session_id, reservation_token)
         raise
@@ -1804,7 +1807,6 @@ def _write_recovery_checkpoint(
     checkpoint_path = state.get("checkpoint_path")
     if not isinstance(identity, dict) or not isinstance(attempt, dict) or not checkpoint_path:
         raise ValueError("W1 recovery identity and attempt are required before checkpointing")
-    committed_ids = sorted({int(item["chunk_id"]) for item in chunk_extractions if item.get("chunk_id") is not None})
     checkpoint = w1_recovery.build_checkpoint(
         identity=identity,
         attempt=attempt,
@@ -1812,7 +1814,6 @@ def _write_recovery_checkpoint(
         entity_registry=entity_registry,
         chunk_extractions=chunk_extractions,
         raw_relationships=raw_relationships,
-        committed_chunk_ids=committed_ids,
         cross_validation=cross_validation,
     )
     w1_recovery.write_checkpoint_atomic(checkpoint_path, checkpoint)
@@ -1954,6 +1955,22 @@ def _write_chunk_prompt_failure(state: ImportState, chunk: dict, failures: list[
     raw = chunk.get("manuscript_content") or chunk.get("raw_content") or chunk.get("content", "")
     path = _state_artifact_dir(state, str(import_run_id)) / "chunks" / f"chunk_{chunk_id}_failures.json"
     path.parent.mkdir(parents=True, exist_ok=True)
+    existing = _safe_read_json(path, {})
+    existing_failures = existing.get("failures", []) if isinstance(existing, dict) else []
+    combined_failures = [*existing_failures, *failures]
+    unique_failures: list[dict] = []
+    seen_failure_keys: set[tuple[str, str, str]] = set()
+    for failure in combined_failures:
+        if not isinstance(failure, dict):
+            continue
+        key = (
+            str(failure.get("label") or ""),
+            str(failure.get("error") or ""),
+            str(failure.get("failure_code") or ""),
+        )
+        if key not in seen_failure_keys:
+            seen_failure_keys.add(key)
+            unique_failures.append(failure)
     with open(path, "w", encoding="utf-8") as f:
         json.dump({
             "chunk_id": chunk_id,
@@ -1961,7 +1978,7 @@ def _write_chunk_prompt_failure(state: ImportState, chunk: dict, failures: list[
             "chunk_hash": _sha256_text(raw),
             "prompt_profile": state.get("prompt_profile") or "balanced",
             "written_at": _now_iso(),
-            "failures": failures,
+            "failures": unique_failures,
         }, f, ensure_ascii=False, indent=2)
 
 
@@ -3751,6 +3768,7 @@ async def _legacy_node_process_chunks(state: ImportState) -> dict:
 
         chunk_content = chunk.get("content", "")
 
+        registry_before = copy.deepcopy(registry)
         try:
             # 1. Extract characters
             char_prompt = W1_EXTRACT_CHARACTERS.format(
@@ -3891,7 +3909,7 @@ async def _legacy_node_process_chunks(state: ImportState) -> dict:
                     world_mentions.append(name)
 
             # Build extraction record
-            extraction: dict = {
+            extraction: dict = w1_truth.semantic_complete({
                 "chunk_id": chunk_id,
                 "new_characters": new_chars,
                 "updated_aliases": alias_updates,
@@ -3899,23 +3917,27 @@ async def _legacy_node_process_chunks(state: ImportState) -> dict:
                 "world_mentions": world_mentions,
                 "manuscript_content": chunk.get("manuscript_content", chunk_content),
                 "notes": [],
-            }
+            }, complete_domains=("characters", "events", "world"))
             extractions.append(extraction)
+            completed_ids.add(chunk_id)
 
-        except ProviderCallRequiresHumanConfirmation:
+        except (ProviderCallRequiresHumanConfirmation, LeaseLostError):
             raise
         except Exception as e:
+            registry = registry_before
             errors.append(f"Chunk {chunk_id} failed: {str(e)}")
-            # Still add a minimal extraction so we can preserve manuscript content
-            extractions.append({
+            _write_chunk_prompt_failure(state, chunk, [{
+                "label": "legacy_chunk",
+                "error": str(e),
                 "chunk_id": chunk_id,
-                "new_characters": [],
-                "updated_aliases": [],
-                "events": [],
-                "world_mentions": [],
-                "manuscript_content": chunk.get("manuscript_content", chunk_content),
-                "notes": [f"Extraction failed: {str(e)}"],
-            })
+                "failure_code": "legacy_extraction_failed",
+            }])
+            extractions.append(w1_truth.failed_extraction(
+                chunk,
+                error=str(e),
+                failure_code="legacy_extraction_failed",
+                legacy=True,
+            ))
 
         # Save checkpoint after EVERY chunk
         completed = len(completed_ids)
@@ -5222,6 +5244,13 @@ async def node_review_import(state: ImportState) -> dict:
     warnings: list[str] = list(reducer.get("warnings", [])) + list(timeline.get("warnings", []))
     errors: list[str] = list(finalized_state.get("errors", []))
     low_confidence_items: list[dict] = []
+    durable_failed_chunks: list[dict] = []
+    if state.get("import_run_id"):
+        durable_failed_chunks = w1_truth.durable_failures(_state_artifact_dir(state))
+        for failure in durable_failed_chunks:
+            chunk_id = failure.get("chunk_id")
+            details = "; ".join(str(item) for item in failure.get("errors", []))
+            errors.append(f"Durable semantic extraction failure for chunk {chunk_id}: {details}")
 
     for cid, character in registry.get("characters", {}).items():
         if character.get("skip_create"):
@@ -5296,7 +5325,7 @@ async def node_review_import(state: ImportState) -> dict:
             {"chunk_id": entry.get("chunk_id"), "errors": entry.get("errors", [])}
             for entry in _chunk_log.get(state.get("project_path", ""), [])
             if entry.get("errors")
-        ],
+        ] + durable_failed_chunks,
         "model": state.get("context", {}).get("model", "deepseek-chat"),
         "prompt_profile": state.get("prompt_profile", "balanced"),
         "artifact_paths": {
@@ -6460,7 +6489,7 @@ async def node_synthesize_relationships(state: ImportState) -> dict:
             source_language_label=_src_lang_label,
             language_policy=_lang_policy,
         )
-    except ProviderCallRequiresHumanConfirmation:
+    except (ProviderCallRequiresHumanConfirmation, LeaseLostError):
         raise
     except Exception as e:
         errors.append(f"Relationship synthesis failed: {str(e)}")
@@ -6556,7 +6585,7 @@ async def node_classify_character_tags(state: ImportState) -> dict:
             source_language_label=_src_lang_label,
             language_policy=_lang_policy,
         )
-    except ProviderCallRequiresHumanConfirmation:
+    except (ProviderCallRequiresHumanConfirmation, LeaseLostError):
         raise
     except Exception as e:
         errors.append(f"Character tag classification failed: {str(e)}")
@@ -6655,7 +6684,7 @@ async def node_infer_world_settings(state: ImportState) -> dict:
             text_sample=text_sample,
             source_language_label=_lang_label,
         )
-    except ProviderCallRequiresHumanConfirmation:
+    except (ProviderCallRequiresHumanConfirmation, LeaseLostError):
         raise
     except Exception as e:
         errors.append(f"World settings inference failed: {str(e)}")
@@ -6830,6 +6859,8 @@ async def node_process_chunks(state: ImportState) -> dict:
         registry_summary = _registry_summary(registry)
         scene_hint = chunk.get("chapter_hint") or ""
 
+        registry_before = copy.deepcopy(registry)
+        raw_relationships_before = list(raw_relationships)
         try:
             is_packed_window = any(len(prompt_window.get("chunk_ids", [])) > 1 for prompt_window in prompt_windows)
             # Use window-level cache for the compiler path so cross-validation
@@ -6854,7 +6885,7 @@ async def node_process_chunks(state: ImportState) -> dict:
 
                 def _coerce_result(results: list[Any], index: int, label: str, window: dict) -> dict:
                     result = results[index]
-                    if isinstance(result, ProviderCallRequiresHumanConfirmation):
+                    if isinstance(result, (ProviderCallRequiresHumanConfirmation, LeaseLostError)):
                         raise result
                     if isinstance(result, BaseException):
                         window_id = window.get("id", "window")
@@ -6904,7 +6935,7 @@ async def node_process_chunks(state: ImportState) -> dict:
                                 cross_validation,
                                 str(state.get("import_run_id") or "import"),
                             )
-                        except ProviderCallRequiresHumanConfirmation:
+                        except (ProviderCallRequiresHumanConfirmation, LeaseLostError):
                             raise
                         except Exception as validation_exc:
                             warning = f"Cross-validation failed in cached {prompt_window.get('id', 'window')}: {validation_exc}"
@@ -7001,7 +7032,7 @@ async def node_process_chunks(state: ImportState) -> dict:
                                 cross_validation,
                                 str(state.get("import_run_id") or "import"),
                             )
-                        except ProviderCallRequiresHumanConfirmation:
+                        except (ProviderCallRequiresHumanConfirmation, LeaseLostError):
                             raise
                         except Exception as validation_exc:
                             warning = f"Cross-validation failed in {prompt_window.get('id', 'window')}: {validation_exc}"
@@ -7022,6 +7053,7 @@ async def node_process_chunks(state: ImportState) -> dict:
                 }
                 if prompt_failures:
                     _write_chunk_prompt_failure(state, chunk, prompt_failures)
+                    raise RuntimeError("One or more required semantic extraction domains failed")
                 elif not is_packed_window:
                     _write_chunk_prompt_cache(state, chunk, prompt_outputs)
 
@@ -7356,7 +7388,7 @@ async def node_process_chunks(state: ImportState) -> dict:
             for covered_chunk_id in covered_chunk_ids:
                 covered_chunk = chunks[chunk_index_by_id.get(covered_chunk_id, 0)] if chunks else chunk
                 is_primary_chunk = covered_chunk_id == chunk_id
-                extractions.append({
+                extractions.append(w1_truth.semantic_complete({
                     "chunk_id": covered_chunk_id,
                     "new_characters": new_chars if is_primary_chunk else [],
                     "updated_aliases": alias_updates if is_primary_chunk else [],
@@ -7368,28 +7400,28 @@ async def node_process_chunks(state: ImportState) -> dict:
                     "chapter_hint": covered_chunk.get("chapter_hint") or chapter_hint,
                     "manuscript_content": covered_chunk.get("manuscript_content", covered_chunk.get("content", "")),
                     "notes": chunk_notes if is_primary_chunk else [f"Covered by packed prompt window anchored at chunk {chunk_id}."],
-                })
+                }))
                 completed_ids.add(covered_chunk_id)
 
-        except ProviderCallRequiresHumanConfirmation:
+        except (ProviderCallRequiresHumanConfirmation, LeaseLostError):
             raise
         except Exception as e:
+            registry = registry_before
+            raw_relationships = raw_relationships_before
             errors.append(f"Chunk {chunk_id} failed: {str(e)}")
-            extractions.append({
+            _write_chunk_prompt_failure(state, chunk, [{
+                "label": "chunk",
+                "error": str(e),
                 "chunk_id": chunk_id,
-                "new_characters": [],
-                "updated_aliases": [],
-                "events": [],
-                "world_mentions": [],
-                "world_mentions_detailed": [],
-                "raw_relationships": [],
-                "scenes": [],
-                "chapter_hint": chunk.get("chapter_hint"),
-                "manuscript_content": chunk.get("manuscript_content", chunk_content),
-                "notes": [f"Extraction failed: {str(e)}"],
-            })
+                "failure_code": "semantic_extraction_failed",
+            }])
+            extractions.append(w1_truth.failed_extraction(
+                chunk,
+                error=str(e),
+                failure_code="semantic_extraction_failed",
+            ))
 
-        completed = len([e for e in extractions if e.get("chunk_id") is not None])
+        completed = len(completed_ids)
         chunk_duration_ms = int((asyncio.get_event_loop().time() - _chunk_start_time) * 1000) if "_chunk_start_time" in dir() else 0
 
         # Update mid-node progress so the polling coroutine in _run_w1 can
