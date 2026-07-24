@@ -52,3 +52,51 @@ test('View timeline uses worldItem and Timeline matches both locationIds and lin
   await expect(page.getByTestId('timeline-event-node-event_location')).toBeVisible();
   await expect(page.getByTestId('timeline-event-node-event_world')).toBeVisible();
 });
+
+test('World entry detail remains readable with the Agent Dock open at desktop width', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto('http://localhost:3000');
+  await page.evaluate(() => {
+    (window as any).__narrativeStore.setState((state: any) => ({
+      ...state,
+      worldContainers: [{ id: 'nb_layout', name: '地点', type: 'notebook', sortOrder: 0, parentId: null }],
+      worldItems: [{
+        id: 'wi_layout',
+        folderId: 'nb_layout',
+        containerId: 'nb_layout',
+        type: 'location',
+        name: '七玄门山门',
+        description: '用于验证窄桌面布局的世界条目。',
+        attributes: [],
+        linkedCharacterIds: [],
+        linkedEventIds: ['event_layout'],
+        linkedSceneIds: [],
+        mapMarkers: [],
+        tagIds: [],
+      }],
+      timelineBranches: [{ id: 'branch_layout', name: '主时间线', sortOrder: 0, mode: 'root' }],
+      timelineEvents: [{
+        id: 'event_layout',
+        title: '韩立抵达七玄门',
+        summary: '',
+        time: '第一章',
+        branchId: 'branch_layout',
+        orderIndex: 0,
+        locationIds: ['wi_layout'],
+        participantCharacterIds: [],
+        linkedSceneIds: [],
+        linkedWorldItemIds: ['wi_layout'],
+        tags: [],
+      }],
+    }));
+  });
+  await page.getByTestId('activity-btn-world').click();
+  await page.getByTestId('world-folder-nb_layout').click();
+  await page.getByTestId('world-item-wi_layout').click();
+
+  const detail = page.getByTestId('world-item-detail-wi_layout');
+  await expect(detail).toBeVisible();
+  const box = await detail.boundingBox();
+  expect(box?.width).toBeGreaterThanOrEqual(280);
+  await expect(page.getByTestId('world-link-event-event_layout')).toContainText('韩立抵达七玄门');
+});
