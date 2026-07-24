@@ -25,6 +25,17 @@ export interface RuntimeEvent {
   event_id: string;
   sequence: number;
   event_type: string;
+  contract_version?: string;
+  actor?: {
+    kind?: string;
+    id?: string;
+  } | null;
+  run_id?: string;
+  lineage_id?: string;
+  attempt_id?: string;
+  causation_id?: string | null;
+  correlation_id?: string | null;
+  idempotency_key?: string | null;
   payload?: Record<string, unknown>;
   created_at?: string;
 }
