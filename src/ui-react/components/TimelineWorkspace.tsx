@@ -25,15 +25,17 @@ export const TimelineWorkspace = () => {
     addTimelineEvent,
     createTimelineBranch,
     moveTimelineEvent,
+    setSelectedEntity,
   } = useProjectStore();
   const { setLastActionStatus } = useUIStore();
   const { t } = useI18n();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [activeBranchId, setActiveBranchId] = useState<string>(timelineBranches[0]?.id || MAIN_BRANCH_ID);
   const [activeEventId, setActiveEventId] = useState<string | null>(timelineEvents[0]?.id || null);
   const [characterFilter, setCharacterFilter] = useState(searchParams.get('character') || '');
   const [locationFilter, setLocationFilter] = useState(searchParams.get('location') || '');
   const [worldItemFilter, setWorldItemFilter] = useState(searchParams.get('worldItem') || '');
+  const [focusedEventId, setFocusedEventId] = useState<string | null>(searchParams.get('event'));
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [drawModeBranchId, setDrawModeBranchId] = useState<string | null>(null);
 
@@ -61,6 +63,7 @@ export const TimelineWorkspace = () => {
   }, [filteredEvents]);
 
   const activeEvent = timelineEvents.find((entry) => entry.id === activeEventId) || null;
+  const focusedEvent = timelineEvents.find((entry) => entry.id === focusedEventId) || null;
   const activeBranch = sortedBranches.find((b) => b.id === activeBranchId) || sortedBranches[0] || null;
   const activeCharacterFilterName = characters.find((entry) => entry.id === characterFilter)?.name;
   const activeLocationFilterName = worldItems.find((entry) => entry.id === (worldItemFilter || locationFilter))?.name;
@@ -70,11 +73,30 @@ export const TimelineWorkspace = () => {
     const characterId = searchParams.get('character');
     const locationId = searchParams.get('location');
     const worldItemId = searchParams.get('worldItem');
-    if (eventId) setActiveEventId(eventId);
+    if (eventId) {
+      const event = timelineEvents.find((entry) => entry.id === eventId);
+      if (event) {
+        setActiveEventId(event.id);
+        setFocusedEventId(event.id);
+        setActiveBranchId(event.branchId);
+        setSelectedEntity('timeline_event', event.id);
+      } else {
+        setFocusedEventId(null);
+      }
+    } else {
+      setFocusedEventId(null);
+    }
     if (characterId !== null) setCharacterFilter(characterId);
     if (locationId !== null) setLocationFilter(locationId);
     if (worldItemId !== null) setWorldItemFilter(worldItemId);
-  }, [searchParams]);
+  }, [searchParams, setSelectedEntity, timelineEvents]);
+
+  const clearFocusedEvent = () => {
+    setFocusedEventId(null);
+    const nextSearchParams = new URLSearchParams(searchParams);
+    nextSearchParams.delete('event');
+    setSearchParams(nextSearchParams, { replace: true });
+  };
 
   const addForkBranch = () => {
     if (!activeEvent) return;
@@ -332,10 +354,34 @@ export const TimelineWorkspace = () => {
         )}
       </div>
 
+      {focusedEvent && (
+        <div
+          className="flex flex-wrap items-center justify-between gap-3 border-b border-brand/25 bg-brand/10 px-6 py-2 text-sm text-text"
+          data-testid="timeline-focus-banner"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="min-w-0">
+            <span className="font-bold">{focusedEvent.title}</span>
+            <span className="mx-2 text-text-3">{focusedEvent.time || t('timeline.timeTbd', 'TBD')}</span>
+            <span className="text-text-2">{sortedBranches.find((branch) => branch.id === focusedEvent.branchId)?.name || focusedEvent.branchId}</span>
+          </div>
+          <button
+            type="button"
+            data-testid="timeline-clear-event-focus"
+            className="rounded border border-brand/30 px-2 py-1 text-xs font-semibold text-brand-2 hover:bg-brand/15"
+            onClick={clearFocusedEvent}
+          >
+            {t('timeline.clearFocus', 'Clear focus')}
+          </button>
+        </div>
+      )}
+
       <div className="min-h-0 flex-1">
         <TimelineCanvas
           events={filteredEvents}
           branches={sortedBranches}
+          focusedEventId={focusedEvent?.id || null}
           drawModeBranchId={drawModeBranchId}
           onDrawModeChange={(id) => setDrawModeBranchId(id)}
         />

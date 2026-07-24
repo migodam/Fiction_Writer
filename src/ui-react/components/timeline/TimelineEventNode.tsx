@@ -8,6 +8,7 @@ interface TimelineEventNodeProps {
   event: TimelineEvent;
   position: Point;
   isHovered: boolean;
+  isFocused?: boolean;
   dragMode: 'move' | 'drop' | null;
   onPointerDown: (eventId: string, e: React.PointerEvent<SVGCircleElement>) => void;
   onPointerUp: (eventId: string) => void;
@@ -35,6 +36,7 @@ export function TimelineEventNode({
   event,
   position,
   isHovered,
+  isFocused = false,
   dragMode,
   onPointerDown,
   onPointerUp,
@@ -94,16 +96,18 @@ export function TimelineEventNode({
       data-label-visible={label.visible ? 'true' : 'false'}
       data-label-x={position.x + label.dx}
       data-label-y={position.y + label.dy}
+      data-focused={isFocused ? 'true' : 'false'}
     >
       <title>{event.title}</title>
       {/* Hover ring — expands on hover */}
       <circle
-        r={isHovered ? baseR + 8 : baseR + 2}
+        r={isFocused ? baseR + 13 : isHovered ? baseR + 8 : baseR + 2}
         fill="none"
         stroke={color}
-        strokeWidth={2}
-        opacity={isHovered ? 0.3 : 0.1}
+        strokeWidth={isFocused ? 3 : 2}
+        opacity={isFocused ? 0.8 : isHovered ? 0.3 : 0.1}
         style={{ transition: 'r 0.15s ease, opacity 0.15s ease' }}
+        data-testid={isFocused ? `timeline-event-focus-ring-${event.id}` : undefined}
       />
 
       {/* Base circle */}

@@ -34,6 +34,7 @@ interface SnapTarget {
 interface TimelineCanvasProps {
   events: TimelineEvent[];
   branches: TimelineBranch[];
+  focusedEventId?: string | null;
   drawModeBranchId?: string | null;
   onDrawModeChange?: (branchId: string | null) => void;
 }
@@ -118,7 +119,7 @@ function eventImportanceRadius(importance?: string): number {
   return 6;
 }
 
-export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeChange }: TimelineCanvasProps) {
+export function TimelineCanvas({ events, branches, focusedEventId = null, drawModeBranchId, onDrawModeChange }: TimelineCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const branchDragStateRef = useRef<BranchDragState | null>(null);
@@ -146,6 +147,8 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
   const [panY, setPanY] = useState(0);
   const [zoom, setZoom] = useState(1);
   const [containerWidth, setContainerWidth] = useState(0);
+  const [containerHeight, setContainerHeight] = useState(0);
+  const focusedViewportKeyRef = useRef<string | null>(null);
 
   // Interaction
   const [mode, setMode] = useState<InteractionMode>('idle');
@@ -196,7 +199,10 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
     if (!el) return;
     const ro = new ResizeObserver((entries) => {
       const entry = entries[0];
-      if (entry) setContainerWidth(entry.contentRect.width);
+      if (entry) {
+        setContainerWidth(entry.contentRect.width);
+        setContainerHeight(entry.contentRect.height);
+      }
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -337,6 +343,27 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
     }
     return map;
   }, [events, branchCPMap, branchEventsMap]);
+
+  useEffect(() => {
+    if (!focusedEventId || containerWidth <= 0 || containerHeight <= 0) return;
+    const position = eventPositions.get(focusedEventId);
+    if (!position) return;
+
+    // Deep links and a resized viewport get one intentional centering pass.
+    // Manual panning afterwards changes state without changing this key, so it
+    // remains under the author's control instead of snapping back.
+    const focusKey = `${focusedEventId}:${containerWidth}x${containerHeight}`;
+    if (focusedViewportKeyRef.current === focusKey) return;
+    focusedViewportKeyRef.current = focusKey;
+    setPanX(containerWidth / 2 - position.x * zoom);
+    setPanY(containerHeight / 2 - position.y * zoom);
+  }, [containerHeight, containerWidth, eventPositions, focusedEventId, zoom]);
+
+  useEffect(() => {
+    if (!focusedEventId) {
+      focusedViewportKeyRef.current = null;
+    }
+  }, [focusedEventId]);
 
   const eventLabelPlacements = useMemo(() => {
     return placeTimelineLabels(
@@ -1453,6 +1480,7 @@ export function TimelineCanvas({ events, branches, drawModeBranchId, onDrawModeC
                   event={event}
                   position={pos}
                   isHovered={hoveredEventId === event.id}
+                  isFocused={focusedEventId === event.id}
                   dragMode={dragState?.eventId === event.id ? dragState.interaction : null}
                   labelPlacement={eventLabelPlacements.get(event.id)}
                   onPointerDown={handleEventPointerDown}
