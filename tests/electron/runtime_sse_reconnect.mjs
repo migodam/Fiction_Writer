@@ -10,11 +10,28 @@ import { _electron as electron } from 'playwright';
 const REPO_ROOT = process.cwd();
 const PYTHON = path.join(REPO_ROOT, 'sidecar/.venv/bin/python');
 const TIMEOUT_MS = 30_000;
-const resources = { app: null, server: null, userData: null, projectRoot: null };
+const resources = { app: null, server: null, userData: null, projectRoot: null, sidecarPort: null };
+let testDeadline = 0;
+
+async function assertPortClosed(port) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 1_000);
+  try {
+    await fetch(`http://127.0.0.1:${port}/health`, { signal: controller.signal });
+    throw new Error(`sidecar port ${port} remained reachable after Electron cleanup`);
+  } catch (error) {
+    if (error?.message?.includes('remained reachable')) throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 const within = (label, action, timeoutMs = TIMEOUT_MS) => Promise.race([
   Promise.resolve().then(action),
-  new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs)),
+  new Promise((_, reject) => {
+    const remaining = Math.max(1, Math.min(timeoutMs, testDeadline - Date.now()));
+    setTimeout(() => reject(new Error(`${label} timed out after ${remaining}ms`)), remaining);
+  }),
 ]);
 
 const seedAttempt = (projectRoot, count) => {
@@ -71,6 +88,7 @@ async function closeResources() {
 }
 
 async function main() {
+  testDeadline = Date.now() + TIMEOUT_MS;
   resources.userData = await mkdtemp(path.join(os.tmpdir(), 'narrative-runtime-sse-user-'));
   resources.projectRoot = await mkdtemp(path.join(os.tmpdir(), 'narrative-runtime-sse-project-'));
   try {
@@ -118,8 +136,10 @@ async function main() {
       unsubscribeStatuses();
       return { events, statuses, port: spawned.port };
     }, { projectRoot: resources.projectRoot, attemptId }));
+    resources.sidecarPort = first.port;
     assert(first.statuses.some((status) => status.status === 'open'), JSON.stringify(first));
     assert.deepEqual(first.events.map((message) => message.event.sequence), [1]);
+    assert.equal(new Set(first.events.map((message) => message.event.event_id)).size, 1);
 
     seedAttempt(resources.projectRoot, 3);
     const resumed = await within('cursor real SSE subscription', () => page.evaluate(async ({ projectRoot, attemptId }) => {
@@ -144,9 +164,14 @@ async function main() {
     assert(resumed.statuses.some((status) => status.status === 'open'), JSON.stringify(resumed));
     assert.deepEqual(resumed.events.map((message) => message.event.sequence), [2, 3]);
     assert.equal(new Set(resumed.events.map((message) => message.event.event_id)).size, 2);
+    assert.deepEqual([...first.events, ...resumed.events].map((message) => message.event.sequence), [1, 2, 3]);
+    assert.equal(new Set([...first.events, ...resumed.events].map((message) => message.event.event_id)).size, 3);
     console.log('electron runtime SSE reconnect smoke: passed');
   } finally {
     await closeResources();
+    if (resources.sidecarPort !== null) {
+      await assertPortClosed(resources.sidecarPort);
+    }
   }
 }
 
