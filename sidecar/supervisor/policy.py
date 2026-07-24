@@ -337,7 +337,11 @@ def _run_live_planner(
         )
         return proposal, decision_record, None
     except PlannerLiveCallError as exc:
-        return None, build_live_planner_failure_record(planner_state, exc), exc.safe_message
+        return None, build_live_planner_failure_record(
+            planner_state,
+            exc,
+            retry_authorization=exc.retry_authorization,
+        ), exc.safe_message
 
 
 def _ensure_orchestrator_plan(state: ImportSupervisorState) -> ImportSupervisorState:
@@ -374,6 +378,41 @@ def _ensure_orchestrator_plan(state: ImportSupervisorState) -> ImportSupervisorS
                         f"planner_proposal_validation: {err}" for err in proposal_errors
                     ],
                 }
+        # A live planner may resume from a previously blocked state that has a
+        # spec/target but no valid ImportPlan. Rebuild only the deterministic
+        # plan projection here; this does not execute any W1 tool or write
+        # canonical/proposal data.
+        prior_plan_validation = state.get("import_plan_validation") or {}
+        if proposal is not None and (
+            not state.get("import_plan") or not prior_plan_validation.get("ok")
+        ):
+            chapter_count = _chapter_count_from_state(state)
+            source_language = str(state.get("source_language", "en") or "en")
+            prompt_profile = str(state.get("prompt_profile", "balanced") or "balanced")
+            try:
+                import_plan = planner_proposal_to_import_plan(
+                    proposal,
+                    state["tool_operating_spec"],
+                    source_language=source_language,
+                    prompt_profile=prompt_profile,
+                    chapter_count=chapter_count,
+                )
+                plan_ok, plan_errors = validate_import_plan(import_plan)
+            except ValueError as exc:
+                import_plan = {}  # type: ignore[assignment]
+                plan_ok, plan_errors = False, [str(exc)]
+            return {
+                **state,
+                "planner_proposal": proposal,
+                "planner_proposal_validation": {"ok": plan_ok, "errors": plan_errors},
+                "import_plan": import_plan,
+                "import_plan_validation": {"ok": plan_ok, "errors": plan_errors},
+                "orchestrator_phase": "planning" if plan_ok else "planning_failed",
+                "converge_status": "planning" if plan_ok else "hard_fail",
+                "errors": list(state.get("errors", [])) + [
+                    f"import_plan_validation: {err}" for err in plan_errors
+                ],
+            }
         if state.get("import_plan") and not state.get("import_plan_validation"):
             is_valid, errors = validate_import_plan(state["import_plan"])
             return {

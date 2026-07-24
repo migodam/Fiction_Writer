@@ -122,7 +122,7 @@ def test_unknown_tool_and_bounds_are_rejected_deterministically() -> None:
     assert any("max_additional_cost_usd" in error for error in errors)
 
 
-def test_live_mode_rejects_malformed_json_without_retry() -> None:
+def test_live_mode_treats_malformed_json_as_an_uncertain_paid_outcome() -> None:
     calls = 0
 
     def callback(_payload: dict) -> str:
@@ -138,7 +138,7 @@ def test_live_mode_rejects_malformed_json_without_retry() -> None:
 
     assert calls == 1
     assert result["converge_status"] == "hard_fail"
-    assert result["planner_decision_record"]["error_code"] == "response_invalid"
+    assert result["planner_decision_record"]["error_code"] == "unknown_outcome"
 
 
 def test_unknown_outcome_never_retries_automatically() -> None:
@@ -154,6 +154,110 @@ def test_unknown_outcome_never_retries_automatically() -> None:
             "planner_live_approval": {"approved": True, "decision_id": "decision_live_3"},
         }), model_callback=callback)
     assert calls == 1
+
+
+def test_repeated_ensure_after_unknown_outcome_never_recalls_provider() -> None:
+    calls = 0
+
+    def callback(_payload: dict) -> dict:
+        nonlocal calls
+        calls += 1
+        return {"status": "unknown_outcome"}
+
+    initial = _state(context={
+        "llm_planner_mode": "live",
+        "planner_live_approval": {"approved": True, "decision_id": "decision_live_unknown"},
+        "planner_model_callback": callback,
+    })
+    first = _ensure_orchestrator_plan(initial)
+    repeated = _ensure_orchestrator_plan(first)
+
+    assert calls == 1
+    assert first["planner_decision_record"]["error_code"] == "unknown_outcome"
+    assert repeated["planner_decision_record"]["error_code"] == "unknown_outcome"
+
+
+def test_distinct_retry_authorization_permits_exactly_one_additional_call() -> None:
+    calls = 0
+
+    def callback(_payload: dict) -> str | dict:
+        nonlocal calls
+        calls += 1
+        return {"status": "unknown_outcome"} if calls == 1 else json.dumps(_proposal())
+
+    initial = _state(context={
+        "llm_planner_mode": "live",
+        "planner_live_approval": {"approved": True, "decision_id": "decision_live_original"},
+        "planner_model_callback": callback,
+    })
+    first = _ensure_orchestrator_plan(initial)
+    retry_state = {
+        **first,
+        "context": {
+            **first["context"],
+            "planner_live_retry_authorization": {
+                "approved": True,
+                "decision_id": "decision_live_retry_1",
+            },
+        },
+    }
+    retried = _ensure_orchestrator_plan(retry_state)
+    repeated_success = _ensure_orchestrator_plan(retried)
+
+    assert calls == 2
+    assert retried["planner_decision_record"]["retry_authorization_decision_id"] == "decision_live_retry_1"
+    assert retried["import_plan_validation"]["ok"] is True
+    assert repeated_success["planner_proposal"] == retried["planner_proposal"]
+    assert calls == 2
+
+
+def test_same_retry_authorization_is_consumed_after_one_uncertain_retry() -> None:
+    calls = 0
+
+    def callback(_payload: dict) -> dict:
+        nonlocal calls
+        calls += 1
+        return {"status": "unknown_outcome"}
+
+    initial = _state(context={
+        "llm_planner_mode": "live",
+        "planner_live_approval": {"approved": True, "decision_id": "decision_live_once"},
+        "planner_model_callback": callback,
+    })
+    first = _ensure_orchestrator_plan(initial)
+    retry_context = {
+        **first["context"],
+        "planner_live_retry_authorization": {
+            "approved": True,
+            "decision_id": "decision_live_once_retry",
+        },
+    }
+    retried = _ensure_orchestrator_plan({**first, "context": retry_context})
+    repeated = _ensure_orchestrator_plan({**retried, "context": retry_context})
+
+    assert calls == 2
+    assert retried["planner_decision_record"]["retry_authorization_decision_id"] == "decision_live_once_retry"
+    assert repeated["planner_decision_record"]["error_code"] == "unknown_outcome"
+
+
+def test_generic_callback_exception_is_durable_unknown_outcome() -> None:
+    calls = 0
+
+    def callback(_payload: dict) -> str:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("transport disconnected after dispatch")
+
+    first = _ensure_orchestrator_plan(_state(context={
+        "llm_planner_mode": "live",
+        "planner_live_approval": {"approved": True, "decision_id": "decision_live_generic"},
+        "planner_model_callback": callback,
+    }))
+    repeated = _ensure_orchestrator_plan(first)
+
+    assert calls == 1
+    assert first["planner_decision_record"]["error_code"] == "unknown_outcome"
+    assert repeated["planner_decision_record"]["error_code"] == "unknown_outcome"
 
 
 def test_live_planner_decision_record_is_stable_and_never_applies_budget() -> None:

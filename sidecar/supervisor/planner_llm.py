@@ -30,6 +30,7 @@ class PlannerLiveCallError(RuntimeError):
     def __init__(self, code: str, message: str) -> None:
         self.code = code
         self.safe_message = message
+        self.retry_authorization: dict[str, Any] | None = None
         super().__init__(message)
 
 
@@ -44,6 +45,12 @@ class PlannerUnknownOutcomeError(PlannerLiveCallError):
 
 
 PlannerModelCallback = Callable[[dict[str, Any]], str | bytes | Mapping[str, Any]]
+_RETRY_REQUIRED_ERROR_CODES = frozenset({
+    "unknown_outcome",
+    "provider_failed",
+    "response_invalid",
+    "provider_response_invalid",
+})
 
 
 def _approval_record(state: dict[str, Any]) -> dict[str, Any] | None:
@@ -59,11 +66,38 @@ def _approval_record(state: dict[str, Any]) -> dict[str, Any] | None:
     return {"decision_id": decision_id.strip()}
 
 
+def _retry_authorization_record(state: dict[str, Any]) -> dict[str, Any] | None:
+    """Return one new retry authorization, or block a prior uncertain call.
+
+    A retry is scoped to a durable decision record.  Reusing its authorization
+    ID is deliberately inert, so reconstructing the same state after restart
+    cannot fan out another potentially billable call.
+    """
+    prior = state.get("planner_decision_record")
+    if not isinstance(prior, dict) or prior.get("error_code") not in _RETRY_REQUIRED_ERROR_CODES:
+        return None
+
+    context = state.get("context")
+    authorization = context.get("planner_live_retry_authorization") if isinstance(context, dict) else None
+    if not isinstance(authorization, dict) or authorization.get("approved") is not True:
+        raise PlannerUnknownOutcomeError()
+    decision_id = authorization.get("decision_id")
+    if not isinstance(decision_id, str) or not decision_id.strip():
+        raise PlannerUnknownOutcomeError()
+    retry_id = decision_id.strip()
+    consumed_id = str(prior.get("retry_authorization_decision_id") or "")
+    original_id = str(prior.get("approval_decision_id") or "")
+    if retry_id == consumed_id or retry_id == original_id:
+        raise PlannerUnknownOutcomeError()
+    return {"decision_id": retry_id}
+
+
 def _decision_record(
     *,
     mode: str,
     status: str,
     approval: dict[str, Any] | None = None,
+    retry_authorization: dict[str, Any] | None = None,
     proposal: PlannerProposal | None = None,
     error: PlannerLiveCallError | None = None,
 ) -> dict[str, Any]:
@@ -75,6 +109,8 @@ def _decision_record(
     }
     if approval:
         record["approval_decision_id"] = approval["decision_id"]
+    if retry_authorization:
+        record["retry_authorization_decision_id"] = retry_authorization["decision_id"]
     if proposal is not None:
         canonical = json.dumps(proposal, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
         record["proposal_sha256"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -255,6 +291,7 @@ def generate_live_planner_proposal(
             "live planner requires explicit planner_live_approval with a decision_id; no model call was made",
         )
         raise error
+    retry_authorization = _retry_authorization_record(state)
     if not callable(model_callback):
         raise PlannerLiveCallError(
             "provider_missing",
@@ -265,36 +302,44 @@ def generate_live_planner_proposal(
     try:
         response = model_callback(request)
         proposal = parse_planner_proposal_json(_payload_from_provider_result(response))
-    except PlannerLiveCallError:
+    except PlannerUnknownOutcomeError as exc:
+        exc.retry_authorization = retry_authorization
         raise
+    except PlannerLiveCallError:
+        # A response existed but cannot be trusted as a completed operation.
+        # Treat it as uncertain rather than trying another paid call.
+        error = PlannerUnknownOutcomeError()
+        error.retry_authorization = retry_authorization
+        raise error from None
     except (TypeError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
-        raise PlannerLiveCallError(
-            "response_invalid",
-            "live planner returned invalid structured JSON",
-        ) from None
+        error = PlannerUnknownOutcomeError()
+        error.retry_authorization = retry_authorization
+        raise error from None
     except Exception:
-        # Do not expose provider details, and never automatically repeat a
-        # possibly billable request.
-        raise PlannerLiveCallError(
-            "provider_failed",
-            "live planner call failed without a usable result",
-        ) from None
+        # The callback may have dispatched a paid request before it raised.
+        # Do not expose provider details or retry without a new decision.
+        error = PlannerUnknownOutcomeError()
+        error.retry_authorization = retry_authorization
+        raise error from None
 
     return proposal, _decision_record(
         mode="live",
         status="accepted",
         approval=approval,
+        retry_authorization=retry_authorization,
         proposal=proposal,
     )
 
 
 def build_live_planner_failure_record(
-    state: dict[str, Any], error: PlannerLiveCallError
+    state: dict[str, Any], error: PlannerLiveCallError,
+    *, retry_authorization: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the safe decision record used by the policy gate on failure."""
     return _decision_record(
         mode="live",
         status="blocked",
         approval=_approval_record(state),
+        retry_authorization=retry_authorization,
         error=error,
     )
