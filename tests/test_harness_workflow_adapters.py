@@ -130,6 +130,7 @@ def test_default_external_budget_fails_closed(tmp_path) -> None:
     with pytest.raises(HarnessExecutionError, match="budget exceeded"):
         executor.execute(registry.resolve_workflow("W0").build_plan({}))
     assert order == []
+    assert registry.resolve_workflow("W0").build_plan({}).budget.max_seconds == 300
 
 
 def test_harness_executor_runs_full_w0_dag_without_scope_violation(tmp_path) -> None:
@@ -160,11 +161,48 @@ def test_harness_executor_runs_full_w1_dag_and_both_gates(tmp_path) -> None:
     assert order == list(task_ids)
 
 
+def test_w1_reviewable_warning_stages_package_for_human_action(tmp_path) -> None:
+    order: list[str] = []
+    handlers = _success_handlers(
+        "W1", ("extract", "semantic_coverage", "package_graph", "proposal_write"), order
+    )
+    handlers["W1"]["w1.semantic_coverage_compiler"] = lambda _arguments: (
+        order.append("semantic_coverage")
+        or {
+            "verdict": "warning",
+            "warning_approved": True,
+            "acceptance_policy": {
+                "requires_human_review": True,
+                "automatic_acceptance": False,
+            },
+            "artifact_ref": {
+                "relativePath": "system/imports/run/semantic_coverage.json",
+                "sha256": "a" * 64,
+                "contractVersion": "SemanticCoverage/v1",
+            },
+        }
+    )
+    registry = create_default_harness_registry(handlers)
+    executor, runtime = _executor(tmp_path, registry, "W1")
+    plan = registry.resolve_workflow("W1").build_plan(
+        {"max_cost_usd": 1, "max_tokens": 100}
+    )
+    state = executor.execute(plan)
+    assert state.status == "completed"
+    assert order == ["extract", "semantic_coverage", "package_graph", "proposal_write"]
+    semantic_call = next(
+        call for call in runtime.list_tool_calls(executor.attempt_id)
+        if call["tool_name"] == "w1.semantic_coverage_compiler"
+    )
+    assert semantic_call["result_payload"]["completion_mode"] == "requires_human_action"
+    assert semantic_call["result_payload"]["canonical_acceptance_allowed"] is False
+    assert not any(name.endswith("canonical_commit") for name in plan.available_tools)
+
+
 @pytest.mark.parametrize(
     "semantic_result",
     [
         {"verdict": "blocked"},
-        {"verdict": "warning"},
         {"verdict": "pass", "status": "unknown_outcome"},
     ],
 )
@@ -197,6 +235,68 @@ def test_w1_blocked_semantic_gate_stops_before_package_graph(
         executor.execute(plan)
     assert order == ["extract", "semantic_coverage"]
     assert runtime.get_attempt(executor.attempt_id)["status"] != "completed"
+
+
+@pytest.mark.parametrize(
+    "semantic_result",
+    [
+        {
+            "verdict": "warning",
+            "acceptance_policy": {
+                "requires_human_review": False,
+                "automatic_acceptance": False,
+            },
+            "artifact_ref": {
+                "relativePath": "coverage.json",
+                "sha256": "a" * 64,
+                "contractVersion": "SemanticCoverage/v1",
+            },
+        },
+        {
+            "verdict": "warning",
+            "acceptance_policy": {
+                "requires_human_review": True,
+                "automatic_acceptance": True,
+            },
+            "artifact_ref": {
+                "relativePath": "coverage.json",
+                "sha256": "a" * 64,
+                "contractVersion": "SemanticCoverage/v1",
+            },
+        },
+        {
+            "verdict": "warning",
+            "warning_approved": True,
+            "acceptance_policy": {
+                "requires_human_review": True,
+                "automatic_acceptance": False,
+            },
+            "artifact_ref": {
+                "relativePath": "../coverage.json",
+                "sha256": "not-a-sha256",
+                "contractVersion": "SemanticCoverage/v1",
+            },
+        },
+    ],
+)
+def test_w1_warning_requires_durable_review_policy_and_artifact(
+    tmp_path, semantic_result: dict[str, object]
+) -> None:
+    order: list[str] = []
+    handlers = _success_handlers(
+        "W1", ("extract", "semantic_coverage", "package_graph", "proposal_write"), order
+    )
+    handlers["W1"]["w1.semantic_coverage_compiler"] = (
+        lambda _arguments: order.append("semantic_coverage") or semantic_result
+    )
+    registry = create_default_harness_registry(handlers)
+    executor, _ = _executor(tmp_path, registry, "W1")
+    plan = registry.resolve_workflow("W1").build_plan(
+        {"max_cost_usd": 1, "max_tokens": 100}
+    )
+    with pytest.raises(WorkflowGateBlocked, match="reviewable artifact"):
+        executor.execute(plan)
+    assert order == ["extract", "semantic_coverage"]
 
 
 def test_w1_non_atomic_package_stops_before_proposal_write(tmp_path) -> None:

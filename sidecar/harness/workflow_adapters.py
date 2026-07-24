@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from hashlib import sha256
+from pathlib import PurePosixPath
+import re
 from typing import Any, Callable, Mapping, Sequence
 
 from .contracts import Budget, ExecutionPlan, PlanTask, ToolSpec
@@ -17,6 +19,7 @@ from .registry import HarnessRegistry
 
 Handler = Callable[[Mapping[str, Any]], Mapping[str, Any]]
 TERMINAL_FAILURES = {"failed", "blocked", "unknown_outcome", "cancelled"}
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$", re.IGNORECASE)
 
 
 class WorkflowGateBlocked(RuntimeError):
@@ -98,7 +101,7 @@ class RegisteredWorkflowAdapter:
                 max_steps=max(1, len(tasks) * 2),
                 max_tokens=int(context.get("max_tokens", 0)),
                 max_cost_usd=float(context.get("max_cost_usd", 0.0)),
-                max_seconds=float(context.get("max_seconds", 3_600)),
+                max_seconds=float(context.get("max_seconds", 300)),
             ),
             completion_predicate=self.definition.completion_predicate,
             available_tools=frozenset(tool.name for tool in self._tools),
@@ -130,7 +133,7 @@ class RegisteredWorkflowAdapter:
         self._enforce_runtime_gate(task.task_id, result)
         return result
 
-    def _enforce_runtime_gate(self, task_id: str, result: Mapping[str, Any]) -> None:
+    def _enforce_runtime_gate(self, task_id: str, result: dict[str, Any]) -> None:
         status = str(result.get("status", "")).lower()
         if status in TERMINAL_FAILURES:
             raise WorkflowGateBlocked(f"{self.workflow_id} {task_id} returned {status}")
@@ -138,9 +141,13 @@ class RegisteredWorkflowAdapter:
             return
         if task_id == "semantic_coverage":
             verdict = str(result.get("verdict", "")).lower()
-            warning_approved = bool(result.get("warning_approved"))
-            if verdict == "warning" and not warning_approved:
-                raise WorkflowGateBlocked("W1 semantic coverage warning requires human approval")
+            if verdict == "warning":
+                if not _reviewable_warning(result):
+                    raise WorkflowGateBlocked(
+                        "W1 semantic coverage warning lacks a reviewable artifact"
+                    )
+                result["completion_mode"] = "requires_human_action"
+                result["canonical_acceptance_allowed"] = False
             if verdict not in {"pass", "warning"}:
                 raise WorkflowGateBlocked("W1 semantic coverage did not pass")
         if task_id == "package_graph":
@@ -168,7 +175,10 @@ class RegisteredWorkflowAdapter:
         package = by_task.get("package_graph", {})
         verdict = str(semantic.get("verdict", "")).lower()
         semantic_ok = verdict == "pass" or (
-            verdict == "warning" and bool(semantic.get("warning_approved"))
+            verdict == "warning"
+            and _reviewable_warning(semantic)
+            and semantic.get("completion_mode") == "requires_human_action"
+            and semantic.get("canonical_acceptance_allowed") is False
         )
         return semantic_ok and package.get("valid") is True and package.get("atomic") is True
 
@@ -194,6 +204,28 @@ def _tool_spec(definition: WorkflowAdapterDefinition, step: WorkflowStepDefiniti
         estimated_cost_usd=0.000001 if step.risk == "external_call" else 0.0,
         estimated_tokens=1 if step.risk == "external_call" else 0,
     )
+
+
+def _reviewable_warning(result: Mapping[str, Any]) -> bool:
+    policy = result.get("acceptance_policy")
+    artifact_ref = result.get("artifact_ref")
+    if not isinstance(policy, Mapping) or not isinstance(artifact_ref, Mapping):
+        return False
+    if policy.get("requires_human_review") is not True:
+        return False
+    if policy.get("automatic_acceptance") is not False:
+        return False
+    relative_path = artifact_ref.get("relativePath") or artifact_ref.get("relative_path")
+    digest = artifact_ref.get("sha256")
+    contract_version = artifact_ref.get("contractVersion") or artifact_ref.get("contract_version")
+    if not all(isinstance(value, str) and value.strip() for value in (
+        relative_path, digest, contract_version
+    )):
+        return False
+    path = PurePosixPath(str(relative_path))
+    if path.is_absolute() or ".." in path.parts:
+        return False
+    return SHA256_PATTERN.fullmatch(str(digest)) is not None
 
 
 def _step(
