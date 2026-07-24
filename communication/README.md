@@ -77,6 +77,7 @@ This folder is the evidence and handoff layer for Narrative IDE work. It is not 
 | Communication merge | `2026-06-06-communication-merged-evidence-rollup.md` | `2026-06-06-task-completion-audit.md`, this README |
 | Orchestrator design | `2026-06-06-orchestrator-design-and-prompt-hardening-addendum.md` | `sidecar/supervisor/policy.py`, `planner.py`, `planner_llm.py`, `tool_registry.py` |
 | Execution guide | `2026-06-06-next-wave-execution-guide-and-solution-architecture.md` | Current answer to how to execute Claude windows and what the solution design is |
+| Import Test 18 quality gate | `2026-07-25-import-test18-quality-regression-and-harness-repair-gate.md` | Durable failure evidence, Pro 50-chapter hold decision, two-compiler Harness repair sequence |
 
 ## Superseded Or Historical Prompt Packages
 
