@@ -19,6 +19,8 @@ export interface ProviderConnectionPayload {
 }
 
 export interface ProjectFileBridge {
+  /** Electron main uses fsync on data files and containing directories. */
+  durability: "power-loss";
   existsSync(path: string): boolean;
   readFileSync(path: string, encoding?: "utf8"): string | Uint8Array;
   writeFileSync(path: string, data: string, encoding?: "utf8"): void;
@@ -27,6 +29,7 @@ export interface ProjectFileBridge {
   readdirSync(path: string): string[];
   unlinkSync(path: string): void;
   realpathSync(path: string): string;
+  fsyncDirectorySync(path: string): void;
   copyFileSync(source: string, destination: string): void;
   renameSync(source: string, destination: string): void;
 }
@@ -691,6 +694,7 @@ export const electronApi = {
         "projectFileReaddir",
         "projectFileUnlink",
         "projectFileRealpath",
+        "projectFileFsyncDirectory",
         "projectFileCopy",
         "projectFileRename",
       ].every((key) => typeof bridge[key] === "function")
@@ -698,6 +702,7 @@ export const electronApi = {
       return null;
     }
     return {
+      durability: "power-loss",
       existsSync: (path) => Boolean(bridge.projectFileExists({ path })),
       readFileSync: (path: string, encoding?: "utf8") => {
         if (encoding === "utf8")
@@ -728,6 +733,9 @@ export const electronApi = {
         bridge.projectFileUnlink({ path });
       },
       realpathSync: (path) => String(bridge.projectFileRealpath({ path })),
+      fsyncDirectorySync: (path) => {
+        bridge.projectFileFsyncDirectory({ path });
+      },
       copyFileSync: (source, destination) => {
         bridge.projectFileCopy({ path: source, destination });
       },

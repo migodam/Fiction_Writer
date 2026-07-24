@@ -259,6 +259,12 @@ function handleProjectFileSync(event, operation, payload = {}) {
         const { target: checked } = verifyProjectFilePath(event, target);
         return { ok: true, value: fs.realpathSync(checked) };
       }
+      case 'fsync-directory': {
+        const { target: checked } = verifyProjectFilePath(event, target);
+        if (!fs.lstatSync(checked).isDirectory()) throw new Error('Project directory does not exist');
+        fsyncDirectory(checked);
+        return { ok: true };
+      }
       case 'copy': {
         const { target: source } = verifyProjectFilePath(event, target, { requireFile: true });
         const sourceStat = fs.lstatSync(source);
@@ -795,7 +801,7 @@ ipcMain.handle('project:selectRoot', async (event) => {
   return { canceled: result.canceled, path: result.canceled ? null : await registerProjectRoot(event, result.filePaths[0]) };
 });
 
-for (const operation of ['exists', 'read', 'write', 'mkdir', 'readdir', 'unlink', 'realpath', 'copy', 'rename']) {
+for (const operation of ['exists', 'read', 'write', 'mkdir', 'readdir', 'unlink', 'realpath', 'fsync-directory', 'copy', 'rename']) {
   ipcMain.on(`projectfs:${operation}`, (event, payload) => {
     event.returnValue = handleProjectFileSync(event, operation, payload);
   });

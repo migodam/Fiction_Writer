@@ -1,20 +1,42 @@
-export type TransactionFileSystem = Pick<typeof import('fs'), 'existsSync' | 'readFileSync' | 'writeFileSync' | 'mkdirSync' | 'renameSync' | 'unlinkSync' | 'readdirSync'>;
+export type TransactionDurability = 'power-loss' | 'best-effort';
+
+/**
+ * `power-loss` is only valid for an implementation that fsyncs both the file
+ * contents and each affected directory. Browser fixtures deliberately use the
+ * weaker fallback so tests cannot accidentally claim physical durability.
+ */
+export type TransactionFileSystem = Pick<typeof import('fs'), 'existsSync' | 'readFileSync' | 'writeFileSync' | 'mkdirSync' | 'renameSync' | 'unlinkSync' | 'readdirSync'> & {
+  durability?: TransactionDurability;
+  fsyncDirectorySync?: (directory: string) => void;
+};
 
 export type ProjectTransactionReceipt = {
   id: string;
   journalPath: string;
   backupPath: string;
+  durability: TransactionDurability;
 };
 
 export type ProjectTransactionOperation =
   | { relativePath: string; postimage: string; delete?: never }
   | { relativePath: string; delete: true; postimage?: never };
 
-export type ProjectTransactionCrashPoint = 'before-first-rename' | 'mid-rename' | 'after-last-rename-before-commit';
+export type ProjectTransactionCrashPoint =
+  | 'before-commit-intent'
+  | 'before-first-rename'
+  | 'mid-rename'
+  | 'after-last-rename-before-commit';
+export type ProjectTransactionPhase = 'prepared' | 'commit-intent' | 'target-applied' | 'committed' | 'rolled-back';
+export type ProjectTransactionOptions = {
+  /** Test-only deterministic failpoint. Production callers must leave this unset. */
+  crashAt?: ProjectTransactionCrashPoint;
+  /** Test-only hook used by a child process to terminate at a durable boundary. */
+  onPhase?: (phase: ProjectTransactionPhase, targetIndex?: number) => void;
+};
 
 type Image = { present: boolean; sha256: string; stage: string | null };
 type PreparedTransaction = {
-  version: 1 | 2;
+  version: 1 | 2 | 3;
   id: string;
   targets: Array<{ relativePath: string; intent?: 'write' | 'delete'; preimage: Image; postimage: Image }>;
 };
@@ -36,6 +58,47 @@ const readImage = (fs: TransactionFileSystem, targetPath: string): { present: bo
     ? { present: true, content: fs.readFileSync(targetPath, 'utf8') as string }
     : { present: false, content: null };
 
+const transactionDurability = (fs: TransactionFileSystem): TransactionDurability =>
+  fs.durability === 'power-loss' ? 'power-loss' : 'best-effort';
+
+const syncDirectory = (fs: TransactionFileSystem, directory: string) => {
+  if (fs.fsyncDirectorySync) {
+    fs.fsyncDirectorySync(directory);
+    return;
+  }
+  if (transactionDurability(fs) === 'power-loss') {
+    throw new Error(`Power-loss durable transaction filesystem is missing directory fsync for ${directory}.`);
+  }
+};
+
+const parentDirectory = (targetPath: string) => targetPath.split('/').slice(0, -1).join('/') || '/';
+
+const ensureDirectory = (fs: TransactionFileSystem, directory: string) => {
+  fs.mkdirSync(directory, { recursive: true });
+  syncDirectory(fs, directory);
+};
+
+const writeJournalFile = (fs: TransactionFileSystem, targetPath: string, content: string) => {
+  ensureDirectory(fs, parentDirectory(targetPath));
+  fs.writeFileSync(targetPath, content, 'utf8');
+  // Electron's named bridge writes through a temp file, fsyncs it, renames it,
+  // and fsyncs this directory. The fallback is intentionally best-effort.
+  syncDirectory(fs, parentDirectory(targetPath));
+};
+
+const renameJournalFile = (fs: TransactionFileSystem, sourcePath: string, targetPath: string) => {
+  ensureDirectory(fs, parentDirectory(targetPath));
+  fs.renameSync(sourcePath, targetPath);
+  syncDirectory(fs, parentDirectory(targetPath));
+  if (parentDirectory(sourcePath) !== parentDirectory(targetPath)) syncDirectory(fs, parentDirectory(sourcePath));
+};
+
+const unlinkJournalFile = (fs: TransactionFileSystem, targetPath: string) => {
+  if (!fs.existsSync(targetPath)) return;
+  fs.unlinkSync(targetPath);
+  syncDirectory(fs, parentDirectory(targetPath));
+};
+
 const validImage = async (fs: TransactionFileSystem, transactionDirectory: string, image: Image, targetPath: string) => {
   const actual = readImage(fs, targetPath);
   if (actual.present !== image.present) return false;
@@ -49,7 +112,7 @@ const validImage = async (fs: TransactionFileSystem, transactionDirectory: strin
 
 const restoreImage = async (fs: TransactionFileSystem, transactionDirectory: string, image: Image, targetPath: string) => {
   if (!image.present) {
-    if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath);
+    unlinkJournalFile(fs, targetPath);
     return;
   }
   if (!image.stage) throw new Error(`Transaction preimage is missing for ${targetPath}.`);
@@ -58,23 +121,42 @@ const restoreImage = async (fs: TransactionFileSystem, transactionDirectory: str
   const staged = fs.readFileSync(stagedPath, 'utf8') as string;
   if ((await sha256Text(staged)) !== image.sha256) throw new Error(`Transaction preimage hash is invalid for ${targetPath}.`);
   const rollbackPath = join(transactionDirectory, 'rollback', image.sha256);
-  fs.mkdirSync(join(transactionDirectory, 'rollback'), { recursive: true });
-  fs.writeFileSync(rollbackPath, staged, 'utf8');
-  fs.mkdirSync(targetPath.split('/').slice(0, -1).join('/'), { recursive: true });
-  fs.renameSync(rollbackPath, targetPath);
+  ensureDirectory(fs, join(transactionDirectory, 'rollback'));
+  writeJournalFile(fs, rollbackPath, staged);
+  renameJournalFile(fs, rollbackPath, targetPath);
 };
 
-/**
- * The synchronous project-files bridge does not expose fsync. This is therefore
- * rename plus an explicit WAL protocol, not a claim of power-loss durability.
- */
+const applyImage = async (fs: TransactionFileSystem, transactionDirectory: string, image: Image, targetPath: string) => {
+  if (!image.present) {
+    unlinkJournalFile(fs, targetPath);
+    return;
+  }
+  if (!image.stage) throw new Error(`Transaction postimage is missing for ${targetPath}.`);
+  const stagedPath = join(transactionDirectory, image.stage);
+  if (!fs.existsSync(stagedPath)) throw new Error(`Transaction postimage stage is missing for ${targetPath}.`);
+  const staged = fs.readFileSync(stagedPath, 'utf8') as string;
+  if ((await sha256Text(staged)) !== image.sha256) throw new Error(`Transaction postimage hash is invalid for ${targetPath}.`);
+  const applyPath = join(transactionDirectory, 'apply', image.sha256);
+  ensureDirectory(fs, join(transactionDirectory, 'apply'));
+  writeJournalFile(fs, applyPath, staged);
+  renameJournalFile(fs, applyPath, targetPath);
+};
+
+const phase = (options: ProjectTransactionOptions, value: ProjectTransactionPhase, targetIndex?: number) => {
+  options.onPhase?.(value, targetIndex);
+};
+
+const normalizedOptions = (value?: ProjectTransactionCrashPoint | ProjectTransactionOptions): ProjectTransactionOptions =>
+  typeof value === 'string' ? { crashAt: value } : value || {};
+
 export const commitProjectTransaction = async (
   fs: TransactionFileSystem,
   projectRoot: string,
   id: string,
   operations: ProjectTransactionOperation[],
-  crashAt?: ProjectTransactionCrashPoint,
+  optionsOrCrashAt?: ProjectTransactionCrashPoint | ProjectTransactionOptions,
 ): Promise<ProjectTransactionReceipt> => {
+  const options = normalizedOptions(optionsOrCrashAt);
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(id)) throw new Error('Invalid transaction id.');
   const ordered = [...operations].sort((a, b) => a.relativePath.localeCompare(b.relativePath));
   if (!ordered.length || ordered.some(({ relativePath }) => !isRelativePath(relativePath)) || new Set(ordered.map(({ relativePath }) => relativePath)).size !== ordered.length) {
@@ -91,7 +173,7 @@ export const commitProjectTransaction = async (
   }
   const preparedPath = join(transactionDirectory, 'prepared.json');
   const committedPath = join(transactionDirectory, 'committed.json');
-  fs.mkdirSync(transactionDirectory, { recursive: true });
+  ensureDirectory(fs, transactionDirectory);
 
   const targets: PreparedTransaction['targets'] = [];
   for (const [index, operation] of ordered.entries()) {
@@ -103,14 +185,12 @@ export const commitProjectTransaction = async (
     const preStage = preimage.present ? `pre/${index}.txt` : null;
     const postStage = postimage === null ? null : `post/${index}.txt`;
     if (preStage) {
-      fs.mkdirSync(join(transactionDirectory, 'pre'), { recursive: true });
-      fs.writeFileSync(join(transactionDirectory, preStage), preimage.content || '', 'utf8');
+      ensureDirectory(fs, join(transactionDirectory, 'pre'));
+      writeJournalFile(fs, join(transactionDirectory, preStage), preimage.content || '');
     }
     if (postStage) {
-      fs.mkdirSync(join(transactionDirectory, 'post'), { recursive: true });
-      fs.writeFileSync(join(transactionDirectory, postStage), postimage as string, 'utf8');
-      fs.mkdirSync(join(transactionDirectory, 'apply'), { recursive: true });
-      fs.writeFileSync(join(transactionDirectory, `apply/${index}.txt`), postimage as string, 'utf8');
+      ensureDirectory(fs, join(transactionDirectory, 'post'));
+      writeJournalFile(fs, join(transactionDirectory, postStage), postimage as string);
     }
     targets.push({
       relativePath,
@@ -119,22 +199,35 @@ export const commitProjectTransaction = async (
       postimage: { present: postimage !== null, sha256: postimage !== null ? await sha256Text(postimage) : '', stage: postStage },
     });
   }
-  const prepared: PreparedTransaction = { version: 2, id: transactionId, targets };
-  fs.writeFileSync(join(transactionDirectory, 'manifest.json'), JSON.stringify(prepared), 'utf8');
-  fs.writeFileSync(preparedPath, JSON.stringify({ id: transactionId, state: 'prepared' }), 'utf8');
-  if (crashAt === 'before-first-rename') throw new Error('Crash injection: before first rename');
+  const prepared: PreparedTransaction = { version: 3, id: transactionId, targets };
+  writeJournalFile(fs, join(transactionDirectory, 'manifest.json'), JSON.stringify(prepared));
+  writeJournalFile(fs, preparedPath, JSON.stringify({ id: transactionId, state: 'prepared', version: 3 }));
+  phase(options, 'prepared');
+  if (options.crashAt === 'before-commit-intent') throw new Error('Crash injection: before commit intent');
+
+  // This durable decision is the only point at which recovery changes from
+  // rollback to completion. It prevents a mixed package after a power loss.
+  const intentPath = join(transactionDirectory, 'commit-intent.json');
+  writeJournalFile(fs, intentPath, JSON.stringify({ id: transactionId, state: 'commit-intent', version: 3 }));
+  phase(options, 'commit-intent');
+  if (options.crashAt === 'before-first-rename') throw new Error('Crash injection: before first rename');
 
   for (let index = 0; index < targets.length; index += 1) {
     const target = targets[index];
     const targetPath = join(projectRoot, target.relativePath);
-    fs.mkdirSync(targetPath.split('/').slice(0, -1).join('/'), { recursive: true });
-    if (target.postimage.present) fs.renameSync(join(transactionDirectory, `apply/${index}.txt`), targetPath);
-    else if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath);
-    if (crashAt === 'mid-rename' && index === 0 && targets.length > 1) throw new Error('Crash injection: mid rename');
+    await applyImage(fs, transactionDirectory, target.postimage, targetPath);
+    phase(options, 'target-applied', index);
+    if (options.crashAt === 'mid-rename' && index === 0 && targets.length > 1) throw new Error('Crash injection: mid rename');
   }
-  if (crashAt === 'after-last-rename-before-commit') throw new Error('Crash injection: after last rename');
-  fs.writeFileSync(committedPath, JSON.stringify({ id: transactionId, state: 'committed' }), 'utf8');
-  return { id: transactionId, journalPath: `system/transactions/${transactionId}/manifest.json`, backupPath: `system/transactions/${transactionId}/pre` };
+  if (options.crashAt === 'after-last-rename-before-commit') throw new Error('Crash injection: after last rename');
+  writeJournalFile(fs, committedPath, JSON.stringify({ id: transactionId, state: 'committed', version: 3 }));
+  phase(options, 'committed');
+  return {
+    id: transactionId,
+    journalPath: `system/transactions/${transactionId}/manifest.json`,
+    backupPath: `system/transactions/${transactionId}/pre`,
+    durability: transactionDurability(fs),
+  };
 };
 
 export const recoverProjectTransactions = async (fs: TransactionFileSystem, projectRoot: string): Promise<void> => {
@@ -146,10 +239,10 @@ export const recoverProjectTransactions = async (fs: TransactionFileSystem, proj
     const preparedPath = join(transactionDirectory, 'prepared.json');
     const committedPath = join(transactionDirectory, 'committed.json');
     const manifestPath = join(transactionDirectory, 'manifest.json');
-    if (!fs.existsSync(preparedPath) || fs.existsSync(committedPath) || !fs.existsSync(manifestPath)) continue;
+    if (!fs.existsSync(preparedPath) || !fs.existsSync(manifestPath)) continue;
     const prepared = JSON.parse(fs.readFileSync(manifestPath, 'utf8') as string) as PreparedTransaction;
     if (
-      (prepared.version !== 1 && prepared.version !== 2)
+      (prepared.version !== 1 && prepared.version !== 2 && prepared.version !== 3)
       || prepared.id !== id
       || !Array.isArray(prepared.targets)
       || prepared.targets.some((target) => !isRelativePath(target.relativePath)
@@ -158,15 +251,47 @@ export const recoverProjectTransactions = async (fs: TransactionFileSystem, proj
     ) {
       throw new Error(`Invalid prepared project transaction ${id}.`);
     }
+    const intentPath = join(transactionDirectory, 'commit-intent.json');
+    const terminalState = fs.existsSync(committedPath)
+      ? (JSON.parse(fs.readFileSync(committedPath, 'utf8') as string) as { id?: unknown; state?: unknown }).state
+      : null;
+    if (terminalState !== null && (terminalState !== 'committed' && terminalState !== 'rolled_back')) {
+      throw new Error(`Invalid terminal project transaction marker ${id}.`);
+    }
+    const shouldComplete = terminalState === 'committed'
+      || (terminalState === null && prepared.version >= 3 && fs.existsSync(intentPath));
+    if (shouldComplete) {
+      for (const target of prepared.targets) {
+        const targetPath = join(projectRoot, target.relativePath);
+        if (!(await validImage(fs, transactionDirectory, target.postimage, targetPath))) {
+          await applyImage(fs, transactionDirectory, target.postimage, targetPath);
+        }
+      }
+      const complete = (await Promise.all(prepared.targets.map((target) => validImage(fs, transactionDirectory, target.postimage, join(projectRoot, target.relativePath))))).every(Boolean);
+      if (!complete) throw new Error(`Could not finish committed project transaction ${id}.`);
+      writeJournalFile(fs, committedPath, JSON.stringify({ id, state: 'committed', recovered: true, version: prepared.version }));
+      continue;
+    }
+    if (terminalState === 'rolled_back') {
+      const rolledBack = (await Promise.all(prepared.targets.map((target) => validImage(fs, transactionDirectory, target.preimage, join(projectRoot, target.relativePath))))).every(Boolean);
+      if (!rolledBack) {
+        for (const target of [...prepared.targets].sort((a, b) => a.relativePath.localeCompare(b.relativePath))) {
+          await restoreImage(fs, transactionDirectory, target.preimage, join(projectRoot, target.relativePath));
+        }
+      }
+      continue;
+    }
+    // Version 1/2 had no commit decision. Preserve their historical behavior:
+    // a completely applied transaction is committed; otherwise it rolls back.
     const complete = (await Promise.all(prepared.targets.map((target) => validImage(fs, transactionDirectory, target.postimage, join(projectRoot, target.relativePath))))).every(Boolean);
     if (complete) {
-      fs.writeFileSync(committedPath, JSON.stringify({ id, state: 'committed', recovered: true }), 'utf8');
+      writeJournalFile(fs, committedPath, JSON.stringify({ id, state: 'committed', recovered: true, version: prepared.version }));
       continue;
     }
     for (const target of [...prepared.targets].sort((a, b) => a.relativePath.localeCompare(b.relativePath))) {
       await restoreImage(fs, transactionDirectory, target.preimage, join(projectRoot, target.relativePath));
     }
-    fs.writeFileSync(committedPath, JSON.stringify({ id, state: 'rolled_back', recovered: true }), 'utf8');
+    writeJournalFile(fs, committedPath, JSON.stringify({ id, state: 'rolled_back', recovered: true, version: prepared.version }));
   }
 };
 

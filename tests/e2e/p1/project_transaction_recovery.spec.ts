@@ -45,13 +45,13 @@ const recoverAfterCrash = async (page: import('@playwright/test').Page, crashAt:
   };
 }, crashAt);
 
-test('recovers a crash before the first package rename by restoring every preimage', async ({ page }) => {
+test('completes a decided package after a browser-fallback crash before the first rename', async ({ page }) => {
   await page.goto('http://localhost:3000');
   const result = await recoverAfterCrash(page, 'before-first-rename');
-  expect(result.files).toEqual(['before-a', 'before-b']);
+  expect(result.files).toEqual(['after-a', undefined]);
   expect(result.repeatedRecovery).toEqual(result.files);
   expect(result.unrelated).toBe('keep');
-  expect(result.marker).toContain('rolled_back');
+  expect(result.marker).toContain('committed');
 });
 
 test('commits exact lowercase SHA-256 hashes without Node require', async ({ page }) => {
@@ -81,13 +81,13 @@ test('commits exact lowercase SHA-256 hashes without Node require', async ({ pag
   expect(result.targets.find((target: any) => target.relativePath === 'entities/obsolete.txt')).toMatchObject({ intent: 'delete', postimage: { present: false } });
 });
 
-test('recovers a mid-package rename by rolling back every target', async ({ page }) => {
+test('completes a decided package after a browser-fallback mid-package rename', async ({ page }) => {
   await page.goto('http://localhost:3000');
   const result = await recoverAfterCrash(page, 'mid-rename');
-  expect(result.files).toEqual(['before-a', 'before-b']);
+  expect(result.files).toEqual(['after-a', undefined]);
   expect(result.repeatedRecovery).toEqual(result.files);
   expect(result.unrelated).toBe('keep');
-  expect(result.marker).toContain('rolled_back');
+  expect(result.marker).toContain('committed');
 });
 
 test('completes a fully-renamed package after a crash before the commit marker', async ({ page }) => {

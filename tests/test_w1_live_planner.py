@@ -233,11 +233,16 @@ def test_same_retry_authorization_is_consumed_after_one_uncertain_retry() -> Non
         },
     }
     retried = _ensure_orchestrator_plan({**first, "context": retry_context})
-    repeated = _ensure_orchestrator_plan({**retried, "context": retry_context})
+    repeated_once = _ensure_orchestrator_plan({**retried, "context": retry_context})
+    repeated_twice = _ensure_orchestrator_plan({**repeated_once, "context": retry_context})
+    repeated_thrice = _ensure_orchestrator_plan({**repeated_twice, "context": retry_context})
 
     assert calls == 2
     assert retried["planner_decision_record"]["retry_authorization_decision_id"] == "decision_live_once_retry"
-    assert repeated["planner_decision_record"]["error_code"] == "unknown_outcome"
+    for result in (repeated_once, repeated_twice, repeated_thrice):
+        assert result["planner_decision_record"]["error_code"] == "unknown_outcome"
+        assert result["planner_decision_record"]["retry_authorization_decision_id"] == "decision_live_once_retry"
+    assert calls == 2
 
 
 def test_generic_callback_exception_is_durable_unknown_outcome() -> None:

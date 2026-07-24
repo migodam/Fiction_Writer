@@ -29,6 +29,7 @@ const narrativeIDE = {
   projectFileReaddir: (payload) => projectFileSync('readdir', payload),
   projectFileUnlink: (payload) => projectFileSync('unlink', payload),
   projectFileRealpath: (payload) => projectFileSync('realpath', payload),
+  projectFileFsyncDirectory: (payload) => projectFileSync('fsync-directory', payload),
   projectFileCopy: (payload) => projectFileSync('copy', payload),
   projectFileRename: (payload) => projectFileSync('rename', payload),
   sha256: (value) => {

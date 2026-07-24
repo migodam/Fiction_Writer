@@ -336,6 +336,15 @@ def build_live_planner_failure_record(
     *, retry_authorization: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the safe decision record used by the policy gate on failure."""
+    if retry_authorization is None:
+        prior = state.get("planner_decision_record")
+        consumed_id = (
+            str(prior.get("retry_authorization_decision_id") or "").strip()
+            if isinstance(prior, dict)
+            else ""
+        )
+        if consumed_id:
+            retry_authorization = {"decision_id": consumed_id}
     return _decision_record(
         mode="live",
         status="blocked",
