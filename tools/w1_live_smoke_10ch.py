@@ -681,7 +681,7 @@ def _smoke_result_exit_code(result: dict[str, Any]) -> int:
         or ("error" if terminal.get("current_node") == "error" or errors else "done")
     )
     converge_status = terminal.get("converge_status")
-    if status in {"error", "timeout", "budget_exhausted", "auth_failed"}:
+    if status in {"error", "timeout", "stalled", "cleanup_timeout", "budget_exhausted", "auth_failed"}:
         return 1
     if converge_status in {"hard_fail", "failed"}:
         return 1
@@ -696,9 +696,20 @@ async def _watch_streaming_updates(
     *,
     timeout_seconds: float,
     heartbeat_seconds: float,
+    stalled_seconds: float | None = None,
+    cleanup_timeout_seconds: float = 15.0,
     on_update: Any = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Consume a streaming workflow without coupling health reporting to updates."""
+    """Consume a stream with wall-clock, silence, and cleanup deadlines.
+
+    The runner owns an async producer rather than a child process, so it cannot
+    safely kill a process tree here.  It does, however, bound cancellation and
+    records a failed cleanup instead of leaving a silent task invisible.
+    """
+    if timeout_seconds <= 0 or heartbeat_seconds <= 0 or cleanup_timeout_seconds <= 0:
+        raise ValueError("watchdog timeouts must be greater than zero")
+    if stalled_seconds is not None and stalled_seconds <= 0:
+        raise ValueError("stalled_seconds must be greater than zero")
     start = time.monotonic()
     state: dict[str, Any] = {
         "last_update_at": start,
@@ -706,6 +717,7 @@ async def _watch_streaming_updates(
         "update_count": 0,
     }
     updates: list[dict[str, Any]] = []
+    watchdog_events: list[dict[str, Any]] = []
     queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
     stop_heartbeat = asyncio.Event()
 
@@ -718,6 +730,18 @@ async def _watch_streaming_updates(
             "update_count": state["update_count"],
         }
         _write_json_atomic(output_dir / "heartbeat.json", payload)
+
+    def record_watchdog_event(event_type: str, **details: Any) -> dict[str, Any]:
+        event = {
+            "event_type": event_type,
+            "elapsed_seconds": round(time.monotonic() - start, 3),
+            "last_update_age_seconds": round(time.monotonic() - state["last_update_at"], 3),
+            "last_node": state["last_node"],
+            **details,
+        }
+        watchdog_events.append(event)
+        _write_json_atomic(output_dir / "watchdog_events.json", watchdog_events)
+        return event
 
     async def produce_updates() -> None:
         try:
@@ -756,12 +780,24 @@ async def _watch_streaming_updates(
         while True:
             remaining = timeout_seconds - (time.monotonic() - start)
             if remaining <= 0:
-                terminal = {"status": "timeout", "elapsed_seconds": int(time.monotonic() - start)}
+                terminal = {"status": "timeout", "elapsed_seconds": int(time.monotonic() - start), "watchdog_events": [record_watchdog_event("wall_clock_timeout")]}
+                break
+            silence_remaining = (
+                stalled_seconds - (time.monotonic() - state["last_update_at"])
+                if stalled_seconds is not None
+                else remaining
+            )
+            if stalled_seconds is not None and silence_remaining <= 0:
+                terminal = {"status": "stalled", "watchdog_events": [record_watchdog_event("stream_stalled", stalled_seconds=stalled_seconds)]}
                 break
             try:
-                kind, value = await asyncio.wait_for(queue.get(), timeout=remaining)
+                kind, value = await asyncio.wait_for(queue.get(), timeout=min(remaining, silence_remaining))
             except TimeoutError:
-                terminal = {"status": "timeout", "elapsed_seconds": int(time.monotonic() - start)}
+                now = time.monotonic()
+                if stalled_seconds is not None and now - state["last_update_at"] >= stalled_seconds:
+                    terminal = {"status": "stalled", "watchdog_events": [record_watchdog_event("stream_stalled", stalled_seconds=stalled_seconds)]}
+                else:
+                    terminal = {"status": "timeout", "elapsed_seconds": int(now - start), "watchdog_events": [record_watchdog_event("wall_clock_timeout")]}
                 break
             if kind == "done":
                 terminal = updates[-1] if updates else {"status": "done"}
@@ -787,7 +823,12 @@ async def _watch_streaming_updates(
             producer_cancelled_by_runner = True
             producer.cancel()
         try:
-            await producer
+            await asyncio.wait_for(producer, timeout=cleanup_timeout_seconds)
+        except TimeoutError:
+            terminal = {
+                "status": "cleanup_timeout",
+                "watchdog_events": [record_watchdog_event("producer_cleanup_timeout", cleanup_timeout_seconds=cleanup_timeout_seconds)],
+            }
         except asyncio.CancelledError:
             if not producer_cancelled_by_runner:
                 raise
@@ -873,6 +914,8 @@ async def _run_live(args: argparse.Namespace, project_path: Path, output_dir: Pa
             output_dir,
             timeout_seconds=args.timeout_seconds,
             heartbeat_seconds=args.heartbeat_seconds,
+            stalled_seconds=args.stalled_seconds,
+            cleanup_timeout_seconds=args.cleanup_timeout_seconds,
             on_update=handle_update,
         )
     except Exception as exc:
@@ -913,6 +956,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--endpoint", default=os.environ.get("DEEPSEEK_ENDPOINT", "https://api.deepseek.com/v1"))
     parser.add_argument("--timeout-seconds", type=int, default=1800)
     parser.add_argument("--heartbeat-seconds", type=float, default=15.0)
+    parser.add_argument("--stalled-seconds", type=float, default=120.0, help="Stop a stream that produces no update for this long.")
+    parser.add_argument("--cleanup-timeout-seconds", type=float, default=15.0, help="Maximum wait for cancelled async work to exit.")
     parser.add_argument("--max-cost-usd", type=float, default=3.0)
     parser.add_argument("--max-input-tokens", type=int, default=1_000_000)
     parser.add_argument("--max-output-tokens", type=int, default=250_000)
@@ -924,8 +969,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--prepare-only", action="store_true", help="Create scratch project/output dirs and exit without live calls.")
     parser.add_argument("--reuse-project", action="store_true", help="Do not delete an existing scratch project path before running.")
     args = parser.parse_args(argv)
-    if args.heartbeat_seconds <= 0:
-        parser.error("--heartbeat-seconds must be greater than zero")
+    if args.heartbeat_seconds <= 0 or args.stalled_seconds <= 0 or args.cleanup_timeout_seconds <= 0:
+        parser.error("watchdog timeout values must be greater than zero")
+    if args.stalled_seconds > args.timeout_seconds:
+        parser.error("--stalled-seconds must not exceed --timeout-seconds")
     return args
 
 

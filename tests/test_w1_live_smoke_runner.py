@@ -375,6 +375,36 @@ def test_watchdog_writes_heartbeat_file_for_a_silent_stream(tmp_path):
     assert heartbeat["update_count"] == 0
 
 
+def test_watchdog_marks_silent_stream_stalled_before_wall_clock_timeout(tmp_path):
+    cancelled = False
+
+    async def silent_stream():
+        nonlocal cancelled
+        try:
+            await asyncio.Event().wait()
+            yield {}
+        finally:
+            cancelled = True
+
+    _, terminal = asyncio.run(
+        _watch_streaming_updates(
+            silent_stream(),
+            tmp_path,
+            timeout_seconds=1,
+            heartbeat_seconds=0.005,
+            stalled_seconds=0.03,
+            cleanup_timeout_seconds=0.1,
+        )
+    )
+
+    assert terminal["status"] == "stalled"
+    assert terminal["watchdog_events"][0]["event_type"] == "stream_stalled"
+    assert cancelled
+    events = json.loads((tmp_path / "watchdog_events.json").read_text(encoding="utf-8"))
+    assert events[0]["event_type"] == "stream_stalled"
+    assert _smoke_result_exit_code({"terminal": terminal, "quality_probe": _passing_probe()}) == 1
+
+
 def test_watchdog_collects_normal_updates_and_tracks_latest_node(tmp_path):
     async def normal_stream():
         yield {"progress": 10, "current_node": "segment"}

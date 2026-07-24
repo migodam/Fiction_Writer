@@ -166,6 +166,56 @@ def test_cli_exit_codes_default_and_threshold(tmp_path, capsys):
     assert "does not exist" in captured.err
 
 
+def test_attempt_aware_diagnostics_selects_attempt_split_layout_and_blocks_pass_conflict(tmp_path):
+    project = tmp_path / "project"
+    attempt = project / "system" / "imports" / "lineage_demo" / "attempts" / "attempt_demo"
+    _write_json(project / "system" / "inbox.json", [])
+    _write_json(project / "project.json", {"metadata": {"locale": "zh-CN"}})
+    _write_json(attempt / "manifest.json", {"import_run_id": "lineage_demo", "segments": [{}, {}]})
+    _write_json(attempt / "checkpoint.json", {"total_chunks": 2, "committed_chunk_ids": [0, 1]})
+    _write_json(attempt / "review_report.json", {"status": "pass"})
+    _write_json(attempt / "timeline_architecture.json", {"branches": [], "canonical_events": []})
+    _write_json(attempt / "chunks" / "chunk_1_failures.json", {
+        "chunk_id": 1,
+        "failures": [{"label": "character", "error": "lease is missing, expired, or fenced"}],
+    })
+    for index in range(2):
+        _write_json(project / "writing" / "chapters" / f"chapter_{index}.json", {"id": f"chapter_{index}", "orderIndex": index})
+        _write_json(project / "writing" / "scenes" / f"scene_{index}.meta.json", {"id": f"scene_{index}"})
+        (project / "writing" / "scenes" / f"scene_{index}.md").write_text("正文", encoding="utf-8")
+    _write_json(project / "writing" / "manuscript" / "nodes.json", [])
+
+    metrics = w1_import_diagnostics.analyze_import(
+        w1_import_diagnostics.ImportSource(project, lineage_id="lineage_demo", attempt_id="attempt_demo")
+    )
+
+    assert metrics["artifact_scope"] == {
+        "layout": "attempt",
+        "lineage_id": "lineage_demo",
+        "attempt_id": "attempt_demo",
+        "artifact_dir": str(attempt),
+    }
+    assert metrics["artifact_quality"]["chapters"]["total_chapter_count"] == 2
+    assert metrics["artifact_quality"]["canonical_split_layout"]["scene_content_count"] == 2
+    durable = metrics["artifact_quality"]["durable_failures"]
+    assert durable["failed_chunk_ids"] == [1]
+    assert durable["domain_coverage"]["character"]["failed_chunks"] == [1]
+    assert metrics["import_test6_symptom_flags"]["durable_failure_artifacts_present"]
+    assert metrics["import_test6_symptom_flags"]["review_pass_conflicts_durable_failures"]
+
+
+def test_cli_accepts_project_path_alias_and_positional_regression_is_covered(tmp_path, capsys):
+    project = _make_project(tmp_path, event_count=2)
+
+    code = w1_import_diagnostics.main([
+        "--project-path", str(project), "--import-run-id", "import_a", "--format", "json",
+    ])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["diagnostics"]["import_run_id"] == "import_a"
+
+
 def test_staged_projection_uses_receipts_without_canonical_writes(tmp_path):
     project = tmp_path / "staged"
     run_dir = project / "system" / "imports" / "run_staged"

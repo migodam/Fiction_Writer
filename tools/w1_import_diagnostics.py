@@ -63,6 +63,17 @@ class DiagnosticInputError(ValueError):
 class ImportSource:
     project_path: Path
     import_run_id: str | None = None
+    lineage_id: str | None = None
+    attempt_id: str | None = None
+
+
+@dataclass(frozen=True)
+class ImportArtifactScope:
+    import_run_id: str | None
+    lineage_id: str | None
+    attempt_id: str | None
+    artifact_dir: Path | None
+    layout: str
 
 
 def _read_json(path: Path, *, required: bool = False, default: Any = None) -> Any:
@@ -97,22 +108,55 @@ def _normalize_text(text: str) -> str:
     return re.sub(r"[\W_]+", "", text, flags=re.UNICODE)
 
 
-def _canonical_import_dir(project_path: Path, import_run_id: str | None) -> tuple[str | None, Path | None]:
+def _attempt_dirs(imports_dir: Path) -> list[tuple[str, str, Path]]:
+    attempts: list[tuple[str, str, Path]] = []
+    if not imports_dir.is_dir():
+        return attempts
+    for lineage_dir in imports_dir.iterdir():
+        attempts_dir = lineage_dir / "attempts"
+        if not lineage_dir.is_dir() or not attempts_dir.is_dir():
+            continue
+        for attempt_dir in attempts_dir.iterdir():
+            if attempt_dir.is_dir():
+                attempts.append((lineage_dir.name, attempt_dir.name, attempt_dir))
+    return attempts
+
+
+def _canonical_import_dir(source: ImportSource) -> ImportArtifactScope:
+    project_path = source.project_path
     imports_dir = project_path / "system" / "imports"
-    if import_run_id:
-        run_dir = imports_dir / import_run_id
-        if not run_dir.exists():
+    lineage_id = source.lineage_id or source.import_run_id
+    if source.attempt_id:
+        if not lineage_id:
+            raise DiagnosticInputError("--attempt-id requires --lineage-id or --import-run-id")
+        attempt_dir = imports_dir / lineage_id / "attempts" / source.attempt_id
+        if not attempt_dir.is_dir():
+            raise DiagnosticInputError(f"Import attempt does not exist: {attempt_dir}")
+        return ImportArtifactScope(lineage_id, lineage_id, source.attempt_id, attempt_dir, "attempt")
+
+    if lineage_id:
+        run_dir = imports_dir / lineage_id
+        if not run_dir.is_dir():
             raise DiagnosticInputError(f"Import run does not exist: {run_dir}")
-        return import_run_id, run_dir
+        attempts = _attempt_dirs(run_dir.parent)
+        matching = [entry for entry in attempts if entry[0] == lineage_id]
+        if matching:
+            _, attempt_id, attempt_dir = max(matching, key=lambda entry: entry[2].stat().st_mtime)
+            return ImportArtifactScope(lineage_id, lineage_id, attempt_id, attempt_dir, "attempt")
+        return ImportArtifactScope(lineage_id, None, None, run_dir, "legacy_run")
 
     if not imports_dir.exists():
-        return None, None
+        return ImportArtifactScope(None, None, None, None, "none")
 
-    candidates = [path for path in imports_dir.iterdir() if path.is_dir()]
+    candidates: list[tuple[float, ImportArtifactScope]] = []
+    for lineage, attempt, attempt_dir in _attempt_dirs(imports_dir):
+        candidates.append((attempt_dir.stat().st_mtime, ImportArtifactScope(lineage, lineage, attempt, attempt_dir, "attempt")))
+    for path in imports_dir.iterdir():
+        if path.is_dir() and not (path / "attempts").is_dir():
+            candidates.append((path.stat().st_mtime, ImportArtifactScope(path.name, None, None, path, "legacy_run")))
     if not candidates:
-        return None, None
-    candidates.sort(key=lambda path: path.stat().st_mtime, reverse=True)
-    return candidates[0].name, candidates[0]
+        return ImportArtifactScope(None, None, None, None, "none")
+    return max(candidates, key=lambda entry: entry[0])[1]
 
 
 def _proposal_operations(inbox: Any) -> list[dict[str, Any]]:
@@ -392,7 +436,7 @@ def _canonical_manuscript_projection_metrics(project_path: Path) -> dict[str, An
     chapter_node_count = sum(
         1 for n in nodes if isinstance(n, dict) and n.get("type") == "chapter_outline"
     )
-    manuscript_dir = project_path / "writing" / "manuscript"
+    scenes_dir = project_path / "writing" / "scenes"
     scene_nodes_with_content = 0
     for node in nodes:
         if not isinstance(node, dict) or node.get("type") != "scene_outline":
@@ -400,8 +444,9 @@ def _canonical_manuscript_projection_metrics(project_path: Path) -> dict[str, An
         node_id = node.get("id")
         if not node_id:
             continue
-        md_path = manuscript_dir / f"{node_id}.md"
-        if md_path.exists() and md_path.read_text(encoding="utf-8").strip():
+        scene_id = node.get("linkedSceneId")
+        md_path = scenes_dir / f"{scene_id}.md" if scene_id else None
+        if md_path and md_path.exists() and md_path.read_text(encoding="utf-8").strip():
             scene_nodes_with_content += 1
     return {
         "node_count": len(nodes),
@@ -446,19 +491,97 @@ def _manuscript_projection_metrics(project_path: Path, staged: dict[str, Any]) -
 
 
 def _chapter_quality_metrics(project_path: Path) -> dict[str, Any]:
-    manuscript = _safe_dict(_read_json(project_path / "manuscript.json", default={}))
-    chapters = _safe_list(manuscript.get("chapters"))
+    chapter_dir = project_path / "writing" / "chapters"
+    chapters = [
+        record
+        for path in sorted(chapter_dir.glob("*.json"))
+        for record in [_read_json(path, default={})]
+        if isinstance(record, dict) and record.get("id")
+    ]
+    source = "split_layout"
+    if not chapters:
+        manuscript = _safe_dict(_read_json(project_path / "manuscript.json", default={}))
+        chapters = _safe_list(manuscript.get("chapters"))
+        source = "legacy_manuscript"
     chapter_numbers: list[int] = []
     for ch in chapters:
         if isinstance(ch, dict):
-            num = ch.get("chapterNumber")
+            num = ch.get("chapterNumber", ch.get("orderIndex"))
             if isinstance(num, int):
                 chapter_numbers.append(num)
     counts = Counter(chapter_numbers)
     duplicate_count = sum(1 for c in counts.values() if c > 1)
     return {
+        "source": source,
         "total_chapter_count": len(chapters),
         "duplicate_chapter_number_count": duplicate_count,
+    }
+
+
+def _canonical_split_layout_metrics(project_path: Path) -> dict[str, Any]:
+    chapters = _chapter_quality_metrics(project_path)
+    scenes_dir = project_path / "writing" / "scenes"
+    scene_meta = [
+        record
+        for path in sorted(scenes_dir.glob("*.meta.json"))
+        for record in [_read_json(path, default={})]
+        if isinstance(record, dict) and record.get("id")
+    ]
+    scene_content_count = sum(
+        1 for scene in scene_meta if (scenes_dir / f"{scene['id']}.md").is_file()
+    )
+    nodes = _safe_list(_read_json(project_path / "writing" / "manuscript" / "nodes.json", default=[]))
+    return {
+        "chapter_count": chapters["total_chapter_count"],
+        "scene_metadata_count": len(scene_meta),
+        "scene_content_count": scene_content_count,
+        "manuscript_node_count": len(nodes),
+        "chapter_node_count": sum(1 for node in nodes if _safe_dict(node).get("type") == "chapter_outline"),
+        "scene_node_count": sum(1 for node in nodes if _safe_dict(node).get("type") == "scene_outline"),
+    }
+
+
+def _durable_failure_metrics(import_dir: Path | None, total_chunks: int | None) -> dict[str, Any]:
+    failures: list[dict[str, Any]] = []
+    by_chunk: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    by_domain: Counter[str] = Counter()
+    if import_dir is not None:
+        for path in sorted((import_dir / "chunks").glob("chunk_*_failures.json")):
+            payload = _safe_dict(_read_json(path, default={}))
+            chunk_id = payload.get("chunk_id")
+            if not isinstance(chunk_id, int):
+                match = re.search(r"chunk_(\d+)_failures\.json$", path.name)
+                chunk_id = int(match.group(1)) if match else None
+            for item in _safe_list(payload.get("failures")):
+                item = _safe_dict(item)
+                domain = str(item.get("label") or "unknown")
+                record = {
+                    "chunk_id": chunk_id,
+                    "domain": domain,
+                    "error": str(item.get("error") or "unknown failure"),
+                    "path": str(path),
+                }
+                failures.append(record)
+                if isinstance(chunk_id, int):
+                    by_chunk[chunk_id].append(record)
+                by_domain[domain] += 1
+    expected = max(0, int(total_chunks or 0))
+    domains = ("character", "event", "world", "relationship", "scene")
+    return {
+        "failure_artifact_count": len({record["path"] for record in failures}),
+        "failure_count": len(failures),
+        "failed_chunk_ids": sorted(by_chunk),
+        "failed_chunk_count": len(by_chunk),
+        "failures": failures[:100],
+        "domain_coverage": {
+            domain: {
+                "expected_chunks": expected,
+                "failed_chunks": sorted({chunk_id for chunk_id, items in by_chunk.items() if any(item["domain"] == domain for item in items)}),
+                "failure_count": by_domain[domain],
+                "status": "failed" if by_domain[domain] else "not_proven_by_failure_artifacts",
+            }
+            for domain in domains
+        },
     }
 
 
@@ -859,6 +982,7 @@ def _symptom_flags(metrics: dict[str, Any], review_report: dict[str, Any], inbox
         usage = _safe_dict(artifact_quality.get("usage_ledger"))
         receipts = _safe_dict(artifact_quality.get("proposal_receipts"))
         reviewer_repair = _safe_dict(artifact_quality.get("reviewer_repair"))
+        durable_failures = _safe_dict(artifact_quality.get("durable_failures"))
         chapter_node_count = int(ms.get("chapter_node_count") or 0)
         node_count = int(ms.get("node_count") or 0)
         scene_with_content = int(ms.get("scene_nodes_with_content") or 0)
@@ -896,6 +1020,8 @@ def _symptom_flags(metrics: dict[str, Any], review_report: dict[str, Any], inbox
         flags["usage_ledger_missing"] = not bool(usage.get("present"))
         flags["usage_ledger_exhausted"] = bool(usage.get("exhausted"))
         flags["usage_ledger_over_cap"] = bool(usage.get("over_cap"))
+        flags["durable_failure_artifacts_present"] = int(durable_failures.get("failure_count") or 0) > 0
+        flags["review_pass_conflicts_durable_failures"] = bool(artifact_quality.get("review_pass_durable_failure_conflict"))
     return flags
 
 
@@ -904,7 +1030,9 @@ def analyze_import(source: ImportSource) -> dict[str, Any]:
     if not project_path.exists() or not project_path.is_dir():
         raise DiagnosticInputError(f"Project path does not exist or is not a directory: {project_path}")
 
-    import_run_id, import_dir = _canonical_import_dir(project_path, source.import_run_id)
+    artifact_scope = _canonical_import_dir(source)
+    import_run_id = artifact_scope.import_run_id
+    import_dir = artifact_scope.artifact_dir
     inbox = _read_json(project_path / "system" / "inbox.json", required=True)
     operations = _proposal_operations(inbox)
     operation_counts = Counter(_entity_type(operation) for operation in operations)
@@ -919,9 +1047,21 @@ def analyze_import(source: ImportSource) -> dict[str, Any]:
     source_language = str(manifest.get("source_language") or _safe_dict(_read_json(project_path / "project.json", default={})).get("metadata", {}).get("locale", "")).lower()
     source_language = "zh" if source_language.startswith("zh") else source_language
 
+    total_chunks = len(_safe_list(manifest.get("segments")))
+    checkpoint = _safe_dict(_read_json(import_dir / "checkpoint.json", default={})) if import_dir else {}
+    if isinstance(checkpoint.get("total_chunks"), int):
+        total_chunks = checkpoint["total_chunks"]
+    durable_failures = _durable_failure_metrics(import_dir, total_chunks)
+    review_status = review_report.get("status") if isinstance(review_report, dict) else None
     metrics: dict[str, Any] = {
         "project_path": str(project_path),
         "import_run_id": import_run_id,
+        "artifact_scope": {
+            "layout": artifact_scope.layout,
+            "lineage_id": artifact_scope.lineage_id,
+            "attempt_id": artifact_scope.attempt_id,
+            "artifact_dir": str(import_dir) if import_dir else None,
+        },
         "manifest": {
             "source_file_path": manifest.get("source_file_path"),
             "prompt_profile": manifest.get("prompt_profile"),
@@ -946,7 +1086,7 @@ def analyze_import(source: ImportSource) -> dict[str, Any]:
         "trait_quality": _trait_metrics(characters),
         "timeline": _timeline_metrics(_safe_dict(timeline), operations),
         "review_status": {
-            "status": review_report.get("status"),
+            "status": review_status,
             "warning_count": len(_safe_list(review_report.get("warnings"))),
             "error_count": len(_safe_list(review_report.get("errors"))),
             "failed_chunk_count": len(_safe_list(review_report.get("failed_chunks"))),
@@ -964,7 +1104,12 @@ def analyze_import(source: ImportSource) -> dict[str, Any]:
         "semantic_quality": _semantic_quality_metrics(operations, _safe_dict(review_report), source_language, _safe_dict(timeline)),
         "usage_ledger": _usage_ledger_metrics(usage_ledger),
         "proposal_receipts": _proposal_receipt_metrics(proposal_receipts),
+        "canonical_split_layout": _canonical_split_layout_metrics(project_path),
+        "durable_failures": durable_failures,
     }
+    artifact_quality["review_pass_durable_failure_conflict"] = (
+        review_status == "pass" and durable_failures["failure_count"] > 0
+    )
     metrics["artifact_quality"] = artifact_quality
     metrics["import_test6_symptom_flags"] = _symptom_flags(
         metrics, _safe_dict(review_report), metrics["inbox_proposal_count"], artifact_quality
@@ -1026,6 +1171,8 @@ def render_markdown(metrics: dict[str, Any]) -> str:
         f"- Mainline density: {mainline_density.get('event_count')} events ({mainline_density.get('share')} share)",
         f"- Scene-beat/discard count: {timeline.get('discard_count')} `{json.dumps(timeline.get('scene_beat_discard_counts'), ensure_ascii=False)}`",
         f"- Duplicate event clusters: {timeline.get('event_duplicate_cluster_count')}",
+        f"- Artifact scope: `{json.dumps(metrics.get('artifact_scope'), ensure_ascii=False)}`",
+        f"- Durable failures: {int(_safe_dict(_safe_dict(metrics.get('artifact_quality')).get('durable_failures')).get('failure_count') or 0)}",
         f"- Import_Test6 symptom flags: `{json.dumps(flags, ensure_ascii=False, sort_keys=True)}`",
     ]
     return "\n".join(lines)
@@ -1037,8 +1184,11 @@ def _threshold_failed(metrics: dict[str, Any]) -> bool:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Quantify W1 import quality diagnostics for a Narrative IDE project.")
-    parser.add_argument("project_path", help="Narrative IDE project directory to inspect.")
+    parser.add_argument("project_path", nargs="?", help="Narrative IDE project directory to inspect.")
+    parser.add_argument("--project-path", dest="project_path_flag", help="Alias for the positional project path.")
     parser.add_argument("--import-run-id", help="Specific system/imports/<import_run_id> to inspect. Defaults to newest import run.")
+    parser.add_argument("--lineage-id", help="Specific durable lineage to inspect. Defaults to newest lineage/attempt when no run is provided.")
+    parser.add_argument("--attempt-id", help="Specific attempt under --lineage-id (or --import-run-id when it identifies a lineage).")
     parser.add_argument("--compare-project", help="Optional second project directory to compare against.")
     parser.add_argument("--compare-import-run-id", help="Optional import run id for comparison. Uses the primary project if --compare-project is omitted.")
     parser.add_argument("--format", choices=("json", "markdown", "both"), default="both", help="Output format. Default: both.")
@@ -1050,10 +1200,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
     try:
-        primary = analyze_import(ImportSource(Path(args.project_path), args.import_run_id))
+        if args.project_path and args.project_path_flag and Path(args.project_path) != Path(args.project_path_flag):
+            raise DiagnosticInputError("Positional project_path and --project-path must match when both are supplied")
+        project_path = args.project_path_flag or args.project_path
+        if not project_path:
+            raise DiagnosticInputError("A project path is required (positional or --project-path)")
+        primary = analyze_import(ImportSource(Path(project_path), args.import_run_id, args.lineage_id, args.attempt_id))
         payload: dict[str, Any] = {"diagnostics": primary, "summary_markdown": render_markdown(primary)}
         if args.compare_project or args.compare_import_run_id:
-            compare_project = Path(args.compare_project) if args.compare_project else Path(args.project_path)
+            compare_project = Path(args.compare_project) if args.compare_project else Path(project_path)
             comparison = analyze_import(ImportSource(compare_project, args.compare_import_run_id))
             payload["comparison"] = comparison
             payload["comparison_summary_markdown"] = render_markdown(comparison)
