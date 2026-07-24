@@ -220,6 +220,10 @@ async function installProjectionFilesystem(
           ?? (path === artifactPath && escapedArtifactPath
           ? escapedArtifactPath
           : path === sourcePath && escapedSourcePath ? escapedSourcePath : path),
+        // The in-page fixture models a memory filesystem. It deliberately has
+        // no physical flush boundary, but advertises the named capability so
+        // Electron-only power-loss checks do not disable artifact validation.
+        projectFileFsyncDirectory: (_payload: any) => {},
         projectFileCopy: ({ path }: any) => { throw new Error(`Unexpected copy: ${path}`); },
         projectFileRename: ({ path, destination }: any) => { files.set(destination, files.get(path) ?? ''); files.delete(path); writes.push(destination); },
       };

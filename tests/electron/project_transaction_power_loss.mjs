@@ -1,16 +1,16 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, fsyncSync, mkdirSync as nodeMkdirSync, openSync, readFileSync, readdirSync, renameSync as nodeRenameSync, rmSync, unlinkSync as nodeUnlinkSync, writeFileSync as nodeWriteFileSync } from 'node:fs';
 import { build } from 'esbuild';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const repositoryRoot = resolve(new URL('../..', import.meta.url).pathname);
 const transactionSource = join(repositoryRoot, 'src/ui-react/services/projectTransaction.ts');
 
 const fsyncDirectorySync = (directory) => {
-  const descriptor = openSync(directory, 0);
+  const descriptor = openSync(directory, constants.O_RDONLY | (constants.O_DIRECTORY || 0));
   try {
     fsyncSync(descriptor);
   } finally {
@@ -18,14 +18,70 @@ const fsyncDirectorySync = (directory) => {
   }
 };
 
+let temporaryCounter = 0;
+const durableMkdirSync = (directory) => {
+  if (existsSync(directory)) {
+    fsyncDirectorySync(directory);
+    return;
+  }
+  const missing = [];
+  let current = directory;
+  while (!existsSync(current)) {
+    missing.push(current);
+    const parent = dirname(current);
+    if (parent === current) throw new Error(`No existing parent for ${directory}`);
+    current = parent;
+  }
+  for (const next of missing.reverse()) {
+    const parent = dirname(next);
+    nodeMkdirSync(next);
+    fsyncDirectorySync(next);
+    fsyncDirectorySync(parent);
+  }
+};
+
+const durableWriteFileSync = (target, data, encoding = 'utf8') => {
+  const directory = dirname(target);
+  durableMkdirSync(directory);
+  const temporary = join(directory, `.${basename(target)}.${process.pid}.${Date.now()}.${temporaryCounter += 1}.tmp`);
+  let descriptor;
+  try {
+    descriptor = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW || 0), 0o600);
+    nodeWriteFileSync(descriptor, data, encoding);
+    fsyncSync(descriptor);
+    closeSync(descriptor);
+    descriptor = undefined;
+    nodeRenameSync(temporary, target);
+    fsyncDirectorySync(directory);
+  } catch (error) {
+    if (descriptor !== undefined) {
+      try { closeSync(descriptor); } catch { /* best-effort test cleanup */ }
+    }
+    try { nodeUnlinkSync(temporary); } catch { /* best-effort test cleanup */ }
+    throw error;
+  }
+};
+
+const durableRenameSync = (source, target) => {
+  durableMkdirSync(dirname(target));
+  nodeRenameSync(source, target);
+  fsyncDirectorySync(dirname(target));
+  if (dirname(source) !== dirname(target)) fsyncDirectorySync(dirname(source));
+};
+
+const durableUnlinkSync = (target) => {
+  nodeUnlinkSync(target);
+  fsyncDirectorySync(dirname(target));
+};
+
 const durableFs = {
   durability: 'power-loss',
   existsSync,
   readFileSync,
-  writeFileSync,
-  mkdirSync,
-  renameSync,
-  unlinkSync,
+  writeFileSync: durableWriteFileSync,
+  mkdirSync: durableMkdirSync,
+  renameSync: durableRenameSync,
+  unlinkSync: durableUnlinkSync,
   readdirSync,
   fsyncDirectorySync,
 };
@@ -67,10 +123,9 @@ const compileTransaction = async (directory) => {
 };
 
 const writeInitialProject = (root) => {
-  mkdirSync(join(root, 'entities'), { recursive: true });
-  writeFileSync(join(root, 'entities/a.json'), 'before-a', 'utf8');
-  writeFileSync(join(root, 'entities/b.json'), 'before-b', 'utf8');
-  fsyncDirectorySync(join(root, 'entities'));
+  durableFs.mkdirSync(join(root, 'entities'));
+  durableFs.writeFileSync(join(root, 'entities/a.json'), 'before-a', 'utf8');
+  durableFs.writeFileSync(join(root, 'entities/b.json'), 'before-b', 'utf8');
 };
 
 const readSnapshot = (root) => ({
@@ -82,8 +137,9 @@ const transactionIdFor = (phase, targetIndex) => `power-loss-${phase}-${targetIn
 
 const runCrashCase = async (compiledPath, directory, phase, targetIndex, corruptCommittedTarget = false) => {
   const root = join(directory, `project-${phase}-${targetIndex || 'none'}`);
-  mkdirSync(root, { recursive: true });
+  durableFs.mkdirSync(root);
   writeInitialProject(root);
+  assert.equal(existsSync(join(root, 'system/transactions')), false, 'crash fixture must start without the transaction directory');
   const child = spawnSync(process.execPath, [new URL(import.meta.url).pathname, 'child', compiledPath, root, phase, targetIndex ?? ''], {
     encoding: 'utf8',
     timeout: 6_000,
@@ -91,8 +147,7 @@ const runCrashCase = async (compiledPath, directory, phase, targetIndex, corrupt
   assert.equal(child.error, undefined, `child ${phase} should not time out: ${child.error?.message || ''}`);
   assert.equal(child.status, 97, `child ${phase} should terminate at the failpoint: ${child.stderr}`);
   if (corruptCommittedTarget) {
-    writeFileSync(join(root, 'entities/a.json'), 'corrupt-after-commit', 'utf8');
-    fsyncDirectorySync(join(root, 'entities'));
+    durableFs.writeFileSync(join(root, 'entities/a.json'), 'corrupt-after-commit', 'utf8');
   }
 
   const { recoverProjectTransactions } = await import(`${pathToFileURL(compiledPath).href}?${encodeURIComponent(phase)}-${targetIndex || 'none'}`);
@@ -106,7 +161,7 @@ const runCrashCase = async (compiledPath, directory, phase, targetIndex, corrupt
 };
 
 const scratch = join(tmpdir(), `narrative-transaction-power-loss-${process.pid}-${Date.now()}`);
-mkdirSync(scratch, { recursive: true });
+durableFs.mkdirSync(scratch);
 try {
   const compiledPath = await compileTransaction(scratch);
   const prepared = await runCrashCase(compiledPath, scratch, 'prepared');

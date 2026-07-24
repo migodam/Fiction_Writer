@@ -176,6 +176,46 @@ function fsyncDirectory(directory) {
   }
 }
 
+function mkdirProjectDirectoryDurably(event, target, root) {
+  const createDirectory = (parent, directory) => {
+    fs.mkdirSync(directory);
+    // The child flushes its directory metadata; the parent flushes the new
+    // directory entry. Both are required before a power loss can be tolerated.
+    fsyncDirectory(directory);
+    fsyncDirectory(parent);
+  };
+
+  if (!fs.existsSync(root)) {
+    const parent = path.dirname(root);
+    const { target: checkedRoot } = verifyProjectFilePath(event, root, { allowCreate: true });
+    if (!fs.existsSync(parent) || !fs.lstatSync(parent).isDirectory()) throw new Error('Project root parent does not exist');
+    createDirectory(parent, checkedRoot);
+  } else {
+    const rootStat = fs.lstatSync(root);
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw new Error('Project root must be a directory');
+    fsyncDirectory(root);
+  }
+
+  const relative = path.relative(root, target);
+  if (!relative || relative === '.') return;
+  if (relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error('Project directory escapes authorized root');
+  let current = root;
+  for (const segment of relative.split(path.sep)) {
+    if (!segment || segment === '.' || segment === '..') throw new Error('Invalid project directory path');
+    const next = path.join(current, segment);
+    if (!fs.existsSync(next)) {
+      createDirectory(current, next);
+    } else {
+      const stat = fs.lstatSync(next);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('Project directory must not be a symbolic link');
+      const resolved = fs.realpathSync(next);
+      if (!isPathWithin(root, resolved)) throw new Error('Project directory resolves outside authorized root');
+      fsyncDirectory(resolved);
+    }
+    current = next;
+  }
+}
+
 function createTemporaryFile(directory, target) {
   const noFollow = fs.constants.O_NOFOLLOW || 0;
   for (let attempt = 0; attempt < 8; attempt += 1) {
@@ -240,8 +280,9 @@ function handleProjectFileSync(event, operation, payload = {}) {
         return { ok: true, value: readProjectFileData(checked, encoding) };
       }
       case 'mkdir': {
-        fs.mkdirSync(target, { recursive: true });
-        verifyProjectFilePath(event, target);
+        const { target: checked, root } = verifyProjectFilePath(event, target, { allowCreate: true });
+        mkdirProjectDirectoryDurably(event, checked, root);
+        verifyProjectFilePath(event, checked);
         return { ok: true };
       }
       case 'readdir': {
