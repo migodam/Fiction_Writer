@@ -97,6 +97,17 @@ def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return item
 
 
+def _event_row(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    """Normalize both pre-v6 and v6 rows without changing legacy event shape."""
+    item = _row(row)
+    if item is None:
+        return None
+    item["contract_version"] = item.get("contract_version") or "legacy/v0"
+    if item.get("actor") is None:
+        item["actor"] = {"kind": "system", "id": "legacy"}
+    return item
+
+
 class RuntimeStore:
     """Per-project SQLite WAL store for durable agent execution metadata."""
 
@@ -219,6 +230,24 @@ class RuntimeStore:
                     for statement in statements:
                         connection.execute(statement)
                     connection.execute("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (5, ?)", (_now(),))
+                if connection.execute("SELECT 1 FROM schema_migrations WHERE version = 6").fetchone() is None:
+                    columns = {row[1] for row in connection.execute("PRAGMA table_info(run_events)")}
+                    additions = (
+                        ("contract_version", "TEXT NOT NULL DEFAULT 'legacy/v0'"),
+                        ("actor_json", "TEXT"),
+                        ("idempotency_key", "TEXT"),
+                        ("causation_id", "TEXT"),
+                        ("correlation_id", "TEXT"),
+                    )
+                    for name, definition in additions:
+                        if name not in columns:
+                            connection.execute(f"ALTER TABLE run_events ADD COLUMN {name} {definition}")
+                    connection.execute(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS run_events_idempotency_key "
+                        "ON run_events(attempt_id, idempotency_key) WHERE idempotency_key IS NOT NULL"
+                    )
+                    connection.execute("CREATE INDEX IF NOT EXISTS run_events_correlation_id ON run_events(attempt_id, correlation_id)")
+                    connection.execute("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (6, ?)", (_now(),))
                 connection.execute("COMMIT")
             except BaseException:
                 connection.execute("ROLLBACK")
@@ -379,14 +408,116 @@ class RuntimeStore:
         if owner_id is not None and fence_token is not None:
             self._assert_lease(connection, attempt_id, owner_id, fence_token, _now())
 
-    def append_event(self, attempt_id: str, event_type: str, payload: Any, *, owner_id: str, fence_token: int, now: float | None = None) -> dict[str, Any]:
+    def append_event(
+        self, attempt_id: str, event_type: str, payload: Any, *, owner_id: str,
+        fence_token: int, now: float | None = None, contract_version: str = "legacy/v0",
+        actor: Mapping[str, Any] | None = None, idempotency_key: str | None = None,
+        causation_id: str | None = None, correlation_id: str | None = None,
+        event_id: str | None = None,
+    ) -> dict[str, Any]:
         timestamp = _now(now)
         with self.transaction() as connection:
             self._assert_lease(connection, attempt_id, owner_id, fence_token, timestamp)
-            sequence = connection.execute("SELECT COALESCE(MAX(sequence), 0) + 1 FROM run_events WHERE attempt_id = ?", (attempt_id,)).fetchone()[0]
-            event_id = str(uuid4())
-            connection.execute("INSERT INTO run_events(event_id, attempt_id, sequence, event_type, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)", (event_id, attempt_id, sequence, event_type, _dump(payload), timestamp))
-            return _row(connection.execute("SELECT * FROM run_events WHERE event_id = ?", (event_id,)).fetchone())  # type: ignore[return-value]
+            return self._append_event_in_transaction(
+                connection, attempt_id, event_type, payload, timestamp=timestamp,
+                contract_version=contract_version, actor=actor,
+                idempotency_key=idempotency_key, causation_id=causation_id,
+                correlation_id=correlation_id, event_id=event_id,
+            )
+
+    def append_harness_event(
+        self, event: Any, *, owner_id: str, fence_token: int, now: float | None = None,
+    ) -> dict[str, Any]:
+        """Append an ``AgentEvent/v1`` after verifying its immutable run identity."""
+        from sidecar.harness.contracts import AgentEvent
+
+        if not isinstance(event, AgentEvent):
+            raise TypeError("event must be an AgentEvent")
+        attempt = self.get_attempt(event.attempt_id)
+        if attempt is None:
+            raise KeyError(event.attempt_id)
+        run = self.get_run(attempt["run_id"])
+        if run is None or run["run_id"] != event.run_id or run["lineage_id"] != event.lineage_id:
+            raise ValueError("event_identity_mismatch")
+        return self.append_event(
+            event.attempt_id, event.event_type, dict(event.payload), owner_id=owner_id,
+            fence_token=fence_token, now=now, contract_version=event.contract_version,
+            actor={"kind": event.actor_kind, "id": event.actor_id},
+            idempotency_key=event.idempotency_key, causation_id=event.causation_id,
+            correlation_id=event.correlation_id, event_id=event.event_id,
+        )
+
+    def _append_event_in_transaction(
+        self, connection: sqlite3.Connection, attempt_id: str, event_type: str, payload: Any, *,
+        timestamp: float, contract_version: str, actor: Mapping[str, Any] | None,
+        idempotency_key: str | None, causation_id: str | None, correlation_id: str | None,
+        event_id: str | None,
+    ) -> dict[str, Any]:
+        event_type = _identifier(event_type, "event_type", required=True)
+        contract_version = _identifier(contract_version, "contract_version", required=True)
+        idempotency_key = _identifier(idempotency_key, "idempotency_key")
+        causation_id = _identifier(causation_id, "causation_id")
+        correlation_id = _identifier(correlation_id, "correlation_id")
+        event_id = _identifier(event_id or str(uuid4()), "event_id", required=True)
+        normalized_actor = dict(actor or {"kind": "system", "id": "legacy"})
+        if not isinstance(normalized_actor.get("kind"), str) or not isinstance(normalized_actor.get("id"), str):
+            raise ValueError("actor must contain string kind and id")
+        actor_json = _dump({"kind": normalized_actor["kind"], "id": normalized_actor["id"]})
+        payload_json = _dump(payload)
+        if idempotency_key is not None:
+            existing = connection.execute(
+                "SELECT * FROM run_events WHERE attempt_id = ? AND idempotency_key = ?",
+                (attempt_id, idempotency_key),
+            ).fetchone()
+            if existing is not None:
+                matches = (
+                    existing["event_type"] == event_type
+                    and existing["payload_json"] == payload_json
+                    and existing["contract_version"] == contract_version
+                    and (existing["actor_json"] or actor_json) == actor_json
+                    and existing["causation_id"] == causation_id
+                    and existing["correlation_id"] == correlation_id
+                )
+                if not matches:
+                    raise ValueError("event_idempotency_conflict")
+                result = _event_row(existing)
+                assert result is not None
+                return result
+        sequence = connection.execute(
+            "SELECT COALESCE(MAX(sequence), 0) + 1 FROM run_events WHERE attempt_id = ?", (attempt_id,)
+        ).fetchone()[0]
+        try:
+            connection.execute(
+                "INSERT INTO run_events(event_id, attempt_id, sequence, event_type, payload_json, created_at, "
+                "contract_version, actor_json, idempotency_key, causation_id, correlation_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (event_id, attempt_id, sequence, event_type, payload_json, timestamp,
+                 contract_version, actor_json, idempotency_key, causation_id, correlation_id),
+            )
+        except sqlite3.IntegrityError as error:
+            if "event_id" not in str(error).lower():
+                raise
+            existing = connection.execute("SELECT * FROM run_events WHERE event_id = ?", (event_id,)).fetchone()
+            if existing is None:
+                raise
+            matches = (
+                existing["attempt_id"] == attempt_id
+                and existing["event_type"] == event_type
+                and existing["payload_json"] == payload_json
+                and existing["contract_version"] == contract_version
+                and (existing["actor_json"] or actor_json) == actor_json
+                and existing["idempotency_key"] == idempotency_key
+                and existing["causation_id"] == causation_id
+                and existing["correlation_id"] == correlation_id
+            )
+            if not matches:
+                raise ValueError("event_id_conflict") from error
+            result = _event_row(existing)
+            assert result is not None
+            return result
+        result = _event_row(connection.execute("SELECT * FROM run_events WHERE event_id = ?", (event_id,)).fetchone())
+        assert result is not None
+        return result
 
     def append_control_event(self, attempt_id: str, command: str, payload: Any | None = None) -> dict[str, Any]:
         """Record a user control command without taking ownership from a worker."""
@@ -399,11 +530,22 @@ class RuntimeStore:
                 "INSERT INTO run_events(event_id, attempt_id, sequence, event_type, payload_json, created_at) VALUES (?, ?, ?, 'control', ?, ?)",
                 (event_id, attempt_id, sequence, _dump({"command": command, **(payload or {})}), _now()),
             )
-            return _row(connection.execute("SELECT * FROM run_events WHERE event_id = ?", (event_id,)).fetchone())  # type: ignore[return-value]
+            return _event_row(connection.execute("SELECT * FROM run_events WHERE event_id = ?", (event_id,)).fetchone())  # type: ignore[return-value]
 
     def list_events(self, attempt_id: str, *, after_sequence: int = 0) -> list[dict[str, Any]]:
         with self._connect() as connection:
-            return [_row(row) for row in connection.execute("SELECT * FROM run_events WHERE attempt_id = ? AND sequence > ? ORDER BY sequence", (attempt_id, after_sequence))]  # type: ignore[misc]
+            return [_event_row(row) for row in connection.execute("SELECT * FROM run_events WHERE attempt_id = ? AND sequence > ? ORDER BY sequence", (attempt_id, after_sequence))]  # type: ignore[misc]
+
+    def get_event(self, event_id: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            return _event_row(connection.execute("SELECT * FROM run_events WHERE event_id = ?", (event_id,)).fetchone())
+
+    def get_event_by_idempotency(self, attempt_id: str, idempotency_key: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            return _event_row(connection.execute(
+                "SELECT * FROM run_events WHERE attempt_id = ? AND idempotency_key = ?",
+                (attempt_id, _identifier(idempotency_key, "idempotency_key", required=True)),
+            ).fetchone())
 
     def record_human_decision(self, attempt_id: str, decision_key: str, decision: str, payload: Any, *, decision_id: str | None = None) -> dict[str, Any]:
         timestamp = _now()
@@ -439,6 +581,34 @@ class RuntimeStore:
     def get_human_decision(self, decision_id: str) -> dict[str, Any] | None:
         with self._connect() as connection:
             return _row(connection.execute("SELECT * FROM human_decisions WHERE decision_id = ?", (decision_id,)).fetchone())
+
+    def record_approval(self, approval: Any) -> dict[str, Any]:
+        """Persist a versioned Harness approval using the legacy decision table."""
+        from sidecar.harness.contracts import ApprovalDecision
+
+        if not isinstance(approval, ApprovalDecision):
+            raise TypeError("approval must be an ApprovalDecision")
+        payload = approval.to_dict()
+        payload.pop("decision_id")
+        payload.pop("decision_key")
+        payload.pop("attempt_id")
+        payload.pop("decision")
+        return self.record_human_decision(
+            approval.attempt_id, approval.decision_key, approval.decision, payload,
+            decision_id=approval.decision_id,
+        )
+
+    def get_approval(self, decision_id: str) -> dict[str, Any] | None:
+        approval = self.get_human_decision(decision_id)
+        if approval is None or approval.get("payload", {}).get("contract_version") != "ApprovalDecision/v1":
+            return None
+        return approval
+
+    def list_approvals(self, attempt_id: str) -> list[dict[str, Any]]:
+        return [
+            approval for approval in self.list_human_decisions(attempt_id)
+            if approval.get("payload", {}).get("contract_version") == "ApprovalDecision/v1"
+        ]
 
     def record_tool_intent(
         self, attempt_id: str, tool_name: str, payload: Any, *,
