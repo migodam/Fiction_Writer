@@ -29,7 +29,12 @@ from sidecar.supervisor.planner import (
     resolve_planner_next_action,
     validate_planner_proposal,
 )
-from sidecar.supervisor.planner_llm import generate_planner_proposal_stub
+from sidecar.supervisor.planner_llm import (
+    PlannerLiveCallError,
+    build_live_planner_failure_record,
+    generate_live_planner_proposal,
+    generate_planner_proposal_stub,
+)
 from sidecar.supervisor.prompt_policy import (
     apply_prompt_policy_patch_to_plan,
     choose_prompt_policy_patch,
@@ -309,18 +314,51 @@ def _chapter_count_from_state(state: ImportSupervisorState) -> int:
     return max(sum(len(w.get("chunk_ids", [])) or 1 for w in windows), 1)
 
 
+def _run_live_planner(
+    state: ImportSupervisorState,
+    *,
+    source_profile: dict | None = None,
+    tool_operating_spec: dict | None = None,
+    granularity_profile: dict | None = None,
+) -> tuple[dict | None, dict, str | None]:
+    """Invoke the opt-in planner once through its explicit approval boundary."""
+    context = state.get("context", {})
+    callback = context.get("planner_model_callback") if isinstance(context, dict) else None
+    planner_state = {
+        **state,
+        **({"source_profile": source_profile} if source_profile is not None else {}),
+        **({"tool_operating_spec": tool_operating_spec} if tool_operating_spec is not None else {}),
+        **({"import_granularity_profile": granularity_profile} if granularity_profile is not None else {}),
+    }
+    try:
+        proposal, decision_record = generate_live_planner_proposal(
+            planner_state,
+            model_callback=callback if callable(callback) else None,
+        )
+        return proposal, decision_record, None
+    except PlannerLiveCallError as exc:
+        return None, build_live_planner_failure_record(planner_state, exc), exc.safe_message
+
+
 def _ensure_orchestrator_plan(state: ImportSupervisorState) -> ImportSupervisorState:
     if state.get("tool_operating_spec") and state.get("converge_target"):
         context = state.get("context", {})
         proposal = state.get("planner_proposal") or context.get("planner_proposal")
         if proposal is None and context.get("llm_planner_mode") == "live":
-            error = "llm_planner_mode=live requires explicit approval; no model call was made"
-            return {
+            proposal, decision_record, error = _run_live_planner(state)
+            if error is not None:
+                return {
+                    **state,
+                    "planner_decision_record": decision_record,
+                    "import_plan_validation": {"ok": False, "errors": [error]},
+                    "orchestrator_phase": "planning_failed",
+                    "converge_status": "hard_fail",
+                    "errors": list(state.get("errors", [])) + [error],
+                }
+            state = {
                 **state,
-                "import_plan_validation": {"ok": False, "errors": [error]},
-                "orchestrator_phase": "planning_failed",
-                "converge_status": "hard_fail",
-                "errors": list(state.get("errors", [])) + [error],
+                "planner_proposal": proposal,
+                "planner_decision_record": decision_record,
             }
         if proposal is not None and not state.get("planner_proposal_validation"):
             proposal_ok, proposal_errors = validate_planner_proposal(proposal)
@@ -396,6 +434,7 @@ def _ensure_orchestrator_plan(state: ImportSupervisorState) -> ImportSupervisorS
     proposal = state.get("planner_proposal") or context.get("planner_proposal")
     planner_mode = context.get("llm_planner_mode")
     effective_policy_patch = policy_patch
+    planner_decision_record = state.get("planner_decision_record")
     if proposal is None and planner_mode == "stub":
         proposal = generate_planner_proposal_stub({
             **state,
@@ -406,20 +445,27 @@ def _ensure_orchestrator_plan(state: ImportSupervisorState) -> ImportSupervisorS
             "prompt_profile": prompt_profile,
         })
     elif proposal is None and planner_mode == "live":
-        error = "llm_planner_mode=live requires explicit approval; no model call was made"
-        return {
-            **state,
-            "tool_operating_spec": spec,
-            "converge_target": target,
-            "import_granularity_profile": granularity_profile,
-            "import_plan_validation": {"ok": False, "errors": [error]},
-            "source_profile": source_profile,
-            "profile_config": profile_config,
-            "use_supervisor": bool(state.get("use_supervisor") or spec.get("supervisor_enabled")),
-            "orchestrator_phase": "planning_failed",
-            "converge_status": "hard_fail",
-            "errors": list(state.get("errors", [])) + [error],
-        }
+        proposal, planner_decision_record, error = _run_live_planner(
+            state,
+            source_profile=source_profile,
+            tool_operating_spec=spec,
+            granularity_profile=granularity_profile,
+        )
+        if error is not None:
+            return {
+                **state,
+                "tool_operating_spec": spec,
+                "converge_target": target,
+                "import_granularity_profile": granularity_profile,
+                "planner_decision_record": planner_decision_record,
+                "import_plan_validation": {"ok": False, "errors": [error]},
+                "source_profile": source_profile,
+                "profile_config": profile_config,
+                "use_supervisor": bool(state.get("use_supervisor") or spec.get("supervisor_enabled")),
+                "orchestrator_phase": "planning_failed",
+                "converge_status": "hard_fail",
+                "errors": list(state.get("errors", [])) + [error],
+            }
     planner_proposal_validation = None
 
     if proposal is not None:
@@ -516,6 +562,8 @@ def _ensure_orchestrator_plan(state: ImportSupervisorState) -> ImportSupervisorS
     if proposal is not None:
         result["planner_proposal"] = proposal
         result["planner_proposal_validation"] = planner_proposal_validation
+    if planner_decision_record is not None:
+        result["planner_decision_record"] = planner_decision_record
     return result
 
 

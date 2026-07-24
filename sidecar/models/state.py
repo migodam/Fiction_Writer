@@ -257,6 +257,25 @@ class PlannerNextAction(TypedDict, total=False):
     reason: str
 
 
+class PlannerAction(TypedDict, total=False):
+    """One bounded, ordered action proposed by the live planner.
+
+    Actions are advisory only.  The supervisor still validates the action and
+    owns execution, retries, budgets, and the proposal gate.
+    """
+    kind: Literal["tool", "stop", "rerun"]
+    tool: str
+    window_id: str
+    scope: Literal["current_import", "window"]
+    reason: str
+
+
+class PlannerBudgetAdjustment(TypedDict, total=False):
+    """Small advisory ceiling only; it never mutates the runtime budget."""
+    max_additional_calls: int
+    max_additional_cost_usd: float
+
+
 class PlannerProposal(TypedDict, total=False):
     """Structured proposal from an LLM/RAG planner.
 
@@ -276,6 +295,9 @@ class PlannerProposal(TypedDict, total=False):
     safety_notes: List[str]                                # audit only, never executed
     prompt_policy_patch: "PromptPolicyPatch"               # optional knob-only patch; validated, not yet applied
     next_action: PlannerNextAction                           # optional bounded execution hint
+    proposed_actions: List[PlannerAction]                    # ordered, advisory, bounded
+    evidence_questions: List[str]                            # compact evidence gaps, never hidden reasoning
+    budget_adjustment: PlannerBudgetAdjustment               # advisory ceiling, never applied directly
 
 
 class PromptPolicyPatch(TypedDict, total=False):
@@ -1258,6 +1280,7 @@ class ImportSupervisorState(TypedDict, total=False):
     source_profile: SourceProfile
     planner_proposal: PlannerProposal
     planner_proposal_validation: Dict[str, Any]
+    planner_decision_record: Dict[str, Any]
     candidate_ledger: List[dict]
     quarantine_candidates: List[dict]
     relocation_plans: List[dict]

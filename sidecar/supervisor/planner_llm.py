@@ -1,14 +1,16 @@
-"""Zero-cost scaffolding for future W1 LLM planner proposals.
+"""Bounded W1 planner proposal generation.
 
-This module intentionally performs no model calls and reads no API keys. It only
-builds safe prompt context, parses structured JSON, and emits a deterministic
-stub proposal that must pass the existing planner validator.
+The default path is deterministic and makes no provider call.  An explicitly
+approved live path accepts an injected callback only, so this module neither
+reads provider configuration nor API keys.  Both paths emit the same typed
+``PlannerProposal`` and deterministic validation remains authoritative.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
-from typing import Any
+from typing import Any, Callable, Mapping
 
 from sidecar.models.state import (
     PlannerProposal,
@@ -20,6 +22,85 @@ from sidecar.supervisor.prompt_policy import normalize_prompt_policy_patch
 
 
 _FENCED_JSON_RE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.DOTALL)
+
+
+class PlannerLiveCallError(RuntimeError):
+    """A concise, safe live-planner failure suitable for a durable record."""
+
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        self.safe_message = message
+        super().__init__(message)
+
+
+class PlannerUnknownOutcomeError(PlannerLiveCallError):
+    """The provider may have received a paid request but no result is usable."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "unknown_outcome",
+            "live planner outcome is unknown; explicit retry authorization is required",
+        )
+
+
+PlannerModelCallback = Callable[[dict[str, Any]], str | bytes | Mapping[str, Any]]
+
+
+def _approval_record(state: dict[str, Any]) -> dict[str, Any] | None:
+    context = state.get("context")
+    if not isinstance(context, dict):
+        return None
+    approval = context.get("planner_live_approval")
+    if not isinstance(approval, dict) or approval.get("approved") is not True:
+        return None
+    decision_id = approval.get("decision_id")
+    if not isinstance(decision_id, str) or not decision_id.strip():
+        return None
+    return {"decision_id": decision_id.strip()}
+
+
+def _decision_record(
+    *,
+    mode: str,
+    status: str,
+    approval: dict[str, Any] | None = None,
+    proposal: PlannerProposal | None = None,
+    error: PlannerLiveCallError | None = None,
+) -> dict[str, Any]:
+    """Return audit-safe metadata; never retain prompts, secrets, or reasoning."""
+    record: dict[str, Any] = {
+        "schema": "planner-decision-record-v1",
+        "mode": mode,
+        "status": status,
+    }
+    if approval:
+        record["approval_decision_id"] = approval["decision_id"]
+    if proposal is not None:
+        canonical = json.dumps(proposal, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        record["proposal_sha256"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        record["evidence_questions"] = list(proposal.get("evidence_questions") or [])
+        record["proposed_actions"] = list(proposal.get("proposed_actions") or [])
+        record["budget_adjustment"] = dict(proposal.get("budget_adjustment") or {})
+    if error is not None:
+        record["error_code"] = error.code
+        record["error"] = error.safe_message
+    return record
+
+
+def _payload_from_provider_result(result: str | bytes | Mapping[str, Any]) -> str | bytes:
+    if isinstance(result, (str, bytes)):
+        return result
+    if not isinstance(result, Mapping):
+        raise PlannerLiveCallError("provider_response_invalid", "live planner returned an invalid response")
+    if str(result.get("status") or "") == "unknown_outcome":
+        raise PlannerUnknownOutcomeError()
+    proposal = result.get("proposal")
+    if isinstance(proposal, Mapping):
+        return json.dumps(dict(proposal), ensure_ascii=False, sort_keys=True)
+    content = result.get("content")
+    if isinstance(content, (str, bytes)):
+        return content
+    raise PlannerLiveCallError("provider_response_invalid", "live planner did not return JSON content")
 
 
 def _chapter_count(state: dict[str, Any]) -> int:
@@ -85,6 +166,14 @@ def build_planner_proposal_prompt_context(state: dict[str, Any]) -> dict[str, An
             "rerun_scope",
             "organizer_strictness",
         ],
+        "proposal_limits": {
+            "max_proposed_actions": 4,
+            "allowed_action_kinds": ["tool", "rerun", "stop"],
+            "allowed_action_scopes": ["current_import", "window"],
+            "max_evidence_questions": 3,
+            "max_additional_calls": 2,
+            "max_additional_cost_usd": 0.25,
+        },
         "safety_contract": {
             "llm_planner_can_propose_only": True,
             "raw_prompt_text_allowed": False,
@@ -146,3 +235,66 @@ def generate_planner_proposal_stub(state: dict[str, Any]) -> PlannerProposal:
     if not ok:
         raise ValueError(f"Generated PlannerProposal stub failed validation: {errors}")
     return proposal
+
+
+def generate_live_planner_proposal(
+    state: dict[str, Any],
+    *,
+    model_callback: PlannerModelCallback | None,
+) -> tuple[PlannerProposal, dict[str, Any]]:
+    """Generate one validated proposal from an approved injected callback.
+
+    This function intentionally has no retry loop.  In particular, an unknown
+    provider outcome stays blocked until a higher-level durable human decision
+    explicitly authorizes a retry.
+    """
+    approval = _approval_record(state)
+    if approval is None:
+        error = PlannerLiveCallError(
+            "approval_required",
+            "live planner requires explicit planner_live_approval with a decision_id; no model call was made",
+        )
+        raise error
+    if not callable(model_callback):
+        raise PlannerLiveCallError(
+            "provider_missing",
+            "live planner requires an explicitly injected model callback",
+        )
+
+    request = build_planner_proposal_prompt_context(state)
+    try:
+        response = model_callback(request)
+        proposal = parse_planner_proposal_json(_payload_from_provider_result(response))
+    except PlannerLiveCallError:
+        raise
+    except (TypeError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        raise PlannerLiveCallError(
+            "response_invalid",
+            "live planner returned invalid structured JSON",
+        ) from None
+    except Exception:
+        # Do not expose provider details, and never automatically repeat a
+        # possibly billable request.
+        raise PlannerLiveCallError(
+            "provider_failed",
+            "live planner call failed without a usable result",
+        ) from None
+
+    return proposal, _decision_record(
+        mode="live",
+        status="accepted",
+        approval=approval,
+        proposal=proposal,
+    )
+
+
+def build_live_planner_failure_record(
+    state: dict[str, Any], error: PlannerLiveCallError
+) -> dict[str, Any]:
+    """Build the safe decision record used by the policy gate on failure."""
+    return _decision_record(
+        mode="live",
+        status="blocked",
+        approval=_approval_record(state),
+        error=error,
+    )

@@ -37,6 +37,9 @@ _PROPOSAL_ALLOWED_FIELDS: frozenset = frozenset({
     "safety_notes",
     "prompt_policy_patch",
     "next_action",
+    "proposed_actions",
+    "evidence_questions",
+    "budget_adjustment",
 })
 
 # This mirrors the supervisor registry without importing executable tools here.
@@ -50,6 +53,15 @@ _REGISTERED_NEXT_ACTION_TOOLS: frozenset = frozenset({
     "repair_import_artifacts", "write_proposal_package",
 })
 _NEXT_ACTION_KINDS: frozenset = frozenset({"tool", "stop", "rerun"})
+_PLANNER_ACTION_ALLOWED_FIELDS: frozenset = frozenset({
+    "kind", "tool", "window_id", "scope", "reason",
+})
+_PLANNER_ACTION_SCOPES: frozenset = frozenset({"current_import", "window"})
+_MAX_PROPOSED_ACTIONS = 4
+_MAX_EVIDENCE_QUESTIONS = 3
+_MAX_EVIDENCE_QUESTION_CHARS = 240
+_MAX_BUDGET_ADDITIONAL_CALLS = 2
+_MAX_BUDGET_ADDITIONAL_COST_USD = 0.25
 
 # ---------------------------------------------------------------------------
 # PromptPolicyPatch constants
@@ -170,6 +182,95 @@ def validate_planner_proposal(proposal: PlannerProposal) -> tuple[bool, list[str
                 errors.append(f"next_action.tool: {next_action.get('tool')!r} is not a registered tool")
             if kind == "rerun" and not str(next_action.get("window_id") or "").strip():
                 errors.append("next_action.window_id: rerun requires a window_id")
+
+    # --- proposed_actions ----------------------------------------------------
+    # This is a short ordered list, intentionally not a general graph.  A
+    # linear list has no cycles; the policy may select at most one valid action
+    # and remains the sole executor.
+    proposed_actions = proposal.get("proposed_actions")
+    if proposed_actions is not None:
+        if not isinstance(proposed_actions, list):
+            errors.append("proposed_actions: must be a list")
+        elif len(proposed_actions) > _MAX_PROPOSED_ACTIONS:
+            errors.append(f"proposed_actions: exceeds maximum {_MAX_PROPOSED_ACTIONS}")
+        else:
+            for index, action in enumerate(proposed_actions):
+                if not isinstance(action, dict):
+                    errors.append(f"proposed_actions[{index}]: must be an object")
+                    continue
+                unknown_action_keys = set(action) - _PLANNER_ACTION_ALLOWED_FIELDS
+                if unknown_action_keys:
+                    errors.append(
+                        f"proposed_actions[{index}]: unknown keys {sorted(unknown_action_keys)}"
+                    )
+                kind = action.get("kind")
+                if kind not in _NEXT_ACTION_KINDS:
+                    errors.append(f"proposed_actions[{index}].kind: {kind!r} is not allowed")
+                scope = action.get("scope", "current_import")
+                if scope not in _PLANNER_ACTION_SCOPES:
+                    errors.append(f"proposed_actions[{index}].scope: {scope!r} is not allowed")
+                if kind == "tool" and action.get("tool") not in _REGISTERED_NEXT_ACTION_TOOLS:
+                    errors.append(
+                        f"proposed_actions[{index}].tool: {action.get('tool')!r} is not a registered tool"
+                    )
+                if kind == "rerun":
+                    if action.get("tool") not in (None, "rerun_window"):
+                        errors.append(
+                            f"proposed_actions[{index}].tool: rerun only permits 'rerun_window'"
+                        )
+                    if scope != "window":
+                        errors.append(f"proposed_actions[{index}].scope: rerun requires 'window'")
+                    if not str(action.get("window_id") or "").strip():
+                        errors.append(f"proposed_actions[{index}].window_id: rerun requires a window_id")
+
+    # --- evidence_questions --------------------------------------------------
+    evidence_questions = proposal.get("evidence_questions")
+    if evidence_questions is not None:
+        if not isinstance(evidence_questions, list):
+            errors.append("evidence_questions: must be a list")
+        elif len(evidence_questions) > _MAX_EVIDENCE_QUESTIONS:
+            errors.append(f"evidence_questions: exceeds maximum {_MAX_EVIDENCE_QUESTIONS}")
+        else:
+            for index, question in enumerate(evidence_questions):
+                if not isinstance(question, str) or not question.strip():
+                    errors.append(f"evidence_questions[{index}]: must be a non-empty string")
+                elif len(question) > _MAX_EVIDENCE_QUESTION_CHARS:
+                    errors.append(
+                        f"evidence_questions[{index}]: exceeds maximum {_MAX_EVIDENCE_QUESTION_CHARS} chars"
+                    )
+
+    # --- budget_adjustment ---------------------------------------------------
+    budget_adjustment = proposal.get("budget_adjustment")
+    if budget_adjustment is not None:
+        if not isinstance(budget_adjustment, dict):
+            errors.append("budget_adjustment: must be an object")
+        else:
+            unknown_budget_keys = set(budget_adjustment) - {
+                "max_additional_calls", "max_additional_cost_usd"
+            }
+            if unknown_budget_keys:
+                errors.append(f"budget_adjustment: unknown keys {sorted(unknown_budget_keys)}")
+            calls = budget_adjustment.get("max_additional_calls")
+            if calls is not None and (
+                not isinstance(calls, int) or isinstance(calls, bool)
+                or not 0 <= calls <= _MAX_BUDGET_ADDITIONAL_CALLS
+            ):
+                errors.append(
+                    "budget_adjustment.max_additional_calls: must be an integer "
+                    f"in [0, {_MAX_BUDGET_ADDITIONAL_CALLS}]"
+                )
+            cost = budget_adjustment.get("max_additional_cost_usd")
+            if cost is not None:
+                try:
+                    cost_value = float(cost)
+                except (TypeError, ValueError):
+                    errors.append("budget_adjustment.max_additional_cost_usd: must be numeric")
+                else:
+                    if not 0.0 <= cost_value <= _MAX_BUDGET_ADDITIONAL_COST_USD:
+                        errors.append(
+                            "budget_adjustment.max_additional_cost_usd: must be in "
+                            f"[0, {_MAX_BUDGET_ADDITIONAL_COST_USD}]"
+                        )
 
     # --- proposed_source_type -------------------------------------------------
     if proposal.get("proposed_source_type") not in _VALID_SOURCE_TYPES:
