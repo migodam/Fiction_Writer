@@ -66,6 +66,16 @@ def _approval_record(state: dict[str, Any]) -> dict[str, Any] | None:
     return {"decision_id": decision_id.strip()}
 
 
+def _consumed_retry_authorization(state: dict[str, Any]) -> dict[str, Any] | None:
+    prior = state.get("planner_decision_record")
+    consumed_id = (
+        str(prior.get("retry_authorization_decision_id") or "").strip()
+        if isinstance(prior, dict)
+        else ""
+    )
+    return {"decision_id": consumed_id} if consumed_id else None
+
+
 def _retry_authorization_record(state: dict[str, Any]) -> dict[str, Any] | None:
     """Return one new retry authorization, or block a prior uncertain call.
 
@@ -85,7 +95,8 @@ def _retry_authorization_record(state: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(decision_id, str) or not decision_id.strip():
         raise PlannerUnknownOutcomeError()
     retry_id = decision_id.strip()
-    consumed_id = str(prior.get("retry_authorization_decision_id") or "")
+    consumed = _consumed_retry_authorization(state)
+    consumed_id = str((consumed or {}).get("decision_id") or "")
     original_id = str(prior.get("approval_decision_id") or "")
     if retry_id == consumed_id or retry_id == original_id:
         raise PlannerUnknownOutcomeError()
@@ -337,14 +348,7 @@ def build_live_planner_failure_record(
 ) -> dict[str, Any]:
     """Build the safe decision record used by the policy gate on failure."""
     if retry_authorization is None:
-        prior = state.get("planner_decision_record")
-        consumed_id = (
-            str(prior.get("retry_authorization_decision_id") or "").strip()
-            if isinstance(prior, dict)
-            else ""
-        )
-        if consumed_id:
-            retry_authorization = {"decision_id": consumed_id}
+        retry_authorization = _consumed_retry_authorization(state)
     return _decision_record(
         mode="live",
         status="blocked",

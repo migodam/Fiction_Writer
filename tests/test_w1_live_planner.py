@@ -12,7 +12,9 @@ from sidecar.models.state import (
 )
 from sidecar.supervisor.planner import planner_proposal_to_import_plan, validate_planner_proposal
 from sidecar.supervisor.planner_llm import (
+    PlannerLiveCallError,
     PlannerUnknownOutcomeError,
+    build_live_planner_failure_record,
     generate_live_planner_proposal,
 )
 from sidecar.supervisor.policy import _ensure_orchestrator_plan
@@ -243,6 +245,27 @@ def test_same_retry_authorization_is_consumed_after_one_uncertain_retry() -> Non
         assert result["planner_decision_record"]["error_code"] == "unknown_outcome"
         assert result["planner_decision_record"]["retry_authorization_decision_id"] == "decision_live_once_retry"
     assert calls == 2
+
+
+def test_blocked_record_directly_inherits_consumed_retry_authorization() -> None:
+    record = build_live_planner_failure_record(
+        {
+            "context": {
+                "planner_live_approval": {
+                    "approved": True,
+                    "decision_id": "decision_live_direct",
+                },
+            },
+            "planner_decision_record": {
+                "error_code": "unknown_outcome",
+                "retry_authorization_decision_id": "decision_live_direct_retry",
+            },
+        },
+        PlannerLiveCallError("unknown_outcome", "retry remains blocked"),
+    )
+
+    assert record["retry_authorization_decision_id"] == "decision_live_direct_retry"
+    assert record["error_code"] == "unknown_outcome"
 
 
 def test_generic_callback_exception_is_durable_unknown_outcome() -> None:
