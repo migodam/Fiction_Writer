@@ -9,6 +9,7 @@ test('Agent Dock opens the same durable execution surface as the full Agents wor
   }
 
   await expect(page.getByTestId('agent-runtime-surface')).toBeVisible();
+  await expect(dock).toContainText('Runs, tools, and approvals');
   await expect(page.getByTestId('agent-runtime-summary')).toBeVisible();
   await expect(page.getByTestId('agent-runtime-agent-all')).toBeVisible();
   await expect(page.getByTestId('agent-runtime-no-hidden-thought')).toContainText('Private reasoning is not displayed');
