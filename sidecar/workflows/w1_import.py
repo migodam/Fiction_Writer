@@ -7984,20 +7984,36 @@ async def run_streaming(project_path: str, config: dict):
             "status": "start",
             "message": f"W1 streaming runner started with profile={prompt_profile}.",
         })
-    supervisor_configured = config.get("use_supervisor")
-    context_supervisor_configured = config.get("context", {}).get("use_supervisor")
-    supervisor_defaulted = (
-        supervisor_configured is None
-        and context_supervisor_configured is None
-        and prompt_profile in {"deep", "custom"}
+    import_mode = str(config.get("import_mode", "import_all"))
+    context = config.get("context") if isinstance(config.get("context"), dict) else {}
+    execution_mode = str(config.get("execution_mode") or context.get("execution_mode") or "")
+    compatibility_mode = bool(
+        config.get("compatibility_mode")
+        or context.get("compatibility_mode")
+        or execution_mode == "compatibility_direct"
     )
-    if supervisor_configured or context_supervisor_configured or supervisor_defaulted:
+    if execution_mode and execution_mode not in {"supervisor", "compatibility_direct", "content_only"}:
+        raise ValueError(f"unsupported W1 execution mode: {execution_mode}")
+    # New import_all runs are always supervised. The direct StateGraph is kept
+    # only for content-only imports and explicitly labelled compatibility runs.
+    use_supervisor = import_mode == "import_all" and not compatibility_mode
+    if execution_mode == "supervisor":
+        use_supervisor = import_mode == "import_all"
+    elif execution_mode == "content_only":
+        use_supervisor = False
+    if use_supervisor:
         from sidecar.supervisor.policy import run_supervisor_streaming
-        async for update in run_supervisor_streaming(project_path, config):
+        supervisor_stream = run_supervisor_streaming(project_path, config)
+        # The router marks product runs explicitly. Keep older internal callers
+        # functional while ensuring every new product supervisor run is observed
+        # through the v2 Harness bridge.
+        if execution_mode == "supervisor" or bool(config.get("harness_observer")):
+            from sidecar.workflows.w1_agentic_adapter import W1AgenticAdapter
+            supervisor_stream = W1AgenticAdapter.from_config(config).observe_stream(supervisor_stream)
+        async for update in supervisor_stream:
             yield update
         return
 
-    import_mode = config.get("import_mode", "import_all")
     _profile_cfg: dict = config.get("profile_config") or {}
     initial_state: ImportState = {
         "project_path": project_path,
@@ -8063,7 +8079,15 @@ async def run_streaming(project_path: str, config: dict):
 
     graph_stream = compiled.astream(initial_state, {"configurable": {"thread_id": thread_id}})
     final_state: ImportState | dict[str, Any] = dict(initial_state)
-    async for event in agentic_adapter.observe_stream(graph_stream):
+    # Compatibility checkpoints can resume from a mid-graph LangGraph node and
+    # retain the old durable checkpoint contract. Product supervisor runs use
+    # the v2 observer bridge; content-only has a complete deterministic route.
+    observed_stream = (
+        graph_stream
+        if agentic_adapter.route == "compatibility_direct"
+        else agentic_adapter.observe_stream(graph_stream)
+    )
+    async for event in observed_stream:
         # astream yields {node_name: node_output} per node
         for node_name, node_output in event.items():
             if not isinstance(node_output, dict):

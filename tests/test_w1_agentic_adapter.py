@@ -2,123 +2,161 @@ from __future__ import annotations
 
 import asyncio
 
-from sidecar.runtime.agent_runtime import RuntimeStore
-from sidecar.workflows.w1_agentic_adapter import STAGED_PROPOSAL_PUBLICATION, W1AgenticAdapter, build_execution_plan
+import pytest
+
+from sidecar.runtime.agent_runtime import LeaseLostError, RuntimeStore
+from sidecar.workflows.w1_agentic_adapter import (
+    COMPATIBILITY_DIRECT,
+    SUPERVISOR,
+    W1AgenticAdapter,
+    W1AgenticTransitionError,
+    build_execution_plan,
+)
 
 
 def _runtime(tmp_path):
     store = RuntimeStore(tmp_path)
-    run = store.create_run(workflow_id="W1")
-    return store, run["run_id"]
+    run = store.create_run(workflow_id="W1", lineage_id="lineage-w1", thread_id="thread-w1")
+    attempt = store.create_attempt(run["run_id"])
+    lease = store.acquire_lease(attempt["attempt_id"], "observer", ttl_seconds=60)
+    return store, run, attempt, lease
 
 
-def test_dag_order_and_parallel_extraction_are_stable():
-    plan = build_execution_plan("import_all", window_ids=("b", "a"))
-    by_id = {task.task_id: task for task in plan.tasks}
-    extractions = [task for task in plan.tasks if task.task_id.startswith("extract.window.")]
-    assert len(extractions) == 2
-    assert all(task.dependencies == ("split_chunks",) for task in extractions)
-    assert by_id["resolve_low_confidence"].dependencies == tuple(task.task_id for task in extractions)
-    assert by_id["proposal_write"].dependencies == ("review_import",)
+def test_supervisor_plan_uses_execution_plan_v2_and_typed_tools():
+    plan = build_execution_plan("import_all")
+    assert plan.contract_version == "ExecutionPlan/v2"
+    assert plan.tasks[0].task_id == "validate_file"
+    assert plan.tasks[-1].task_id == "done"
+    assert all(task.tool_name.startswith("w1.observe.") for task in plan.tasks)
+    assert "w1.observe.proposal_write" in plan.available_tools
 
 
-def test_proposal_write_is_the_only_staged_publication_writer_and_never_accepts_canonical_data():
-    for mode in ("import_content_only", "import_all"):
-        plan = build_execution_plan(mode)
-        writers = [task.task_id for task in plan.tasks if STAGED_PROPOSAL_PUBLICATION in task.write_set]
-        assert writers == ["proposal_write"]
-        assert all("canonical" not in resource for task in plan.tasks for resource in task.write_set)
+def test_content_only_and_compatibility_are_the_only_direct_routes():
+    assert W1AgenticAdapter(import_mode="import_all").route == SUPERVISOR
+    assert W1AgenticAdapter(import_mode="import_all", execution_mode=COMPATIBILITY_DIRECT).route == COMPATIBILITY_DIRECT
+    content = W1AgenticAdapter(import_mode="import_content_only")
+    assert content.route == "content_only"
+    assert "process_chunks" not in {task.task_id for task in content.plan.tasks}
 
 
-def test_hook_ordering_and_restart_resume(tmp_path):
-    store, run_id = _runtime(tmp_path)
-    adapter = W1AgenticAdapter(import_mode="import_content_only", runtime_store=store, run_id=run_id, worker_id="worker")
-    adapter.before_run()
-    adapter.on_node_yielded("validate_file")
-    reopened = W1AgenticAdapter(import_mode="import_content_only", runtime_store=RuntimeStore(tmp_path), run_id=run_id, worker_id="worker")
-    reopened.before_run()
-    assert reopened.scheduler.status(run_id, "validate_file") == "completed"
-    assert reopened.scheduler.status(run_id, "checkpoint_load") == "running"
+def test_observer_writes_agent_event_v1_and_supervisor_checkpoints(tmp_path):
+    store, run, attempt, lease = _runtime(tmp_path)
+    adapter = W1AgenticAdapter(
+        import_mode="import_all", runtime_store=store, run_id=run["run_id"],
+        attempt_id=attempt["attempt_id"], lineage_id=run["lineage_id"],
+        worker_id="observer", fence_token=lease["fence_token"], checkpoint_observer=True,
+    )
+
+    async def updates():
+        # Exact observable supervisor route. Windowing/segment manifest are
+        # internal and must not be required by the observer.
+        for node in ("validate_file", "extract_windows", "reduce_repair", "architect_timeline", "qa_review", "judge_import", "proposal_write", "done"):
+            yield {"current_node": node, "progress": 0.5, "completed_chunks": 1, "total_chunks": 2}
+
+    assert asyncio.run(_collect(adapter.observe_stream(updates())))
+    events = store.list_events(attempt["attempt_id"])
+    harness_events = [event for event in events if event["contract_version"] == "AgentEvent/v1"]
+    assert any(event["event_type"] == "tool.started" for event in harness_events)
+    assert any(event["event_type"] == "tool.result" for event in harness_events)
+    assert all(event["actor"]["id"].startswith("w1.observe.") for event in harness_events)
+    assert [item["node"] for item in store.list_checkpoint_metadata(attempt["attempt_id"])] == [
+        "validate_file", "extract_windows", "reduce_repair", "architect_timeline", "qa_review",
+        "judge_import", "proposal_write", "done",
+    ]
 
 
-def test_config_hook_resolves_the_run_from_an_attempt(tmp_path):
-    store, run_id = _runtime(tmp_path)
-    attempt = store.create_attempt(run_id)
-    adapter = W1AgenticAdapter.from_config({"import_mode": "import_content_only", "runtime_store": store, "attempt_id": attempt["attempt_id"]})
-    assert adapter.run_id == run_id
+def test_invalid_transition_fails_closed_without_a_result_event(tmp_path):
+    store, run, attempt, lease = _runtime(tmp_path)
+    adapter = W1AgenticAdapter(
+        import_mode="import_all", runtime_store=store, run_id=run["run_id"],
+        attempt_id=attempt["attempt_id"], lineage_id=run["lineage_id"],
+        worker_id="observer", fence_token=lease["fence_token"],
+    )
+    with pytest.raises(W1AgenticTransitionError, match="missing"):
+        adapter.on_node_yielded("architect_timeline", {"progress": 0.1})
+    assert not [event for event in store.list_events(attempt["attempt_id"]) if event["event_type"] == "tool.result"]
 
 
-def test_failure_and_cancel_are_durable(tmp_path):
-    store, run_id = _runtime(tmp_path)
-    adapter = W1AgenticAdapter(import_mode="import_content_only", runtime_store=store, run_id=run_id)
-    adapter.before_run()
-    adapter.on_failure("validate_file", RuntimeError("failed"))
-    assert adapter.scheduler.status(run_id, "validate_file") == "failed"
-    assert adapter.scheduler.status(run_id, "checkpoint_load") == "blocked"
-    adapter.scheduler.cancel(run_id)
-    assert adapter.scheduler.status(run_id, "proposal_write") == "blocked"
-    store, clean_run_id = _runtime(tmp_path / "clean")
-    clean = W1AgenticAdapter(import_mode="import_content_only", runtime_store=store, run_id=clean_run_id)
-    clean.before_run()
-    clean.scheduler.cancel(clean_run_id)
-    assert clean.scheduler.status(clean_run_id, "proposal_write") == "cancelled"
+def test_lease_loss_is_never_swallowed(tmp_path):
+    store, run, attempt, lease = _runtime(tmp_path)
+    adapter = W1AgenticAdapter(
+        import_mode="import_all", runtime_store=store, run_id=run["run_id"],
+        attempt_id=attempt["attempt_id"], lineage_id=run["lineage_id"],
+        worker_id="observer", fence_token=lease["fence_token"] + 1,
+    )
+    with pytest.raises(LeaseLostError):
+        adapter.on_node_yielded("validate_file", {"progress": 0.1})
 
 
-def test_bounded_allowlisted_decisions_and_no_hidden_evidence(tmp_path):
-    store, run_id = _runtime(tmp_path)
-    adapter = W1AgenticAdapter(import_mode="import_content_only", runtime_store=store, run_id=run_id)
-    decision = adapter.choose_tool("ask_missing_evidence", reason="missing receipt", evidence={"node": "review_import", "source_text": "do not store", "api_key": "nope"})
-    assert decision.evidence == {"node": "review_import"}
-    for _ in range(3):
-        adapter.choose_tool("execute_next_node", reason="ready")
-    assert adapter.choose_tool("execute_next_node", reason="over").stopped
-    records = store.query_blackboard(run_id=run_id)
-    assert all("source_text" not in record["reference"] and "api_key" not in record["reference"] for record in records)
-
-
-def test_self_ask_and_replan_are_bounded_to_allowed_triggers():
-    adapter = W1AgenticAdapter(import_mode="import_all")
-    assert len(adapter.ask_missing_evidence(("timeline anchor", "relationship evidence", "extra"))) == 2
-    initial = adapter.plan
-    assert adapter.replan("task_completed") is initial
-    assert adapter.replan("new_evidence") is initial
-    assert adapter.replan("task_failed") is initial
-    assert adapter.replan("human_modified") is initial
-
-
-def test_stream_wrapper_calls_lifecycle_hooks_without_a_runtime_store():
+def test_stream_that_stops_before_proposal_gate_is_rejected():
     adapter = W1AgenticAdapter(import_mode="import_content_only")
 
     async def updates():
-        yield {"validate_file": {}}
-
-    assert asyncio.run(_collect(adapter.observe_stream(updates()))) == [{"validate_file": {}}]
-
-
-def test_stream_heartbeats_silent_task_claim_and_resource_fence(tmp_path):
-    store, run_id = _runtime(tmp_path)
-    adapter = W1AgenticAdapter(
-        import_mode="import_content_only",
-        runtime_store=store,
-        run_id=run_id,
-        worker_id="worker",
-        claim_ttl_seconds=0.06,
-    )
-
-    async def delayed_update():
         yield {"current_node": "validate_file"}
-        yield {"current_node": "load_or_init_checkpoint"}
-        await asyncio.sleep(0.15)
-        yield {"current_node": "split_chunks"}
 
-    assert asyncio.run(_collect(adapter.observe_stream(delayed_update()))) == [
-        {"current_node": "validate_file"},
-        {"current_node": "load_or_init_checkpoint"},
-        {"current_node": "split_chunks"},
-    ]
-    assert adapter.scheduler.status(run_id, "split_chunks") == "completed"
-    split_task = next(task for task in store.get_task_dag(run_id) if task["task_id"] == "split_chunks")
-    assert split_task["fence_map"] == {}
+    with pytest.raises(W1AgenticTransitionError, match="proposal gate"):
+        asyncio.run(_collect(adapter.observe_stream(updates())))
+
+
+def test_empty_window_supervisor_route_can_reduce_directly_after_validation(tmp_path):
+    store, run, attempt, lease = _runtime(tmp_path)
+    adapter = W1AgenticAdapter(
+        import_mode="import_all", runtime_store=store, run_id=run["run_id"],
+        attempt_id=attempt["attempt_id"], lineage_id=run["lineage_id"],
+        worker_id="observer", fence_token=lease["fence_token"],
+    )
+    for node in ("validate_file", "reduce_repair", "architect_timeline", "qa_review", "judge_import", "proposal_write", "done"):
+        adapter.on_node_yielded(node, {"current_node": node})
+    adapter.on_completion()
+
+
+def test_optional_legacy_progress_events_do_not_change_supervisor_dependencies(tmp_path):
+    store, run, attempt, lease = _runtime(tmp_path)
+    adapter = W1AgenticAdapter(
+        import_mode="import_all", runtime_store=store, run_id=run["run_id"],
+        attempt_id=attempt["attempt_id"], lineage_id=run["lineage_id"],
+        worker_id="observer", fence_token=lease["fence_token"],
+    )
+    adapter.on_node_yielded("validate_file", {"current_node": "validate_file"})
+    adapter.on_node_yielded("split_chunks", {"current_node": "split_chunks"})
+    adapter.on_node_yielded("segment_manifest", {"current_node": "segment_manifest"})
+    adapter.on_node_yielded("reduce_repair", {"current_node": "reduce_repair"})
+    nodes = [event["payload"].get("node") for event in store.list_events(attempt["attempt_id"])]
+    assert nodes.count("split_chunks") == 2
+    assert nodes.count("segment_manifest") == 2
+
+
+def test_repeated_qa_rerun_is_an_allowed_observable_transition(tmp_path):
+    store, run, attempt, lease = _runtime(tmp_path)
+    adapter = W1AgenticAdapter(
+        import_mode="import_all", runtime_store=store, run_id=run["run_id"],
+        attempt_id=attempt["attempt_id"], lineage_id=run["lineage_id"],
+        worker_id="observer", fence_token=lease["fence_token"],
+    )
+    for node in ("validate_file", "extract_windows", "reduce_repair", "architect_timeline", "qa_review", "qa_review", "judge_import", "proposal_write", "done"):
+        adapter.on_node_yielded(node, {"current_node": node})
+    qa_events = [event for event in store.list_events(attempt["attempt_id"]) if event["payload"].get("node") == "qa_review"]
+    assert len([event for event in qa_events if event["event_type"] == "tool.result"]) == 2
+
+
+def test_resume_restores_occurrences_before_repeated_qa_event(tmp_path):
+    store, run, attempt, lease = _runtime(tmp_path)
+    first = W1AgenticAdapter(
+        import_mode="import_all", runtime_store=store, run_id=run["run_id"],
+        attempt_id=attempt["attempt_id"], lineage_id=run["lineage_id"],
+        worker_id="observer", fence_token=lease["fence_token"],
+    )
+    for node in ("validate_file", "extract_windows", "reduce_repair", "architect_timeline", "qa_review"):
+        first.on_node_yielded(node, {"current_node": node})
+    resumed = W1AgenticAdapter(
+        import_mode="import_all", runtime_store=store, run_id=run["run_id"],
+        attempt_id=attempt["attempt_id"], lineage_id=run["lineage_id"],
+        worker_id="observer", fence_token=lease["fence_token"],
+    )
+    resumed.on_node_yielded("qa_review", {"current_node": "qa_review"})
+    keys = [event["idempotency_key"] for event in store.list_events(attempt["attempt_id"])]
+    assert "w1-observer:%s:qa_review:1:result" % attempt["attempt_id"] in keys
+    assert "w1-observer:%s:qa_review:2:result" % attempt["attempt_id"] in keys
 
 
 async def _collect(stream):

@@ -153,6 +153,7 @@ def test_w1_streaming_carries_runtime_lineage_and_attempt(tmp_path, monkeypatch)
         return [update async for update in module.run_streaming(str(tmp_path), {
             "attempt_id": "attempt-stream",
             "lineage_id": "lineage-stream",
+            "compatibility_mode": True,
         })]
 
     assert asyncio.run(consume()) == []
@@ -197,6 +198,7 @@ def test_w1_streaming_records_safe_runtime_checkpoint_chain_across_resume(tmp_pa
             "attempt_id": attempt_id,
             "runtime_store": store,
             "thread_id": f"w1-{attempt_id}",
+            "compatibility_mode": True,
         })]
 
     assert [item["current_node"] for item in asyncio.run(consume())] == [

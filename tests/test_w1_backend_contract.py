@@ -258,6 +258,7 @@ def test_standard_stream_persists_usage_ledger_after_success(tmp_path, monkeypat
         return [update async for update in w1_import.run_streaming(str(tmp_path), {
             "session_id": session_id,
             "import_mode": "import_all",
+            "compatibility_mode": True,
             "import_run_id": "lineage-standard",
             "budget_policy": {"max_cost_usd": 3},
             "context": {"model": "deepseek-v4-flash"},

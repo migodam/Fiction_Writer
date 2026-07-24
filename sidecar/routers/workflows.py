@@ -79,6 +79,11 @@ async def resume_w1_attempt(
 
     config = dict(persisted_config)
     config.update(overrides or {})
+    # Historical runs did not persist a route choice. Keep their legacy graph
+    # semantics on recovery rather than changing a live checkpoint in place.
+    if "execution_mode" not in config:
+        config["execution_mode"] = "compatibility_direct"
+        config["compatibility_mode"] = True
     project_path = str(config.get("project_path") or "")
     source_file_path = str(config.get("source_file_path") or "")
     if not project_path or not source_file_path:
@@ -89,6 +94,7 @@ async def resume_w1_attempt(
         "api_key": api_key,
         "model": config.get("model", context.get("model", "deepseek-chat")),
         "prompt_profile": config.get("profile", config.get("prompt_profile", context.get("prompt_profile", "balanced"))),
+        "compatibility_mode": bool(config.get("compatibility_mode", False)),
     })
     budget_policy = dict(config.get("budget_config") or config.get("budget_policy") or context.get("budget_policy") or {})
     context["budget_policy"] = budget_policy
@@ -111,6 +117,8 @@ async def resume_w1_attempt(
         "status": "running", "progress": config.get("progress", 0.0), "errors": [],
         "completed_chunks": config.get("completed_chunks", 0), "total_chunks": config.get("total_chunks", 0),
         "prompt_profile": config["prompt_profile"], "paused": False, "breakpoint_chunk": None,
+        "execution_mode": config.get("execution_mode", "compatibility_direct"),
+        "compatibility_mode": bool(config.get("compatibility_mode", False)),
         "project_path": project_path, "config": config, **session_status(attempt_id),
     }
     bind_runtime(attempt_id, runtime_store, attempt_id, runtime_owner_id, lease["fence_token"])
@@ -284,8 +292,11 @@ class W1StartRequest(BaseModel):
     api_key: str = ""
     model: str = "deepseek-chat"
     endpoint: str = "https://api.deepseek.com/v1"
-    use_supervisor: bool = False
+    # import_all is supervisor-first. False is retained for bridge parsing but
+    # never selects the direct legacy graph by itself.
+    use_supervisor: Optional[bool] = None
     use_orchestrator: bool = False
+    compatibility_mode: bool = False
     custom_profile_config: Optional[dict[str, Any]] = None
     orchestrator_overrides: Optional[dict[str, Any]] = None
 
@@ -311,6 +322,7 @@ class W1StatusResponse(BaseModel):
     total_chunks: int = 0
     current_step: str = ""
     prompt_profile: str = "balanced"
+    execution_mode: str = ""
     proposals_count: int = 0
     extraction_counts: dict = {}
     import_review_report: dict = {}
@@ -644,13 +656,23 @@ async def w1_start(body: W1StartRequest, request: Request) -> W1StartResponse:
     lineage_id = str(uuid.uuid4())
     source_path = Path(body.source_file_path).expanduser().resolve()
     source_hash = hashlib.sha256(source_path.read_bytes()).hexdigest() if source_path.is_file() else ""
+    execution_mode = (
+        "content_only"
+        if body.import_mode == "import_content_only"
+        else "compatibility_direct"
+        if body.compatibility_mode
+        else "supervisor"
+    )
+    effective_use_supervisor = execution_mode == "supervisor"
+    effective_use_orchestrator = effective_use_supervisor
     safe_config = {
         "project_path": str(Path(body.project_path).resolve()), "provider": "deepseek",
         "model": body.model, "profile": body.prompt_profile, "endpoint": body.endpoint,
         "lineage_id": lineage_id,
         "source_file_path": str(source_path), "source_hash": source_hash, "budget_config": {},
-        "import_mode": body.import_mode, "use_supervisor": body.use_supervisor,
-        "use_orchestrator": body.use_orchestrator,
+        "import_mode": body.import_mode, "use_supervisor": effective_use_supervisor,
+        "use_orchestrator": effective_use_orchestrator,
+        "execution_mode": execution_mode, "compatibility_mode": body.compatibility_mode,
         "custom_profile_config": body.custom_profile_config or {},
         "orchestrator_overrides": body.orchestrator_overrides or {},
     }
@@ -661,12 +683,6 @@ async def w1_start(body: W1StartRequest, request: Request) -> W1StartResponse:
     ensure_session(session_id)
     custom_profile_config = body.custom_profile_config or {}
     orchestrator_overrides = body.orchestrator_overrides or {}
-    effective_use_orchestrator = (
-        body.use_orchestrator
-        or bool(orchestrator_overrides.get("use_orchestrator"))
-        or body.prompt_profile in {"deep", "custom"}
-    )
-    effective_use_supervisor = body.use_supervisor or effective_use_orchestrator
     tool_operating_spec_overrides = {
         **custom_profile_config,
         **orchestrator_overrides,
@@ -678,6 +694,8 @@ async def w1_start(body: W1StartRequest, request: Request) -> W1StartResponse:
         "prompt_profile": body.prompt_profile,
         "use_supervisor": effective_use_supervisor,
         "use_orchestrator": effective_use_orchestrator,
+        "execution_mode": execution_mode,
+        "compatibility_mode": body.compatibility_mode,
         "custom_profile_config": custom_profile_config,
         "orchestrator_overrides": orchestrator_overrides,
         "tool_operating_spec_overrides": tool_operating_spec_overrides,
@@ -689,6 +707,8 @@ async def w1_start(body: W1StartRequest, request: Request) -> W1StartResponse:
         "prompt_profile": body.prompt_profile,
         "use_supervisor": effective_use_supervisor,
         "use_orchestrator": effective_use_orchestrator,
+        "execution_mode": execution_mode,
+        "compatibility_mode": body.compatibility_mode,
         "custom_profile_config": custom_profile_config,
         "orchestrator_overrides": orchestrator_overrides,
         "profile_config": custom_profile_config if body.prompt_profile == "custom" else {},
@@ -707,6 +727,8 @@ async def w1_start(body: W1StartRequest, request: Request) -> W1StartResponse:
         "prompt_profile": body.prompt_profile,
         "use_supervisor": effective_use_supervisor,
         "use_orchestrator": effective_use_orchestrator,
+        "execution_mode": execution_mode,
+        "compatibility_mode": body.compatibility_mode,
         "custom_profile_config": custom_profile_config,
         "orchestrator_overrides": orchestrator_overrides,
         "supervisor_decisions": [],
@@ -941,6 +963,7 @@ async def w1_status(session_id: str = "") -> W1StatusResponse:
         total_chunks=session.get("total_chunks", 0),
         current_step=session.get("current_step", ""),
         prompt_profile=session.get("prompt_profile", "balanced"),
+        execution_mode=session.get("execution_mode", (session.get("config") or {}).get("execution_mode", "")),
         proposals_count=session.get("proposals_count", 0),
         extraction_counts=extraction_counts,
         import_review_report=session.get("import_review_report", {}),

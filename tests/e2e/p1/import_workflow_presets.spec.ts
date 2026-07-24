@@ -98,8 +98,22 @@ test.describe('Import workflow — preset picker', () => {
     await page.waitForFunction(() => (window as any).__lastStartPayload !== null, { timeout: 5000 });
     const payload = await page.evaluate(() => (window as any).__lastStartPayload);
     expect(payload.prompt_profile).toBe('custom');
+    expect(payload.use_supervisor).toBe(true);
+    expect(payload.use_orchestrator).toBe(true);
     expect(payload.custom_profile_config?.event_density).toBe('arc_level');
     expect(payload.custom_profile_config?.character_granularity).toBe('major_only');
+  });
+
+  test('balanced auto import never sends supervisor false', async ({ page }) => {
+    await injectIpcMockWithPayloadCapture(page);
+    await openImportModal(page);
+
+    await page.getByTestId('w1-file-picker-btn').click();
+    await page.waitForFunction(() => (window as any).__lastStartPayload !== null, { timeout: 5000 });
+    const payload = await page.evaluate(() => (window as any).__lastStartPayload);
+    expect(payload.import_mode).toBe('import_all');
+    expect(payload.use_supervisor).toBe(true);
+    expect(payload.use_orchestrator).toBe(true);
   });
 
   test('selecting manuscript_focused sends import_content_only mode', async ({ page }) => {

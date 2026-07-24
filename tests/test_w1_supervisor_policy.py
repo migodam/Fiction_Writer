@@ -438,10 +438,10 @@ class TestPolicyLoop(unittest.TestCase):
 
         asyncio.run(collect())
 
-    # ── Test 8 (replaced): run_streaming bypasses supervisor when disabled ────
+    # ── Test 8: direct graph requires explicit compatibility mode ────────────
 
-    def test_run_streaming_bypasses_supervisor_when_disabled(self):
-        """run_streaming(use_supervisor=False) must NOT call run_supervisor_streaming."""
+    def test_run_streaming_uses_supervisor_when_legacy_flag_is_false(self):
+        """A false legacy flag cannot silently select the lower-quality graph."""
         supervisor_calls = []
 
         async def fake_supervisor(project_path, config):
@@ -461,7 +461,7 @@ class TestPolicyLoop(unittest.TestCase):
                     await asyncio.wait_for(gen.__anext__(), timeout=0.5)
                 except Exception:
                     pass  # LangGraph will fail without real files; that's OK
-            self.assertFalse(supervisor_calls, "run_supervisor_streaming must NOT be called")
+            self.assertTrue(supervisor_calls, "import_all must default to supervisor")
 
         asyncio.run(collect())
 
