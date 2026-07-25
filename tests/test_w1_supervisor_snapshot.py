@@ -159,6 +159,29 @@ def test_source_body_keys_are_recursively_rejected_and_never_persisted(tmp_path:
     assert unique_body.encode("utf-8") not in persisted
 
 
+def test_hidden_reasoning_and_long_source_substrings_are_rejected(tmp_path: Path) -> None:
+    source_text = "A uniquely long source sentence that must never be stored in a durable checkpoint. " * 3
+    source = tmp_path / "sources" / "novel.txt"
+    source.parent.mkdir(parents=True)
+    source.write_text(source_text, encoding="utf-8")
+    source_identity = _source() | {"source_sha256": _sha(source_text), "source_size": len(source_text)}
+    for unsafe_field in ("excerpt", "quote", "analysis", "thought", "rationale", "reasoning", "chainOfThought", "cot"):
+        with pytest.raises(SnapshotValidationError):
+            _write(
+                tmp_path,
+                checkpoint_id=f"checkpoint_{unsafe_field}",
+                source_identity=source_identity,
+                state={"chunks": [{unsafe_field: "short metadata is still forbidden"}]},
+            )
+    with pytest.raises(SnapshotValidationError, match="source_substring"):
+        _write(
+            tmp_path,
+            checkpoint_id="checkpoint_source_substring",
+            source_identity=source_identity,
+            state={"chunks": [{"summary": source_text}]},
+        )
+
+
 def test_absolute_paths_and_unsupported_boundaries_are_rejected(tmp_path: Path) -> None:
     absolute_source = _source() | {"source_relative_path": "/Users/unsafe/novel.txt"}
     with pytest.raises(SnapshotValidationError, match="contained"):

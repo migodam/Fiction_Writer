@@ -97,83 +97,151 @@ _SNAPSHOT_BOUNDARY_NEXT_NODE = {
     "proposal_write": None,
 }
 _SNAPSHOT_PRIVATE_KEY = "_w1_supervisor_snapshot"
-_SNAPSHOT_UNSAFE_KEY = re.compile(
+_SNAPSHOT_FORBIDDEN_FIELD = re.compile(
     r"(?:api[_-]?key|secret|password|authorization|access[_-]?token|refresh[_-]?token|private[_-]?key|"
-    r"prompt|source_(?:body|text|content)|raw_(?:content|text)|chain_?of_?thought|hidden_?reasoning|"
-    r"reasoning_trace|callback|client|runtime|(?:^|_)(?:content|text)(?:$|_))",
+    r"prompt|source_(?:body|text|content)|raw_(?:content|text)|(?:^|_)(?:content|text)(?:$|_)|"
+    r"excerpt|quote|analysis|thought|rationale|reasoning|cot|chain_?of_?thought|chainofthought|"
+    r"callback|client|runtime)",
     re.I,
 )
+_SNAPSHOT_ENTITY_FIELDS = frozenset({
+    "id", "name", "canonical_name", "title", "type", "category", "ontologyType", "ontologyDirection",
+    "aliases", "summary", "description", "background", "experience", "traits", "notes", "confidence",
+    "importance", "importanceScore", "physical_description", "speech_style", "arc_notes", "status",
+    "source_span", "sourceSpan", "source_chunk_id", "source_chunk_ids", "source_segment_id",
+    "source_prompt_window_id", "source_prompt_window_ids", "evidence_refs", "entity_merge_decision",
+    "attributes", "categoryPath", "containerId", "container_id", "parentId", "parent_id", "chapter_range",
+    "chapterRange", "branchId", "branch_id", "orderIndex", "eventClass", "timelineClass", "eventType",
+    "participantCharacterIds", "linkedSceneIds", "linkedWorldItemIds", "locationIds", "tags", "time",
+    "sourceId", "targetId", "source_character_name", "target_character_name", "relationship_id",
+    "importConfidence", "scene_ids", "linked_scene_ids", "goal", "chapter_id", "scene_id", "chunk_ids",
+    "chapterNumber", "chapter_number", "order_index", "domain_receipts", "failure_codes", "truth",
+})
+_SNAPSHOT_CHUNK_FIELDS = frozenset({
+    "id", "chunk_id", "segment_id", "chapter_id", "chapter_ids", "chapter_hint", "chapter_number",
+    "chapterNumber", "source_span", "raw_source_hash", "substring_hash", "absolute_start", "absolute_end",
+    "source_tokens", "source_chars", "token_count", "char_count", "title",
+})
+_SNAPSHOT_MANUSCRIPT_FIELDS = frozenset({
+    "chapter_id", "scene_id", "title", "summary", "goal", "notes", "chunk_ids", "source_span",
+    "chapterNumber", "chapter_number", "orderIndex", "order_index", "confidence", "status",
+})
 
 
-def _snapshot_value(value: Any) -> Any:
-    """Return JSON-only derived state without source/prompt material or secrets."""
+def _snapshot_structured_value(value: Any, source_text: str, field: str) -> Any:
+    """Permit only JSON evidence metadata; reject prose and hidden reasoning."""
     if value is None or isinstance(value, (bool, int, float)):
         return value
     if isinstance(value, str):
-        # File paths and source bodies are never recovery state.  Relative
-        # artifact IDs remain useful; absolute paths are rejected by v1 too.
-        return "" if value.startswith("/") or re.match(r"^[A-Za-z]:[\\\\/]", value) else value
+        if value.startswith("/") or re.match(r"^[A-Za-z]:[\\\\/]", value):
+            raise ValueError(f"{field}_contains_absolute_path")
+        if len(value.strip()) >= 80 and value.strip() in source_text:
+            raise ValueError(f"{field}_contains_source_substring")
+        return value
     if isinstance(value, (list, tuple)):
-        return [_snapshot_value(item) for item in value]
+        return [_snapshot_structured_value(item, source_text, f"{field}[{index}]") for index, item in enumerate(value)]
     if isinstance(value, Mapping):
-        return {
-            str(key): _snapshot_value(item)
-            for key, item in value.items()
-            if isinstance(key, str) and not _SNAPSHOT_UNSAFE_KEY.search(key)
+        result: dict[str, Any] = {}
+        for key, item in value.items():
+            if not isinstance(key, str) or _SNAPSHOT_FORBIDDEN_FIELD.search(key):
+                raise ValueError(f"{field}_contains_forbidden_field")
+            result[key] = _snapshot_structured_value(item, source_text, f"{field}.{key}")
+        return result
+    raise ValueError(f"{field}_is_not_json")
+
+
+def _snapshot_object(value: Any, allowed: frozenset[str], source_text: str, field: str) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    result: dict[str, Any] = {}
+    for key in allowed:
+        if key in value:
+            result[key] = _snapshot_structured_value(value[key], source_text, f"{field}.{key}")
+    return result
+
+
+def _snapshot_entities(registry: Any, source_text: str) -> dict[str, Any]:
+    if not isinstance(registry, Mapping):
+        return {"characters": {}, "events": {}, "world": {}, "world_detailed": {}}
+    result: dict[str, Any] = {}
+    for domain in ("characters", "events", "world_detailed"):
+        entries = registry.get(domain, {})
+        if not isinstance(entries, Mapping):
+            result[domain] = {}
+            continue
+        result[domain] = {
+            str(entry_id): _snapshot_object(entry, _SNAPSHOT_ENTITY_FIELDS, source_text, f"entity_registry.{domain}.{entry_id}")
+            for entry_id, entry in entries.items()
+            if isinstance(entry, Mapping)
         }
-    # Unknown runtime objects make a snapshot preview-only rather than trying
-    # to serialize them.  The codec remains the final fail-closed validator.
-    raise TypeError("supervisor_snapshot_state_is_not_json")
+    world = registry.get("world", {})
+    result["world"] = {
+        str(name): _snapshot_structured_value(category, source_text, f"entity_registry.world.{name}")
+        for name, category in world.items()
+    } if isinstance(world, Mapping) else {}
+    return result
 
 
 def _snapshot_state(state: Mapping[str, Any]) -> dict[str, Any]:
-    """Project the Supervisor's derived artifacts onto the v1 allowlist."""
-    chunk_fields = {
-        "id", "chunk_id", "segment_id", "chapter_id", "chapter_number", "chapterNumber",
-        "source_span", "raw_source_hash", "substring_hash", "absolute_start", "absolute_end",
-        "source_tokens", "source_chars", "token_count", "char_count", "title",
-    }
-    compact_chunks = [
-        {key: value for key, value in chunk.items() if key in chunk_fields}
-        for chunk in state.get("chunks", [])
-        if isinstance(chunk, Mapping)
-    ]
-    if state.get("chunks") and (
-        len(compact_chunks) != len(state.get("chunks", []))
-        or any(not isinstance(chunk.get("source_span"), Mapping) for chunk in compact_chunks)
-    ):
+    """Build the explicit body-free ``W1ResumeState/v1`` DTO.
+
+    This deliberately projects each domain independently.  It is not a
+    filtered copy of the graph state: source/prompt payloads, evidence snippets
+    and hidden reasoning never have a representable field in this DTO.
+    """
+    source_text = str(state.get("source_text") or "")
+    chunks = [_snapshot_object(chunk, _SNAPSHOT_CHUNK_FIELDS, source_text, "chunks") for chunk in state.get("chunks", []) if isinstance(chunk, Mapping)]
+    if state.get("chunks") and (len(chunks) != len(state.get("chunks", [])) or any(not item.get("source_span") for item in chunks)):
         raise ValueError("supervisor_snapshot_requires_source_spans")
+    extractions: list[dict[str, Any]] = []
+    for extraction in state.get("chunk_extractions", []) or []:
+        if not isinstance(extraction, Mapping):
+            continue
+        extractions.append(_snapshot_object(extraction, frozenset({
+            "chunk_id", "window_id", "id", "truth", "domain_receipts", "failure_codes", "semantic_status",
+            "confidence", "status", "source_span", "source_chunk_ids", "chapter_range",
+        }), source_text, "chunk_extractions"))
+    chapters = [_snapshot_object(chapter, _SNAPSHOT_MANUSCRIPT_FIELDS, source_text, "manuscript_chapters") for chapter in state.get("manuscript_chapters", []) if isinstance(chapter, Mapping)]
+    if state.get("manuscript_chapters") and any(not chapter.get("source_span") for chapter in chapters):
+        raise ValueError("supervisor_snapshot_manuscript_requires_source_spans")
+    resume_context = {
+        "contract_version": "W1ResumeState/v1",
+        "import_run_id": _snapshot_structured_value(str(state.get("import_run_id") or ""), source_text, "resume.import_run_id"),
+        "source_language": _snapshot_structured_value(str(state.get("source_language") or ""), source_text, "resume.source_language"),
+        "character_tags": [_snapshot_object(item, _SNAPSHOT_ENTITY_FIELDS, source_text, "character_tags") for item in state.get("character_tags", []) if isinstance(item, Mapping)],
+        "manuscript_chapters": chapters,
+        "raw_relationships": [_snapshot_object(item, _SNAPSHOT_ENTITY_FIELDS, source_text, "raw_relationships") for item in state.get("raw_relationships", []) if isinstance(item, Mapping)],
+        "organizer_output": _snapshot_object(state.get("organizer_output", {}), frozenset({"world_containers", "world_items", "excluded_items", "merge_candidates", "proposal_packages", "warnings", "candidate_ledger", "relocation_plans"}), source_text, "organizer_output"),
+    }
     projected = {
-        "chunks": compact_chunks,
-        # Prompt windows intentionally do not cross a restart boundary: they
-        # contain the source/prompt body. QA reruns are completed before a
-        # checkpoint; a future per-window contract can store span-only input.
-        "chunk_extractions": state.get("chunk_extractions", []),
-        "entity_registry": state.get("entity_registry", {}),
-        "relationships": state.get("relationships", []),
+        "chunks": chunks,
+        "chunk_extractions": extractions,
+        "entity_registry": _snapshot_entities(state.get("entity_registry"), source_text),
+        "relationships": [_snapshot_object(item, _SNAPSHOT_ENTITY_FIELDS, source_text, "relationships") for item in state.get("relationships", []) if isinstance(item, Mapping)],
         "world": {
-            "world_settings": state.get("world_settings", {}),
-            "world_containers": state.get("world_containers", []),
+            "world_settings": _snapshot_structured_value(state.get("world_settings", {}), source_text, "world_settings"),
+            "world_containers": [_snapshot_object(item, _SNAPSHOT_ENTITY_FIELDS, source_text, "world_containers") for item in state.get("world_containers", []) if isinstance(item, Mapping)],
         },
         "timeline": {
-            "timeline_architecture": state.get("timeline_architecture", {}),
-            "timeline_branches": state.get("timeline_branches", []),
+            "timeline_architecture": _snapshot_structured_value(state.get("timeline_architecture", {}), source_text, "timeline_architecture"),
+            "timeline_branches": [_snapshot_object(item, _SNAPSHOT_ENTITY_FIELDS, source_text, "timeline_branches") for item in state.get("timeline_branches", []) if isinstance(item, Mapping)],
         },
-        "organizer": {"organizer": state.get("organizer", {})},
-        "reducer": {"reducer_artifact": state.get("reducer_artifact", {})},
-        "cross_validation": state.get("cross_validation", {}),
-        "reviewer": {"import_review_report": state.get("import_review_report", {})},
+        "organizer": {"organizer_output": resume_context["organizer_output"]},
+        "reducer": {"reducer_artifact": _snapshot_structured_value(state.get("reducer_artifact", {}), source_text, "reducer_artifact")},
+        "cross_validation": _snapshot_structured_value(state.get("cross_validation", {}), source_text, "cross_validation"),
+        "reviewer": {"import_review_report": _snapshot_structured_value(state.get("import_review_report", {}), source_text, "import_review_report")},
         "judge": {
-            "judge_artifact": state.get("judge_artifact", {}),
-            "gate_failures": state.get("gate_failures", []),
-            "supervisor_iteration": state.get("supervisor_iteration", 0),
+            "judge_artifact": _snapshot_structured_value(state.get("judge_artifact", {}), source_text, "judge_artifact"),
+            "gate_failures": _snapshot_structured_value(state.get("gate_failures", []), source_text, "gate_failures"),
+            "supervisor_iteration": int(state.get("supervisor_iteration", 0) or 0),
         },
-        "proposal": {"proposals": state.get("proposals", []), "evidence_cards": state.get("evidence_cards", [])},
-        "operations": state.get("operations", {}),
-        "import_manifest": state.get("import_run_manifest", {}),
-        "project_structure_digest": state.get("project_structure_digest", {}),
+        "proposal": {"proposals": [_snapshot_object(item, _SNAPSHOT_ENTITY_FIELDS, source_text, "proposals") for item in state.get("proposals", []) if isinstance(item, Mapping)]},
+        "operations": _snapshot_structured_value(state.get("operations", {}), source_text, "operations"),
+        "import_manifest": _snapshot_structured_value(state.get("import_run_manifest", {}), source_text, "import_manifest"),
+        "project_structure_digest": _snapshot_structured_value(state.get("project_structure_digest", {}), source_text, "project_structure_digest"),
+        "resume_context": resume_context,
     }
-    return {key: _snapshot_value(value) for key, value in projected.items()}
+    return projected
 
 
 def _rehydrate_snapshot_chunks(state: ImportSupervisorState, source_file_path: str) -> ImportSupervisorState:
@@ -198,6 +266,30 @@ def _rehydrate_snapshot_chunks(state: ImportSupervisorState, source_file_path: s
             "manuscript_content": body,
         })
     return {**state, "chunks": restored_chunks, "source_text": raw_source}  # type: ignore[return-value]
+
+
+def _rehydrate_snapshot_manuscript_chapters(state: ImportSupervisorState, source_file_path: str) -> ImportSupervisorState:
+    """Rebuild chapter bodies only from the verified raw source and SourceSpan."""
+    source_path = Path(source_file_path)
+    raw_source = source_path.read_text(encoding="utf-8")
+    restored_chapters: list[dict[str, Any]] = []
+    for compact in state.get("manuscript_chapters", []):
+        if not isinstance(compact, Mapping):
+            raise ValueError("snapshot_manuscript_chapter_is_invalid")
+        span = compact.get("source_span")
+        if not isinstance(span, Mapping):
+            raise ValueError("snapshot_manuscript_source_span_missing")
+        valid, _errors = validate_source_span(dict(span), raw_source)
+        if not valid:
+            raise ValueError("snapshot_manuscript_source_span_mismatch")
+        body = reconstruct_source_span(dict(span), raw_source)
+        restored_chapters.append({
+            **dict(compact),
+            "content": body,
+            "raw_content": body,
+            "manuscript_content": body,
+        })
+    return {**state, "manuscript_chapters": restored_chapters, "source_text": raw_source}  # type: ignore[return-value]
 
 
 def _restore_snapshot_state(state: ImportSupervisorState, snapshot_state: Mapping[str, Any]) -> ImportSupervisorState:
@@ -228,9 +320,18 @@ def _restore_snapshot_state(state: ImportSupervisorState, snapshot_state: Mappin
     proposal = snapshot_state.get("proposal")
     if isinstance(proposal, Mapping):
         restored["proposals"] = proposal.get("proposals", [])
-        restored["evidence_cards"] = proposal.get("evidence_cards", [])
     if "import_manifest" in snapshot_state:
         restored["import_run_manifest"] = snapshot_state["import_manifest"]
+    resume_context = snapshot_state.get("resume_context")
+    if not isinstance(resume_context, Mapping) or resume_context.get("contract_version") != "W1ResumeState/v1":
+        raise ValueError("snapshot_resume_context_is_invalid")
+    for key in ("import_run_id", "source_language", "character_tags", "manuscript_chapters", "raw_relationships", "organizer_output"):
+        if key not in resume_context:
+            raise ValueError(f"snapshot_resume_context_missing_{key}")
+        restored[key] = resume_context[key]
+    organizer = snapshot_state.get("organizer")
+    if isinstance(organizer, Mapping) and "organizer_output" in organizer:
+        restored["organizer_output"] = organizer["organizer_output"]
     return restored  # type: ignore[return-value]
 
 
@@ -1611,7 +1712,7 @@ async def run_supervisor_streaming(
     if isinstance(resume_reference, Mapping):
         from sidecar.runtime.w1_supervisor_snapshot import (
             SnapshotValidationError,
-            load_w1_supervisor_snapshot,
+            load_w1_supervisor_snapshot_for_resume,
         )
         from sidecar.workflows.w1_agentic_adapter import build_supervisor_snapshot_identities
 
@@ -1625,7 +1726,7 @@ async def run_supervisor_streaming(
         )
         config.setdefault("snapshot_source_attempt_id", source_attempt_id)
         source_identity, config_identity = build_supervisor_snapshot_identities(config, project_path=project_path)
-        loaded = load_w1_supervisor_snapshot(
+        loaded = load_w1_supervisor_snapshot_for_resume(
             project_path,
             resume_reference,
             expected_source_identity=source_identity,
@@ -1651,6 +1752,7 @@ async def run_supervisor_streaming(
         if not source_for_rebuild.is_file():
             source_for_rebuild = Path(project_path) / str(config["w1_supervisor_staged_source_relative_path"])
         state = _rehydrate_snapshot_chunks(state, str(source_for_rebuild))
+        state = _rehydrate_snapshot_manuscript_chapters(state, str(source_for_rebuild))
         resume_next_node = str(snapshot.get("next_node") or "proposal_gate")
         if resume_next_node not in {*_SNAPSHOT_RESUME_ORDER, "proposal_gate"}:
             raise SnapshotValidationError("snapshot_next_node_is_not_resumable")
@@ -1938,10 +2040,21 @@ async def run_supervisor_streaming(
 
     _ja = state.get("judge_artifact") or {}
     persist_w1_usage_ledger(state)
-    state = _with_status(
-        state,
-        current_tool="proposal_write",
-        orchestrator_phase="done",
-        converge_status="passed" if _ja.get("passed", True) else _ja.get("result_status", "failed"),
-    )
+    # A fork from a proposal-write checkpoint is a view of the already staged
+    # package.  It must remain at the human proposal gate: never re-write the
+    # package and never report canonical acceptance as a completed import.
+    if resume_next_node == "proposal_gate":
+        state = _with_status(
+            state,
+            current_tool="proposal_gate",
+            orchestrator_phase="proposal_gate",
+            converge_status="awaiting_acceptance",
+        )
+    else:
+        state = _with_status(
+            state,
+            current_tool="proposal_write",
+            orchestrator_phase="done",
+            converge_status="passed" if _ja.get("passed", True) else _ja.get("result_status", "failed"),
+        )
     yield _emit(_PROGRESS_DONE, "done")

@@ -32,7 +32,9 @@ _SECRET_KEY = re.compile(
     re.I,
 )
 _UNSAFE_KEY = re.compile(
-    r"(?:prompt(?:_body|_text)?|source_(?:body|text|content)|chain_?of_?thought|hidden_?reasoning|reasoning_trace|callback|client|runtime|callable)",
+    r"(?:prompt(?:_body|_text)?|source_(?:body|text|content)|chain_?of_?thought|chainofthought|"
+    r"hidden_?reasoning|reasoning(?:_trace)?|rationale|thought|analysis|excerpt|quote|cot|"
+    r"callback|client|runtime|callable)",
     re.I,
 )
 # Chunk and extraction implementations historically used these generic keys
@@ -79,6 +81,7 @@ STATE_FIELD_ALLOWLIST = frozenset(
         "operations",
         "import_manifest",
         "project_structure_digest",
+        "resume_context",
     }
 )
 
@@ -303,6 +306,33 @@ def _normalize_state(state: Mapping[str, Any]) -> dict[str, Any]:
     if unknown:
         raise SnapshotValidationError(f"state_has_unsupported_fields:{','.join(sorted(map(str, unknown)))}")
     return {key: _safe_json(state[key], f"state.{key}") for key in sorted(state)}
+
+
+def _reject_embedded_source_substrings(state: Mapping[str, Any], source_text: str) -> None:
+    """Reject prose copied verbatim into a snapshot even under an allowed key.
+
+    DTO field names are the primary boundary.  This is a second, content-based
+    guard for accidental future fields.  Short labels and summaries are useful
+    recovery metadata; long continuous source passages are never required.
+    """
+    if not source_text:
+        return
+
+    def walk(value: Any, field: str) -> None:
+        if isinstance(value, str):
+            candidate = value.strip()
+            if len(candidate) >= 80 and candidate in source_text:
+                raise SnapshotValidationError(f"{field}_must_not_contain_source_substring")
+            return
+        if isinstance(value, list):
+            for index, item in enumerate(value):
+                walk(item, f"{field}[{index}]")
+            return
+        if isinstance(value, Mapping):
+            for key, item in value.items():
+                walk(item, f"{field}.{key}")
+
+    walk(state, "state")
 
 
 def _state_refs(state: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
@@ -701,6 +731,17 @@ def write_w1_supervisor_snapshot(
         state=state, budget_snapshot=budget_snapshot, usage_ledger_ref=usage_ledger_ref,
         unknown_tool_call_ids=unknown_tool_call_ids, semantic_coverage_ref=semantic_coverage_ref,
     )
+    # A policy-produced DTO must already be body-free.  When the verified raw
+    # source is locally available, apply a final content guard before anything
+    # is published.  Missing legacy source is tolerated here; resume itself
+    # remains strict and will reject that snapshot later.
+    source_path = root / snapshot["source_identity"]["source_relative_path"]
+    if source_path.exists():
+        source_bytes = _read_regular_file_no_follow(root, source_path, error_prefix="snapshot_source")
+        try:
+            _reject_embedded_source_substrings(normalized_state, source_bytes.decode("utf-8"))
+        except UnicodeDecodeError as exc:
+            raise SnapshotValidationError("snapshot_source_must_be_utf8") from exc
     relative_path = _snapshot_relative_path(snapshot["lineage_id"], snapshot["attempt_id"], snapshot["checkpoint_id"])
     final = root / relative_path
     snapshots_root = final.parent
