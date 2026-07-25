@@ -356,6 +356,122 @@ def test_authorized_unknown_only_allows_matching_retry_then_downstream_call(tmp_
     events.clear_session(session_id)
 
 
+def test_snapshot_resume_authorization_consumes_source_call_once_after_budget_preflight(tmp_path):
+    store = RuntimeStore(tmp_path)
+    run = store.create_run(workflow_id="W1", lineage_id="lineage-snapshot-unknown")
+    source = store.create_attempt(run["run_id"], attempt_id="snapshot-unknown-source")
+    child = store.create_attempt(
+        run["run_id"], attempt_id="snapshot-unknown-child", parent_attempt_id=source["attempt_id"],
+    )
+    prompt = "retry this durable snapshot operation"
+    message_hash = events.provider_message_hash([w1_import.HumanMessage(content=prompt)])
+    unknown = store.record_tool_intent(
+        source["attempt_id"], "provider.chat.completions",
+        {"idempotency_key": "snapshot-unknown-key", "model": "deepseek-chat", "message_hash": message_hash},
+    )
+    store.record_tool_unknown_outcome(unknown["tool_call_id"], "runtime_interrupted")
+    decision_key = "retry_provider_call:snapshot-unknown-key"
+    store.record_unknown_call_decision(source["attempt_id"], decision_key, "authorize_retry_once")
+    child_lease = store.acquire_lease(child["attempt_id"], "resume-worker", ttl_seconds=30)
+    session_id = "snapshot-unknown-resume"
+    events.clear_session(session_id)
+    events.bind_runtime(
+        session_id, store, child["attempt_id"], "resume-worker", child_lease["fence_token"],
+    )
+    events.configure_authorized_unknown_resume(
+        session_id,
+        source_attempt_id=source["attempt_id"],
+        tool_call_ids=[unknown["tool_call_id"]],
+        decision_keys=[decision_key],
+    )
+
+    # A hard preflight cap wins over authorization and leaves the durable
+    # unknown call untouched, so resuming again cannot spend by accident.
+    events.configure_budget(session_id, events.BudgetPolicy(max_calls=0), model="deepseek-chat")
+    denied = _FakeLlm([_Response()])
+    with pytest.raises(RuntimeError, match="budget_exhausted"):
+        asyncio.run(w1_import._invoke_json_prompt(denied, prompt, session_id=session_id))
+    assert denied.calls == 0
+    assert store.list_tool_calls(source["attempt_id"])[0]["status"] == "unknown_outcome"
+
+    events.clear_session(session_id)
+    child_lease = store.acquire_lease(child["attempt_id"], "resume-worker", ttl_seconds=30)
+    events.bind_runtime(
+        session_id, store, child["attempt_id"], "resume-worker", child_lease["fence_token"],
+    )
+    events.configure_authorized_unknown_resume(
+        session_id,
+        source_attempt_id=source["attempt_id"],
+        tool_call_ids=[unknown["tool_call_id"]],
+        decision_keys=[decision_key],
+    )
+    retried = _FakeLlm([_Response()])
+    assert asyncio.run(w1_import._invoke_json_prompt(retried, prompt, session_id=session_id)) == {"ok": True}
+    assert retried.calls == 1
+    assert [call["status"] for call in store.list_tool_calls(source["attempt_id"])] == [
+        "retry_consumed", "result",
+    ]
+
+    # The replacement receipt is verified and cached. A duplicate recovery has
+    # no authorization left to consume and no second billable provider call.
+    duplicate = _FakeLlm([])
+    assert asyncio.run(w1_import._invoke_json_prompt(duplicate, prompt, session_id=session_id)) == {"ok": True}
+    assert duplicate.calls == 0
+    assert len(store.list_tool_calls(source["attempt_id"])) == 2
+    events.clear_session(session_id)
+
+
+def test_snapshot_resume_reuses_verified_receipt_before_spending_authorized_retry(tmp_path):
+    store = RuntimeStore(tmp_path)
+    run = store.create_run(workflow_id="W1", lineage_id="lineage-snapshot-cache")
+    prompt = "reuse the durable provider receipt"
+    message_hash = events.provider_message_hash([w1_import.HumanMessage(content=prompt)])
+
+    cache_attempt = store.create_attempt(run["run_id"], attempt_id="snapshot-cache-source")
+    cache_lease = store.acquire_lease(cache_attempt["attempt_id"], "cache-worker", ttl_seconds=30)
+    events.clear_session("snapshot-cache-origin")
+    events.bind_runtime(
+        "snapshot-cache-origin", store, cache_attempt["attempt_id"], "cache-worker", cache_lease["fence_token"],
+    )
+    assert asyncio.run(w1_import._invoke_json_prompt(
+        _FakeLlm([_Response()]), prompt, session_id="snapshot-cache-origin",
+    )) == {"ok": True}
+
+    source = store.create_attempt(run["run_id"], attempt_id="snapshot-cache-unknown")
+    child = store.create_attempt(
+        run["run_id"], attempt_id="snapshot-cache-child", parent_attempt_id=source["attempt_id"],
+    )
+    unknown = store.record_tool_intent(
+        source["attempt_id"], "provider.chat.completions",
+        {"idempotency_key": "snapshot-cache-key", "model": "deepseek-chat", "message_hash": message_hash},
+    )
+    store.record_tool_unknown_outcome(unknown["tool_call_id"], "runtime_interrupted")
+    decision_key = "retry_provider_call:snapshot-cache-key"
+    store.record_unknown_call_decision(source["attempt_id"], decision_key, "authorize_retry_once")
+    child_lease = store.acquire_lease(child["attempt_id"], "resume-worker", ttl_seconds=30)
+    session_id = "snapshot-cache-resume"
+    events.clear_session(session_id)
+    events.bind_runtime(
+        session_id, store, child["attempt_id"], "resume-worker", child_lease["fence_token"],
+    )
+    events.configure_authorized_unknown_resume(
+        session_id,
+        source_attempt_id=source["attempt_id"],
+        tool_call_ids=[unknown["tool_call_id"]],
+        decision_keys=[decision_key],
+    )
+
+    reused = _FakeLlm([])
+    assert asyncio.run(w1_import._invoke_json_prompt(reused, prompt, session_id=session_id)) == {"ok": True}
+    assert reused.calls == 0
+    source_calls = store.list_tool_calls(source["attempt_id"])
+    assert len(source_calls) == 1
+    assert source_calls[0]["status"] == "retry_consumed"
+    assert source_calls[0]["result_payload"]["outcome"] == "resolved_from_verified_artifact"
+    events.clear_session("snapshot-cache-origin")
+    events.clear_session(session_id)
+
+
 def test_matching_verified_cache_consumes_authorized_unknown_then_allows_downstream(tmp_path):
     store = RuntimeStore(tmp_path)
     run = store.create_run(workflow_id="W1", lineage_id="lineage-cache-resolution")

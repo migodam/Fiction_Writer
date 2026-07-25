@@ -19,6 +19,7 @@ from sidecar.runtime.w1_supervisor_snapshot import (
 )
 from sidecar.supervisor import policy
 from sidecar.workflows import w1_import
+from sidecar.workflows import w1_run_events as events
 from sidecar.workflows.w1_agentic_adapter import build_supervisor_snapshot_identities
 
 
@@ -369,6 +370,134 @@ def test_authorized_unknown_snapshot_passes_runtime_preflight_without_consuming_
     assert captured["w1_authorized_unknown_call_ids"] == [intent["tool_call_id"]]
     assert captured["w1_authorized_unknown_decision_keys"] == [decision_key]
     assert calls[intent["tool_call_id"]]["status"] == "unknown_outcome"
+
+
+def _unknown_resume_reference(tmp_path, *, spent_usd: float = 0.0):
+    _source, _source_text, store, run, parent, config, checkpoint = _parent(tmp_path)
+    intent = store.record_tool_intent(
+        parent["attempt_id"], "provider.chat.completions",
+        {"idempotency_key": "u" * 64, "model": "deepseek-v4-flash", "message_hash": "m" * 64},
+    )
+    store.record_tool_unknown_outcome(intent["tool_call_id"], "runtime_interrupted")
+    state = load_w1_supervisor_snapshot(tmp_path, checkpoint["metadata"]["snapshot_ref"])["state"]
+    source_identity, config_identity = build_supervisor_snapshot_identities(config, project_path=tmp_path)
+    reference = write_w1_supervisor_snapshot(
+        tmp_path,
+        lineage_id=run["lineage_id"],
+        attempt_id=parent["attempt_id"],
+        checkpoint_id="checkpoint_unknown_policy",
+        node="proposal_write",
+        next_node=None,
+        source_identity=source_identity,
+        config_identity=config_identity,
+        state=state,
+        parent_checkpoint_id=checkpoint["checkpoint_id"],
+        completed_nodes=["validate_file", "extract_window", "reduce_repair", "architect_timeline", "qa_review", "judge_import", "proposal_write"],
+        budget_snapshot={"budget_limit_usd": 3.0, "spent_usd": spent_usd},
+        unknown_tool_call_ids=[intent["tool_call_id"]],
+    )
+    return store, parent, config, intent, reference
+
+
+def test_policy_snapshot_unknown_outcome_requires_exact_durable_authorization(tmp_path):
+    store, parent, config, intent, reference = _unknown_resume_reference(tmp_path)
+    session_id = "unknown-policy-reject"
+    lease = store.acquire_lease(parent["attempt_id"], "resume-test", ttl_seconds=60)
+    events.clear_session(session_id)
+    events.bind_runtime(session_id, store, parent["attempt_id"], "resume-test", lease["fence_token"])
+
+    with pytest.raises(SnapshotValidationError, match="require_human_confirmation"):
+        _collect(policy.run_supervisor_streaming(str(tmp_path), {
+            **config,
+            "session_id": session_id,
+            "w1_supervisor_resume_snapshot_ref": reference.to_dict(),
+            "snapshot_source_attempt_id": parent["attempt_id"],
+        }))
+    assert store.list_tool_calls(parent["attempt_id"])[0]["status"] == "unknown_outcome"
+    events.clear_session(session_id)
+
+
+def test_policy_snapshot_unknown_outcome_accepts_only_matching_authorization(tmp_path):
+    store, parent, config, intent, reference = _unknown_resume_reference(tmp_path)
+    session_id = "unknown-policy-authorized"
+    lease = store.acquire_lease(parent["attempt_id"], "resume-test", ttl_seconds=60)
+    events.clear_session(session_id)
+    events.bind_runtime(session_id, store, parent["attempt_id"], "resume-test", lease["fence_token"])
+    decision_key = "retry_provider_call:" + "u" * 64
+    store.record_unknown_call_decision(parent["attempt_id"], decision_key, "authorize_retry_once")
+
+    updates = _collect(policy.run_supervisor_streaming(str(tmp_path), {
+        **config,
+        "session_id": session_id,
+        "w1_supervisor_resume_snapshot_ref": reference.to_dict(),
+        "snapshot_source_attempt_id": parent["attempt_id"],
+        "w1_authorized_unknown_call_ids": [intent["tool_call_id"]],
+        "w1_authorized_unknown_decision_keys": [decision_key],
+    }))
+    assert updates[-1]["converge_status"] == "awaiting_acceptance"
+    configured = events._authorized_unknown_resumes[session_id]
+    assert configured.tool_call_ids == frozenset({intent["tool_call_id"]})
+    assert configured.decision_keys == {intent["tool_call_id"]: decision_key}
+    assert store.list_tool_calls(parent["attempt_id"])[0]["status"] == "unknown_outcome"
+    events.clear_session(session_id)
+
+
+def test_policy_snapshot_unknown_outcome_rejects_wrong_call_id_and_exhausted_budget(tmp_path):
+    store, parent, config, intent, reference = _unknown_resume_reference(tmp_path, spent_usd=2.0)
+    session_id = "unknown-policy-priority"
+    lease = store.acquire_lease(parent["attempt_id"], "resume-test", ttl_seconds=60)
+    events.clear_session(session_id)
+    events.bind_runtime(session_id, store, parent["attempt_id"], "resume-test", lease["fence_token"])
+    decision_key = "retry_provider_call:" + "u" * 64
+    store.record_unknown_call_decision(parent["attempt_id"], decision_key, "authorize_retry_once")
+
+    with pytest.raises(SnapshotValidationError, match="budget_is_not_compatible"):
+        _collect(policy.run_supervisor_streaming(str(tmp_path), {
+            **config,
+            "session_id": session_id,
+            "budget_config": {"max_cost_usd": 1.0},
+            "w1_supervisor_resume_snapshot_ref": reference.to_dict(),
+            "snapshot_source_attempt_id": parent["attempt_id"],
+            "w1_authorized_unknown_call_ids": ["wrong-call-id"],
+            "w1_authorized_unknown_decision_keys": ["retry_provider_call:wrong"],
+        }))
+
+    with pytest.raises(SnapshotValidationError, match="require_human_confirmation"):
+        _collect(policy.run_supervisor_streaming(str(tmp_path), {
+            **config,
+            "session_id": session_id,
+            "w1_supervisor_resume_snapshot_ref": reference.to_dict(),
+            "snapshot_source_attempt_id": parent["attempt_id"],
+            "w1_authorized_unknown_call_ids": ["wrong-call-id"],
+            "w1_authorized_unknown_decision_keys": ["retry_provider_call:wrong"],
+        }))
+    assert store.list_tool_calls(parent["attempt_id"])[0]["status"] == "unknown_outcome"
+    events.clear_session(session_id)
+
+
+def test_policy_snapshot_cancelled_source_beats_retry_authorization(tmp_path):
+    store, parent, config, intent, reference = _unknown_resume_reference(tmp_path)
+    session_id = "unknown-policy-cancelled"
+    lease = store.acquire_lease(parent["attempt_id"], "resume-test", ttl_seconds=60)
+    events.clear_session(session_id)
+    events.bind_runtime(session_id, store, parent["attempt_id"], "resume-test", lease["fence_token"])
+    decision_key = "retry_provider_call:" + "u" * 64
+    store.record_unknown_call_decision(parent["attempt_id"], decision_key, "authorize_retry_once")
+    store.set_attempt_status(
+        parent["attempt_id"], "cancelled", owner_id="resume-test", fence_token=lease["fence_token"],
+    )
+
+    with pytest.raises(SnapshotValidationError, match="resume_cancelled"):
+        _collect(policy.run_supervisor_streaming(str(tmp_path), {
+            **config,
+            "session_id": session_id,
+            "w1_supervisor_resume_snapshot_ref": reference.to_dict(),
+            "snapshot_source_attempt_id": parent["attempt_id"],
+            "w1_authorized_unknown_call_ids": [intent["tool_call_id"]],
+            "w1_authorized_unknown_decision_keys": [decision_key],
+        }))
+    assert store.list_tool_calls(parent["attempt_id"])[0]["status"] == "unknown_outcome"
+    events.clear_session(session_id)
 
 
 def test_span_rehydration_uses_project_staged_source_when_original_is_missing(tmp_path):

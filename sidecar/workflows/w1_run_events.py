@@ -29,6 +29,7 @@ _cancel_requested: set[str] = set()
 _token_ledger: dict[str, dict[str, int]] = {}
 _budget_ledgers: dict[str, "BudgetLedger"] = {}
 _runtime_bindings: dict[str, tuple[Any, str, str, int]] = {}
+_authorized_unknown_resumes: dict[str, "AuthorizedUnknownResume"] = {}
 _runtime_tool_call_lock = RLock()
 _cached_usage_lock = RLock()
 _accounted_cached_operations: dict[str, set[str]] = {}
@@ -81,6 +82,24 @@ class ProviderCallRequiresHumanConfirmation(RuntimeError):
     def __init__(self, idempotency_key: str):
         self.idempotency_key = idempotency_key
         super().__init__(f"requires_human_confirmation:unknown_outcome:{idempotency_key}")
+
+
+@dataclass(frozen=True)
+class AuthorizedUnknownResume:
+    """One immutable, durable approval set for a resumed provider boundary.
+
+    The approval remains consent only until ``record_authorized_retry_intent``
+    atomically replaces the unknown call with a retry intent.  Keeping this
+    reference out of snapshots prevents a renderer or checkpoint from
+    manufacturing a paid retry.
+    """
+
+    store: Any
+    attempt_id: str
+    owner_id: str
+    fence_token: int
+    tool_call_ids: frozenset[str]
+    decision_keys: dict[str, str]
 
 
 class CachedProviderResponse:
@@ -353,6 +372,7 @@ def clear_session(session_id: str) -> None:
     _token_ledger.pop(session_id, None)
     _budget_ledgers.pop(session_id, None)
     _runtime_bindings.pop(session_id, None)
+    _authorized_unknown_resumes.pop(session_id, None)
     _accounted_cached_operations.pop(session_id, None)
     _cancel_requested.discard(session_id)
     bound = dict(_compat_reservation_tokens.get())
@@ -420,6 +440,112 @@ def bind_runtime(session_id: str, store: Any, attempt_id: str, owner_id: str, fe
     """Mirror legacy activity into the durable runtime event stream."""
     ensure_session(session_id)
     _runtime_bindings[session_id] = (store, attempt_id, owner_id, fence_token)
+
+
+def configure_authorized_unknown_resume(
+    session_id: str,
+    *,
+    source_attempt_id: str,
+    tool_call_ids: list[str] | tuple[str, ...],
+    decision_keys: list[str] | tuple[str, ...],
+) -> None:
+    """Bind one strictly validated unknown-outcome retry set to a session.
+
+    This function does not consume a decision or create a provider intent.  It
+    merely pins the source attempt and its durable consent until the next
+    matching provider operation reaches its atomic pre-network boundary.
+    """
+    binding = _runtime_bindings.get(session_id)
+    if binding is None:
+        raise ValueError("unknown_retry_runtime_binding_missing")
+    store, active_attempt_id, owner_id, active_fence_token = binding
+    ids = [str(item) for item in tool_call_ids]
+    keys = [str(item) for item in decision_keys]
+    if (
+        not ids
+        or len(ids) != len(set(ids))
+        or len(keys) != len(ids)
+        or len(keys) != len(set(keys))
+    ):
+        raise ValueError("unknown_retry_authorization_shape_invalid")
+
+    summaries = store.list_unknown_call_summaries(source_attempt_id)
+    by_id = {str(item.get("tool_call_id")): item for item in summaries}
+    if set(ids) != set(by_id):
+        raise ValueError("unknown_retry_authorization_call_ids_mismatch")
+    expected_keys = {
+        call_id: str(summary.get("decision_key") or "")
+        for call_id, summary in by_id.items()
+    }
+    if len(expected_keys) != len(set(expected_keys.values())) or set(keys) != set(expected_keys.values()) or any(
+        summary.get("decision_state") != "authorize_retry_once"
+        for summary in by_id.values()
+    ):
+        raise ValueError("unknown_retry_authorization_not_durable")
+
+    if source_attempt_id == active_attempt_id:
+        source_fence_token = active_fence_token
+    else:
+        source_attempt = store.get_attempt(source_attempt_id) or {}
+        if source_attempt.get("status") == "cancelled":
+            raise ValueError("unknown_retry_source_attempt_cancelled")
+        # A stable source attempt has no active worker.  Lease it under the
+        # recovered worker so RuntimeStore can atomically consume the original
+        # authorization without allowing a child attempt to mutate parent data.
+        source_lease = store.acquire_lease(source_attempt_id, owner_id, ttl_seconds=60)
+        source_fence_token = int(source_lease["fence_token"])
+
+    _authorized_unknown_resumes[session_id] = AuthorizedUnknownResume(
+        store=store,
+        attempt_id=source_attempt_id,
+        owner_id=owner_id,
+        fence_token=int(source_fence_token),
+        tool_call_ids=frozenset(ids),
+        decision_keys=expected_keys,
+    )
+
+
+def _unknown_resume_binding(session_id: str) -> tuple[Any, str, str, int] | None:
+    configured = _authorized_unknown_resumes.get(session_id)
+    if configured is None:
+        return None
+    return (
+        configured.store,
+        configured.attempt_id,
+        configured.owner_id,
+        configured.fence_token,
+    )
+
+
+def _unknown_retry_is_authorized(
+    session_id: str,
+    attempt_id: str,
+    call: dict[str, Any],
+) -> bool:
+    configured = _authorized_unknown_resumes.get(session_id)
+    if configured is not None and configured.attempt_id == attempt_id:
+        call_id = str(call.get("tool_call_id") or "")
+        expected_key = configured.decision_keys.get(call_id)
+        return (
+            call_id in configured.tool_call_ids
+            and bool(expected_key)
+            and expected_key == _retry_decision_key(_unknown_call_key(attempt_id, call))
+            and _retry_is_authorized(configured.store, attempt_id, _unknown_call_key(attempt_id, call))
+        )
+    key = str(call.get("intent_payload", {}).get("idempotency_key", ""))
+    binding = _runtime_bindings.get(session_id)
+    return bool(binding and key and _retry_is_authorized(binding[0], attempt_id, key))
+
+
+def _unknown_bindings(session_id: str) -> list[tuple[Any, str, str, int]]:
+    binding = _runtime_bindings.get(session_id)
+    if binding is None:
+        return []
+    bindings = [binding]
+    source_binding = _unknown_resume_binding(session_id)
+    if source_binding is not None and source_binding[1] != binding[1]:
+        bindings.append(source_binding)
+    return bindings
 
 
 def provider_message_hash(messages: list[Any]) -> str:
@@ -695,21 +821,17 @@ def _block_for_unknown_call(
 
 def guard_pending_provider_unknown_outcomes(session_id: str) -> None:
     """Block cache and provider paths without consuming an unknown-call decision."""
-    binding = _runtime_bindings.get(session_id)
-    if binding is None:
-        return
-    store, attempt_id, owner_id, fence_token = binding
-    unknown_calls = [
-        call for call in store.list_tool_calls(attempt_id)
-        if call.get("status") == "unknown_outcome"
-    ]
-    for call in unknown_calls:
-        unknown_key = str(call.get("intent_payload", {}).get("idempotency_key", ""))
-        if unknown_key and _retry_is_authorized(store, attempt_id, unknown_key):
-            continue
-        _block_for_unknown_call(
-            session_id, store, attempt_id, owner_id, fence_token, call,
-        )
+    for store, attempt_id, owner_id, fence_token in _unknown_bindings(session_id):
+        unknown_calls = [
+            call for call in store.list_tool_calls(attempt_id)
+            if call.get("status") == "unknown_outcome"
+        ]
+        for call in unknown_calls:
+            if _unknown_retry_is_authorized(session_id, attempt_id, call):
+                continue
+            _block_for_unknown_call(
+                session_id, store, attempt_id, owner_id, fence_token, call,
+            )
 
 
 def reconcile_authorized_unknown_from_cache(
@@ -717,40 +839,30 @@ def reconcile_authorized_unknown_from_cache(
     artifact_receipt: dict[str, str],
 ) -> bool:
     """Consume only the authorized unknown exactly matched by a verified cache hit."""
-    binding = _runtime_bindings.get(session_id)
-    if binding is None:
+    bindings = _unknown_bindings(session_id)
+    if not bindings:
         return False
-    store, attempt_id, owner_id, fence_token = binding
     with _runtime_tool_call_lock:
-        unknown_calls = [
-            call for call in store.list_tool_calls(attempt_id)
-            if call.get("status") == "unknown_outcome"
-        ]
-        for call in unknown_calls:
-            key = str(call.get("intent_payload", {}).get("idempotency_key", ""))
-            if not key or not _retry_is_authorized(store, attempt_id, key):
-                _block_for_unknown_call(
-                    session_id, store, attempt_id, owner_id, fence_token, call,
-                )
-        matching = [
-            call for call in unknown_calls
-            if call.get("intent_payload", {}).get("model") == model
-            and call.get("intent_payload", {}).get("message_hash") == message_hash
-        ]
-        if not matching:
+        guard_pending_provider_unknown_outcomes(session_id)
+        matches: list[tuple[Any, str, str, int, dict[str, Any]]] = []
+        for store, attempt_id, owner_id, fence_token in bindings:
+            for call in store.list_tool_calls(attempt_id):
+                if (
+                    call.get("status") == "unknown_outcome"
+                    and call.get("intent_payload", {}).get("model") == model
+                    and call.get("intent_payload", {}).get("message_hash") == message_hash
+                ):
+                    matches.append((store, attempt_id, owner_id, fence_token, call))
+        if not matches:
             return False
-        if len(matching) != 1:
-            _block_for_unknown_call(
-                session_id, store, attempt_id, owner_id, fence_token, matching[0],
-            )
-        key = _unknown_call_key(attempt_id, matching[0])
+        if len(matches) != 1:
+            _store, attempt_id, owner_id, fence_token, call = matches[0]
+            _block_for_unknown_call(session_id, _store, attempt_id, owner_id, fence_token, call)
+        store, attempt_id, owner_id, fence_token, matching = matches[0]
+        key = _unknown_call_key(attempt_id, matching)
         store.resolve_authorized_unknown_with_artifact(
-            attempt_id,
-            matching[0]["tool_call_id"],
-            _retry_decision_key(key),
-            artifact_receipt,
-            owner_id=owner_id,
-            fence_token=fence_token,
+            attempt_id, matching["tool_call_id"], _retry_decision_key(key), artifact_receipt,
+            owner_id=owner_id, fence_token=fence_token,
         )
         clear_cancel_requested(session_id)
         return True
@@ -763,98 +875,95 @@ def restore_durable_provider_history(session_id: str) -> dict[str, int]:
     Reconcile its durable provider history before any downstream call so the
     human authorization and lifetime budget remain effective across restarts.
     """
-    binding = _runtime_bindings.get(session_id)
-    if binding is None:
+    bindings = _unknown_bindings(session_id)
+    if not bindings:
         return {"accounted": 0, "reconciled": 0}
-    store, attempt_id, _owner_id, _fence_token = binding
     accounted = 0
     reconciled = 0
-    for call in store.list_tool_calls(attempt_id):
-        if call.get("tool_name") != "provider.chat.completions":
-            continue
-        intent = call.get("intent_payload") or {}
-        model = str(intent.get("model") or "")
-        message_hash = str(intent.get("message_hash") or "")
-        if not model or not message_hash:
-            continue
+    for store, attempt_id, _owner_id, _fence_token in bindings:
+        for call in store.list_tool_calls(attempt_id):
+            if call.get("tool_name") != "provider.chat.completions":
+                continue
+            intent = call.get("intent_payload") or {}
+            model = str(intent.get("model") or "")
+            message_hash = str(intent.get("message_hash") or "")
+            if not model or not message_hash:
+                continue
 
-        status = call.get("status")
-        if status == "unknown_outcome":
-            key = str(intent.get("idempotency_key") or "")
-            if not key or not _retry_is_authorized(store, attempt_id, key):
-                continue
-            cached = _load_verified_provider_artifact(
-                session_id, model=model, message_hash=message_hash,
-            )
-            if cached is None:
-                continue
-            if reconcile_authorized_unknown_from_cache(
-                session_id,
-                model=model,
-                message_hash=message_hash,
-                artifact_receipt=cached.artifact_receipt,
-            ):
-                reconciled += 1
-            if not record_cached_call_usage_once(
-                session_id, cached.operation_key, cached.usage_metadata, model=model,
-            ):
-                reason = authoritative_usage_ledger(session_id, model).get(
-                    "budget_status", {}
-                ).get("reason", "budget_exhausted")
-                raise RuntimeError(
-                    f"budget_exhausted: durable provider response denied ({reason})"
+            status = call.get("status")
+            if status == "unknown_outcome":
+                if not _unknown_retry_is_authorized(session_id, attempt_id, call):
+                    continue
+                cached = _load_verified_provider_artifact(
+                    session_id, model=model, message_hash=message_hash,
                 )
-            accounted += 1
-            continue
+                if cached is None:
+                    continue
+                if reconcile_authorized_unknown_from_cache(
+                    session_id, model=model, message_hash=message_hash,
+                    artifact_receipt=cached.artifact_receipt,
+                ):
+                    reconciled += 1
+                if not record_cached_call_usage_once(
+                    session_id, cached.operation_key, cached.usage_metadata, model=model,
+                ):
+                    reason = authoritative_usage_ledger(session_id, model).get(
+                        "budget_status", {}
+                    ).get("reason", "budget_exhausted")
+                    raise RuntimeError(
+                        f"budget_exhausted: durable provider response denied ({reason})"
+                    )
+                accounted += 1
+                continue
 
-        if status == "retry_consumed":
+            if status == "retry_consumed":
+                result = call.get("result_payload") or {}
+                if result.get("outcome") != "resolved_from_verified_artifact":
+                    continue
+                cached = _load_verified_provider_artifact(
+                    session_id, model=model, message_hash=message_hash,
+                )
+                if cached is None:
+                    continue
+                if not record_cached_call_usage_once(
+                    session_id, cached.operation_key, cached.usage_metadata, model=model,
+                ):
+                    reason = authoritative_usage_ledger(session_id, model).get(
+                        "budget_status", {}
+                    ).get("reason", "budget_exhausted")
+                    raise RuntimeError(
+                        f"budget_exhausted: reconciled provider usage denied ({reason})"
+                    )
+                accounted += 1
+                continue
+
+            if status != "result":
+                continue
             result = call.get("result_payload") or {}
-            if result.get("outcome") != "resolved_from_verified_artifact":
-                continue
-            cached = _load_verified_provider_artifact(
-                session_id, model=model, message_hash=message_hash,
-            )
-            if cached is None:
+            receipt = result.get("artifact_receipt") or {}
+            operation_key = str(receipt.get("operation_key") or "")
+            if not re.fullmatch(r"[0-9a-f]{64}", operation_key):
+                operation_key = provider_operation_key(
+                    session_id, model=model, message_hash=message_hash,
+                ) or ""
+            if not operation_key:
                 continue
             if not record_cached_call_usage_once(
-                session_id, cached.operation_key, cached.usage_metadata, model=model,
+                session_id,
+                operation_key,
+                {
+                    "input_tokens": result.get("input_tokens"),
+                    "output_tokens": result.get("output_tokens"),
+                },
+                model=model,
             ):
                 reason = authoritative_usage_ledger(session_id, model).get(
                     "budget_status", {}
                 ).get("reason", "budget_exhausted")
                 raise RuntimeError(
-                    f"budget_exhausted: reconciled provider usage denied ({reason})"
+                    f"budget_exhausted: durable provider usage denied ({reason})"
                 )
             accounted += 1
-            continue
-
-        if status != "result":
-            continue
-        result = call.get("result_payload") or {}
-        receipt = result.get("artifact_receipt") or {}
-        operation_key = str(receipt.get("operation_key") or "")
-        if not re.fullmatch(r"[0-9a-f]{64}", operation_key):
-            operation_key = provider_operation_key(
-                session_id, model=model, message_hash=message_hash,
-            ) or ""
-        if not operation_key:
-            continue
-        if not record_cached_call_usage_once(
-            session_id,
-            operation_key,
-            {
-                "input_tokens": result.get("input_tokens"),
-                "output_tokens": result.get("output_tokens"),
-            },
-            model=model,
-        ):
-            reason = authoritative_usage_ledger(session_id, model).get(
-                "budget_status", {}
-            ).get("reason", "budget_exhausted")
-            raise RuntimeError(
-                f"budget_exhausted: durable provider usage denied ({reason})"
-            )
-        accounted += 1
     if reconciled:
         append_event(session_id, {
             "phase": "recovery",
@@ -886,24 +995,52 @@ def begin_provider_call(
 
     store, attempt_id, owner_id, fence_token = binding
     with _runtime_tool_call_lock:
-        existing_calls = store.list_tool_calls(attempt_id)
-        unknown_calls = [call for call in existing_calls if call.get("status") == "unknown_outcome"]
-        for call in unknown_calls:
-            unknown_key = str(call.get("intent_payload", {}).get("idempotency_key", ""))
-            if not unknown_key or not _retry_is_authorized(store, attempt_id, unknown_key):
-                _block_for_unknown_call(
-                    session_id, store, attempt_id, owner_id, fence_token, call,
+        # Budget reservation and cancellation are checked by the caller before
+        # this point.  Only after those checks do we atomically consume the
+        # exact durable approval which matches this provider input.
+        guard_pending_provider_unknown_outcomes(session_id)
+        matching_authorized: list[dict[str, Any]] = []
+        retry_binding: tuple[Any, str, str, int] | None = None
+        pending_authorized: list[tuple[Any, str, str, int, dict[str, Any]]] = []
+        for candidate_binding in _unknown_bindings(session_id):
+            candidate_store, candidate_attempt_id, candidate_owner_id, candidate_fence_token = candidate_binding
+            candidate_unknown = [
+                call for call in candidate_store.list_tool_calls(candidate_attempt_id)
+                if call.get("status") == "unknown_outcome"
+            ]
+            pending_authorized.extend(
+                (candidate_store, candidate_attempt_id, candidate_owner_id, candidate_fence_token, call)
+                for call in candidate_unknown
+            )
+            matches = [
+                item for item in candidate_unknown
+                if item.get("intent_payload", {}).get("message_hash") == message_hash
+                and item.get("intent_payload", {}).get("model") == model
+                and _unknown_retry_is_authorized(session_id, candidate_attempt_id, item)
+            ]
+            if matches:
+                matching_authorized.extend(matches)
+                retry_binding = (
+                    candidate_store, candidate_attempt_id,
+                    candidate_owner_id, candidate_fence_token,
                 )
 
-        matching_authorized = [
-            item for item in unknown_calls
-            if item.get("intent_payload", {}).get("message_hash") == message_hash
-            and item.get("intent_payload", {}).get("model") == model
-        ]
-        if unknown_calls and len(matching_authorized) != 1:
+        if pending_authorized and not matching_authorized:
+            blocked_store, blocked_attempt_id, blocked_owner_id, blocked_fence_token, blocked_call = pending_authorized[0]
             _block_for_unknown_call(
-                session_id, store, attempt_id, owner_id, fence_token, unknown_calls[0],
+                session_id, blocked_store, blocked_attempt_id,
+                blocked_owner_id, blocked_fence_token, blocked_call,
             )
+        if len(matching_authorized) > 1 or (
+            matching_authorized and retry_binding is None
+        ):
+            call = matching_authorized[0]
+            _block_for_unknown_call(session_id, store, attempt_id, owner_id, fence_token, call)
+        if matching_authorized:
+            store, attempt_id, owner_id, fence_token = retry_binding  # type: ignore[misc]
+            store.heartbeat_lease(attempt_id, owner_id, fence_token, ttl_seconds=60)
+
+        existing_calls = store.list_tool_calls(attempt_id)
 
         sequence = len(existing_calls) + 1
         idempotency_key = hashlib.sha256(

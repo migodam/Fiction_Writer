@@ -49,6 +49,7 @@ from sidecar.supervisor.organizer import OrganizerInput, organize_project_conten
 from sidecar.supervisor.pipeline_tools import repair_import_artifacts
 from sidecar.supervisor.timeline_density import enforce_timeline_density
 from sidecar.supervisor.tool_registry import build_tool_registry
+from sidecar.runtime.agent_runtime import LeaseLostError
 from sidecar.workflows.w1_import import (
     _build_supervisor_evidence_cards,
     _chunk_progress,
@@ -59,7 +60,12 @@ from sidecar.workflows.w1_import import (
     node_split_chunks,
     node_validate_file,
 )
-from sidecar.workflows.w1_run_events import append_event, cancel_requested
+from sidecar.workflows.w1_run_events import (
+    append_event,
+    cancel_requested,
+    configure_authorized_unknown_resume,
+    restore_durable_provider_history,
+)
 
 
 # ── Gate thresholds ─────────────────────────────────────────────────────────────
@@ -1806,15 +1812,64 @@ async def run_supervisor_streaming(
             raise SnapshotValidationError("snapshot_attempt_provenance_mismatch")
         runtime_store = config.get("runtime_store")
         current_attempt_id = str(config.get("attempt_id") or "")
-        actual_unknown = []
-        if runtime_store is not None and current_attempt_id:
-            actual_unknown = [str(item.get("tool_call_id")) for item in runtime_store.list_unknown_call_summaries(current_attempt_id)]
-        if sorted(actual_unknown) != sorted(str(item) for item in snapshot.get("unknown_tool_call_ids", [])):
-            raise SnapshotValidationError("snapshot_unknown_tool_calls_mismatch")
-        if actual_unknown:
-            raise SnapshotValidationError("snapshot_unknown_tool_calls_require_human_confirmation")
+        snapshot_attempt_id = str(snapshot.get("attempt_id") or "")
+        if _cancel_requested(state):
+            raise SnapshotValidationError("snapshot_resume_cancelled")
+        if runtime_store is not None:
+            for attempt_id in {current_attempt_id, snapshot_attempt_id} - {""}:
+                attempt = runtime_store.get_attempt(attempt_id) or {}
+                if attempt.get("status") == "cancelled":
+                    raise SnapshotValidationError("snapshot_resume_cancelled")
+        # A hard budget rejection always wins over a paid retry authorization.
+        # The provider layer then performs its own reservation immediately
+        # before network I/O, so a race cannot consume consent after a cap is hit.
         if not _resume_budget_is_compatible(config, snapshot):
             raise SnapshotValidationError("snapshot_budget_is_not_compatible")
+        declared_unknown = sorted(str(item) for item in snapshot.get("unknown_tool_call_ids", []))
+        actual_unknown: list[str] = []
+        if runtime_store is not None and snapshot_attempt_id:
+            summaries = runtime_store.list_unknown_call_summaries(snapshot_attempt_id)
+            actual_unknown = sorted(str(item.get("tool_call_id") or "") for item in summaries)
+            if actual_unknown != declared_unknown:
+                raise SnapshotValidationError("snapshot_unknown_tool_calls_mismatch")
+            if actual_unknown:
+                authorized_ids = [
+                    str(item) for item in config.get("w1_authorized_unknown_call_ids", [])
+                ] if isinstance(config.get("w1_authorized_unknown_call_ids"), (list, tuple)) else []
+                authorized_keys = [
+                    str(item) for item in config.get("w1_authorized_unknown_decision_keys", [])
+                ] if isinstance(config.get("w1_authorized_unknown_decision_keys"), (list, tuple)) else []
+                if (
+                    sorted(authorized_ids) != actual_unknown
+                    or len(authorized_ids) != len(set(authorized_ids))
+                    or len(authorized_keys) != len(authorized_ids)
+                    or len(authorized_keys) != len(set(authorized_keys))
+                ):
+                    raise SnapshotValidationError("snapshot_unknown_tool_calls_require_human_confirmation")
+                expected_keys = sorted(str(item.get("decision_key") or "") for item in summaries)
+                if len(expected_keys) != len(set(expected_keys)) or sorted(authorized_keys) != expected_keys or any(
+                    item.get("decision_state") != "authorize_retry_once"
+                    for item in summaries
+                ):
+                    raise SnapshotValidationError("snapshot_unknown_tool_calls_require_human_confirmation")
+                if not session_id:
+                    raise SnapshotValidationError("snapshot_unknown_tool_calls_runtime_binding_missing")
+                try:
+                    configure_authorized_unknown_resume(
+                        session_id,
+                        source_attempt_id=snapshot_attempt_id,
+                        tool_call_ids=authorized_ids,
+                        decision_keys=authorized_keys,
+                    )
+                    # A receipt may have reached durable storage just before
+                    # the old worker lost power. Reuse it before scheduling a
+                    # replacement call; no authorization is spent on network
+                    # I/O unless the verified cache is absent.
+                    restore_durable_provider_history(session_id)
+                except (LeaseLostError, ValueError) as exc:
+                    raise SnapshotValidationError("snapshot_unknown_tool_calls_authorization_invalid") from exc
+        elif declared_unknown:
+            raise SnapshotValidationError("snapshot_unknown_tool_calls_runtime_binding_missing")
         state = _restore_snapshot_state(state, loaded["state"])
         source_for_rebuild = Path(str(config.get("source_file_path") or ""))
         if not source_for_rebuild.is_file():
