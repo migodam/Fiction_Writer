@@ -110,9 +110,9 @@ Before any legacy paid recovery is resumed, the user must explicitly choose the 
 | Area | Latest evidence in this wave | Result / interpretation |
 | --- | --- | --- |
 | W1 snapshot/resume | Final snapshot worker reported `869 passed` W1 tests | Pass for typed snapshot, source span, full operation equivalence, and stable-label leak cases |
-| Runtime, adapter, and budget | Budget worker reported `926 passed` for runtime/W1 set; live-runner worker later reported W1 `874 passed`, runtime/adapter `85 passed` | Different targeted collections, not one additive full-suite total |
+| Runtime, W1, adapter, and budget | Post-merge main integration run: `929 passed` | One combined collection: `tests/test_w1_*.py`, `tests/test_agent_runtime.py`, and `tests/test_runtime_api.py` |
 | Latest focused review set | `123` / `101` reported by final review streams | Focused hardening gates passed; retain command logs for exact selection |
-| Browser tests | Earlier complete P0/P1 run reported `281/282`; focused post-fix suite reported `46 passed` | One UI regression was repaired; **complete browser suite must be rerun by the main integration flow** |
+| Browser tests | Post-merge full P0/P1 run: `282/282 passed` with `--retries=0` | Includes package acceptance/compiler, Recovery, Import budget, World, Timeline, right-click, Graph drag, and Undo |
 | Electron | `npm run electron:smoke` passed | Real preload/main/sidecar Runtime recovery, fork reference, SSE replay, and shutdown cleanup covered |
 | UI static checks | `npm run ui:lint` and `npm run ui:build` passed in worker handoffs | Build retains existing bundle-size warning |
 | Canary watchdog | W1 `874 passed`, runtime/adapter `85 passed`, no external request during repair | False-stall and cleanup cases covered; no paid-success claim |
@@ -128,9 +128,9 @@ Before any legacy paid recovery is resumed, the user must explicitly choose the 
 
 ### Still open
 
-1. Run the full P0/P1 Playwright collection after the last UI changes; the focused `46` pass is not a substitute for a complete rerun.
-2. Run the fresh-project Flash 10-chapter canary with the stated limits, stop at proposal gate, then review source spans, semantic coverage, costs, and artifacts before any broader run.
-3. Make an explicit human decision for the legacy unknown provider call: retry exactly once or cancel. Do not start it implicitly.
+1. Make an explicit human decision for the first canary's unknown provider outcome before issuing another paid request.
+2. After authorization, run the repaired fresh-project Flash 10-chapter canary with the remaining cumulative budget, stop at proposal gate, then review source spans, semantic coverage, costs, and artifacts.
+3. Do not run 50 chapters or Pro until that canary has a successful artifact and the reviewer gate accepts it.
 4. Perform a headed Electron user-project package-acceptance/reviewer-quarantine replay. The deterministic Electron smoke covers bridge/recovery, not every native dialog behavior.
 5. The UI bundle-size warning and legacy `src/core`/V3 test debt remain P2/non-active-stack work.
 

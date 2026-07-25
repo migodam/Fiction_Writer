@@ -33,6 +33,18 @@ has not yet produced a successful artifact in this reporting window. Do not
 reuse historical reports to claim it completed. The legacy unknown provider
 outcome remains an explicit user cancel/retry decision.
 
+Post-merge integration verification:
+
+- `tests/test_w1_*.py tests/test_agent_runtime.py tests/test_runtime_api.py`:
+  `929 passed`.
+- Full Playwright P0/P1 with `--retries=0`: `282 passed`.
+- `npm run ui:lint` and `npm run ui:build`: passed; the existing bundle-size
+  warning remains.
+- `npm run electron:smoke`: passed with real Runtime recovery discovery, fork
+  `state_reference.snapshot_ref`, SSE cursor replay, and process/stream cleanup.
+- Remote divergence was resolved with a regular merge commit; no reset, rebase,
+  or force push was used.
+
 ## Documentation-only checks
 
 - `git diff --check`: to be run by the integration owner after this docs commit.
