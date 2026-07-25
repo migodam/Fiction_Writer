@@ -402,6 +402,16 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
     ) || w1RuntimeStatus?.converge_status === "budget_exhausted";
   const budgetCap = Number(w1BudgetPolicy.max_cost_usd ?? 0);
   const actualCost = w1TokenLedger?.cost_usd;
+  const budgetSummary = w1TokenLedger
+    ? [
+        `${formatTokens(w1TokenLedger.actual_total_tokens ?? 0)} ${t("import.tokens", "tokens")}`,
+        `${w1TokenLedger.api_call_count ?? 0} ${t("import.calls", "calls")}`,
+        actualCost != null ? `$${actualCost.toFixed(4)}` : null,
+        `$${budgetCap.toFixed(2)} ${t("import.hardCap", "hard cap")}`,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : `$${budgetCap.toFixed(2)} ${t("import.hardCap", "hard cap")}`;
   const isProposalGate = w1Status === "awaiting_acceptance";
   const activeStage = importStageFor(
     w1RuntimeStatus?.orchestrator_phase || w1CurrentStep || w1Status,
@@ -449,11 +459,7 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
           <RuntimeField
             testId="w1-import-budget"
             label={t("import.budget", "Budget")}
-            value={
-              actualCost != null
-                ? `$${actualCost.toFixed(4)} / $${budgetCap.toFixed(2)}`
-                : `$${budgetCap.toFixed(2)} ${t("import.hardCap", "hard cap")}`
-            }
+            value={budgetSummary}
           />
         </div>
 

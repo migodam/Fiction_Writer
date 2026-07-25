@@ -59,7 +59,7 @@ test('world folders are projected once from stable parent IDs', async ({ page })
   ] })));
   await page.getByTestId('activity-btn-world').click();
   await expect(page.getByTestId('world-container-notebook-root')).toHaveCount(1);
-  await page.getByTestId('world-container-notebook-root').click();
+  await page.getByTestId('world-notebook-select').selectOption('notebook-root');
   await expect(page.getByTestId('world-folder-notebook-folder')).toHaveCount(1);
   await expect(page.getByTestId('world-folder-notebook-folder')).toHaveText('Cities');
 });
