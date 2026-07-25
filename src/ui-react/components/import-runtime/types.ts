@@ -86,6 +86,26 @@ export interface RuntimeCheckpointCapability {
   snapshotRef?: RuntimeSnapshotRef;
 }
 
+/**
+ * The server returns a fork's proof inside its immutable state reference.
+ * Keep this separate from checkpoint metadata: a child attempt must never be
+ * considered resumable based on an unscoped top-level flag or reference.
+ */
+export interface RuntimeForkStateReference {
+  kind?: 'w1_supervisor_snapshot/v1' | string;
+  immutable?: boolean;
+  resumable?: boolean;
+  snapshot_ref?: RuntimeSnapshotRef | Record<string, unknown> | string;
+  [key: string]: unknown;
+}
+
+export interface RuntimeForkSnapshot {
+  resumable?: boolean;
+  non_resumable_reason?: string;
+  state_reference?: RuntimeForkStateReference | Record<string, unknown> | string;
+  [key: string]: unknown;
+}
+
 const runtimeObject = (value: unknown): Record<string, unknown> | undefined => {
   if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
   if (typeof value !== 'string') return undefined;
@@ -126,6 +146,21 @@ export const verifiedRuntimeSnapshotRef = (value: unknown): RuntimeSnapshotRef |
     if (!SNAPSHOT_HASH.test(String(reference[field] ?? ''))) return undefined;
   }
   return reference as RuntimeSnapshotRef;
+};
+
+/** Only the API's state_reference envelope is proof that a fork can resume. */
+export const verifiedRuntimeForkSnapshotRef = (value: unknown): RuntimeSnapshotRef | undefined => {
+  const fork = runtimeObject(value);
+  const stateReference = runtimeObject(fork?.state_reference);
+  if (
+    !fork
+    || fork.resumable !== true
+    || !stateReference
+    || stateReference.kind !== 'w1_supervisor_snapshot/v1'
+    || stateReference.immutable !== true
+    || stateReference.resumable !== true
+  ) return undefined;
+  return verifiedRuntimeSnapshotRef(stateReference.snapshot_ref);
 };
 
 /**

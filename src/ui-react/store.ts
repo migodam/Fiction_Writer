@@ -58,7 +58,7 @@ import { appSettingsService, defaultAppSettings } from './services/appSettingsSe
 import * as metadataService from './services/metadataService';
 import { electronApi } from './services/electronApi';
 import type { RuntimeForkResult, W1CustomProfileConfig, W1OrchestratorOverrides, W1PromptProfile } from './services/electronApi';
-import { verifiedRuntimeSnapshotRef, type RuntimeCheckpoint, type RuntimeEvent, type RuntimeRun, type RuntimeUnknownCall, type RuntimeUnknownCallDecision } from './components/import-runtime/types';
+import { verifiedRuntimeForkSnapshotRef, type RuntimeCheckpoint, type RuntimeEvent, type RuntimeRun, type RuntimeUnknownCall, type RuntimeUnknownCallDecision } from './components/import-runtime/types';
 
 const UI_SETTINGS_KEY = 'narrative-ide-ui-settings';
 const W1_POLL_INTERVAL_MS = 3000;
@@ -2301,8 +2301,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const result: RuntimeForkResult = await electronApi.runtimeFork(projectRoot, w1RuntimeAttemptId, checkpointId, decisionId).catch(() => ({ error: 'runtime_fork_failed', parent_attempt_id: w1RuntimeAttemptId }));
     const forkedAttemptId = result.attempt?.attempt_id;
     const snapshot = result.fork_snapshot ?? result.attempt?.fork_snapshot;
-    const childIsResumable = snapshot?.resumable === true
-      && verifiedRuntimeSnapshotRef(snapshot?.snapshot_ref) !== undefined;
+    const childIsResumable = verifiedRuntimeForkSnapshotRef(snapshot) !== undefined;
     if (!forkedAttemptId || !childIsResumable || result.error || result.attempt?.status === 'error') {
       const errorText = typeof result.error === 'string' ? result.error : '';
       set({

@@ -21,7 +21,22 @@ test('recovery discovery is attempt-scoped, dedupes reconnect events, and forks 
       if (channel === 'runtime:checkpoints') return { checkpoints: [{ checkpoint_id: 'checkpoint-1', sequence: 1, label: 'After source scan', metadata: { resumable: true, snapshot_ref: snapshotRef('checkpoint-1') } }] };
       if (channel.startsWith('runtime:') && ['runtime:resume', 'runtime:fork', 'runtime:pause', 'runtime:cancel'].includes(channel)) state.actionPayloads.push({ channel, payload });
       if (channel === 'runtime:resume') { state.resumeCalls += 1; return { attempt_id: 'attempt-2', status: 'running' }; }
-      if (channel === 'runtime:fork') { state.forkCalls += 1; return { attempt: { attempt_id: 'attempt-fork', status: 'running' }, parent_attempt_id: 'attempt-2', fork_snapshot: { resumable: true } }; }
+      if (channel === 'runtime:fork') {
+        state.forkCalls += 1;
+        return {
+          attempt: { attempt_id: 'attempt-fork', status: 'paused' },
+          parent_attempt_id: 'attempt-2',
+          fork_snapshot: {
+            resumable: true,
+            state_reference: {
+              kind: 'w1_supervisor_snapshot/v1',
+              immutable: true,
+              resumable: true,
+              snapshot_ref: snapshotRef('checkpoint-1'),
+            },
+          },
+        };
+      }
       if (channel === 'runtime:pause') { state.pauseCalls += 1; return { attempt_id: 'attempt-1', status: 'paused' }; }
       if (channel === 'runtime:cancel') { state.cancelCalls += 1; return { attempt_id: 'attempt-1', status: 'cancelled' }; }
       return {};
@@ -56,6 +71,10 @@ test('recovery discovery is attempt-scoped, dedupes reconnect events, and forks 
   await expect.poll(() => page.evaluate(() => (window as any).__recoveryState.actionPayloads.find((entry: any) => entry.channel === 'runtime:fork'))).toMatchObject({
     channel: 'runtime:fork',
     payload: { attempt_id: 'attempt-2', checkpoint_id: 'checkpoint-1', decision_id: 'fork:attempt-2:checkpoint-1' },
+  });
+  await page.getByTestId('w1-runtime-pause').click();
+  await expect.poll(() => page.evaluate(() => (window as any).__recoveryState.actionPayloads.filter((entry: any) => entry.channel === 'runtime:pause').at(-1))).toMatchObject({
+    payload: { attempt_id: 'attempt-fork' },
   });
 });
 

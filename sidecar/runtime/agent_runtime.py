@@ -485,6 +485,11 @@ class RuntimeStore:
                         or snapshot.get("checkpoint_id") != checkpoint_id
                     ):
                         non_resumable_reason = "fork_snapshot_provenance_mismatch"
+                    elif snapshot.get("parent_checkpoint_id") != checkpoint["parent_checkpoint_id"]:
+                        # The immutable snapshot and runtime graph describe the
+                        # same boundary.  A valid hash alone is insufficient if
+                        # its predecessor was substituted.
+                        non_resumable_reason = "fork_snapshot_parent_checkpoint_mismatch"
                     elif actual_unknown != declared_unknown:
                         non_resumable_reason = "fork_snapshot_unknown_tool_calls_mismatch"
                     elif actual_unknown:

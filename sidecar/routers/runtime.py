@@ -98,17 +98,42 @@ def _validate_resume_snapshot(store: Any, attempt: dict[str, Any], config: dict[
     snapshot = loaded["snapshot"]
     if snapshot.get("attempt_id") != source_attempt_id:
         raise ValueError("fork_snapshot_provenance_mismatch")
+    checkpoint_id = str(snapshot.get("checkpoint_id") or "")
+    source_checkpoint = next(
+        (
+            item for item in store.list_checkpoint_metadata(source_attempt_id)
+            if item.get("checkpoint_id") == checkpoint_id
+        ),
+        None,
+    )
+    if source_checkpoint is None or source_checkpoint.get("parent_checkpoint_id") != snapshot.get("parent_checkpoint_id"):
+        raise ValueError("fork_snapshot_parent_checkpoint_mismatch")
+    fork = store.get_fork_snapshot(attempt["attempt_id"])
+    if isinstance(fork, dict) and (
+        fork.get("source_checkpoint_id") != checkpoint_id
+        or fork.get("checkpoint_parent_id") != snapshot.get("parent_checkpoint_id")
+    ):
+        raise ValueError("fork_snapshot_parent_checkpoint_mismatch")
     # A fork owns no inherited tool calls. The immutable source attempt owns
     # the provider outcomes that produced the snapshot and must be clean too.
-    actual_unknown = sorted(
-        str(item.get("tool_call_id"))
-        for item in store.list_unknown_call_summaries(source_attempt_id)
-    )
+    unknown_summaries = store.list_unknown_call_summaries(source_attempt_id)
+    actual_unknown = sorted(str(item.get("tool_call_id")) for item in unknown_summaries)
     declared_unknown = sorted(str(item) for item in snapshot.get("unknown_tool_call_ids", []))
     if actual_unknown != declared_unknown:
         raise ValueError("fork_snapshot_unknown_tool_calls_mismatch")
-    if actual_unknown:
+    pending_unknown = [
+        item for item in unknown_summaries
+        if item.get("decision_state") != "authorize_retry_once"
+    ]
+    if pending_unknown:
         raise ValueError("fork_snapshot_unknown_tool_calls_present")
+    if unknown_summaries:
+        # Authorizing a retry records consent only. The fenced provider runtime
+        # consumes it atomically immediately before a replacement call.
+        config["w1_authorized_unknown_call_ids"] = actual_unknown
+        config["w1_authorized_unknown_decision_keys"] = sorted(
+            str(item.get("decision_key")) for item in unknown_summaries
+        )
     if not _snapshot_artifact_refs_are_valid(store.project_root, snapshot):
         raise ValueError("fork_snapshot_artifact_reference_invalid")
     budget = snapshot.get("budget_snapshot") if isinstance(snapshot.get("budget_snapshot"), dict) else {}
