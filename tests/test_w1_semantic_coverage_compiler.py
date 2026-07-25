@@ -178,6 +178,16 @@ def test_scene_event_world_linkage_rejects_unknown_world_target():
     assert "event_world_link_missing_target" in _codes(report, "blocking_findings")
 
 
+def test_major_character_background_stays_blocked_when_evidence_cannot_support_it():
+    payload = _clean_input()
+    character = next(item for item in payload["candidates"] if item["candidate_id"] == "char_han")
+    character["fields"]["background"] = ""
+
+    report = compile_semantic_coverage(payload)
+
+    assert "major_character_missing_background" in _codes(report, "blocking_findings")
+
+
 def test_input_hash_is_order_independent_and_finds_missing_major_character_evidence():
     payload = _clean_input()
     payload["candidates"][0]["evidence_refs"] = []

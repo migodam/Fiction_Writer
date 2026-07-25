@@ -1787,6 +1787,71 @@ def test_node_write_to_project_proposes_chapter_and_content_scene(tmp_path, monk
     assert scene_op["depends_on"] == ["chap_3"]
 
 
+def test_node_write_to_project_links_scene_and_event_only_with_shared_source_chunk(tmp_path, monkeypatch):
+    captured_ops = []
+
+    async def fake_propose_write(op, _project_path):
+        captured_ops.append(op)
+        return {"id": f"p_{op['entity_id']}", "confidence": op["confidence"], "status": "pending"}
+
+    monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", fake_propose_write)
+    state = _make_write_state(
+        tmp_path,
+        manuscript_chapters=[{
+            "chapter_id": "chap_1", "scene_id": "scene_1", "title": "第一章",
+            "chunk_ids": [0], "manuscript_content": "正文",
+        }],
+        entity_registry={
+            "characters": {},
+            "events": {
+                "event_1": {
+                    "title": "入门测试", "description": "", "confidence": 0.9,
+                    "branchId": "branch_main", "orderIndex": 0, "chunk_id": 0,
+                },
+            },
+            "world": {}, "world_detailed": {},
+        },
+    )
+
+    asyncio.run(w1_import.node_write_to_project(state))
+
+    event_op = next(op for op in captured_ops if op["entity_type"] == "timeline_event")
+    scene_op = next(op for op in captured_ops if op["entity_type"] == "scene")
+    assert event_op["data"]["linkedSceneIds"] == ["scene_1"]
+    assert event_op["data"]["sceneLinkEvidence"] == {"scene_1": "shared_source_chunk"}
+    assert scene_op["data"]["linkedEventIds"] == ["event_1"]
+    assert scene_op["data"]["eventLinkEvidence"] == {"event_1": "shared_source_chunk"}
+
+
+def test_node_write_to_project_does_not_link_scene_event_without_durable_provenance(tmp_path, monkeypatch):
+    captured_ops = []
+
+    async def fake_propose_write(op, _project_path):
+        captured_ops.append(op)
+        return {"id": f"p_{op['entity_id']}", "confidence": op["confidence"], "status": "pending"}
+
+    monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", fake_propose_write)
+    state = _make_write_state(
+        tmp_path,
+        manuscript_chapters=[{
+            "chapter_id": "chap_1", "scene_id": "scene_1", "title": "第一章",
+            "manuscript_content": "正文",
+        }],
+        entity_registry={
+            "characters": {},
+            "events": {"event_1": {"title": "入门测试", "description": "", "confidence": 0.9, "branchId": "branch_main", "orderIndex": 0}},
+            "world": {}, "world_detailed": {},
+        },
+    )
+
+    asyncio.run(w1_import.node_write_to_project(state))
+
+    event_op = next(op for op in captured_ops if op["entity_type"] == "timeline_event")
+    scene_op = next(op for op in captured_ops if op["entity_type"] == "scene")
+    assert event_op["data"]["linkedSceneIds"] == []
+    assert scene_op["data"]["linkedEventIds"] == []
+
+
 def test_node_write_to_project_world_containers_before_items_and_skips_people(tmp_path, monkeypatch):
     captured_ops = []
 

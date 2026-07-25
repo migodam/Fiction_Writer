@@ -156,6 +156,74 @@ def test_missing_legacy_truth_fails_closed_with_migration_status(tmp_path: Path)
     assert "chunk_not_semantically_complete" in {item["code"] for item in report["blocking_findings"]}
 
 
+def test_supervisor_domain_receipts_replace_absent_legacy_chunk_extractions(tmp_path: Path) -> None:
+    state = _state(tmp_path, None)
+    state["use_supervisor"] = True
+    state["supervisor_semantic_receipts"] = [{
+        "chunk_id": 0,
+        "window_id": "pwin_1",
+        "domain_status": {
+            "characters": "complete", "events": "complete", "world": "complete",
+            "relationships": "complete", "scenes": "complete",
+        },
+        "completion_evidence": {"contract": "w1-supervisor-window-receipt/v1", "failed_prompts": []},
+    }]
+
+    report = asyncio.run(w1_import.node_review_import(state))["semantic_coverage_report"]
+
+    assert report["verdict"] == "pass"
+    assert report["migration_status"] == "current"
+    assert not {item["code"] for item in report["blocking_findings"] if item["code"].startswith("chunk_")}
+
+
+def test_supervisor_failed_domain_receipt_remains_blocked(tmp_path: Path) -> None:
+    state = _state(tmp_path, None)
+    state["use_supervisor"] = True
+    state["supervisor_semantic_receipts"] = [{
+        "chunk_id": 0,
+        "window_id": "pwin_1",
+        "domain_status": {
+            "characters": "complete", "events": "complete", "world": "complete",
+            "relationships": "failed", "scenes": "complete",
+        },
+        "completion_evidence": {"contract": "w1-supervisor-window-receipt/v1", "failed_prompts": ["relationship:timeout"]},
+    }]
+
+    report = asyncio.run(w1_import.node_review_import(state))["semantic_coverage_report"]
+
+    assert report["verdict"] == "blocked"
+    assert "chunk_domain_failed" in {item["code"] for item in report["blocking_findings"]}
+
+
+def test_slim_supervisor_write_input_rebuilds_chunk_coverage_from_receipts(tmp_path: Path) -> None:
+    state = _state(tmp_path, None)
+    state["chunks"] = []
+    state["manuscript_chapters"] = [{"chapter_id": "chapter_1", "chunk_ids": [0], "title": "Outline"}]
+    state["supervisor_semantic_receipts"] = [{
+        "chunk_id": 0,
+        "domain_status": {
+            "characters": "complete", "events": "complete", "world": "complete",
+            "relationships": "complete", "scenes": "complete",
+        },
+        "completion_evidence": {"contract": "w1-supervisor-window-receipt/v1", "failed_prompts": []},
+    }]
+
+    records, migration_status = w1_import._semantic_chunk_records(state)
+
+    assert migration_status == "current"
+    assert records == [
+        {
+            "chunk_id": 0, "chapter_ids": ["chapter_1"], "semantic_status": "semantic_complete",
+            "domain_status": {
+                "characters": "complete", "events": "complete", "world": "complete",
+                "relationships": "complete", "scenes": "complete",
+            },
+            "failure_refs": [], "candidate_ids": [],
+            "completion_evidence": {"contract": "w1-supervisor-window-receipt/v1", "failed_prompts": []},
+        }
+    ]
+
+
 def test_manifest_chapter_count_without_durable_chunk_chapter_ids_blocks(tmp_path: Path) -> None:
     state = _state(tmp_path, _complete())
     state["import_run_manifest"]["chapter_count"] = 2

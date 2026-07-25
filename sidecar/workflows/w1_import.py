@@ -5252,6 +5252,10 @@ def _semantic_chunk_records(state: ImportState | dict) -> tuple[list[dict[str, A
     chunks = [item for item in state.get("chunks", []) if isinstance(item, dict)]
     extractions = [item for item in state.get("chunk_extractions", []) if isinstance(item, dict)]
     by_chunk_id = {item.get("chunk_id"): item for item in extractions if isinstance(item.get("chunk_id"), int)}
+    supervisor_receipt_items = [
+        item for item in state.get("supervisor_semantic_receipts", []) or []
+        if isinstance(item, dict) and item.get("chunk_id") is not None
+    ]
     chapter_ids_by_chunk: dict[Any, list[str]] = {}
     for chapter in state.get("manuscript_chapters", []) or []:
         if not isinstance(chapter, dict) or not chapter.get("chapter_id"):
@@ -5260,10 +5264,24 @@ def _semantic_chunk_records(state: ImportState | dict) -> tuple[list[dict[str, A
             chapter_ids_by_chunk.setdefault(chunk_id, []).append(str(chapter["chapter_id"]))
     if not chunks:
         chunks = [{"chunk_id": item.get("chunk_id"), "chapter_hint": item.get("chapter_hint", "")} for item in extractions]
+    if not chunks and supervisor_receipt_items:
+        # Slim supervisor write input deliberately omits full chunk bodies. The
+        # receipt IDs plus manuscript chapter->chunk mappings are enough for
+        # semantic coverage and do not reintroduce source text into the gate.
+        chunks = [{"chunk_id": item["chunk_id"]} for item in supervisor_receipt_items]
     if not chunks and state.get("import_run_id"):
         # A historical import with no durable chunk receipts is never assumed
         # complete merely because a later stage happened to have empty data.
         chunks = [{"chunk_id": 0, "chapter_hint": "legacy"}]
+
+    # Product supervisor runs do not materialize legacy ``chunk_extractions``.
+    # Their durable result is a per-window, per-domain receipt created after all
+    # five domain calls finish.  Do not translate an absent receipt into
+    # success: it remains unknown exactly like a legacy import with no receipt.
+    supervisor_receipts = {
+        str(item.get("chunk_id")): item
+        for item in supervisor_receipt_items
+    }
     records: list[dict[str, Any]] = []
     missing_truth = False
     for index, chunk in enumerate(chunks):
@@ -5275,6 +5293,27 @@ def _semantic_chunk_records(state: ImportState | dict) -> tuple[list[dict[str, A
         if not chapter_ids:
             chapter_ids = sorted(set(chapter_ids_by_chunk.get(chunk_id, [])))
         if extraction is None:
+            supervisor_receipt = supervisor_receipts.get(str(chunk_id))
+            if isinstance(supervisor_receipt, dict):
+                raw_domains = supervisor_receipt.get("domain_status") or supervisor_receipt.get("domainStatus") or {}
+                domain_status = {
+                    domain: str(raw_domains.get(domain) or "unknown").strip().lower()
+                    for domain in w1_truth.SEMANTIC_DOMAINS
+                }
+                has_failed_domain = any(status == "failed" for status in domain_status.values())
+                has_unknown_domain = any(status not in {"complete", "not_applicable"} for status in domain_status.values())
+                records.append({
+                    "chunk_id": chunk_id,
+                    "chapter_ids": chapter_ids,
+                    "semantic_status": "failed" if has_failed_domain else "unknown_outcome" if has_unknown_domain else "semantic_complete",
+                    "domain_status": domain_status,
+                    "failure_refs": list((supervisor_receipt.get("completion_evidence") or {}).get("failed_prompts") or []),
+                    "candidate_ids": [],
+                    "completion_evidence": dict(supervisor_receipt.get("completion_evidence") or {}),
+                })
+                if has_unknown_domain:
+                    missing_truth = True
+                continue
             missing_truth = True
             records.append({
                 "chunk_id": chunk_id,
@@ -5309,6 +5348,94 @@ def _semantic_chunk_records(state: ImportState | dict) -> tuple[list[dict[str, A
             "candidate_ids": [],
         })
     return records, "legacy_truth_migration_required" if missing_truth else "current"
+
+
+def _source_span_overlap(left: Any, right: Any) -> bool:
+    """Return True only for verifiable overlap in the same raw source."""
+    if not isinstance(left, dict) or not isinstance(right, dict):
+        return False
+    if not left.get("raw_source_hash") or left.get("raw_source_hash") != right.get("raw_source_hash"):
+        return False
+    try:
+        return max(int(left["absolute_start"]), int(right["absolute_start"])) < min(int(left["absolute_end"]), int(right["absolute_end"]))
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def _provenance_values(entry: dict, *keys: str) -> set[str]:
+    values: set[str] = set()
+    for key in keys:
+        value = entry.get(key)
+        if isinstance(value, (list, tuple, set)):
+            values.update(str(item) for item in value if str(item))
+        elif value is not None and str(value):
+            values.add(str(value))
+    return values
+
+
+def _link_scene_events_from_provenance(state: ImportState | dict) -> dict[str, Any]:
+    """Link staged scenes/events only when durable provenance establishes it.
+
+    Source-span overlap is strongest, followed by a shared evidence receipt and
+    finally an exact shared source chunk.  This creates reviewer-visible links
+    without guessing from titles, names, or adjacency.
+    """
+    registry = state.get("entity_registry") if isinstance(state.get("entity_registry"), dict) else {}
+    events = {
+        str(event_id): dict(event)
+        for event_id, event in (registry.get("events", {}) or {}).items()
+        if isinstance(event, dict)
+    }
+    chapters = [dict(chapter) for chapter in state.get("manuscript_chapters", []) or [] if isinstance(chapter, dict)]
+    if not events or not chapters:
+        return {"entity_registry": {**registry, "events": events}, "manuscript_chapters": chapters}
+
+    scenes: list[dict[str, Any]] = []
+    for index, chapter in enumerate(chapters):
+        chapter_id = str(chapter.get("chapter_id") or "")
+        scene_id = str(chapter.get("scene_id") or f"scene_from_chapter_{index}")
+        scenes.append({
+            "scene_id": scene_id,
+            "chapter": chapter,
+            "span": chapter.get("source_span") or chapter.get("sourceSpan"),
+            "evidence": _provenance_values(chapter, "evidence_refs", "evidenceRefs"),
+            "chunks": _provenance_values(chapter, "chunk_ids", "source_chunk_ids", "chunk_id", "source_chunk_id"),
+            "chapter_id": chapter_id,
+        })
+
+    for event_id, event in events.items():
+        existing = _provenance_values(event, "linkedSceneIds", "linked_scene_ids")
+        event_span = event.get("source_span") or event.get("sourceSpan")
+        event_evidence = _provenance_values(event, "evidence_refs", "evidenceRefs")
+        event_chunks = _provenance_values(event, "source_chunk_ids", "chunk_ids", "chunk_id", "source_chunk_id")
+        matched: list[tuple[str, str]] = []
+        for scene in scenes:
+            reason = ""
+            if _source_span_overlap(event_span, scene["span"]):
+                reason = "source_span_overlap"
+            elif event_evidence and scene["evidence"] and event_evidence.intersection(scene["evidence"]):
+                reason = "shared_evidence_ref"
+            elif event_chunks and scene["chunks"] and event_chunks.intersection(scene["chunks"]):
+                reason = "shared_source_chunk"
+            if reason:
+                matched.append((scene["scene_id"], reason))
+        if not matched:
+            continue
+        evidence = dict(event.get("sceneLinkEvidence") or {})
+        for scene_id, reason in matched:
+            existing.add(scene_id)
+            evidence.setdefault(scene_id, reason)
+            scene = next(scene for scene in scenes if scene["scene_id"] == scene_id)
+            chapter = scene["chapter"]
+            reverse = _provenance_values(chapter, "linkedEventIds", "linked_event_ids")
+            reverse.add(event_id)
+            chapter["linkedEventIds"] = sorted(reverse)
+            reverse_evidence = dict(chapter.get("eventLinkEvidence") or {})
+            reverse_evidence.setdefault(event_id, reason)
+            chapter["eventLinkEvidence"] = reverse_evidence
+        event["linkedSceneIds"] = sorted(existing)
+        event["sceneLinkEvidence"] = evidence
+    return {"entity_registry": {**registry, "events": events}, "manuscript_chapters": chapters}
 
 
 def _semantic_coverage_input(state: ImportState | dict) -> tuple[dict[str, Any], str]:
@@ -5481,6 +5608,7 @@ async def node_review_import(state: ImportState) -> dict:
     # Review the same deterministic entity set that proposal staging will write.
     finalized_state = {**state, **_finalize_registry_for_proposal_staging(state)}
     finalized_state = {**finalized_state, **_finalize_supervisor_evidence_bindings(finalized_state)}
+    finalized_state = {**finalized_state, **_link_scene_events_from_provenance(finalized_state)}
     registry = finalized_state.get("entity_registry", {})
     reducer = state.get("reducer_artifact", {})
     timeline = state.get("timeline_architecture", {})
@@ -5595,6 +5723,7 @@ async def node_review_import(state: ImportState) -> dict:
     return {
         "entity_registry": registry,
         "relationships": finalized_state.get("relationships", []),
+        "manuscript_chapters": finalized_state.get("manuscript_chapters", []),
         "evidence_cards": finalized_state.get("evidence_cards", state.get("evidence_cards", [])),
         "import_review_report": report,
         "semantic_coverage_report": semantic_coverage,
@@ -5787,6 +5916,7 @@ async def node_write_to_project(state: ImportState) -> dict:
         original_registry.update(finalized_staging["entity_registry"])
         finalized_staging["entity_registry"] = original_registry
     state = {**state, **finalized_staging}
+    state = {**state, **_link_scene_events_from_provenance(state)}
     project_path = Path(state["project_path"])
     import_run_id = str(state.get("import_run_id", "") or "")
     semantic_coverage = _load_or_compile_semantic_coverage(state)
@@ -6132,6 +6262,7 @@ async def node_write_to_project(state: ImportState) -> dict:
                 "participantCharacterIds": entry.get("participantCharacterIds")
                     or [character_id_map.get(cid, cid) for cid in entry.get("character_ids", [])],
                 "linkedSceneIds": entry.get("linkedSceneIds", []),
+                "sceneLinkEvidence": entry.get("sceneLinkEvidence", {}),
                 "linkedWorldItemIds": entry.get("linkedWorldItemIds", []),
                 "tags": entry.get("tags", ["imported"]),
                 "time": entry.get("temporal_hint", ""),
@@ -6456,7 +6587,8 @@ async def node_write_to_project(state: ImportState) -> dict:
                 "orderIndex": 0,
                 "povCharacterId": None,
                 "linkedCharacterIds": [],
-                "linkedEventIds": [],
+                "linkedEventIds": list(mc.get("linkedEventIds", [])),
+                "eventLinkEvidence": dict(mc.get("eventLinkEvidence", {})),
                 "linkedWorldItemIds": [],
                 "status": "draft",
                 "notes": chapter_info["notes"],

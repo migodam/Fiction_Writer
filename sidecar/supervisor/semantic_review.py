@@ -69,6 +69,7 @@ _TITLE_TOKENS = (
 _STRONG_ORG_DESCRIPTION = ("门派", "宗门", "帮派", "组织", "势力", "议事机构", "长老组成", "公会", "分堂")
 _STRONG_LOCATION_DESCRIPTION = ("地点", "建筑", "位于", "坐落", "入口", "山谷", "山峰", "占据", "通道", "大殿")
 _PERSON_OR_RELATIONSHIP_PHRASES = ("夫人", "表姐夫", "表姐", "妻子", "丈夫", "岳父", "岳母")
+_PERSON_APPELLATION_SUFFIXES = ("父", "母", "兄", "弟", "姐", "妹", "叔", "伯", "婶", "姑", "爷", "奶")
 
 
 def normalize_candidate_name(value: Any) -> str:
@@ -162,7 +163,10 @@ def assess_world_candidate(
     # A relation-bearing appellation without a stable person identity is not
     # durable World lore.  Keep it for the reviewer instead of inventing a
     # concept node that can later be accepted as canonical data.
-    if any(token in normalized for token in _PERSON_OR_RELATIONSHIP_PHRASES):
+    if (
+        any(token in normalized for token in _PERSON_OR_RELATIONSHIP_PHRASES)
+        or (len(normalized) >= 2 and normalized.endswith(_PERSON_APPELLATION_SUFFIXES))
+    ):
         ledger["candidate_kind"] = "unknown"
         ledger["status"] = "quarantined"
         ledger["reason_codes"] = ["person_or_relationship_phrase"]

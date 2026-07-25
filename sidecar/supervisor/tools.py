@@ -2130,6 +2130,43 @@ async def proposal_write(state: ImportSupervisorState) -> dict:
         merged.get("entity_registry", {})
     )
 
+    # The supervisor owns five domain calls per prompt window, rather than the
+    # legacy ``chunk_extractions`` list. Preserve a compact, domain-level
+    # receipt for the semantic gate before releasing prompt windows/metrics.
+    # A receipt is emitted only for calls that actually completed; an absent or
+    # failed window remains unknown/failed at the W1 boundary.
+    supervisor_semantic_receipts: list[dict[str, Any]] = []
+    metrics_by_window = state.get("window_metrics", {})
+    for window in state.get("prompt_windows", []):
+        if not isinstance(window, dict):
+            continue
+        window_id = str(window.get("id") or "")
+        metrics = metrics_by_window.get(window_id) if isinstance(metrics_by_window, dict) else None
+        if not isinstance(metrics, dict):
+            continue
+        failed_labels = {
+            str(item).split(":", 1)[0].strip()
+            for item in metrics.get("failed_prompts", [])
+            if str(item).strip()
+        }
+        for chunk_id in window.get("chunk_ids", []) or []:
+            supervisor_semantic_receipts.append({
+                "chunk_id": chunk_id,
+                "window_id": window_id,
+                "domain_status": {
+                    "characters": "failed" if "character" in failed_labels else "complete",
+                    "events": "failed" if "event" in failed_labels else "complete",
+                    "world": "failed" if "world" in failed_labels else "complete",
+                    "relationships": "failed" if "relationship" in failed_labels else "complete",
+                    "scenes": "failed" if "scene" in failed_labels else "complete",
+                },
+                "completion_evidence": {
+                    "contract": "w1-supervisor-window-receipt/v1",
+                    "failed_prompts": sorted(failed_labels),
+                    "window_gate_passed": bool(metrics.get("gate_passed")),
+                },
+            })
+
     # Build a slim write_input — only the keys node_write_to_project actually reads.
     # Evict everything else (timeline_architecture, prompt_windows, supervisor_decisions,
     # window_metrics, chunks, cross_validation) so GC can reclaim their pages
@@ -2140,7 +2177,9 @@ async def proposal_write(state: ImportSupervisorState) -> dict:
         "import_review_report", "import_mode", "source_language", "relationships",
         "character_tags", "world_settings", "world_containers",
         "workflow_id", "context", "errors", "checkpoint_path",
+        "supervisor_semantic_receipts",
     })
+    merged["supervisor_semantic_receipts"] = supervisor_semantic_receipts
     write_input = {k: merged[k] for k in _WRITE_KEYS if k in merged}
     del merged
 

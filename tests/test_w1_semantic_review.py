@@ -106,6 +106,16 @@ def test_organizer_holds_relation_bearing_appellation_for_human_review():
     assert output["quarantine_items"][0]["reason_codes"] == ["person_or_relationship_phrase"]
 
 
+def test_organizer_quarantines_kinship_appellation_instead_of_routing_it_as_organization():
+    output = organize_project_content(_input(world_candidates={
+        "韩父": {"id": "world_han_father", "category": "organization", "confidence": 0.98},
+    }))
+
+    assert output["world_items"] == []
+    assert output["quarantine_items"][0]["raw_name"] == "韩父"
+    assert output["quarantine_items"][0]["reason_codes"] == ["person_or_relationship_phrase"]
+
+
 def test_organizer_routes_described_branch_hall_as_a_location():
     output = organize_project_content(_input(world_candidates={
         "七玄门分堂": {"id": "world_branch", "category": "location", "confidence": 0.7, "description": "各个堂口占据彩霞山大小山峰。"},
