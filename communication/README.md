@@ -1,6 +1,6 @@
 # Narrative IDE Communication Index
 
-Last updated: 2026-07-25
+Last updated: 2026-07-26
 Owner: Codex / W4 QA + Communication Merge
 
 This folder is the evidence and handoff layer for Narrative IDE work. It is not the canonical product source of truth. When docs conflict, use `dev_docs/README.md` to identify the winning canonical document, then use the files here as reports, prompt packages, QA evidence, and historical context.
@@ -9,7 +9,7 @@ This folder is the evidence and handoff layer for Narrative IDE work. It is not 
 
 | Status | File | Why it matters |
 |---|---|---|
-| **Canonical current Harness gate** | `2026-07-25-agent-runtime-harness-reviewer-ready-report.md` | Durable Runtime, recovery/Time Travel, hard budgets, body-free snapshots, package safety, first-canary stall repair, exact remaining user decision, and reviewer gate. |
+| **Canonical current Harness gate** | `2026-07-25-agent-runtime-harness-reviewer-ready-report.md` | Durable Runtime, recovery/Time Travel, hard budgets, paid Flash canary ledger, deterministic replay package, and reviewer gate. |
 | Current World/Harness closeout | `2026-07-25-world-model-harness-reviewer-redesign-report.md` | Notebook/folder UI, concrete narrative links, semantic reviewer/mover, benchmark reconciliation, Agent Dock, tests, and residual gates. |
 | Current Harness research | `2026-07-25-agent-harness-open-source-architecture-research.md` | Public Claude Code/Codex and OneNote architecture references, limits, and the adopted runtime design. |
 | W1 package compiler repair | `2026-07-25-claude-code-harness-and-package-compiler-report.md` | Official Claude Code public-Harness research, package graph v2 root cause/fix, and Import Text 18 acceptance evidence. |
@@ -27,13 +27,14 @@ This folder is the evidence and handoff layer for Narrative IDE work. It is not 
 | Live smoke / hard fail | `2026-06-06-w1-live-smoke-runner-and-hardfail-report.md` | Direct 10-chapter runner, hard-fail guard, and timeout/token-ledger evidence. |
 | Deep diagnostic flow | `2026-06-06-w1-deep-diagnostic-multiagent-flow.md` | Investigation-first multi-agent workflow that led to the next-wave plan. |
 
-## Current Verdict (2026-07-25)
+## Current Verdict (2026-07-26)
 
 - The canonical current report is `2026-07-25-agent-runtime-harness-reviewer-ready-report.md`.
-- Runtime, W1 resume, budget, proposal-gate, package graph, World hierarchy, command/Undo, and Electron recovery hardening have current targeted evidence. The branch is not yet a paid-canary success story.
-- The first fresh Flash canary stalled because the old runner bypassed durable RuntimeStore/Harness activity. The repaired runner now persists leases, intents, heartbeats, cleanup, and human-gated unknown outcomes. No successful fresh paid artifact is claimed here.
-- A separate legacy Import Text 18 paid-recovery attempt has an unknown provider boundary. It remains a user decision: cancel or authorize one exact retry. It must not be retried automatically.
-- Focused post-fix Playwright passed; the complete P0/P1 browser suite must be rerun by the main integration flow. Electron runtime recovery/fork/SSE smoke passed.
+- The authorized 10-chapter `deepseek-v4-flash` canary completed 22 calls for `$0.034208`, below the cumulative `$3` ceiling. No unknown provider outcome remains in this canary.
+- The initial package was correctly blocked by Harness contract defects. After those fixes, a zero-provider-call deterministic replay staged 74 pending proposals with an atomic graph, zero dangling references, and every diagnostic symptom flag false.
+- Canonical counts remain zero. Workbench review is still required for 6 unproven scene/event links and 12 thin character cards before package acceptance.
+- Current Python integration evidence is `984 passed`; the prior unchanged UI gate remains `282/282` Playwright plus passing UI lint/build and Electron smoke.
+- Pro and 50-chapter testing remain on hold until one reviewed package is accepted in a copied project and survives restart persistence.
 - Existing reports remain provenance. Items marked `merged-retained` are not deleted; use their rollup/current report rather than treating every historical conclusion as live truth.
 
 ## Status Labels

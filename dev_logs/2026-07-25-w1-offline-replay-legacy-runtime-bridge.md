@@ -59,6 +59,11 @@ Date: 2026-07-25
   lineage_6a5a451c45289c50e681f9d8 --attempt-id replay_99b38a49c8d4
   --fail-on-threshold --format json` exited 0. Every diagnostic symptom flag
   is false.
+- Independent combined regression:
+  `sidecar/.venv/bin/python -m pytest -q tests/test_w1_*.py
+  tests/test_agent_runtime.py tests/test_runtime_api.py
+  tests/test_harness_workflow_adapters.py` completed with `984 passed in
+  13.09s`.
 
 ## Remaining Review Notes
 

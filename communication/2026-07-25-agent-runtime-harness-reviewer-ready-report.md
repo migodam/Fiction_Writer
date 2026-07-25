@@ -1,9 +1,9 @@
 # Agent Runtime and Harness Reviewer-Ready Report
 
 **Date:** 2026-07-25
-**Branch:** `codex/agent-runtime-resilience` at `9d17691`
+**Code baseline:** `codex/agent-runtime-resilience` at `3716e92`
 **Scope:** W1 import, durable agent runtime, Time Travel, package safety, Agent Dock, and product interaction hardening.
-**Status:** implementation and zero-cost gates are ready for reviewer inspection; the fresh paid Flash canary is **not yet a success result**.
+**Status:** the authorized 10-chapter Flash canary completed within budget, and a zero-provider-call deterministic replay produced an atomic reviewer-ready pending package. No canonical project data was accepted.
 
 ## Executive Summary
 
@@ -11,7 +11,9 @@ The W1 failure pattern was not one bug. The import path had several authorities 
 
 This wave gives the product a durable control plane. Every W1 execution now has a lineage, a unique attempt, a lease/fencing token, durable events, tool-call receipts, a bounded budget, and a proposal gate. Recovery and Time Travel create child attempts instead of editing history. Canonical project data remains unchanged until a complete compiled package is explicitly accepted.
 
-The first fresh-canary runner stalled because it bypassed the durable RuntimeStore and watched only graph yields while waiting for a provider boundary. It is **not defensible to call that run successful or to claim a completed provider result**. The repaired runner now persists intent and activity, releases locks, and turns cancellation during provider I/O into a human-gated `unknown_outcome`.
+The first fresh-canary runner stalled because it bypassed the durable RuntimeStore and watched only graph yields while waiting for a provider boundary. The repaired runner now binds workflow and runtime identities, persists intent and activity, releases locks, and fails the run when the quality gate fails instead of reporting a false completion.
+
+The authorized retry then completed 22 provider calls for `$0.034208`. Its raw extraction artifacts were complete, but the proposal gate correctly rejected the first package because supervisor completion receipts, runtime/artifact identities, scene/event evidence, World relocation, and relationship ontology were inconsistent. Those Harness contracts were repaired, and the verified response artifacts were replayed without another provider call. The resulting package has 74 pending proposals, zero blocking diagnostics, and zero canonical writes.
 
 ## Root Causes and Repairs
 
@@ -86,36 +88,54 @@ flowchart TD
 - Timeline, World, and graph movement use an `UndoTransaction`: capture before state at pointer-down, commit final position once at pointer-up, cancel on Esc, and undo exactly one user action with Meta/Ctrl+Z.
 - Graph drag now waits for a ready React Flow surface and commits authoritative final coordinates on drag-stop; repeat testing reported 10/10 stable moves.
 
-## Paid Canary: Honest Status
+## Paid Canary And Deterministic Replay
 
-### What happened
+### Paid execution
 
-The earlier Import Text 18 paid-resume evidence includes a real interrupted attempt with five durable results and one unresolved provider boundary. That boundary remains an explicit human decision; it must not be retried automatically.
+- Project: `/tmp/narrative_ide_w1_flash_canary_retry_authorized_20260725/20260725_073831/project`
+- Model: `deepseek-v4-flash`
+- Scope: first 10 chapters
+- Provider calls: `22`
+- Input/output tokens: `136,162` / `54,090`
+- Total tokens: `190,252`
+- Actual cost: `$0.034208`, below the cumulative `$3` ceiling
+- Unknown outcomes: `0`
+- Source verification: 10 continuous spans covering offsets `0..20,949`; source hash and every substring hash match
 
-The first fresh Flash canary runner later stalled at extraction because it directly called the workflow without RuntimeStore/Harness binding and only measured graph yields. It left no durable proof that a provider call completed. It therefore cannot be used as a quality, cost, or successful-import result.
+The provider run reached the graph terminal node, but its initial package did not pass the semantic gate. This was a Harness failure, not a missing provider result: per-domain completion evidence was lost, runtime and artifact identities diverged, some scene/event links lacked proof, `韩父` was misrouted into World, and raw relationship labels bypassed the ontology. The proposal gate blocked the package, so no bad data reached canonical storage.
 
-### What changed before the next canary
+### Harness repair and replay
 
-- New runner uses a durable run/attempt/lease/budget and the supervisor/Harness observer.
-- Provider wait heartbeats are durable; a genuine quiet stream still stops, but a live provider wait is not falsely classified as idle.
-- Cancellation cleans the workflow lock, lease, active intent, and writes a safe final summary. A call interrupted during I/O becomes `unknown_outcome` and waits for a user decision.
-- The next allowed run is limited to a **fresh project**, first 10 chapters, `deepseek-v4-flash`, `$3`, 100 calls, 1800 seconds, and proposal gate only. It must not accept canonical data.
+- The runner now supplies real runtime lineage/attempt identity to W1 and reports `review_failed` when the terminal quality probe fails.
+- Supervisor completion receipts preserve exact window/domain evidence and fail closed when evidence is absent.
+- A strict legacy identity bridge verifies one matching RuntimeStore run, exact model/source/usage, 22 result calls, 22 response hashes, and 3 windows x 5 domain start/success pairs.
+- Scene/event links require overlapping source spans or shared evidence; shared chunk membership alone is insufficient.
+- World relocation moved `韩父` into evidence-backed character proposals and removed the contaminated World candidate.
+- Relationship output is normalized to the Chinese allowlist; action/descriptive labels are demoted to evidence or notes.
+- The package compiler uses one atomic dependency graph and replaces stale pending proposals only for the same lineage after backup.
 
-### Current decision required
+### Final staged result
 
-Before any legacy paid recovery is resumed, the user must explicitly choose the recorded unknown provider call's one-time retry or cancellation. That decision is intentionally not inferred by an agent. A new fresh-project canary is separately allowed by the zero-cost gate, but it has not yet produced a final successful artifact in this reporting window.
+- Replay attempt: `replay_99b38a49c8d4`
+- Provider calls during replay: `0`
+- Pending proposals: `74`
+- Proposal breakdown: 19 characters, 1 timeline branch, 5 timeline events, 7 World containers, 12 World items, 10 relationships, 10 chapters, and 10 scenes
+- Package graph: `w1-package-graph-v2`, atomic, 134 resolved edges, no blocking errors, no dangling references
+- Diagnostics: every symptom flag is false
+- Canonical counts: all zero; the package remains at the human proposal gate
+- Review-only warnings: 6 scene/event links lack sufficient evidence for automatic linking; 12 character cards remain thin
 
 ## Verification Matrix
 
 | Area | Latest evidence in this wave | Result / interpretation |
 | --- | --- | --- |
 | W1 snapshot/resume | Final snapshot worker reported `869 passed` W1 tests | Pass for typed snapshot, source span, full operation equivalence, and stable-label leak cases |
-| Runtime, W1, adapter, and budget | Post-merge main integration run: `929 passed` | One combined collection: `tests/test_w1_*.py`, `tests/test_agent_runtime.py`, and `tests/test_runtime_api.py` |
+| Runtime, W1, adapter, and replay | Current combined integration run: `984 passed` in `13.09s` | `tests/test_w1_*.py`, `tests/test_agent_runtime.py`, `tests/test_runtime_api.py`, and `tests/test_harness_workflow_adapters.py` |
 | Latest focused review set | `123` / `101` reported by final review streams | Focused hardening gates passed; retain command logs for exact selection |
 | Browser tests | Post-merge full P0/P1 run: `282/282 passed` with `--retries=0` | Includes package acceptance/compiler, Recovery, Import budget, World, Timeline, right-click, Graph drag, and Undo |
 | Electron | `npm run electron:smoke` passed | Real preload/main/sidecar Runtime recovery, fork reference, SSE replay, and shutdown cleanup covered |
 | UI static checks | `npm run ui:lint` and `npm run ui:build` passed in worker handoffs | Build retains existing bundle-size warning |
-| Canary watchdog | W1 `874 passed`, runtime/adapter `85 passed`, no external request during repair | False-stall and cleanup cases covered; no paid-success claim |
+| Paid canary and replay | 22 calls, `$0.034208`; replay made zero provider calls | Ten source spans verified; 74-proposal atomic package staged; all diagnostics false |
 | Full repository pytest | Earlier bounded run: `986 passed`, `11 failed`, `7 errors` | Remaining failures are legacy/reference `src/core`/V3 tests and missing `tests/api_key.txt`; they are not silently waived |
 
 ## Reviewer Gate and Residual Risks
@@ -124,19 +144,19 @@ Before any legacy paid recovery is resumed, the user must explicitly choose the 
 
 - Durable snapshot, resume, fork, fence, source-provenance, exact retry authorization, package graph, budget, and Electron bridge behavior have targeted automated evidence.
 - W1 import remains proposal-gated and package acceptance remains explicit, package-scoped, and transactional.
-- The original Import Text 18 attempt is not used as a clean canary benchmark because it includes legacy/interrupted history.
+- The fresh 10-chapter Flash extraction and its deterministic replay are suitable for Workbench proposal review. They are not evidence that all 74 proposals should be accepted without human inspection.
 
 ### Still open
 
-1. Make an explicit human decision for the first canary's unknown provider outcome before issuing another paid request.
-2. After authorization, run the repaired fresh-project Flash 10-chapter canary with the remaining cumulative budget, stop at proposal gate, then review source spans, semantic coverage, costs, and artifacts.
-3. Do not run 50 chapters or Pro until that canary has a successful artifact and the reviewer gate accepts it.
-4. Perform a headed Electron user-project package-acceptance/reviewer-quarantine replay. The deterministic Electron smoke covers bridge/recovery, not every native dialog behavior.
-5. The UI bundle-size warning and legacy `src/core`/V3 test debt remain P2/non-active-stack work.
+1. Review the 74 pending proposals in Workbench. Resolve the 6 unproven scene/event links and inspect the 12 thin character cards before package acceptance.
+2. Perform a headed Electron acceptance/reviewer-quarantine replay on a copied project before accepting the original package.
+3. Do not run 50 chapters or Pro yet. First close the human review warnings and prove one package-scoped acceptance plus restart persistence.
+4. The UI bundle-size warning and legacy `src/core`/V3 test debt remain P2/non-active-stack work.
 
 ## Related Evidence
 
 - [Stall root cause and repaired runner](../dev_logs/2026-07-25-w1-live-canary-harness-stall-fix.md)
+- [Verified legacy identity bridge and final offline replay](../dev_logs/2026-07-25-w1-offline-replay-legacy-runtime-bridge.md)
 - [Resume budget guard](../dev_logs/2026-07-25-runtime-resume-budget-guard.md)
 - [Original paid-resume evidence](../dev_logs/2026-07-15-import-text18-paid-resume.md)
 - [Package compiler and acceptance repair](2026-07-25-claude-code-harness-and-package-compiler-report.md)
