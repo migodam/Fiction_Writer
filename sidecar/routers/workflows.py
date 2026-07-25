@@ -16,6 +16,10 @@ from typing import Any, List, Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from sidecar.runtime.w1_budget_policy import (
+    W1BudgetPolicyError,
+    normalize_w1_budget_policy,
+)
 from sidecar.utils.lock import acquire_lock, release_lock, WorkflowBusyError
 
 router = APIRouter()
@@ -97,16 +101,25 @@ async def resume_w1_attempt(
         "prompt_profile": config.get("profile", config.get("prompt_profile", context.get("prompt_profile", "balanced"))),
         "compatibility_mode": bool(config.get("compatibility_mode", False)),
     })
-    budget_policy = dict(config.get("budget_config") or config.get("budget_policy") or context.get("budget_policy") or {})
-    # A historical run may predate persisted W1 budgets. Recovery must still
-    # fail closed rather than resume with an unbounded provider ledger.
-    if not budget_policy:
-        budget_policy = _normalize_w1_budget_policy(str(config.get("model") or context.get("model") or ""), None)
+    raw_budget_policy = (
+        config.get("budget_config")
+        or config.get("budget_policy")
+        or context.get("budget_policy")
+        or {}
+    )
+    # Defense in depth: direct callers and historical runs must pass through
+    # the same complete server envelope even when their policy is non-empty.
+    budget_policy = normalize_w1_budget_policy(
+        str(config.get("model") or context.get("model") or ""),
+        raw_budget_policy,
+        persisted_legacy=True,
+    )
     context["budget_policy"] = budget_policy
     config.update({
         "project_path": project_path,
         "source_file_path": source_file_path,
         "prompt_profile": config.get("profile", config.get("prompt_profile", "balanced")),
+        "budget_config": budget_policy,
         "budget_policy": budget_policy,
         "context": context,
         "session_id": attempt_id,
@@ -289,42 +302,13 @@ async def w3_status() -> W3StatusResponse:
 
 # ── W1 Import models ──────────────────────────────────────────────────────────
 
-_W1_BUDGET_DEFAULTS = {
-    "max_calls": 100,
-    "max_input_tokens": 3_000_000,
-    "max_output_tokens": 500_000,
-    "max_total_tokens": 3_500_000,
-    "fail_on_unknown_pricing": True,
-    "fail_on_missing_usage": True,
-}
-
-
-def _w1_budget_cost_cap(model: str) -> float:
-    """Return the server-owned maximum spend for one interactive W1 attempt."""
-    return 8.0 if "deepseek-v4-pro" in (model or "").lower() else 3.0
-
-
 def _normalize_w1_budget_policy(model: str, requested: "W1BudgetPolicyRequest | None") -> dict[str, Any]:
-    """Fill every safety limit and reject values outside the server-owned envelope."""
+    """Validate the public request against the shared server-owned envelope."""
     values = requested.model_dump(exclude_none=True) if requested is not None else {}
-    max_cost_usd = float(values.get("max_cost_usd", _w1_budget_cost_cap(model)))
-    if max_cost_usd > _w1_budget_cost_cap(model):
-        raise HTTPException(status_code=422, detail="budget_max_cost_exceeds_model_cap")
-
-    effective = {
-        "max_cost_usd": max_cost_usd,
-        **_W1_BUDGET_DEFAULTS,
-    }
-    for name in ("max_calls", "max_input_tokens", "max_output_tokens", "max_total_tokens"):
-        if name in values:
-            requested_value = int(values[name])
-            if requested_value > _W1_BUDGET_DEFAULTS[name]:
-                raise HTTPException(status_code=422, detail=f"budget_{name}_exceeds_server_cap")
-            effective[name] = requested_value
-    for name in ("fail_on_unknown_pricing", "fail_on_missing_usage"):
-        if values.get(name) is False:
-            raise HTTPException(status_code=422, detail=f"budget_{name}_must_be_true")
-    return effective
+    try:
+        return normalize_w1_budget_policy(model, values)
+    except W1BudgetPolicyError as exc:
+        raise HTTPException(status_code=422, detail=exc.code) from exc
 
 
 class W1BudgetPolicyRequest(BaseModel):

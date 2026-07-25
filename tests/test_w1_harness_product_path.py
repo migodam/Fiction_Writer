@@ -107,6 +107,56 @@ def test_product_start_rejects_unbounded_or_invalid_budget_requests(tmp_path):
     assert pro.json()["budget_policy"]["max_calls"] == 12
 
 
+def test_direct_workflow_resume_normalizes_nonempty_legacy_pro_budget(tmp_path, monkeypatch):
+    from sidecar.routers import workflows
+
+    source = tmp_path / "novel.txt"
+    source.write_text("Chapter 1\nFixture", encoding="utf-8")
+    store = RuntimeStore(tmp_path)
+    run = store.create_run(workflow_id="W1", config={
+        "project_path": str(tmp_path),
+        "source_file_path": str(source),
+        "model": "deepseek-v4-pro",
+        "budget_config": {
+            "max_cost_usd": 99.0,
+            "max_calls": 999,
+            "fail_on_missing_usage": False,
+        },
+    })
+    attempt_id = store.create_attempt(run["run_id"])["attempt_id"]
+
+    async def fake_run(_session_id: str, _config: dict) -> None:
+        return None
+
+    monkeypatch.setattr(workflows, "_run_w1", fake_run)
+
+    async def resume_and_capture() -> dict:
+        await workflows.resume_w1_attempt(
+            attempt_id=attempt_id,
+            runtime_store=store,
+            runtime_owner_id="budget-test",
+            api_key="sk-transient",
+            persisted_config=run["config"],
+        )
+        await asyncio.sleep(0)
+        return workflows._w1_sessions[attempt_id]["config"]
+
+    config = asyncio.run(resume_and_capture())
+    workflows._w1_sessions.pop(attempt_id, None)
+    workflows._w1_tasks.pop(attempt_id, None)
+
+    assert config["budget_policy"] == {
+        "max_cost_usd": 8.0,
+        "max_calls": 100,
+        "max_input_tokens": 3_000_000,
+        "max_output_tokens": 500_000,
+        "max_total_tokens": 3_500_000,
+        "fail_on_unknown_pricing": True,
+        "fail_on_missing_usage": True,
+    }
+    assert config["budget_config"] == config["budget_policy"]
+
+
 def test_proposal_gate_is_waiting_human_not_canonical_import_complete(tmp_path, monkeypatch):
     from sidecar.routers import workflows
     from sidecar.workflows import w1_import

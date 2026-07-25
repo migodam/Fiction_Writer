@@ -464,9 +464,134 @@ def test_legacy_resume_applies_fail_closed_three_dollar_budget(tmp_path, monkeyp
 
     assert response.json()["status"] == "resumed"
     assert launches[0]["budget_policy"] == {
-        "max_cost_usd": 3.0, "fail_on_unknown_pricing": True, "fail_on_missing_usage": True,
+        "max_cost_usd": 3.0,
+        "max_calls": 100,
+        "max_input_tokens": 3_000_000,
+        "max_output_tokens": 500_000,
+        "max_total_tokens": 3_500_000,
+        "fail_on_unknown_pricing": True,
+        "fail_on_missing_usage": True,
     }
     assert launches[0]["context"]["budget_policy"] == launches[0]["budget_policy"]
+
+
+def test_resume_budget_request_can_only_tighten_each_server_limit(tmp_path, monkeypatch):
+    from sidecar.routers import workflows
+
+    launches: list[dict] = []
+
+    async def fake_resume(**kwargs):
+        launches.append(kwargs["persisted_config"])
+        return True
+
+    monkeypatch.setattr(workflows, "resume_w1_attempt", fake_resume)
+    with _client(tmp_path) as client:
+        attempt_id = _attempt(client)
+        store = client.app.state.runtime_store
+        attempt = store.get_attempt(attempt_id)
+        run = store.get_run(attempt["run_id"])
+        store.update_run_config(run["run_id"], {
+            **run["config"],
+            "model": "deepseek-v4-flash",
+            "budget_config": {
+                "max_cost_usd": 1.25,
+                "max_calls": 5,
+                "max_input_tokens": 2_500_000,
+            },
+        })
+        store.set_attempt_status(attempt_id, "interrupted")
+        response = client.post(f"/runtime/runs/{attempt_id}/resume", json={
+            "api_key": "sk-transient",
+            "budget_config": {
+                "max_cost_usd": 2.0,
+                "max_calls": 10,
+                "max_input_tokens": 2_000_000,
+                "max_output_tokens": 400_000,
+            },
+        })
+
+    assert response.status_code == 200
+    assert launches[0]["budget_config"] == {
+        "max_cost_usd": 1.25,
+        "max_calls": 5,
+        "max_input_tokens": 2_000_000,
+        "max_output_tokens": 400_000,
+        "max_total_tokens": 3_500_000,
+        "fail_on_unknown_pricing": True,
+        "fail_on_missing_usage": True,
+    }
+
+
+@pytest.mark.parametrize(
+    ("payload", "detail"),
+    [
+        ({"budget_config": {"surprise_limit": 1}}, "budget_unknown_keys"),
+        ({"budget_config": {"max_calls": -1}}, "budget_max_calls_invalid"),
+    ],
+)
+def test_resume_budget_rejects_invalid_or_unknown_values(tmp_path, payload, detail):
+    with _client(tmp_path) as client:
+        attempt_id = _attempt(client)
+        response = client.post(f"/runtime/runs/{attempt_id}/resume", json=payload)
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == detail
+
+
+@pytest.mark.parametrize("literal", ["NaN", "Infinity"])
+def test_resume_budget_rejects_non_finite_cost_at_api_boundary(tmp_path, literal):
+    with _client(tmp_path) as client:
+        attempt_id = _attempt(client)
+        response = client.post(
+            f"/runtime/runs/{attempt_id}/resume",
+            content=f'{{"budget_config":{{"max_cost_usd":{literal}}}}}',
+            headers={"content-type": "application/json"},
+        )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "budget_max_cost_usd_invalid"
+
+
+def test_resume_normalizes_nonempty_legacy_budget_before_launch(tmp_path, monkeypatch):
+    from sidecar.routers import workflows
+
+    launches: list[dict] = []
+
+    async def fake_resume(**kwargs):
+        launches.append(kwargs["persisted_config"])
+        return True
+
+    monkeypatch.setattr(workflows, "resume_w1_attempt", fake_resume)
+    with _client(tmp_path) as client:
+        attempt_id = _attempt(client)
+        store = client.app.state.runtime_store
+        attempt = store.get_attempt(attempt_id)
+        run = store.get_run(attempt["run_id"])
+        store.update_run_config(run["run_id"], {
+            **run["config"],
+            "model": "deepseek-v4-flash",
+            "budget_config": {
+                "max_cost_usd": 999.0,
+                "max_calls": 999,
+                "fail_on_unknown_pricing": False,
+            },
+        })
+        store.set_attempt_status(attempt_id, "interrupted")
+        response = client.post(
+            f"/runtime/runs/{attempt_id}/resume",
+            json={"api_key": "sk-transient"},
+        )
+
+    assert response.status_code == 200
+    assert launches[0]["budget_config"] == {
+        "max_cost_usd": 3.0,
+        "max_calls": 100,
+        "max_input_tokens": 3_000_000,
+        "max_output_tokens": 500_000,
+        "max_total_tokens": 3_500_000,
+        "fail_on_unknown_pricing": True,
+        "fail_on_missing_usage": True,
+    }
 
 
 def test_lifespan_reuses_runtime_store_and_closes_then_reopens_workflow_saver(tmp_path):

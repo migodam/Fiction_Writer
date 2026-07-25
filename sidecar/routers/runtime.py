@@ -2,28 +2,28 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Any
+from typing import Any, Mapping
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
+
+from sidecar.runtime.w1_budget_policy import (
+    W1BudgetPolicyError,
+    merge_w1_resume_budget_policy,
+)
 
 
 router = APIRouter(prefix="/runtime")
 
 
-def _merge_budget_config(existing: dict[str, Any], requested: dict[str, Any]) -> dict[str, Any]:
-    """Keep persisted limits when a resume body omits them and never raise a cap."""
-    merged = {**existing, **requested}
-    old_max, new_max = existing.get("max_cost_usd"), requested.get("max_cost_usd")
-    if isinstance(old_max, (int, float)) and not isinstance(old_max, bool):
-        if not isinstance(new_max, (int, float)) or isinstance(new_max, bool):
-            merged["max_cost_usd"] = old_max
-        else:
-            merged["max_cost_usd"] = min(float(old_max), float(new_max))
-    for key in ("fail_on_unknown_pricing", "fail_on_missing_usage"):
-        if existing.get(key) is True:
-            merged[key] = True
-    return merged
+def _merge_budget_config(
+    existing: Mapping[str, Any] | None,
+    requested: Mapping[str, Any] | None,
+    *,
+    model: str,
+) -> dict[str, Any]:
+    """Return the server-normalized intersection of stored and requested limits."""
+    return merge_w1_resume_budget_policy(model, existing, requested)
 
 
 def require_project_identity(request: Request, project_path: str) -> None:
@@ -298,8 +298,21 @@ async def resume(attempt_id: str, body: ResumeRequest, request: Request) -> dict
     }.items() if value is not None})
     if body.profile is not None:
         config["prompt_profile"] = body.profile
-    if body.budget_config:
-        config["budget_config"] = _merge_budget_config(dict(config.get("budget_config") or {}), body.budget_config)
+    context = config.get("context") if isinstance(config.get("context"), dict) else {}
+    stored_budget = (
+        config.get("budget_config")
+        or config.get("budget_policy")
+        or context.get("budget_policy")
+        or {}
+    )
+    try:
+        config["budget_config"] = _merge_budget_config(
+            stored_budget,
+            body.budget_config,
+            model=str(config.get("model") or ""),
+        )
+    except W1BudgetPolicyError as exc:
+        raise HTTPException(status_code=422, detail=exc.code) from exc
     try:
         _validate_resume_snapshot(_store(request), attempt, config)
     except ValueError as exc:
