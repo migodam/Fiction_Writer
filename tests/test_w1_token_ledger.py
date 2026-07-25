@@ -92,6 +92,21 @@ def test_empty_session_id_is_noop():
     assert ledger == {}
 
 
+def test_provider_wait_heartbeat_only_advances_activity_while_call_is_active():
+    sid = _fresh("provider-wait-heartbeat")
+
+    assert ev.append_provider_wait_heartbeat(sid) == {}
+    assert ev.list_events(sid) == []
+
+    ev.set_active_call(sid, 1)
+    heartbeat = ev.append_provider_wait_heartbeat(sid)
+
+    assert heartbeat["status"] == "heartbeat"
+    assert heartbeat["tool"] == "provider.chat.completions"
+    assert heartbeat["active_api_calls"] == 1
+    ev.set_active_call(sid, -1)
+
+
 @pytest.mark.parametrize(("model", "expected_cost"), [
     ("deepseek-v4-flash", 0.42),
     ("provider/deepseek-v4-pro:latest", 1.305),

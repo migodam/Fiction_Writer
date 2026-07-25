@@ -453,6 +453,7 @@ async def _run_w1(session_id: str, config: dict) -> None:
     from sidecar.workflows.w1_run_events import (
         ProviderCallRequiresHumanConfirmation,
         append_event,
+        append_provider_wait_heartbeat,
         session_status,
         set_active_call,
     )
@@ -514,6 +515,10 @@ async def _run_w1(session_id: str, config: dict) -> None:
     async def _heartbeat_lease() -> None:
         while not heartbeat_stop.is_set():
             runtime_heartbeat()
+            append_provider_wait_heartbeat(
+                session_id,
+                model=str(config.get("context", {}).get("model") or ""),
+            )
             try:
                 await asyncio.wait_for(heartbeat_stop.wait(), timeout=heartbeat_interval_seconds)
             except asyncio.TimeoutError:
@@ -699,6 +704,17 @@ async def _run_w1(session_id: str, config: dict) -> None:
             await release_lock(project_path)
         except Exception:
             pass
+        if (
+            runtime_store is not None
+            and runtime_fence_token is not None
+            and runtime_owner_id
+        ):
+            try:
+                runtime_store.release_lease(
+                    session_id, runtime_owner_id, runtime_fence_token,
+                )
+            except LeaseLostError:
+                pass
 
 
 # ── W2 background task ────────────────────────────────────────────────────────

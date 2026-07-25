@@ -69,6 +69,22 @@ def test_expired_lease_can_be_fenced_by_a_new_worker(runtime):
     assert second["fence_token"] == first["fence_token"] + 1
 
 
+def test_release_lease_is_fenced_and_immediately_expires_the_owner(runtime):
+    attempt = runtime.create_attempt(runtime.create_run(workflow_id="W1")["run_id"])
+    lease = runtime.acquire_lease(attempt["attempt_id"], "worker-a", ttl_seconds=60)
+
+    with pytest.raises(LeaseLostError):
+        runtime.release_lease(
+            attempt["attempt_id"], "worker-b", lease["fence_token"],
+        )
+
+    runtime.release_lease(
+        attempt["attempt_id"], "worker-a", lease["fence_token"],
+    )
+
+    assert attempt["attempt_id"] in runtime.expire_leases()
+
+
 def test_expired_running_attempt_is_interrupted_before_recovery_is_reported(runtime):
     attempt = runtime.create_attempt(runtime.create_run(workflow_id="W1")["run_id"])
     runtime.acquire_lease(attempt["attempt_id"], "worker-a", ttl_seconds=1, now=10)

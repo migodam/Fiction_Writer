@@ -690,6 +690,205 @@ def _smoke_result_exit_code(result: dict[str, Any]) -> int:
     return 0
 
 
+class _DurableLiveRun:
+    """Small CLI adapter over the same durable boundaries as the W1 product path."""
+
+    def __init__(
+        self,
+        project_path: Path,
+        *,
+        safe_config: dict[str, Any],
+        attempt_id: str,
+        lineage_id: str,
+        thread_id: str,
+        owner_id: str,
+        model: str,
+    ) -> None:
+        from sidecar.runtime import RuntimeStore
+        from sidecar.workflows.w1_run_events import (
+            append_event,
+            bind_runtime,
+            ensure_session,
+        )
+
+        self.project_path = project_path
+        self.store = RuntimeStore(project_path)
+        self.attempt_id = attempt_id
+        self.session_id = attempt_id
+        self.lineage_id = lineage_id
+        self.thread_id = thread_id
+        self.owner_id = owner_id
+        self.model = model
+        self.lease_released = False
+        run = self.store.create_run(
+            workflow_id="W1",
+            lineage_id=lineage_id,
+            thread_id=thread_id,
+            config=safe_config,
+        )
+        self.run_id = str(run["run_id"])
+        self.store.create_attempt(self.run_id, attempt_id=attempt_id)
+        lease = self.store.acquire_lease(
+            attempt_id, owner_id, ttl_seconds=60,
+        )
+        self.fence_token = int(lease["fence_token"])
+        self.store.set_attempt_status(
+            attempt_id, "running", owner_id=owner_id,
+            fence_token=self.fence_token,
+        )
+        ensure_session(self.session_id)
+        bind_runtime(
+            self.session_id, self.store, self.attempt_id, self.owner_id,
+            self.fence_token,
+        )
+        append_event(self.session_id, {
+            "phase": "queued",
+            "tool": "live_canary",
+            "status": "start",
+            "message": "Queued live canary through the durable W1 runtime.",
+        })
+
+    def heartbeat(self) -> None:
+        from sidecar.workflows.w1_run_events import (
+            append_provider_wait_heartbeat,
+        )
+
+        if self.lease_released:
+            return
+        self.store.heartbeat_lease(
+            self.attempt_id, self.owner_id, self.fence_token,
+            ttl_seconds=60,
+        )
+        append_provider_wait_heartbeat(
+            self.session_id, model=self.model,
+        )
+
+    def request_stop(self, reason: str) -> None:
+        from sidecar.workflows.w1_run_events import append_event, mark_cancel_requested
+
+        mark_cancel_requested(self.session_id)
+        append_event(self.session_id, {
+            "phase": "watchdog",
+            "tool": "live_canary",
+            "status": "cancelled",
+            "level": "warning",
+            "message": f"Live canary stop requested: {reason}.",
+        })
+
+    def activity(self, after_sequence: int = 0) -> dict[str, Any]:
+        from sidecar.workflows.w1_run_events import (
+            session_status,
+        )
+
+        events = self.store.list_events(
+            self.attempt_id, after_sequence=max(0, int(after_sequence)),
+        )
+        sequence = (
+            int(events[-1]["sequence"])
+            if events
+            else max(0, int(after_sequence))
+        )
+        return {
+            "sequence": sequence,
+            "events": events,
+            "active_api_calls": session_status(
+                self.session_id,
+            ).get("active_api_calls", 0),
+        }
+
+    def finish(self, terminal: dict[str, Any]) -> None:
+        """Close ambiguous intents, stabilize the attempt, then release its lease."""
+        from sidecar.runtime.agent_runtime import LeaseLostError
+        from sidecar.workflows.w1_run_events import append_event
+
+        if self.lease_released:
+            return
+        terminal_status = str(terminal.get("status") or "")
+        try:
+            for call in self.store.list_tool_calls(self.attempt_id):
+                if call.get("status") == "intent":
+                    self.store.record_tool_unknown_outcome(
+                        call["tool_call_id"],
+                        "live_canary_interrupted",
+                        attempt_id=self.attempt_id,
+                        owner_id=self.owner_id,
+                        fence_token=self.fence_token,
+                    )
+            unknown = self.store.list_unknown_call_summaries(self.attempt_id)
+            if unknown:
+                attempt_status = "waiting_human"
+            elif terminal.get("converge_status") == "awaiting_acceptance":
+                attempt_status = "waiting_human"
+            elif terminal_status in {"done", "completed", "success"}:
+                attempt_status = "completed"
+            elif terminal_status in {"stalled", "timeout", "cleanup_timeout"}:
+                attempt_status = "interrupted"
+            else:
+                attempt_status = "failed"
+            append_event(self.session_id, {
+                "phase": "terminal",
+                "tool": "live_canary",
+                "status": attempt_status,
+                "message": f"Live canary stopped with status={terminal_status or 'unknown'}.",
+            })
+            self.store.set_attempt_status(
+                self.attempt_id,
+                attempt_status,
+                owner_id=self.owner_id,
+                fence_token=self.fence_token,
+            )
+        finally:
+            try:
+                self.store.release_lease(
+                    self.attempt_id, self.owner_id, self.fence_token,
+                )
+            except LeaseLostError:
+                pass
+            self.lease_released = True
+
+    def summary(self) -> dict[str, Any]:
+        from sidecar.workflows.w1_run_events import authoritative_usage_ledger
+
+        events = self.store.list_events(self.attempt_id)
+        calls = self.store.list_tool_calls(self.attempt_id)
+        active_intents = [
+            {
+                "tool_call_id": call.get("tool_call_id"),
+                "tool_name": call.get("tool_name"),
+                "status": call.get("status"),
+            }
+            for call in calls
+            if call.get("status") == "intent"
+        ]
+        return {
+            "run_id": self.run_id,
+            "lineage_id": self.lineage_id,
+            "attempt_id": self.attempt_id,
+            "thread_id": self.thread_id,
+            "attempt": self.store.get_attempt(self.attempt_id),
+            "last_activity": events[-1] if events else {},
+            "durable_event_count": len(events),
+            "active_intents": active_intents,
+            "unknown_calls": [
+                {"status": "unknown_outcome", **summary}
+                for summary in self.store.list_unknown_call_summaries(
+                    self.attempt_id,
+                )
+            ],
+            "usage": authoritative_usage_ledger(
+                self.session_id, self.model,
+            ),
+            "lease_released": self.lease_released,
+        }
+
+
+async def _call_maybe_async(callback: Any, *args: Any) -> Any:
+    if callback is None:
+        return None
+    value = callback(*args)
+    return await value if asyncio.iscoroutine(value) else value
+
+
 async def _watch_streaming_updates(
     stream: Any,
     output_dir: Path,
@@ -699,6 +898,9 @@ async def _watch_streaming_updates(
     stalled_seconds: float | None = None,
     cleanup_timeout_seconds: float = 15.0,
     on_update: Any = None,
+    activity_probe: Any = None,
+    on_heartbeat: Any = None,
+    on_stop: Any = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Consume a stream with wall-clock, silence, and cleanup deadlines.
 
@@ -713,10 +915,14 @@ async def _watch_streaming_updates(
     start = time.monotonic()
     state: dict[str, Any] = {
         "last_update_at": start,
+        "last_activity_at": start,
         "last_node": None,
         "update_count": 0,
+        "durable_event_sequence": 0,
+        "active_api_calls": 0,
     }
     updates: list[dict[str, Any]] = []
+    durable_activity: list[dict[str, Any]] = []
     watchdog_events: list[dict[str, Any]] = []
     queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
     stop_heartbeat = asyncio.Event()
@@ -726,8 +932,11 @@ async def _watch_streaming_updates(
         payload = {
             "elapsed": round(now - start, 3),
             "last_update_age": round(now - state["last_update_at"], 3),
+            "last_activity_age": round(now - state["last_activity_at"], 3),
             "last_node": state["last_node"],
             "update_count": state["update_count"],
+            "durable_event_sequence": state["durable_event_sequence"],
+            "active_api_calls": state["active_api_calls"],
         }
         _write_json_atomic(output_dir / "heartbeat.json", payload)
 
@@ -736,7 +945,10 @@ async def _watch_streaming_updates(
             "event_type": event_type,
             "elapsed_seconds": round(time.monotonic() - start, 3),
             "last_update_age_seconds": round(time.monotonic() - state["last_update_at"], 3),
+            "last_activity_age_seconds": round(time.monotonic() - state["last_activity_at"], 3),
             "last_node": state["last_node"],
+            "durable_event_sequence": state["durable_event_sequence"],
+            "active_api_calls": state["active_api_calls"],
             **details,
         }
         watchdog_events.append(event)
@@ -756,12 +968,15 @@ async def _watch_streaming_updates(
 
     async def heartbeat() -> None:
         while not stop_heartbeat.is_set():
+            await _call_maybe_async(on_heartbeat)
             write_heartbeat()
             print(
                 "[live-smoke]",
                 f"heartbeat elapsed={int(time.monotonic() - start)}s",
                 f"last_node={state['last_node'] or '?'}",
                 f"updates={state['update_count']}",
+                f"durable_seq={state['durable_event_sequence']}",
+                f"active_api={state['active_api_calls']}",
                 flush=True,
             )
             try:
@@ -776,14 +991,43 @@ async def _watch_streaming_updates(
     heartbeat_task = asyncio.create_task(heartbeat(), name="w1-live-smoke-heartbeat")
     terminal: dict[str, Any] = {"status": "done"}
     producer_cancelled_by_runner = False
+
+    async def poll_activity() -> bool:
+        if activity_probe is None:
+            return False
+        snapshot = await _call_maybe_async(
+            activity_probe, state["durable_event_sequence"],
+        )
+        if not isinstance(snapshot, dict):
+            return False
+        state["active_api_calls"] = max(
+            0, int(snapshot.get("active_api_calls", 0) or 0),
+        )
+        sequence = max(0, int(snapshot.get("sequence", 0) or 0))
+        events = [
+            _redact_terminal_payload(event)
+            for event in snapshot.get("events", [])
+            if isinstance(event, dict)
+        ]
+        if sequence <= state["durable_event_sequence"]:
+            return False
+        state["durable_event_sequence"] = sequence
+        state["last_activity_at"] = time.monotonic()
+        durable_activity.extend(events)
+        _write_json_atomic(
+            output_dir / "durable_activity.json", durable_activity,
+        )
+        return True
+
     try:
         while True:
+            await poll_activity()
             remaining = timeout_seconds - (time.monotonic() - start)
             if remaining <= 0:
                 terminal = {"status": "timeout", "elapsed_seconds": int(time.monotonic() - start), "watchdog_events": [record_watchdog_event("wall_clock_timeout")]}
                 break
             silence_remaining = (
-                stalled_seconds - (time.monotonic() - state["last_update_at"])
+                stalled_seconds - (time.monotonic() - state["last_activity_at"])
                 if stalled_seconds is not None
                 else remaining
             )
@@ -791,14 +1035,25 @@ async def _watch_streaming_updates(
                 terminal = {"status": "stalled", "watchdog_events": [record_watchdog_event("stream_stalled", stalled_seconds=stalled_seconds)]}
                 break
             try:
-                kind, value = await asyncio.wait_for(queue.get(), timeout=min(remaining, silence_remaining))
+                poll_interval = min(
+                    remaining,
+                    silence_remaining,
+                    max(0.001, heartbeat_seconds),
+                )
+                kind, value = await asyncio.wait_for(
+                    queue.get(), timeout=poll_interval,
+                )
             except TimeoutError:
+                if await poll_activity():
+                    continue
                 now = time.monotonic()
-                if stalled_seconds is not None and now - state["last_update_at"] >= stalled_seconds:
-                    terminal = {"status": "stalled", "watchdog_events": [record_watchdog_event("stream_stalled", stalled_seconds=stalled_seconds)]}
-                else:
+                if now - start >= timeout_seconds:
                     terminal = {"status": "timeout", "elapsed_seconds": int(now - start), "watchdog_events": [record_watchdog_event("wall_clock_timeout")]}
-                break
+                    break
+                if stalled_seconds is not None and now - state["last_activity_at"] >= stalled_seconds:
+                    terminal = {"status": "stalled", "watchdog_events": [record_watchdog_event("stream_stalled", stalled_seconds=stalled_seconds, reason="no_durable_activity")]}
+                    break
+                continue
             if kind == "done":
                 terminal = updates[-1] if updates else {"status": "done"}
                 break
@@ -809,6 +1064,7 @@ async def _watch_streaming_updates(
             update = value
             updates.append(update)
             state["last_update_at"] = time.monotonic()
+            state["last_activity_at"] = state["last_update_at"]
             state["last_node"] = update.get("current_node") or update.get("current_tool")
             state["update_count"] += 1
             if on_update is not None:
@@ -817,6 +1073,11 @@ async def _watch_streaming_updates(
                     terminal = requested_terminal
                     break
     finally:
+        if terminal.get("status") in {
+            "timeout", "stalled", "cleanup_timeout", "budget_exhausted",
+            "auth_failed",
+        }:
+            await _call_maybe_async(on_stop, str(terminal.get("status")))
         stop_heartbeat.set()
         write_heartbeat()
         if not producer.done():
@@ -842,10 +1103,27 @@ async def _watch_streaming_updates(
 
 
 async def _run_live(args: argparse.Namespace, project_path: Path, output_dir: Path) -> dict[str, Any]:
+    from sidecar.runtime.w1_budget_policy import normalize_w1_budget_policy
+    from sidecar.utils.lock import release_lock
     from sidecar.workflows.w1_import import run_streaming
 
     api_key = os.environ.get("DEEPSEEK_API_KEY", "")
     import_run_id = f"live_smoke_{_timestamp()}_{uuid.uuid4().hex[:8]}"
+    attempt_id = str(uuid.uuid4())
+    lineage_id = str(uuid.uuid4())
+    thread_id = f"w1-{attempt_id}"
+    owner_id = f"live-canary-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    requested_budget = {
+        "max_cost_usd": args.max_cost_usd,
+        "max_input_tokens": args.max_input_tokens,
+        "max_output_tokens": args.max_output_tokens,
+        "max_total_tokens": args.max_total_tokens,
+        "max_calls": args.max_calls,
+        "fail_on_unknown_pricing": True,
+        "fail_on_missing_usage": True,
+    }
+    budget_policy = normalize_w1_budget_policy(args.model, requested_budget)
+    source_hash = hashlib.sha256(args.source.read_bytes()).hexdigest()
     config = {
         "project_path": str(project_path),
         "source_file_path": str(args.source),
@@ -853,6 +1131,9 @@ async def _run_live(args: argparse.Namespace, project_path: Path, output_dir: Pa
         "prompt_profile": args.prompt_profile,
         "use_supervisor": True,
         "use_orchestrator": True,
+        "execution_mode": "supervisor",
+        "compatibility_mode": False,
+        "harness_observer": True,
         "custom_profile_config": {
             "extract_relationships": args.extract_relationships,
             "extract_world": args.extract_world,
@@ -863,15 +1144,7 @@ async def _run_live(args: argparse.Namespace, project_path: Path, output_dir: Pa
             "extract_world": args.extract_world,
             "extract_timeline": args.extract_timeline,
         },
-        "budget_policy": {
-            "max_cost_usd": args.max_cost_usd,
-            "max_input_tokens": args.max_input_tokens,
-            "max_output_tokens": args.max_output_tokens,
-            "max_total_tokens": args.max_total_tokens,
-            "max_calls": args.max_calls,
-            "fail_on_unknown_pricing": True,
-            "fail_on_missing_usage": True,
-        },
+        "budget_policy": budget_policy,
         "rerun_cap": 0,
         "max_reruns": 0,
         "context": {
@@ -881,11 +1154,52 @@ async def _run_live(args: argparse.Namespace, project_path: Path, output_dir: Pa
             "prompt_profile": args.prompt_profile,
             "use_supervisor": True,
             "use_orchestrator": True,
+            "execution_mode": "supervisor",
+            "budget_policy": budget_policy,
         },
-        "session_id": f"live_smoke_{_timestamp()}",
+        "session_id": attempt_id,
+        "attempt_id": attempt_id,
+        "lineage_id": lineage_id,
+        "thread_id": thread_id,
         "import_run_id": import_run_id,
     }
     safe_config = {**config, "context": {**config["context"], "api_key": "***"}}
+    durable_safe_config = {
+        "project_path": str(project_path.resolve()),
+        "provider": "deepseek",
+        "model": args.model,
+        "profile": args.prompt_profile,
+        "endpoint": args.endpoint,
+        "lineage_id": lineage_id,
+        "source_file_path": str(args.source.resolve()),
+        "source_hash": source_hash,
+        "budget_config": budget_policy,
+        "import_mode": args.import_mode,
+        "use_supervisor": True,
+        "use_orchestrator": True,
+        "execution_mode": "supervisor",
+        "compatibility_mode": False,
+        "custom_profile_config": config["custom_profile_config"],
+        "import_run_id": import_run_id,
+    }
+    runtime = _DurableLiveRun(
+        project_path,
+        safe_config=durable_safe_config,
+        attempt_id=attempt_id,
+        lineage_id=lineage_id,
+        thread_id=thread_id,
+        owner_id=owner_id,
+        model=args.model,
+    )
+    config.update({
+        "runtime_store": runtime.store,
+        "runtime_owner_id": runtime.owner_id,
+        "runtime_fence_token": runtime.fence_token,
+        "runtime_lease_ttl_seconds": 60,
+        "runtime_heartbeat_interval_seconds": max(
+            1.0, min(20.0, args.heartbeat_seconds),
+        ),
+    })
     _write_json(output_dir / "run_config.safe.json", safe_config)
 
     start = time.time()
@@ -909,25 +1223,57 @@ async def _run_live(args: argparse.Namespace, project_path: Path, output_dir: Pa
         return None
 
     try:
-        _, terminal = await _watch_streaming_updates(
-            run_streaming(str(project_path), config),
-            output_dir,
-            timeout_seconds=args.timeout_seconds,
-            heartbeat_seconds=args.heartbeat_seconds,
-            stalled_seconds=args.stalled_seconds,
-            cleanup_timeout_seconds=args.cleanup_timeout_seconds,
-            on_update=handle_update,
-        )
-    except Exception as exc:
-        terminal = {"status": "error", "error_type": type(exc).__name__, "error": str(exc)}
+        try:
+            _, terminal = await _watch_streaming_updates(
+                run_streaming(str(project_path), config),
+                output_dir,
+                timeout_seconds=args.timeout_seconds,
+                heartbeat_seconds=args.heartbeat_seconds,
+                stalled_seconds=args.stalled_seconds,
+                cleanup_timeout_seconds=args.cleanup_timeout_seconds,
+                on_update=handle_update,
+                activity_probe=runtime.activity,
+                on_heartbeat=runtime.heartbeat,
+                on_stop=runtime.request_stop,
+            )
+        except Exception as exc:
+            terminal = {
+                "status": "error",
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            }
+    finally:
+        try:
+            await release_lock(str(project_path))
+        except Exception:
+            pass
+        runtime.finish(terminal)
 
     probe = _quality_probe(project_path, expected_import_run_id=import_run_id)
+    runtime_summary = runtime.summary()
+    runtime_summary.update({
+        "workflow_lock_present": (
+            project_path / "workflow.lock"
+        ).exists(),
+        "execution_process": {
+            "mode": "in_process",
+            "runner_pid": os.getpid(),
+            "child_processes": [],
+        },
+    })
+    runtime_summary["cleanup_complete"] = bool(
+        runtime_summary.get("lease_released")
+        and not runtime_summary["workflow_lock_present"]
+        and not runtime_summary.get("active_intents")
+    )
+    _write_json_atomic(output_dir / "runtime_summary.json", runtime_summary)
     secret_leaks = _artifact_secret_leaks(output_dir)
     if secret_leaks:
         terminal = {"status": "error", "error": "secret_leakage_detected"}
     result = {
         "elapsed_seconds": int(time.time() - start),
         "terminal": _redact_terminal_payload(terminal),
+        "runtime": _redact_terminal_payload(runtime_summary),
         "quality_probe": probe,
         "secret_leak_artifacts": secret_leaks,
     }

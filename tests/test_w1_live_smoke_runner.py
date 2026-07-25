@@ -427,6 +427,56 @@ def test_watchdog_collects_normal_updates_and_tracks_latest_node(tmp_path):
     assert heartbeat["update_count"] == 2
 
 
+def test_watchdog_does_not_stall_slow_provider_with_durable_activity(tmp_path):
+    activity = {"sequence": 0}
+
+    async def slow_provider_stream():
+        await asyncio.sleep(0.09)
+        yield {"progress": 100, "current_tool": "proposal_write"}
+
+    def durable_probe(after_sequence=0):
+        if activity["sequence"] <= after_sequence:
+            return {
+                "sequence": activity["sequence"],
+                "events": [],
+                "active_api_calls": 1,
+            }
+        return {
+            "sequence": activity["sequence"],
+            "events": [{
+                "sequence": activity["sequence"],
+                "event_type": "w1_activity",
+                "payload": {
+                    "status": "heartbeat",
+                    "tool": "provider.chat.completions",
+                    "active_api_calls": 1,
+                },
+            }],
+            "active_api_calls": 1,
+        }
+
+    def provider_heartbeat():
+        activity["sequence"] += 1
+
+    updates, terminal = asyncio.run(
+        _watch_streaming_updates(
+            slow_provider_stream(),
+            tmp_path,
+            timeout_seconds=0.5,
+            heartbeat_seconds=0.01,
+            stalled_seconds=0.025,
+            activity_probe=durable_probe,
+            on_heartbeat=provider_heartbeat,
+        )
+    )
+
+    assert updates[-1]["current_tool"] == "proposal_write"
+    assert terminal.get("status") != "stalled"
+    heartbeat = json.loads((tmp_path / "heartbeat.json").read_text(encoding="utf-8"))
+    assert heartbeat["durable_event_sequence"] > 0
+    assert heartbeat["active_api_calls"] == 1
+
+
 def test_runner_persists_timeout_final_result_for_a_silent_stream(tmp_path, monkeypatch):
     from sidecar.workflows import w1_import
 
@@ -444,6 +494,133 @@ def test_runner_persists_timeout_final_result_for_a_silent_stream(tmp_path, monk
     assert result["terminal"]["status"] == "timeout"
     final_result = json.loads((tmp_path / "output" / "final_result.json").read_text(encoding="utf-8"))
     assert final_result["terminal"]["status"] == "timeout"
+
+
+def test_runner_stops_truly_silent_work_and_releases_workflow_lock(tmp_path, monkeypatch):
+    from sidecar.utils.lock import acquire_lock
+    from sidecar.workflows import w1_import
+
+    source = tmp_path / "source.txt"
+    source.write_text("第一章\n韩立入门。", encoding="utf-8")
+
+    async def silent_stream(project_path, _config):
+        await acquire_lock(project_path, "W1")
+        await asyncio.Event().wait()
+        yield {}
+
+    monkeypatch.setattr(w1_import, "run_streaming", silent_stream)
+    args = parse_args(["--source", str(source)])
+    args.timeout_seconds = 0.2
+    args.heartbeat_seconds = 0.01
+    args.stalled_seconds = 0.03
+    args.cleanup_timeout_seconds = 0.1
+    project = tmp_path / "project"
+
+    result = asyncio.run(_run_live(args, project, tmp_path / "output"))
+
+    assert result["terminal"]["status"] == "stalled"
+    assert result["runtime"]["attempt"]["status"] == "interrupted"
+    assert result["runtime"]["unknown_calls"] == []
+    assert result["runtime"]["lease_released"] is True
+    assert result["runtime"]["cleanup_complete"] is True
+    assert not (project / "workflow.lock").exists()
+
+
+def test_runner_uses_product_runtime_identity_harness_and_server_budget(tmp_path, monkeypatch):
+    from sidecar.workflows import w1_import
+
+    source = tmp_path / "source.txt"
+    source.write_text("第一章\n韩立入门。", encoding="utf-8")
+    captured = {}
+
+    async def complete_at_gate(_project_path, config):
+        captured.update(config)
+        yield {
+            "status": "done",
+            "progress": 1.0,
+            "current_node": "proposal_gate",
+            "converge_status": "awaiting_acceptance",
+        }
+
+    monkeypatch.setattr(w1_import, "run_streaming", complete_at_gate)
+    args = parse_args(["--source", str(source)])
+
+    result = asyncio.run(
+        _run_live(args, tmp_path / "project", tmp_path / "output"),
+    )
+
+    assert captured["execution_mode"] == "supervisor"
+    assert captured["harness_observer"] is True
+    assert captured["session_id"] == captured["attempt_id"]
+    assert captured["runtime_store"] is not None
+    assert captured["runtime_fence_token"] >= 1
+    assert captured["budget_policy"]["max_cost_usd"] == 3.0
+    assert captured["budget_policy"]["max_calls"] == 100
+    assert result["runtime"]["attempt"]["status"] == "waiting_human"
+    run_config = captured["runtime_store"].get_run(
+        result["runtime"]["run_id"],
+    )["config"]
+    assert run_config["budget_config"]["max_cost_usd"] == 3.0
+    assert "api_key" not in json.dumps(run_config)
+
+
+def test_runner_cancel_marks_provider_intent_unknown_and_cleans_lock(tmp_path, monkeypatch):
+    from sidecar.utils.lock import acquire_lock
+    from sidecar.workflows import w1_import
+    from sidecar.workflows.w1_run_events import append_event, set_active_call
+
+    source = tmp_path / "source.txt"
+    source.write_text("第一章\n韩立入门。", encoding="utf-8")
+    project = tmp_path / "project"
+    output = tmp_path / "output"
+
+    class SlowProvider:
+        model_name = "deepseek-v4-flash"
+
+        async def ainvoke(self, _messages):
+            await asyncio.Event().wait()
+
+    async def provider_stream(project_path, config):
+        await acquire_lock(project_path, "W1")
+        session_id = config["session_id"]
+        append_event(session_id, {
+            "phase": "extracting",
+            "tool": "extract_window",
+            "status": "start",
+            "message": "Starting fake provider call.",
+        })
+        set_active_call(session_id, 1)
+        try:
+            await w1_import._ainvoke_with_budget(
+                SlowProvider(),
+                [{"role": "user", "content": "fixture"}],
+                session_id=session_id,
+                estimated_input_tokens=10,
+                estimated_output_tokens=10,
+            )
+        finally:
+            set_active_call(session_id, -1)
+        yield {"progress": 1.0, "current_node": "done"}
+
+    monkeypatch.setattr(w1_import, "run_streaming", provider_stream)
+    args = parse_args(["--source", str(source)])
+    args.timeout_seconds = 0.08
+    args.heartbeat_seconds = 0.01
+    args.stalled_seconds = 0.025
+    args.cleanup_timeout_seconds = 0.1
+
+    result = asyncio.run(_run_live(args, project, output))
+
+    assert result["terminal"]["status"] == "timeout"
+    assert result["runtime"]["attempt"]["status"] == "waiting_human"
+    assert result["runtime"]["unknown_calls"]
+    assert result["runtime"]["unknown_calls"][0]["status"] == "unknown_outcome"
+    assert result["runtime"]["active_intents"] == []
+    assert result["runtime"]["lease_released"] is True
+    assert result["runtime"]["cleanup_complete"] is True
+    assert not (project / "workflow.lock").exists()
+    assert result["runtime"]["last_activity"]["sequence"] > 0
+    assert result["runtime"]["usage"]["actual_calls"] == 0
 
 
 def test_runner_redacts_exception_text_before_persisting_final_result(tmp_path, monkeypatch):

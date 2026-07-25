@@ -651,6 +651,22 @@ class RuntimeStore:
             connection.execute("UPDATE run_leases SET heartbeat_at = ?, expires_at = ? WHERE attempt_id = ?", (timestamp, timestamp + ttl_seconds, attempt_id))
             return _row(connection.execute("SELECT * FROM run_leases WHERE attempt_id = ?", (attempt_id,)).fetchone())  # type: ignore[return-value]
 
+    def release_lease(
+        self, attempt_id: str, owner_id: str, fence_token: int, *,
+        now: float | None = None,
+    ) -> None:
+        """Fence-check and expire a worker lease when its attempt stops."""
+        timestamp = _now(now)
+        with self.transaction() as connection:
+            self._assert_lease(
+                connection, attempt_id, owner_id, fence_token, timestamp,
+            )
+            connection.execute(
+                "UPDATE run_leases SET heartbeat_at = ?, expires_at = 0 "
+                "WHERE attempt_id = ?",
+                (timestamp, attempt_id),
+            )
+
     def assert_current_lease(
         self, attempt_id: str, owner_id: str, fence_token: int, *, now: float | None = None,
     ) -> None:

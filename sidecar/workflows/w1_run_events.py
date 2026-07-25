@@ -397,6 +397,37 @@ def active_calls(session_id: str) -> int:
     return _active_calls.get(session_id, 0)
 
 
+def append_provider_wait_heartbeat(
+    session_id: str, *, model: str = "",
+) -> dict[str, Any]:
+    """Publish one durable liveness pulse only while provider I/O is active."""
+    count = active_calls(session_id)
+    if not session_id or count <= 0:
+        return {}
+    configured = _budget_ledgers.get(session_id)
+    effective_model = model or (configured.model if configured is not None else "")
+    ledger = (
+        authoritative_usage_ledger(session_id, effective_model)
+        if effective_model
+        else {
+            "actual_calls": 0,
+            "budget_status": {"remaining": {}},
+        }
+    )
+    return append_event(session_id, {
+        "phase": "provider_call",
+        "tool": "provider.chat.completions",
+        "status": "heartbeat",
+        "message": f"Waiting for {count} active provider call(s).",
+        "completed": ledger.get("actual_calls", 0),
+        "total": (
+            ledger.get("budget_status", {})
+            .get("remaining", {})
+            .get("calls")
+        ),
+    })
+
+
 def mark_cancel_requested(session_id: str) -> None:
     if session_id:
         ensure_session(session_id)
