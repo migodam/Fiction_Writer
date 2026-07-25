@@ -5029,11 +5029,30 @@ async def node_organize_project(state: ImportState) -> dict:
     needs the source candidate present in ``world_detailed`` to merge evidence
     into the matching character.  Apply those plans before the exclusion pass.
     """
+    relocation_update = _relocate_evidence_backed_person_world_candidates(state)
+    state = {**state, **relocation_update}
     registry = dict(state.get("entity_registry", {}))
     world_candidates: dict = {k: dict(v) for k, v in registry.get("world_detailed", {}).items()}
 
     if not world_candidates:
-        return {}
+        relationship_update = _normalize_relationships_for_proposal_staging(state)
+        relocation_quarantine = [
+            {
+                "candidate_id": audit.get("source_candidate_id"), "raw_name": audit.get("source_name"),
+                "status": "quarantined", "reason_codes": ["person_or_relationship_phrase", "person_like_world_relocated"],
+                "relocation_target_id": audit.get("target_entity_id"), "evidence_refs": list(audit.get("evidence_refs", []) or []),
+            }
+            for audit in relocation_update.get("relocation_audits", []) if isinstance(audit, dict)
+        ]
+        return {
+            "entity_registry": registry,
+            "relationships": relationship_update["relationships"],
+            "relationship_demotions": relationship_update["relationship_demotions"],
+            "relationship_quarantines": relationship_update["relationship_quarantines"],
+            "quarantine_candidates": relocation_update.get("quarantine_candidates", []),
+            "relocation_audits": relocation_update.get("relocation_audits", []),
+            "organizer_output": {"quarantine_items": relocation_quarantine, "world_items": [], "world_containers": []},
+        }
 
     # ``world_detailed`` is compatible with both historical name keys and
     # newer stable entity-ID keys.  Semantic classification must always see a
@@ -5056,6 +5075,38 @@ async def node_organize_project(state: ImportState) -> dict:
     )
 
     result = organize_project_content(organizer_input)
+    # A safe relocation is still a World quarantine decision first. Preserve
+    # that decision in the Organizer artifact so reviewers can see why the
+    # candidate disappeared from World and where it went.
+    for audit in relocation_update.get("relocation_audits", []):
+        if not isinstance(audit, dict):
+            continue
+        source_id = str(audit.get("source_candidate_id") or "")
+        source_name = str(audit.get("source_name") or source_id)
+        if not source_id:
+            continue
+        result.setdefault("quarantine_items", []).append({
+            "candidate_id": source_id,
+            "raw_name": source_name,
+            "status": "quarantined",
+            "reason_codes": ["person_or_relationship_phrase", "person_like_world_relocated"],
+            "relocation_target_id": audit.get("target_entity_id"),
+            "evidence_refs": list(audit.get("evidence_refs", []) or []),
+        })
+        result.setdefault("candidate_ledger", []).append({
+            "candidate_id": source_id,
+            "raw_name": source_name,
+            "candidate_kind": "world_item",
+            "status": "quarantined",
+            "reason_codes": ["person_or_relationship_phrase", "person_like_world_relocated"],
+            "relocation_target_id": audit.get("target_entity_id"),
+        })
+        result.setdefault("review_decisions", []).append({
+            "item_id": source_id,
+            "action": "relocate_to_character",
+            "reason_codes": ["person_or_relationship_phrase", "person_like_world_relocated"],
+            "target_entity_id": audit.get("target_entity_id"),
+        })
     if state.get("import_run_id"):
         _write_state_artifact(state, "organizer_output.json", result)
 
@@ -5148,14 +5199,21 @@ async def node_organize_project(state: ImportState) -> dict:
         }
         for container in result.get("world_containers", [])
     ]
+    relationship_update = _normalize_relationships_for_proposal_staging({
+        **state, "entity_registry": updated_registry,
+    })
     return {
         "entity_registry": updated_registry,
+        "relationships": relationship_update["relationships"],
+        "relationship_demotions": relationship_update["relationship_demotions"],
+        "relationship_quarantines": relationship_update["relationship_quarantines"],
         "world_containers": world_containers,
         # Keep the Organizer's review material available to the direct graph's
         # reviewers and proposal writer; it is not a canonical mutation.
         "organizer_output": result,
         "candidate_ledger": result.get("candidate_ledger", []),
         "quarantine_candidates": repair_result.get("quarantine_candidates", []),
+        "relocation_audits": relocation_update.get("relocation_audits", []),
         "relocation_plans": result.get("relocation_plans", []),
         "applied_relocation_plan_ids": repair_result.get("applied_relocation_plan_ids", []),
         "minor_repair_log": repair_result.get("minor_repair_log", []),
@@ -5519,6 +5577,7 @@ def _semantic_coverage_input(state: ImportState | dict) -> tuple[dict[str, Any],
         "manuscript_projection": {"chapters": list(state.get("manuscript_chapters", []) or [])},
         "existing_project_digest": dict(state.get("project_structure_digest") or {}),
         "profile": str(state.get("prompt_profile") or "balanced"),
+        "relationship_quarantines": list(state.get("relationship_quarantines", []) or []),
     }, migration_status
 
 
@@ -6756,22 +6815,27 @@ _ZH_CATEGORY_LABELS: dict[str, str] = {
 }
 
 _RELATIONSHIP_ONTOLOGY: dict[str, dict[str, str]] = {
-    "family": {"label": "家族关系", "directionality": "symmetric"},
-    "romantic": {"label": "情感关系", "directionality": "symmetric"},
+    "family": {"label": "亲属关系", "directionality": "symmetric"},
+    "romantic": {"label": "恋爱关系", "directionality": "symmetric"},
     "rivalry": {"label": "竞争关系", "directionality": "symmetric"},
     "sworn_brothers": {"label": "结拜关系", "directionality": "symmetric"},
-    "conflict": {"label": "对立关系", "directionality": "symmetric"},
+    "conflict": {"label": "敌对关系", "directionality": "symmetric"},
     "mentor_disciple": {"label": "师徒关系", "directionality": "directed"},
     "political": {"label": "政治关系", "directionality": "directed"},
     "alliance": {"label": "盟友关系", "directionality": "symmetric"},
+    "friendship": {"label": "朋友关系", "directionality": "symmetric"},
+    "organization": {"label": "组织隶属", "directionality": "directed"},
 }
 _ZH_REL_CATEGORY_ALIASES = {
     "家族": "family", "family": "family", "romance": "romantic", "情感": "romantic",
     "竞争": "rivalry", "rivalry": "rivalry", "师徒": "mentor_disciple", "mentor": "mentor_disciple",
     "政治": "political", "political": "political", "结拜": "sworn_brothers", "conflict": "conflict",
     "对立": "conflict", "alliance": "alliance", "盟友": "alliance",
+    "兄弟": "family", "母子": "family", "父子": "family", "叔侄": "family",
+    "密友": "friendship", "同门伙伴": "friendship", "朋友": "friendship",
+    "上下级": "political", "组织隶属": "organization", "隶属": "organization",
 }
-_RELATIONSHIP_FALSE_LABELS = frozenset({"解惑", "选拔", "冷冰冰的师兄"})
+_RELATIONSHIP_FALSE_LABELS = frozenset({"解惑", "选拔", "冷冰冰的师兄", "起名者", "贿赂"})
 
 
 def _relationship_ontology(relationship: dict, source_language: str) -> dict | None:
@@ -6811,6 +6875,117 @@ def _normalize_relationship_type(raw_type: str, category: str, source_language: 
     canonical = _RELATIONSHIP_ONTOLOGY.get(_ZH_REL_CATEGORY_ALIASES.get(category, category), {}).get("label", "关系")
     source_label = raw_type if (raw_type and raw_type != canonical) else ""
     return canonical, source_label
+
+
+def _relocate_evidence_backed_person_world_candidates(state: ImportState | dict) -> dict[str, Any]:
+    """Move a kinship World candidate into staged Characters only with proof.
+
+    This is a production staging repair, not an offline-only exception.  The
+    original World quarantine record remains reviewer-visible, while relations
+    can resolve against the new deterministic character identity.
+    """
+    registry = copy.deepcopy(state.get("entity_registry", {}) or {})
+    chars = registry.get("characters", {}) if isinstance(registry.get("characters"), dict) else {}
+    world = registry.get("world", {}) if isinstance(registry.get("world"), dict) else {}
+    detailed = registry.get("world_detailed", {}) if isinstance(registry.get("world_detailed"), dict) else {}
+    relationship_rows = list(state.get("relationships", []) or [])
+    # The synthesizer may not have materialized ``relationships`` yet. Raw
+    # candidates are safe as relocation evidence, but never create a relation
+    # on their own.
+    if not relationship_rows:
+        relationship_rows = list(state.get("raw_relationships", []) or [])
+    relationships = [dict(item) for item in relationship_rows if isinstance(item, dict)]
+    quarantine = [dict(item) for item in state.get("quarantine_candidates", []) if isinstance(item, dict)]
+    audits = [dict(item) for item in state.get("relocation_audits", []) if isinstance(item, dict)]
+    suffixes = ("父", "母", "兄", "弟", "姐", "妹", "叔", "伯", "婶", "姑")
+    for key, item in list(detailed.items()):
+        name = str(item.get("name") or key).strip()
+        entity_id = str(item.get("entity_id") or item.get("id") or key)
+        if len(name) < 2 or not name.endswith(suffixes):
+            continue
+        references = [
+            rel for rel in relationships
+            if name in {
+                str(rel.get("source_character_name") or rel.get("source_candidate_id") or ""),
+                str(rel.get("target_character_name") or rel.get("target_candidate_id") or ""),
+            }
+        ]
+        evidence = list(item.get("evidence_refs") or item.get("evidenceRefs") or [])
+        span = item.get("source_span") or item.get("sourceSpan")
+        description = str(item.get("description") or item.get("summary") or "").strip()
+        span_is_auditable = isinstance(span, dict) and bool(
+            span.get("raw_source_hash") or span.get("source_hash")
+        ) and any(key in span for key in ("absolute_start", "start", "start_offset")) and any(
+            key in span for key in ("absolute_end", "end", "end_offset")
+        )
+        if not references or not evidence or not span_is_auditable or not description:
+            if not any(str(item.get("candidate_id") or "") == entity_id for item in quarantine):
+                quarantine.append({"candidate_id": entity_id, "raw_name": name, "status": "quarantined", "reason_codes": ["person_like_world_insufficient_relocation_evidence"], "evidence_refs": evidence})
+            continue
+        character_id = f"char_relocated_{hashlib.sha256(entity_id.encode('utf-8')).hexdigest()[:10]}"
+        chars.setdefault(character_id, {
+            "canonical_name": name, "name": name, "aliases": [], "summary": description,
+            "background": description, "importance": "supporting", "confidence": float(item.get("confidence") or 0.7),
+            "evidence_refs": evidence, "source_span": dict(span), "source_chunk_ids": [item.get("source_chunk_id")] if item.get("source_chunk_id") is not None else [],
+            "relocation_audit": {"source_world_candidate_id": entity_id, "reason": "person_like_world_referenced_by_relationship"},
+        })
+        del detailed[key]
+        for world_key, value in list(world.items()):
+            if world_key == key or world_key == name or str(value) == entity_id:
+                world.pop(world_key, None)
+        if not any(str(item.get("candidate_id") or "") == entity_id for item in quarantine):
+            quarantine.append({"candidate_id": entity_id, "raw_name": name, "status": "quarantined", "reason_codes": ["person_or_relationship_phrase", "person_like_world_relocated"], "evidence_refs": evidence, "relocation_target_id": character_id})
+        if not any(str(item.get("source_candidate_id") or "") == entity_id for item in audits):
+            audits.append({
+                "source_candidate_id": entity_id, "source_name": name, "target_entity_id": character_id,
+                "action": "character_relocation", "reason": "person_like_world_referenced_by_relationship",
+                "original_world_decision": {"action": "quarantine", "reason": "person_or_relationship_phrase"},
+                "evidence_refs": evidence,
+            })
+        for relationship in relationships:
+            if str(relationship.get("source_character_name") or "") == name:
+                relationship["sourceId"] = character_id
+            if str(relationship.get("target_character_name") or "") == name:
+                relationship["targetId"] = character_id
+    registry.update({"characters": chars, "world": world, "world_detailed": detailed})
+    return {"entity_registry": registry, "relationships": relationships, "quarantine_candidates": quarantine, "relocation_audits": audits}
+
+
+def _normalize_relationships_for_proposal_staging(state: ImportState | dict) -> dict[str, Any]:
+    """Apply the production Chinese ontology before coverage/proposal staging."""
+    registry = state.get("entity_registry", {}) or {}
+    normalized: list[dict] = []
+    demoted: list[dict] = []
+    quarantined: list[dict] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for relationship in state.get("relationships", []) or []:
+        if not isinstance(relationship, dict):
+            continue
+        rel = dict(relationship)
+        raw_type = str(rel.get("type") or "").strip()
+        evidence = list(rel.get("evidence_refs") or rel.get("evidenceRefs") or rel.get("evidence") or [])
+        source_id = rel.get("sourceId") or _resolve_character_id(rel.get("source_character_name"), registry)
+        target_id = rel.get("targetId") or _resolve_character_id(rel.get("target_character_name"), registry)
+        rel["sourceId"], rel["targetId"] = source_id, target_id
+        if raw_type in _RELATIONSHIP_FALSE_LABELS:
+            demoted.append({"relationship_id": rel.get("id"), "type": raw_type, "disposition": "demote_to_evidence", "evidence": evidence, "description": rel.get("description", "")})
+            continue
+        if raw_type == "上下级" and not rel.get("category"):
+            text = " ".join(str(rel.get(key) or "") for key in ("description", "sourceNotes"))
+            rel["category"] = "organization" if any(token in text for token in ("门派", "宗门", "组织", "堂", "会")) else "political"
+        ontology = _relationship_ontology(rel, str(state.get("source_language") or "zh"))
+        if not ontology or not evidence or not source_id or not target_id:
+            quarantined.append({"relationship_id": rel.get("id"), "type": raw_type, "reason": "unknown_type_or_missing_evidence_or_endpoint", "evidence": evidence})
+            continue
+        rel.update(ontology)
+        if raw_type and raw_type != rel["type"]:
+            rel["specificRole"] = raw_type
+        rel["evidence_refs"] = [str(item) for item in evidence if str(item)]
+        key = _relationship_dedupe_key(str(source_id), str(target_id), rel)
+        if key not in seen:
+            seen.add(key)
+            normalized.append(rel)
+    return {"relationships": normalized, "relationship_demotions": demoted, "relationship_quarantines": quarantined}
 
 
 # ── Synthesis node stubs (populated by Codex in Steps 3–5) ───────────────────

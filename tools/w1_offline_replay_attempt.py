@@ -18,6 +18,7 @@ import shutil
 import sqlite3
 import tempfile
 import uuid
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -70,6 +71,55 @@ def _atomic_json(path: Path, payload: Any) -> None:
 
 def _relative(project: Path, path: Path) -> str:
     return path.resolve().relative_to(project.resolve()).as_posix()
+
+
+def _proposal_belongs_to_lineage(proposal: dict[str, Any], lineage_id: str) -> bool:
+    """Match the package-compiler's W1 lineage ownership rule locally.
+
+    Offline replay can replace only stale pending proposals from the same W1
+    lineage. It must never touch another workflow's inbox item.
+    """
+    source_workflow = str(proposal.get("source_workflow") or proposal.get("sourceWorkflow") or "")
+    if source_workflow != "W1_import" and proposal.get("source") != "import":
+        return False
+    explicit = str(proposal.get("importRunId") or proposal.get("import_run_id") or proposal.get("packageId") or "")
+    if explicit:
+        return explicit == lineage_id
+    operations = proposal.get("operations") or []
+    operation_ids = {
+        str((operation.get("fields") or {}).get("importRunId") or (operation.get("fields") or {}).get("import_run_id") or "")
+        for operation in operations if isinstance(operation, dict)
+    }
+    operation_ids.discard("")
+    return operation_ids == {lineage_id}
+
+
+def _replace_stale_lineage_package(inbox_path: Path, lineage_id: str) -> list[str]:
+    """Remove only prior pending W1 proposals after the caller wrote a backup."""
+    if not inbox_path.is_file():
+        return []
+    inbox = _read_json(inbox_path)
+    if not isinstance(inbox, list):
+        raise ValueError("inbox_not_array")
+    stale = [item for item in inbox if isinstance(item, dict) and _proposal_belongs_to_lineage(item, lineage_id)]
+    if stale:
+        _atomic_json(inbox_path, [item for item in inbox if item not in stale])
+    return [str(item.get("id") or "") for item in stale if str(item.get("id") or "")]
+
+
+def _pending_package_snapshot(inbox_path: Path, lineage_id: str) -> dict[str, Any]:
+    """Return only the package facts required to prove an apply result."""
+    if not inbox_path.is_file():
+        return {"proposal_count": 0, "proposal_ids": []}
+    inbox = _read_json(inbox_path)
+    if not isinstance(inbox, list):
+        return {"proposal_count": 0, "proposal_ids": [], "error": "inbox_not_array"}
+    package = [item for item in inbox if isinstance(item, dict) and _proposal_belongs_to_lineage(item, lineage_id)]
+    return {
+        "proposal_count": len(package),
+        "proposal_ids": [str(item.get("id") or "") for item in package if str(item.get("id") or "")],
+        "non_pending_count": sum(1 for item in package if str(item.get("status") or "") != "pending"),
+    }
 
 
 def _attempt_paths(project: Path, attempt_dir: Path) -> tuple[Path, Path]:
@@ -346,6 +396,10 @@ def _finalize_for_deterministic_review(state: dict[str, Any]) -> dict[str, Any]:
             enriched["profile_field_evidence"] = field_evidence
         characters[character_id] = enriched
     finalized = {**finalized, "entity_registry": {**registry, "characters": characters}}
+    # Use the same staged Organizer/relocation/relationship path as a new W1
+    # import.  Clearing import_run_id makes this dry-run path strictly no-write.
+    organizer_update = asyncio.run(w1_import.node_organize_project({**finalized, "import_run_id": ""}))
+    finalized = {**finalized, **organizer_update}
     return {**finalized, **w1_import._link_scene_events_from_provenance(finalized)}
 
 
@@ -593,6 +647,8 @@ def replay_attempt(project: Path, attempt_dir: Path, *, apply: bool = False, exp
         "legacy_identity_bridge": legacy_identity_bridge,
         "semantic_verdict": semantic["verdict"], "semantic_blocking_codes": [item["code"] for item in semantic["blocking_findings"]],
         "semantic_blocking_code_counts": blocking_code_counts,
+        "semantic_warning_codes": [item["code"] for item in semantic["warnings"]],
+        "semantic_warning_code_counts": dict(sorted(Counter(item["code"] for item in semantic["warnings"]).items())),
         "proposal_counts": proposal_counts, "canonical_counts": canonical_counts,
         "usage": {key: loaded["usage_ledger"].get(key) for key in ("actual_calls", "actual_total_tokens", "cost_usd", "model")},
     }
@@ -623,13 +679,43 @@ def replay_attempt(project: Path, attempt_dir: Path, *, apply: bool = False, exp
         _atomic_json(receipt_dir / "receipt.json", result)
         return result
 
+    # A replay is a durable attempt in its own right. Materialize only the
+    # verified manifest/usage metadata with its new attempt identity so tools
+    # such as diagnostics never have to guess which source attempt it reused.
+    replay_manifest = {
+        **loaded["manifest"],
+        "attempt_id": replay_attempt_id,
+        "lineage_id": str(loaded["manifest"]["lineage_id"]),
+        "import_run_id": str(loaded["manifest"]["lineage_id"]),
+        "replayed_from_attempt_id": str(loaded["manifest"]["attempt_id"]),
+        "offline_replay": True,
+    }
+    _atomic_json(replay_dir / "manifest.json", replay_manifest)
+    _atomic_json(replay_dir / "usage_ledger.json", loaded["usage_ledger"])
+    stale_package_proposal_ids = _replace_stale_lineage_package(inbox_path, str(loaded["manifest"]["lineage_id"]))
     reviewed = asyncio.run(w1_import.node_review_import(finalized_state))
     written = asyncio.run(w1_import.node_write_to_project({**finalized_state, **reviewed}))
+    package_snapshot = _pending_package_snapshot(inbox_path, str(loaded["manifest"]["lineage_id"]))
+    graph_path = loaded["lineage_dir"] / "proposal_graph.json"
+    graph = _read_json(graph_path) if graph_path.is_file() else {}
+    graph_atomic = bool(graph.get("atomic")) if isinstance(graph, dict) else False
+    graph_blocking = list(graph.get("blockingErrors") or []) if isinstance(graph, dict) else ["proposal_graph_missing"]
+    package_ready = (
+        written.get("status") != "blocked"
+        and bool(written.get("proposals") or [])
+        and package_snapshot.get("proposal_count", 0) == len(written.get("proposals") or [])
+        and package_snapshot.get("non_pending_count", 0) == 0
+        and graph_atomic
+        and not graph_blocking
+    )
     result = {
-        **receipt, "status": "applied" if written.get("status") != "blocked" else "blocked",
-        "phase": "completed" if written.get("status") != "blocked" else "blocked",
+        **receipt, "status": "applied" if package_ready else "blocked",
+        "phase": "completed" if package_ready else "package_validation_failed",
         "proposal_receipt_count": len(written.get("proposals") or []),
         "review_status": (written.get("import_review_report") or {}).get("status"),
+        "stale_package_proposal_ids": stale_package_proposal_ids,
+        "pending_package": package_snapshot,
+        "proposal_graph": {"atomic": graph_atomic, "blocking_errors": graph_blocking},
         "replay_attempt_dir": _relative(loaded["project"], replay_dir),
     }
     _atomic_json(receipt_dir / "receipt.json", result)

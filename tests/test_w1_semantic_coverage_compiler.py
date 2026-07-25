@@ -129,6 +129,31 @@ def test_event_action_cannot_be_promoted_to_long_term_relationship():
     assert report["relationship_report"]["dispositions"][0]["disposition"] == "event_participation"
 
 
+def test_long_term_relationship_can_cite_an_action_as_evidence():
+    payload = _clean_input()
+    relationship = next(item for item in payload["candidates"] if item["entity_type"] == "relationship")
+    relationship["fields"]["type"] = "政治关系"
+    relationship["fields"]["source_label"] = "上下级"
+    relationship["fields"]["description"] = "王护法向岳堂主恭敬行礼，以此证明上下级关系。"
+
+    report = compile_semantic_coverage(payload)
+
+    assert "relationship_event_action" not in _codes(report, "blocking_findings")
+    assert report["relationship_report"]["dispositions"][0]["disposition"] == "long_term_relationship"
+
+
+def test_quarantined_relationship_remains_a_blocking_repair():
+    payload = _clean_input()
+    payload["relationship_quarantines"] = [{
+        "relationship_id": "rel_unknown", "type": "陌生称谓", "reason": "unknown_type_or_missing_evidence_or_endpoint",
+        "evidence": [],
+    }]
+
+    report = compile_semantic_coverage(payload)
+
+    assert "relationship_quarantined" in _codes(report, "blocking_findings")
+
+
 def test_world_role_contamination_blocks_and_ambiguous_hall_warns():
     payload = _clean_input()
     payload["candidates"].extend([

@@ -71,3 +71,46 @@ def test_supervisor_organizer_relocates_before_rebuilding_world_survivors() -> N
     assert result["candidate_ledger"]
     assert result["relocation_plans"][0]["source_candidate_id"] == "world_wang"
     assert result["applied_relocation_plan_ids"] == ["relocate_world_wang_to_char_wang"]
+
+
+def test_supervisor_organizer_relocates_evidence_backed_kinship_candidate_with_audit() -> None:
+    """The production supervisor path must not leave Han's father in World."""
+    state = {
+        "source_language": "zh",
+        "relationships": [{
+            "id": "rel_han_father", "source_character_name": "韩立",
+            "target_character_name": "韩父", "type": "父子", "category": "family",
+            "evidence_refs": ["ev_father"],
+        }],
+        "timeline_architecture": {},
+        "project_structure_digest": {},
+        "entity_registry": {
+            "characters": {"char_han": {"canonical_name": "韩立", "evidence_refs": ["ev_han"]}},
+            "events": {},
+            "world": {"韩父": "organization"},
+            "world_detailed": {
+                "world_han_father": {
+                    "entity_id": "world_han_father", "name": "韩父", "category": "organization",
+                    "description": "韩立的父亲，支持他参加七玄门考验。", "evidence_refs": ["ev_father"],
+                    "source_span": {"raw_source_hash": "source", "absolute_start": 8, "absolute_end": 20},
+                },
+            },
+        },
+    }
+
+    result = asyncio.run(_organize_staged_world_candidates(state))
+
+    father_id = next(
+        key for key, value in result["entity_registry"]["characters"].items()
+        if value.get("canonical_name") == "韩父"
+    )
+    assert "韩父" not in result["entity_registry"]["world"]
+    assert "world_han_father" not in result["entity_registry"]["world_detailed"]
+    assert result["relationships"][0]["targetId"] == father_id
+    audit = result["relocation_audits"][0]
+    assert audit["source_candidate_id"] == "world_han_father"
+    artifact_quarantine = next(
+        item for item in result["organizer_output"]["quarantine_items"]
+        if item["candidate_id"] == "world_han_father"
+    )
+    assert artifact_quarantine["relocation_target_id"] == father_id

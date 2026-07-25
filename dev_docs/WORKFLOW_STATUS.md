@@ -41,9 +41,11 @@ provider recovery are covered. A legacy Import Text 18 paid attempt retains a
 human-gated unknown provider boundary. The first fresh Flash canary stalled in
 the pre-hardened runner and is not a completed import result; the repaired
 runner owns RuntimeStore binding, provider heartbeat, lock/lease cleanup, and
-fail-closed unknown-outcome handling. A fresh-project 10-chapter Flash canary
-is allowed by zero-cost gates but remains pending execution and review. Exact
-commands and receipts are in the 2026-07-15 and 2026-07-25 dev logs.
+fail-closed unknown-outcome handling. A later 10-chapter Flash canary completed
+22 provider calls for USD 0.034208 and its verified offline replay produced a
+74-proposal pending package with an atomic graph, zero semantic blockers, and
+no canonical acceptance. Exact commands and receipts are in the 2026-07-15 and
+2026-07-25 dev logs.
 
 ## Workflow Matrix
 | Workflow | Purpose | Backend status | UI status | Current status | Integration source | Open gaps |

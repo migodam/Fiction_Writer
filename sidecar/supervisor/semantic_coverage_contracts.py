@@ -43,6 +43,7 @@ class SemanticCoverageInput(TypedDict):
     manuscript_projection: dict[str, Any]
     existing_project_digest: dict[str, Any]
     profile: str
+    relationship_quarantines: NotRequired[list[dict[str, Any]]]
 
 
 class SemanticCoverageReport(TypedDict):

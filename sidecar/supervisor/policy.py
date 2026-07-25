@@ -55,6 +55,7 @@ from sidecar.workflows.w1_import import (
     _build_supervisor_evidence_cards,
     _chunk_progress,
     _merge_cross_validation_artifacts,
+    _relocate_evidence_backed_person_world_candidates,
     _write_import_artifact,
     configure_w1_budget,
     persist_w1_usage_ledger,
@@ -687,7 +688,9 @@ async def _organize_staged_world_candidates(state: ImportSupervisorState) -> Imp
     in the registry; rebuilding World from Organizer survivors first would
     discard the evidence needed to enrich the target character.
     """
-    registry = dict(state.get("entity_registry", {}))
+    relocation_update = _relocate_evidence_backed_person_world_candidates(state)
+    staged_state = {**state, **relocation_update}
+    registry = dict(staged_state.get("entity_registry", {}))
     world_detailed = registry.get("world_detailed", {}) or {}
     organizer_candidates: dict[str, dict] = {}
     if isinstance(world_detailed, dict):
@@ -700,13 +703,45 @@ async def _organize_staged_world_candidates(state: ImportSupervisorState) -> Imp
     organizer_output = organize_project_content(OrganizerInput(
         characters=registry.get("characters", {}),
         events=list(registry.get("events", {}).values()),
-        relationships=state.get("relationships", []),
+        relationships=staged_state.get("relationships", []),
         world_candidates=organizer_candidates,
         manuscript_notes=[],
-        timeline_architecture=state.get("timeline_architecture", {}),
-        project_digest=state.get("project_structure_digest", {}),
-        source_language=state.get("source_language", "zh"),
+        timeline_architecture=staged_state.get("timeline_architecture", {}),
+        project_digest=staged_state.get("project_structure_digest", {}),
+        source_language=staged_state.get("source_language", "zh"),
     ))
+
+    # Preserve direct, evidence-backed relocations in the organizer artifact.
+    # They are intentional World quarantines with a staged Character target,
+    # not silently discarded candidates.
+    for audit in relocation_update.get("relocation_audits", []):
+        if not isinstance(audit, dict):
+            continue
+        source_id = str(audit.get("source_candidate_id") or "")
+        if not source_id:
+            continue
+        organizer_output.setdefault("quarantine_items", []).append({
+            "candidate_id": source_id,
+            "raw_name": str(audit.get("source_name") or source_id),
+            "status": "quarantined",
+            "reason_codes": ["person_or_relationship_phrase", "person_like_world_relocated"],
+            "relocation_target_id": audit.get("target_entity_id"),
+            "evidence_refs": list(audit.get("evidence_refs", []) or []),
+        })
+        organizer_output.setdefault("candidate_ledger", []).append({
+            "candidate_id": source_id,
+            "raw_name": str(audit.get("source_name") or source_id),
+            "candidate_kind": "world_item",
+            "status": "quarantined",
+            "reason_codes": ["person_or_relationship_phrase", "person_like_world_relocated"],
+            "relocation_target_id": audit.get("target_entity_id"),
+        })
+        organizer_output.setdefault("review_decisions", []).append({
+            "item_id": source_id,
+            "action": "relocate_to_character",
+            "reason_codes": ["person_or_relationship_phrase", "person_like_world_relocated"],
+            "target_entity_id": audit.get("target_entity_id"),
+        })
 
     repair_actions = [
         {
@@ -726,10 +761,10 @@ async def _organize_staged_world_candidates(state: ImportSupervisorState) -> Imp
         if isinstance(plan, dict)
     ]
     repair_result = await repair_import_artifacts({
-        **state,
+        **staged_state,
         "entity_registry": registry,
-        "quarantine_candidates": list(organizer_output.get("quarantine_items", [])),
-        "applied_relocation_plan_ids": list(state.get("applied_relocation_plan_ids", [])),
+        "quarantine_candidates": list(relocation_update.get("quarantine_candidates", [])) + list(organizer_output.get("quarantine_items", [])),
+        "applied_relocation_plan_ids": list(staged_state.get("applied_relocation_plan_ids", [])),
     }, repair_actions)
 
     # Organizer survivors are the only World proposals.  Character changes
@@ -741,8 +776,8 @@ async def _organize_staged_world_candidates(state: ImportSupervisorState) -> Imp
         "world": {item["name"]: item["category"] for item in organized_world_items},
         "world_detailed": {item["name"]: item for item in organized_world_items},
     }
-    project_path = state.get("project_path", "")
-    import_run_id = state.get("import_run_id", "")
+    project_path = staged_state.get("project_path", "")
+    import_run_id = staged_state.get("import_run_id", "")
     if project_path and import_run_id:
         _write_import_artifact(project_path, import_run_id, "organizer_output.json", dict(organizer_output))
 
@@ -753,6 +788,8 @@ async def _organize_staged_world_candidates(state: ImportSupervisorState) -> Imp
         "organizer_output": organizer_output,
         "candidate_ledger": organizer_output.get("candidate_ledger", []),
         "quarantine_candidates": repair_result.get("quarantine_candidates", []),
+        "relocation_audits": relocation_update.get("relocation_audits", []),
+        "relationships": relocation_update.get("relationships", []),
         "relocation_plans": organizer_output.get("relocation_plans", []),
         "applied_relocation_plan_ids": repair_result.get("applied_relocation_plan_ids", []),
         "minor_repair_log": repair_result.get("minor_repair_log", []),

@@ -132,6 +132,27 @@ def test_apply_creates_pending_replay_package_with_backup(tmp_path: Path) -> Non
     assert receipt.is_file()
     assert json.loads(receipt.read_text(encoding="utf-8"))["phase"] == "completed"
     assert json.loads((tmp_path / "system/inbox.json").read_text(encoding="utf-8"))
+    replay_dir = tmp_path / result["replay_attempt_dir"]
+    manifest = json.loads((replay_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["attempt_id"] == result["replay_attempt_id"]
+    assert manifest["replayed_from_attempt_id"] == "attempt_original"
+    assert json.loads((replay_dir / "usage_ledger.json").read_text(encoding="utf-8"))["actual_calls"] == 5
+
+
+def test_apply_replaces_only_stale_same_lineage_package_before_compiling(tmp_path: Path) -> None:
+    attempt = _fixture(tmp_path)
+
+    first = replay_attempt(tmp_path, attempt, apply=True)
+    second = replay_attempt(tmp_path, attempt, apply=True)
+
+    assert first["status"] == "applied"
+    assert second["status"] == "applied"
+    assert second["stale_package_proposal_ids"]
+    assert second["proposal_graph"] == {"atomic": True, "blocking_errors": []}
+    pending = second["pending_package"]
+    assert pending["proposal_count"] == second["proposal_receipt_count"]
+    assert pending["non_pending_count"] == 0
+    assert len(json.loads((tmp_path / "system/inbox.json").read_text(encoding="utf-8"))) == pending["proposal_count"]
 
 
 def test_legacy_metrics_without_completed_domains_fail_closed_and_apply_only_receipts(tmp_path: Path) -> None:

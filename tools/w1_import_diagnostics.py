@@ -41,10 +41,12 @@ _CULTIVATION_CONTAINERS: frozenset[str] = frozenset({
 })
 
 _ZH_RELATIONSHIP_LABELS = frozenset({
-    "家族关系", "情感关系", "竞争关系", "师徒关系", "结拜关系", "政治关系", "对立关系", "盟友关系",
+    "亲属关系", "恋爱关系", "竞争关系", "师徒关系", "结拜关系", "政治关系", "敌对关系", "盟友关系",
+    "朋友关系", "组织隶属",
 })
 _RELATIONSHIP_ONTOLOGY_TYPES = frozenset({
     "family", "romantic", "rivalry", "mentor_disciple", "sworn_brothers", "political", "conflict", "alliance",
+    "friendship", "organization",
 })
 _MAJOR_CHARACTER_MARKERS = frozenset({
     "protagonist", "main", "main_character", "main character", "lead", "hero",

@@ -215,7 +215,10 @@ def _relationship_checks(candidates: list[dict[str, Any]], character_ids: set[st
         source_id = _text(fields.get("source_id") or fields.get("sourceId"))
         target_id = _text(fields.get("target_id") or fields.get("targetId"))
         relationship_type = _text(fields.get("type") or fields.get("relationship_type") or fields.get("relationshipType"))
-        label_text = " ".join([relationship_type, _text(fields.get("source_label") or fields.get("sourceLabel")), _text(fields.get("description"))])
+        # An evidence description may quote an action while supporting a
+        # legitimate long-term relationship. Only the asserted type/label may
+        # promote an event action into a relationship.
+        label_text = " ".join([relationship_type, _text(fields.get("source_label") or fields.get("sourceLabel"))])
         evidence = _evidence_ids(item)
         if any(marker in label_text for marker in _EVENT_ACTION_MARKERS):
             disposition = "event_participation"
@@ -324,6 +327,19 @@ def compile_semantic_coverage(payload: SemanticCoverageInput | dict[str, Any]) -
     character_ids = {_candidate_id(item) for item in candidates if _text(item.get("entity_type")) == "character"}
     relationship_report, relationship_findings = _relationship_checks(candidates, character_ids)
     blocking.extend(relationship_findings)
+    # Normalization removes invalid candidates from proposal staging, but that
+    # never counts as acceptance. Keep its durable quarantine records
+    # fail-closed until a repair produces a valid relationship candidate.
+    for record in normalized.get("relationship_quarantines", []):
+        if not isinstance(record, dict):
+            continue
+        relationship_id = _text(record.get("relationship_id") or record.get("id"))
+        evidence = _values(record, "evidence", "evidence_refs", "evidenceRefs")
+        blocking.append(_finding(
+            "relationship_quarantined", "blocking", entity_ids=[relationship_id], evidence_refs=[_text(item) for item in evidence],
+            message="A relationship was quarantined before proposal staging and still needs evidence, endpoint, or ontology repair.",
+            repair_action="quarantine",
+        ))
     world_report, world_findings = _world_checks(candidates)
     for finding in world_findings:
         (warnings if finding["severity"] == "warning" else blocking).append(finding)

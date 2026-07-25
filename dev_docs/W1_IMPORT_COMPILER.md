@@ -94,9 +94,13 @@ and artifact lineage IDs are allowed solely through a recorded
 
 Dry-run does not write. `--apply` first writes an isolated backup/receipt and
 may create only a new pending proposal package after the final deterministic
-review and semantic gate pass; it never accepts canonical data. Scene-event
-links require source-span overlap or an exact shared evidence receipt. A shared
-chunk alone is not link evidence because a chunk can contain multiple scenes.
+review and semantic gate pass; it never accepts canonical data. A replay
+materializes its own manifest and verified usage ledger with a new attempt ID.
+Before publication it replaces only stale pending W1 proposals from the same
+lineage, then requires a non-empty pending package whose receipt count matches
+an atomic proposal graph with no blocking edges. Scene-event links require
+source-span overlap or an exact shared evidence receipt. A shared chunk alone
+is not link evidence because a chunk can contain multiple scenes.
 
 ## Status
 W1 import now uses a Hybrid Compiler spine for long novel imports. The runtime still starts from the existing Import modal and sidecar W1 endpoint, but imported material is staged through deterministic artifacts before proposals are written.

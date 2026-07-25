@@ -9,6 +9,7 @@ from sidecar.supervisor.semantic_review import (
     normalize_candidate_name,
     parse_person_title_expression,
 )
+from sidecar.workflows import w1_import
 
 
 def _input(**overrides):
@@ -114,6 +115,72 @@ def test_organizer_quarantines_kinship_appellation_instead_of_routing_it_as_orga
     assert output["world_items"] == []
     assert output["quarantine_items"][0]["raw_name"] == "韩父"
     assert output["quarantine_items"][0]["reason_codes"] == ["person_or_relationship_phrase"]
+
+
+def test_evidence_backed_kinship_world_item_relocates_to_character_for_relationship_endpoint():
+    state = {
+        "source_language": "zh",
+        "entity_registry": {
+            "characters": {"char_han_li": {"canonical_name": "韩立", "evidence_refs": ["ev_han"]}},
+            "events": {},
+            "world": {"韩父": "organization"},
+            "world_detailed": {
+                "world_han_father": {
+                    "entity_id": "world_han_father", "name": "韩父", "category": "organization",
+                    "description": "韩立的父亲，支持他参加七玄门考验。", "evidence_refs": ["ev_father"],
+                    "source_span": {"raw_source_hash": "source", "absolute_start": 8, "absolute_end": 20},
+                },
+            },
+        },
+        "relationships": [{
+            "id": "rel_father", "source_character_name": "韩立", "target_character_name": "韩父",
+            "type": "父子", "category": "family", "description": "韩父决定让韩立参加七玄门考验。", "evidence_refs": ["ev_father"],
+        }],
+    }
+
+    result = asyncio.run(w1_import.node_organize_project(state))
+
+    relocated_id = next(key for key, value in result["entity_registry"]["characters"].items() if value.get("canonical_name") == "韩父")
+    assert "world_han_father" not in result["entity_registry"]["world_detailed"]
+    assert "韩父" not in result["entity_registry"]["world"]
+    relation = result["relationships"][0]
+    assert relation["targetId"] == relocated_id
+    assert relation["type"] == "亲属关系"
+    assert relation["specificRole"] == "父子"
+    audit = result["relocation_audits"][0]
+    assert audit["original_world_decision"] == {"action": "quarantine", "reason": "person_or_relationship_phrase"}
+    review_item = next(item for item in result["organizer_output"]["quarantine_items"] if item["candidate_id"] == "world_han_father")
+    assert review_item["relocation_target_id"] == relocated_id
+
+
+def test_relationship_normalizer_maps_chinese_ontology_and_quarantines_unknowns():
+    registry = {"characters": {"char_a": {"canonical_name": "甲"}, **{
+        f"char_{index}": {"canonical_name": f"角色{index}"} for index in range(12)
+    }}}
+    rows = [
+        ("兄弟", "family", "亲属关系"), ("母子", "family", "亲属关系"), ("父子", "family", "亲属关系"),
+        ("叔侄", "family", "亲属关系"), ("师徒", "mentor_disciple", "师徒关系"),
+        ("竞争", "rivalry", "竞争关系"), ("密友", "friendship", "朋友关系"), ("同门伙伴", "friendship", "朋友关系"),
+        ("上下级", "", "政治关系"),
+    ]
+    relationships = [
+        {"id": f"rel_{index}", "sourceId": "char_a", "targetId": f"char_{index}", "type": raw_type, "category": category, "evidence_refs": ["ev"]}
+        for index, (raw_type, category, _expected) in enumerate(rows)
+    ]
+    relationships.extend([
+        {"id": "rel_action", "sourceId": "char_a", "targetId": "char_9", "type": "贿赂", "evidence_refs": ["ev"]},
+        {"id": "rel_unknown", "sourceId": "char_a", "targetId": "char_10", "type": "陌生称谓", "evidence_refs": ["ev"]},
+        {"id": "rel_no_evidence", "sourceId": "char_a", "targetId": "char_11", "type": "父子", "category": "family", "evidence_refs": []},
+    ])
+
+    result = w1_import._normalize_relationships_for_proposal_staging({"source_language": "zh", "entity_registry": registry, "relationships": relationships})
+
+    normalized = {item["id"]: item for item in result["relationships"]}
+    for index, (_raw_type, _category, expected) in enumerate(rows):
+        assert normalized[f"rel_{index}"]["type"] == expected
+    assert normalized["rel_0"]["specificRole"] == "兄弟"
+    assert result["relationship_demotions"] == [{"relationship_id": "rel_action", "type": "贿赂", "disposition": "demote_to_evidence", "evidence": ["ev"], "description": ""}]
+    assert {item["relationship_id"] for item in result["relationship_quarantines"]} == {"rel_unknown", "rel_no_evidence"}
 
 
 def test_organizer_routes_described_branch_hall_as_a_location():

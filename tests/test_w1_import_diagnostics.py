@@ -284,6 +284,26 @@ def test_semantic_hard_flags_use_final_proposals_and_reviewer_findings(tmp_path)
     assert flags["usage_ledger_over_cap"]
 
 
+def test_semantic_quality_accepts_current_chinese_relationship_ontology() -> None:
+    operations = [
+        {
+            "entityType": "relationship",
+            "entityId": f"rel_{ontology_type}",
+            "fields": {"id": f"rel_{ontology_type}", "type": label, "ontologyType": ontology_type},
+        }
+        for label, ontology_type in [
+            ("亲属关系", "family"), ("恋爱关系", "romantic"), ("竞争关系", "rivalry"),
+            ("师徒关系", "mentor_disciple"), ("结拜关系", "sworn_brothers"),
+            ("政治关系", "political"), ("敌对关系", "conflict"), ("盟友关系", "alliance"),
+            ("朋友关系", "friendship"), ("组织隶属", "organization"),
+        ]
+    ]
+
+    metrics = w1_import_diagnostics._semantic_quality_metrics(operations, {}, "zh", {})
+
+    assert metrics["invalid_relationships"] == []
+
+
 def test_world_quality_rejects_dangling_container_references(tmp_path):
     project = _make_project(tmp_path)
     run_dir = project / "system" / "imports" / "import_a"

@@ -1767,6 +1767,65 @@ class TestProposalWriteCharacterProfileBoundary(unittest.TestCase):
         })
 
 
+class TestProposalWriteSemanticBoundary(unittest.TestCase):
+    def test_live_supervisor_normalizes_relationships_and_relocates_kinship_world_items(self):
+        """proposal_write is the live path after relationship synthesis."""
+        captured_write_input: dict = {}
+
+        async def _capture_write(write_input):
+            captured_write_input.update(copy.deepcopy(write_input))
+            return {"proposals": [], "errors": [], "status": "done", "progress": 1.0}
+
+        state = _make_state(
+            source_language="zh",
+            entity_registry={
+                "characters": {"char_han": {"canonical_name": "韩立", "evidence_refs": ["ev_han"]}},
+                "events": {},
+                "world": {"韩父": "organization"},
+                "world_detailed": {
+                    "world_han_father": {
+                        "entity_id": "world_han_father", "name": "韩父", "category": "organization",
+                        "description": "韩立的父亲。", "evidence_refs": ["ev_father"],
+                        "source_span": {"raw_source_hash": "source", "absolute_start": 1, "absolute_end": 6},
+                    },
+                },
+            },
+        )
+        synthesized = {"relationships": [
+            {
+                "id": "rel_father", "source_character_name": "韩立", "target_character_name": "韩父",
+                "type": "父子", "category": "family", "evidence_refs": ["ev_father"],
+            },
+            {
+                "id": "rel_action", "source_character_name": "韩立", "target_character_name": "韩父",
+                "type": "贿赂", "evidence_refs": ["ev_action"],
+            },
+        ]}
+
+        with (
+            patch("sidecar.supervisor.tools.node_build_manuscript", new=AsyncMock(return_value={"manuscript_chapters": []})),
+            patch("sidecar.supervisor.tools.node_synthesize_relationships", new=AsyncMock(return_value=synthesized)),
+            patch("sidecar.supervisor.tools.node_classify_character_tags", new=AsyncMock(return_value={})),
+            patch("sidecar.supervisor.tools.node_infer_world_settings", new=AsyncMock(return_value={})),
+            patch("sidecar.supervisor.tools.node_write_to_project", new=AsyncMock(side_effect=_capture_write)),
+        ):
+            _run(proposal_write(state))
+
+        registry = captured_write_input["entity_registry"]
+        father_id = next(key for key, value in registry["characters"].items() if value.get("canonical_name") == "韩父")
+        assert "韩父" not in registry["world"]
+        assert "world_han_father" not in registry["world_detailed"]
+        relation = captured_write_input["relationships"][0]
+        assert relation["targetId"] == father_id
+        assert relation["type"] == "亲属关系"
+        assert relation["specificRole"] == "父子"
+        assert captured_write_input["relationship_demotions"] == [{
+            "relationship_id": "rel_action", "type": "贿赂", "disposition": "demote_to_evidence",
+            "evidence": ["ev_action"], "description": "",
+        }]
+        assert captured_write_input["relationship_quarantines"] == []
+
+
 # ── Cost guard: 402 budget exhaustion detection ───────────────────────────────
 
 class TestBudgetExhausted402Detection(unittest.TestCase):

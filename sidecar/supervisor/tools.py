@@ -49,6 +49,7 @@ from sidecar.workflows.w1_import import (
     _merge_prompt_outputs,
     _merge_text_field,
     _normalize_character_tag,
+    _normalize_relationships_for_proposal_staging,
     _normalize_world_category,
     _normalize_timeline_event_ontology,
     _now_iso,
@@ -57,6 +58,7 @@ from sidecar.workflows.w1_import import (
     _registry_summary,
     _resolve_character_id,
     _resolve_character_ids,
+    _relocate_evidence_backed_person_world_candidates,
     _sha256_text,
     _stable_id,
     _truncate_text_fields,
@@ -2119,6 +2121,14 @@ async def proposal_write(state: ImportSupervisorState) -> dict:
         rel_result = await node_synthesize_relationships(merged)
         merged = {**merged, **rel_result}
 
+        # The policy organizer runs before relationship synthesis. Re-run the
+        # same pure staging helpers at the authoritative write boundary so the
+        # live supervisor path and offline replay share one fail-closed contract.
+        relocation_update = _relocate_evidence_backed_person_world_candidates(merged)
+        merged = {**merged, **relocation_update}
+        relationship_update = _normalize_relationships_for_proposal_staging(merged)
+        merged = {**merged, **relationship_update}
+
         tags_result = await node_classify_character_tags(merged)
         merged = {**merged, **tags_result}
 
@@ -2199,7 +2209,8 @@ async def proposal_write(state: ImportSupervisorState) -> dict:
         "import_review_report", "import_mode", "source_language", "relationships",
         "character_tags", "world_settings", "world_containers",
         "workflow_id", "context", "errors", "checkpoint_path",
-        "supervisor_semantic_receipts",
+        "supervisor_semantic_receipts", "relationship_demotions",
+        "relationship_quarantines", "quarantine_candidates", "relocation_audits",
     })
     merged["supervisor_semantic_receipts"] = supervisor_semantic_receipts
     write_input = {k: merged[k] for k in _WRITE_KEYS if k in merged}
@@ -2220,6 +2231,9 @@ async def proposal_write(state: ImportSupervisorState) -> dict:
         **rel_result,
         **tags_result,
         **world_result,
+        **relationship_update,
+        "relocation_audits": relocation_update.get("relocation_audits", []),
+        "quarantine_candidates": relocation_update.get("quarantine_candidates", []),
         **write_result,
         "supervisor_log": log,
         "current_stage": "proposal_write",
