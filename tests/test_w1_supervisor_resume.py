@@ -512,7 +512,7 @@ def test_span_rehydration_uses_project_staged_source_when_original_is_missing(tm
     assert rebuilt["chunks"][0]["content"] == source_text
 
 
-def test_short_source_prose_uses_spans_while_ids_and_chinese_labels_remain_inline(tmp_path):
+def test_short_source_names_use_refs_and_rehydrate_without_changing_values(tmp_path):
     source_text = "韩立入门"
     source = tmp_path / "short-source.txt"
     source.write_text(source_text, encoding="utf-8")
@@ -527,6 +527,7 @@ def test_short_source_prose_uses_spans_while_ids_and_chinese_labels_remain_inlin
             "characters": {
                 "char_han": {
                     "id": "char_han", "canonical_name": "韩立", "summary": "韩立入门",
+                    "aliases": ["韩二愣"],
                     "background": "韩立", "notes": ["入门"], "confidence": 0.9,
                 },
             },
@@ -559,10 +560,11 @@ def test_short_source_prose_uses_spans_while_ids_and_chinese_labels_remain_inlin
         assert set(value["source_span"]) == {"raw_source_hash", "absolute_start", "absolute_end", "substring_hash"}
 
     character = snapshot["entity_registry"]["characters"]["char_han"]
-    assert character["canonical_name"] == "韩立"
-    assert snapshot["resume_context"]["character_tags"][0]["name"] == "入门"
-    assert snapshot["timeline"]["timeline_branches"][0]["name"] == "入门"
-    assert snapshot["resume_context"]["manuscript_chapters"][0]["title"] == "入门"
+    assert_source_ref(character["canonical_name"])
+    assert character["aliases"] == ["韩二愣"]
+    assert_source_ref(snapshot["resume_context"]["character_tags"][0]["name"])
+    assert_source_ref(snapshot["timeline"]["timeline_branches"][0]["name"])
+    assert_source_ref(snapshot["resume_context"]["manuscript_chapters"][0]["title"])
     assert_source_ref(character["summary"])
     assert_source_ref(character["background"])
     assert_source_ref(character["notes"][0])
@@ -594,24 +596,29 @@ def test_short_source_prose_uses_spans_while_ids_and_chinese_labels_remain_inlin
     persisted = load_w1_supervisor_snapshot(tmp_path, ref)["state"]
     assert_source_ref(persisted["entity_registry"]["characters"]["char_han"]["summary"])
     assert_source_ref(persisted["entity_registry"]["characters"]["char_han"]["background"])
-    assert persisted["entity_registry"]["characters"]["char_han"]["canonical_name"] == "韩立"
-    assert persisted["resume_context"]["character_tags"][0]["name"] == "入门"
+    assert_source_ref(persisted["entity_registry"]["characters"]["char_han"]["canonical_name"])
+    assert_source_ref(persisted["resume_context"]["character_tags"][0]["name"])
 
     restored = policy._restore_snapshot_state({}, snapshot)
     restored = policy._rehydrate_snapshot_chunks(restored, str(source))
     restored = policy._rehydrate_snapshot_manuscript_chapters(restored, str(source))
+    assert restored["entity_registry"]["characters"]["char_han"]["canonical_name"] == "韩立"
+    assert restored["entity_registry"]["characters"]["char_han"]["aliases"] == ["韩二愣"]
     assert restored["entity_registry"]["characters"]["char_han"]["summary"] == "韩立入门"
     assert restored["entity_registry"]["characters"]["char_han"]["background"] == "韩立"
     assert restored["entity_registry"]["characters"]["char_han"]["notes"] == ["入门"]
     assert restored["character_tags"][0]["description"] == "韩立"
+    assert restored["character_tags"][0]["name"] == "入门"
     assert restored["world_settings"]["worldRulesSummary"] == "韩立入门"
     assert restored["timeline_branches"][0]["description"] == "韩立"
+    assert restored["timeline_branches"][0]["name"] == "入门"
+    assert restored["manuscript_chapters"][0]["title"] == "入门"
     assert restored["manuscript_chapters"][0]["summary"] == "韩立入门"
     assert restored["manuscript_chapters"][0]["notes"] == "入门"
 
 
 def test_stable_label_source_fragments_become_refs_and_never_reach_snapshot_files(tmp_path):
-    source_text = "第1章\n韩立入门。"
+    source_text = "第1章\n韩立入门。随后参加选拔。"
     source = tmp_path / "stable-label-source.txt"
     source.write_text(source_text, encoding="utf-8")
     span = make_source_span(source_text, 0, len(source_text))
@@ -626,7 +633,7 @@ def test_stable_label_source_fragments_become_refs_and_never_reach_snapshot_file
                 "char_han": {
                     "id": "char_han",
                     "canonical_name": "韩立",
-                    "aliases": ["韩二愣", source_text],
+                    "aliases": ["韩二愣", "参加选拔"],
                 },
             },
             "events": {},
@@ -637,14 +644,14 @@ def test_stable_label_source_fragments_become_refs_and_never_reach_snapshot_file
         "relationships": [],
         "raw_relationships": [],
         "character_tags": [
-            {"id": "tag_guarded", "name": source_text},
+            {"id": "tag_guarded", "name": "韩立入门"},
             {"id": "tag_valid", "name": "核心人物"},
         ],
         "world_settings": {},
         "world_containers": [],
         "organizer_output": {},
         "timeline_architecture": {
-            "label": source_text,
+            "label": "随后参加选拔",
             "valid_display": {"label": "主时间线"},
         },
         "timeline_branches": [],
@@ -662,7 +669,7 @@ def test_stable_label_source_fragments_become_refs_and_never_reach_snapshot_file
             {
                 "chapter_id": "chap_guarded",
                 "scene_id": "scene_guarded",
-                "title": source_text,
+                "title": "韩立入门。",
                 "chunk_ids": [0],
                 "source_span": span,
                 "manuscript_content": source_text,
@@ -683,7 +690,7 @@ def test_stable_label_source_fragments_become_refs_and_never_reach_snapshot_file
         assert set(value) == {"contract_version", "source_span"}
 
     character = snapshot["entity_registry"]["characters"]["char_han"]
-    assert character["canonical_name"] == "韩立"
+    assert_source_ref(character["canonical_name"])
     assert character["aliases"][0] == "韩二愣"
     assert_source_ref(character["aliases"][1])
     assert_source_ref(snapshot["resume_context"]["character_tags"][0]["name"])
@@ -722,25 +729,41 @@ def test_stable_label_source_fragments_become_refs_and_never_reach_snapshot_file
         completed_nodes=["validate_file", "extract_window", "reduce_repair"],
     )
 
+    forbidden_source_values = {
+        "韩立",
+        "韩立入门",
+        "韩立入门。",
+        "随后参加选拔",
+        "参加选拔",
+    }
     snapshot_root = tmp_path / ref.relative_path
     for json_path in snapshot_root.rglob("*.json"):
         document = json.loads(json_path.read_text(encoding="utf-8"))
 
         def scan(value):
             if isinstance(value, str):
-                assert value != source_text, f"source body leaked into {json_path}"
+                assert value not in forbidden_source_values, f"source substring leaked into {json_path}"
             elif isinstance(value, list):
                 for item in value:
                     scan(item)
             elif isinstance(value, dict):
                 for key, item in value.items():
-                    assert key != source_text, f"source body leaked as key into {json_path}"
+                    assert key not in forbidden_source_values, f"source substring leaked as key into {json_path}"
                     scan(item)
 
         scan(document)
 
+    restored = policy._restore_snapshot_state({}, snapshot)
+    restored = policy._rehydrate_snapshot_chunks(restored, str(source))
+    restored = policy._rehydrate_snapshot_manuscript_chapters(restored, str(source))
+    assert restored["entity_registry"]["characters"]["char_han"]["canonical_name"] == "韩立"
+    assert restored["entity_registry"]["characters"]["char_han"]["aliases"] == ["韩二愣", "参加选拔"]
+    assert restored["character_tags"][0]["name"] == "韩立入门"
+    assert restored["timeline_architecture"]["label"] == "随后参加选拔"
+    assert restored["manuscript_chapters"][0]["title"] == "韩立入门。"
 
-def test_obvious_single_line_source_fragments_are_not_treated_as_stable_labels():
+
+def test_every_nonempty_source_substring_in_text_fields_becomes_a_source_ref():
     source_text = "韩立入门，拜墨大夫为师，随后进入七玄门修炼并参加门内选拔。"
     cases = [
         ("character_tags[0].name", "韩立入门，拜墨大夫为师"),

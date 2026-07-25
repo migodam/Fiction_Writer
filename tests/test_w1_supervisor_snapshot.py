@@ -70,6 +70,8 @@ def _kwargs() -> dict[str, object]:
 def _write(project: Path, **changes: object):
     values = _kwargs()
     values.update(changes)
+    if values["source_identity"] == _source() and not (project / "sources" / "novel.txt").exists():
+        _prepare_resume_source(project)
     return write_w1_supervisor_snapshot(project, **values)  # type: ignore[arg-type]
 
 
@@ -185,16 +187,16 @@ def test_hidden_reasoning_and_long_source_substrings_are_rejected(tmp_path: Path
 @pytest.mark.parametrize(
     "state",
     [
-        {"resume_context": {"character_tags": [{"name": "第1章\n韩立入门。"}]}},
-        {"resume_context": {"manuscript_chapters": [{"title": "第1章\n韩立入门。"}]}},
-        {"timeline": {"timeline_architecture": {"label": "第1章\n韩立入门。"}}},
-        {"entity_registry": {"characters": {"char_han": {"aliases": ["第1章\n韩立入门。"]}}}},
+        {"resume_context": {"character_tags": [{"name": "韩立入门"}]}},
+        {"resume_context": {"manuscript_chapters": [{"title": "韩立入门。"}]}},
+        {"timeline": {"timeline_architecture": {"label": "随后参加选拔"}}},
+        {"entity_registry": {"characters": {"char_han": {"aliases": ["参加选拔"]}}}},
     ],
 )
 def test_snapshot_codec_rejects_stable_label_source_body_bypass(
     tmp_path: Path, state: dict[str, object],
 ) -> None:
-    source_text = "第1章\n韩立入门。"
+    source_text = "第1章\n韩立入门。随后参加选拔。"
     source = tmp_path / "sources" / "novel.txt"
     source.parent.mkdir(parents=True)
     source.write_text(source_text, encoding="utf-8")
@@ -203,12 +205,12 @@ def test_snapshot_codec_rejects_stable_label_source_body_bypass(
         "source_size": len(source_text.encode("utf-8")),
     }
 
-    with pytest.raises(SnapshotValidationError, match=r"invalid_(?:name|title|label|alias)"):
+    with pytest.raises(SnapshotValidationError, match="source_substring"):
         _write(tmp_path, source_identity=source_identity, state=state)
 
 
 def test_snapshot_codec_preserves_valid_short_chinese_display_labels(tmp_path: Path) -> None:
-    source_text = "第1章 山边小村\n韩立进入七玄门，成为核心人物。"
+    source_text = "一段与展示名称无关的测试正文。"
     source = tmp_path / "sources" / "novel.txt"
     source.parent.mkdir(parents=True)
     source.write_text(source_text, encoding="utf-8")
@@ -229,6 +231,16 @@ def test_snapshot_codec_preserves_valid_short_chinese_display_labels(tmp_path: P
     persisted = load_w1_supervisor_snapshot(tmp_path, ref)["state"]
 
     assert persisted == state
+
+
+def test_snapshot_write_fails_closed_when_declared_source_is_missing(tmp_path: Path) -> None:
+    missing_identity = _source() | {"source_relative_path": "sources/missing.txt"}
+
+    with pytest.raises(SnapshotValidationError, match="snapshot_source"):
+        _write(tmp_path, source_identity=missing_identity)
+
+    snapshots_root = tmp_path / "system" / "imports" / "lineage_01" / "attempts" / "attempt_01" / "snapshots"
+    assert not snapshots_root.exists()
 
 
 def test_absolute_paths_and_unsupported_boundaries_are_rejected(tmp_path: Path) -> None:
@@ -411,6 +423,7 @@ def test_actual_nul_path_is_rejected(tmp_path: Path) -> None:
 
 
 def test_concurrent_same_checkpoint_is_idempotent_and_conflicts_fail_closed(tmp_path: Path) -> None:
+    _prepare_resume_source(tmp_path)
     with ThreadPoolExecutor(max_workers=6) as executor:
         refs = list(executor.map(lambda _index: _write(tmp_path), range(6)))
     assert len({ref.manifest_sha256 for ref in refs}) == 1

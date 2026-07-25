@@ -53,8 +53,14 @@ _STABLE_LABEL_MAX_LENGTH = {
     "title": 160,
 }
 _STABLE_LABEL_LINE_BREAK = re.compile(r"[\r\n\u2028\u2029]")
-_SOURCE_PROSE_TERMINATOR = re.compile(r"[。！？!?；;]")
-_SOURCE_PROSE_SEPARATOR = re.compile(r"[，,：:]")
+_STABLE_METADATA_FIELDS = frozenset({
+    "id", "ids", "type", "category", "color", "status", "mode",
+    "kind", "field", "contract_version", "source_language", "importcategorykey", "ontologytype",
+    "ontologydirection", "directionality", "eventclass", "timelineclass", "eventtype", "endmode",
+    "densityclass", "projecttype", "narrativepacing", "languagestyle", "narrativeperspective",
+    "lengthstrategy", "character_id_map", "evidence_refs", "evidencerefs",
+    "profile_field_evidence", "candidate_ids", "normalization",
+})
 
 SUPPORTED_BOUNDARIES = frozenset(
     {
@@ -322,11 +328,21 @@ def _stable_label_kind(field: str) -> str | None:
     if not tokens:
         return None
     leaf = tokens[-1]
+    label_containers = {
+        "tags", "traits", "personality_traits",
+    }
+    name_containers = {
+        "candidate_names", "character_names", "characternames",
+    }
     if leaf in {"alias", "aliases"} or ("aliases" in tokens and leaf == "value"):
         return "alias"
+    if leaf in label_containers or (leaf == "value" and any(token in label_containers for token in tokens)):
+        return "label"
+    if leaf in name_containers or (leaf == "value" and any(token in name_containers for token in tokens)):
+        return "name"
     if leaf == "title" or leaf.endswith("_title"):
         return "title"
-    if leaf == "label" or leaf.endswith("_label"):
+    if leaf in {"label", "sourcelabel"} or leaf.endswith("_label"):
         return "label"
     if (
         leaf in {"name", "canonical_name", "sourcename", "candidate_names", "character_names", "characternames"}
@@ -336,7 +352,28 @@ def _stable_label_kind(field: str) -> str | None:
     return None
 
 
-def _stable_label_invalid_reason(value: str, kind: str, source_text: str) -> str | None:
+def _field_is_stable_metadata(field: str) -> bool:
+    lowered = field.lower()
+    if "entity_registry.world." in lowered or "character_id_map" in lowered:
+        return True
+    tokens = [token.lower() for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", field)]
+    if not tokens:
+        return False
+    leaf = tokens[-1]
+    if leaf in _STABLE_METADATA_FIELDS:
+        return True
+    if leaf.endswith(("id", "ids", "_id", "_ids", "hash", "_hash")):
+        return True
+    return any(
+        token in {
+            "evidence_refs", "evidencerefs", "profile_field_evidence",
+            "candidate_ids", "character_ids",
+        }
+        for token in tokens
+    )
+
+
+def _stable_label_invalid_reason(value: str, kind: str) -> str | None:
     if value != value.strip():
         return "surrounding_whitespace"
     if _STABLE_LABEL_LINE_BREAK.search(value):
@@ -347,21 +384,6 @@ def _stable_label_invalid_reason(value: str, kind: str, source_text: str) -> str
         return "tab"
     if len(value) > _STABLE_LABEL_MAX_LENGTH[kind]:
         return "too_long"
-    if value:
-        if value == source_text:
-            return "complete_source"
-        if value in source_text:
-            if len(value) >= 24:
-                return "source_prose_fragment"
-            terminators = len(_SOURCE_PROSE_TERMINATOR.findall(value))
-            if kind in {"name", "alias", "label"} and (
-                terminators or _SOURCE_PROSE_SEPARATOR.search(value)
-            ):
-                return "source_prose_fragment"
-            if kind == "title" and terminators >= 2:
-                return "source_prose_fragment"
-            if len(value) >= 24 and len(value.split()) >= 4:
-                return "source_prose_fragment"
     return None
 
 
@@ -378,15 +400,14 @@ def _reject_embedded_source_substrings(state: Mapping[str, Any], source_text: st
     def walk(value: Any, field: str) -> None:
         if isinstance(value, str):
             candidate = value
+            if candidate and candidate in source_text and not _field_is_stable_metadata(field):
+                raise SnapshotValidationError(f"{field}_must_not_contain_source_substring")
             label_kind = _stable_label_kind(field)
             if label_kind:
-                reason = _stable_label_invalid_reason(candidate, label_kind, source_text)
+                reason = _stable_label_invalid_reason(candidate, label_kind)
                 if reason:
                     raise SnapshotValidationError(f"{field}_invalid_{label_kind}:{reason}")
                 return
-            candidate = candidate.strip()
-            if len(candidate) >= 80 and candidate in source_text:
-                raise SnapshotValidationError(f"{field}_must_not_contain_source_substring")
             return
         if isinstance(value, list):
             for index, item in enumerate(value):
@@ -797,17 +818,21 @@ def write_w1_supervisor_snapshot(
         state=state, budget_snapshot=budget_snapshot, usage_ledger_ref=usage_ledger_ref,
         unknown_tool_call_ids=unknown_tool_call_ids, semantic_coverage_ref=semantic_coverage_ref,
     )
-    # A policy-produced DTO must already be body-free.  When the verified raw
-    # source is locally available, apply a final content guard before anything
-    # is published.  Missing legacy source is tolerated here; resume itself
-    # remains strict and will reject that snapshot later.
+    # A resumable proof is valid only when its source is available and matches
+    # the declared identity at publication time.
     source_path = root / snapshot["source_identity"]["source_relative_path"]
-    if source_path.exists():
-        source_bytes = _read_regular_file_no_follow(root, source_path, error_prefix="snapshot_source")
-        try:
-            _reject_embedded_source_substrings(normalized_state, source_bytes.decode("utf-8"))
-        except UnicodeDecodeError as exc:
-            raise SnapshotValidationError("snapshot_source_must_be_utf8") from exc
+    source_bytes = _read_regular_file_no_follow(root, source_path, error_prefix="snapshot_source")
+    if _sha256(source_bytes) != snapshot["source_identity"]["source_sha256"]:
+        raise SnapshotValidationError("snapshot_source_hash_mismatch")
+    if (
+        "source_size" in snapshot["source_identity"]
+        and len(source_bytes) != snapshot["source_identity"]["source_size"]
+    ):
+        raise SnapshotValidationError("snapshot_source_size_mismatch")
+    try:
+        _reject_embedded_source_substrings(normalized_state, source_bytes.decode("utf-8"))
+    except UnicodeDecodeError as exc:
+        raise SnapshotValidationError("snapshot_source_must_be_utf8") from exc
     relative_path = _snapshot_relative_path(snapshot["lineage_id"], snapshot["attempt_id"], snapshot["checkpoint_id"])
     final = root / relative_path
     snapshots_root = final.parent

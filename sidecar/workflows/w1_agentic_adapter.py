@@ -601,7 +601,7 @@ class W1AgenticAdapter:
         if isinstance(error, OSError):
             return "snapshot_io_failed"
         message = str(error).lower()
-        if "identity" in message or "staged_source" in message:
+        if "identity" in message or "staged_source" in message or "snapshot_source" in message:
             return "snapshot_identity_unavailable"
         if "unknown" in message:
             return "snapshot_unknown_outcome_pending"

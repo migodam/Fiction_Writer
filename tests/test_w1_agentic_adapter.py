@@ -148,6 +148,40 @@ def test_snapshot_failure_persists_only_a_safe_reason_code(tmp_path):
     assert checkpoint["metadata"]["snapshot_error"] == "snapshot_identity_unavailable"
 
 
+def test_missing_staged_source_downgrades_checkpoint_without_stopping_import(tmp_path):
+    store, run, attempt, lease = _runtime(tmp_path)
+    source = tmp_path / "source.txt"
+    source.write_text("第1章\n韩立入门。", encoding="utf-8")
+    adapter = W1AgenticAdapter(
+        import_mode="import_all", runtime_store=store, run_id=run["run_id"],
+        attempt_id=attempt["attempt_id"], lineage_id=run["lineage_id"],
+        worker_id="observer", fence_token=lease["fence_token"], checkpoint_observer=True,
+        project_path=str(tmp_path), source_file_path=str(source),
+        source_hash=hashlib.sha256(source.read_bytes()).hexdigest(),
+        model="deepseek-v4-flash", prompt_profile="balanced",
+    )
+    adapter.on_node_yielded("validate_file", {"current_node": "validate_file"})
+    staged_source = (
+        tmp_path / "system" / "imports" / run["lineage_id"]
+        / "attempts" / attempt["attempt_id"] / "raw_source.txt"
+    )
+    staged_source.unlink()
+
+    adapter.on_node_yielded("reduce_repair", {
+        "current_node": "reduce_repair",
+        "_w1_supervisor_snapshot": {
+            "state": {"chunks": []},
+            "completed_nodes": ["validate_file", "reduce_repair"],
+            "unknown_tool_call_ids": [],
+        },
+    })
+
+    checkpoint = store.list_checkpoint_metadata(attempt["attempt_id"])[-1]
+    assert checkpoint["metadata"]["recovery_mode"] == "preview_only"
+    assert checkpoint["metadata"]["snapshot_error"] == "snapshot_identity_unavailable"
+    assert "snapshot_ref" not in checkpoint["metadata"]
+
+
 def test_stream_that_stops_before_proposal_gate_is_rejected():
     adapter = W1AgenticAdapter(import_mode="import_content_only")
 

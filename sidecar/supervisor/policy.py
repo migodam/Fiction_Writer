@@ -177,12 +177,12 @@ _SNAPSHOT_MANUSCRIPT_FIELDS = frozenset({
     "chapterNumber", "chapter_number", "orderIndex", "order_index", "confidence", "status",
 })
 _SOURCE_TEXT_REF_CONTRACT = "W1SourceTextRef/v1"
-_SNAPSHOT_SOURCE_LABEL_FIELDS = frozenset({
+_SNAPSHOT_STABLE_METADATA_FIELDS = frozenset({
     "id", "ids", "type", "category", "color", "status", "mode",
     "kind", "field", "contract_version", "source_language", "importcategorykey", "ontologytype",
     "ontologydirection", "directionality", "eventclass", "timelineclass", "eventtype", "endmode",
     "densityclass", "projecttype", "narrativepacing", "languagestyle", "narrativeperspective",
-    "lengthstrategy", "tags", "personality_traits", "traits", "character_id_map", "evidence_refs",
+    "lengthstrategy", "character_id_map", "evidence_refs",
     "evidencerefs", "profile_field_evidence", "candidate_ids", "normalization",
 })
 _SNAPSHOT_LABEL_MAX_LENGTH = {
@@ -192,8 +192,6 @@ _SNAPSHOT_LABEL_MAX_LENGTH = {
     "title": 160,
 }
 _SNAPSHOT_LABEL_LINE_BREAK = re.compile(r"[\r\n\u2028\u2029]")
-_SNAPSHOT_PROSE_TERMINATOR = re.compile(r"[。！？!?；;]")
-_SNAPSHOT_PROSE_SEPARATOR = re.compile(r"[，,：:]")
 
 
 class W1ResumeState(TypedDict):
@@ -219,11 +217,21 @@ def _snapshot_label_kind(field: str) -> str | None:
     if not tokens:
         return None
     leaf = tokens[-1]
+    label_containers = {
+        "tags", "traits", "personality_traits",
+    }
+    name_containers = {
+        "candidate_names", "character_names", "characternames",
+    }
     if leaf in {"alias", "aliases"} or ("aliases" in tokens and leaf == "value"):
         return "alias"
+    if leaf in label_containers or (leaf == "value" and any(token in label_containers for token in tokens)):
+        return "label"
+    if leaf in name_containers or (leaf == "value" and any(token in name_containers for token in tokens)):
+        return "name"
     if leaf == "title" or leaf.endswith("_title"):
         return "title"
-    if leaf == "label" or leaf.endswith("_label"):
+    if leaf in {"label", "sourcelabel"} or leaf.endswith("_label"):
         return "label"
     if (
         leaf in {"name", "canonical_name", "sourcename", "candidate_names", "character_names", "characternames"}
@@ -242,7 +250,7 @@ def _snapshot_field_is_stable_metadata(field: str) -> bool:
     if not tokens:
         return False
     leaf = tokens[-1]
-    if leaf in _SNAPSHOT_SOURCE_LABEL_FIELDS:
+    if leaf in _SNAPSHOT_STABLE_METADATA_FIELDS:
         return True
     if leaf.endswith(("id", "ids", "_id", "_ids", "hash", "_hash")):
         return True
@@ -251,14 +259,14 @@ def _snapshot_field_is_stable_metadata(field: str) -> bool:
     # labels are handled separately by ``_snapshot_label_kind``.
     return any(
         token in {
-            "tags", "traits", "personality_traits", "evidence_refs", "evidencerefs",
-            "profile_field_evidence", "candidate_ids", "character_ids", "characternames",
+            "evidence_refs", "evidencerefs", "profile_field_evidence",
+            "candidate_ids", "character_ids",
         }
         for token in tokens
     )
 
 
-def _snapshot_label_invalid_reason(value: str, kind: str, source_text: str) -> str | None:
+def _snapshot_label_invalid_reason(value: str, kind: str) -> str | None:
     if value != value.strip():
         return "surrounding_whitespace"
     if _SNAPSHOT_LABEL_LINE_BREAK.search(value):
@@ -269,21 +277,6 @@ def _snapshot_label_invalid_reason(value: str, kind: str, source_text: str) -> s
         return "tab"
     if len(value) > _SNAPSHOT_LABEL_MAX_LENGTH[kind]:
         return "too_long"
-    if source_text and value:
-        if value == source_text:
-            return "complete_source"
-        if value in source_text:
-            if len(value) >= 24:
-                return "source_prose_fragment"
-            terminators = len(_SNAPSHOT_PROSE_TERMINATOR.findall(value))
-            if kind in {"name", "alias", "label"} and (
-                terminators or _SNAPSHOT_PROSE_SEPARATOR.search(value)
-            ):
-                return "source_prose_fragment"
-            if kind == "title" and terminators >= 2:
-                return "source_prose_fragment"
-            if len(value) >= 24 and len(value.split()) >= 4:
-                return "source_prose_fragment"
     return None
 
 
@@ -306,10 +299,10 @@ def _snapshot_structured_value(value: Any, source_text: str, field: str) -> Any:
             raise ValueError(f"{field}_contains_absolute_path")
         label_kind = _snapshot_label_kind(field)
         if label_kind:
-            invalid_reason = _snapshot_label_invalid_reason(value, label_kind, source_text)
+            if source_text and value and value in source_text:
+                return _snapshot_source_text_ref(value, source_text, field)
+            invalid_reason = _snapshot_label_invalid_reason(value, label_kind)
             if invalid_reason:
-                if source_text and value and value in source_text:
-                    return _snapshot_source_text_ref(value, source_text, field)
                 raise ValueError(f"{field}_invalid_{label_kind}:{invalid_reason}")
             return value
         if source_text and value and value in source_text and not _snapshot_field_is_stable_metadata(field):
