@@ -105,6 +105,17 @@ export interface W1OrchestratorOverrides {
   language_policy: W1CustomProfileConfig["language_policy"];
 }
 
+/** Public, non-secret guardrails. The sidecar fills omitted values and enforces caps. */
+export interface W1BudgetPolicy {
+  max_cost_usd?: number;
+  max_input_tokens?: number;
+  max_output_tokens?: number;
+  max_total_tokens?: number;
+  max_calls?: number;
+  fail_on_unknown_pricing?: boolean;
+  fail_on_missing_usage?: boolean;
+}
+
 export interface W1StartPayload {
   projectRoot: string;
   source_file_path: string;
@@ -117,11 +128,14 @@ export interface W1StartPayload {
   api_key?: string;
   model?: string;
   endpoint?: string;
+  budget_policy?: W1BudgetPolicy;
 }
 
 export interface W1StartResult {
   session_id: string;
   status: string;
+  error?: string;
+  budget_policy?: W1BudgetPolicy;
 }
 
 export interface W1CancelPayload {
@@ -166,6 +180,7 @@ export interface W1StatusResult {
   cancel_requested?: boolean;
   token_budget_exhausted?: boolean;
   token_ledger?: W1TokenLedger;
+  budget_policy?: W1BudgetPolicy;
 }
 
 export interface W1ExtractionCounts {

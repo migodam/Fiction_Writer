@@ -315,6 +315,24 @@ test.describe('W1 Import Workflow — success state', () => {
     // On next open, store should have reset (or show idle state again)
     await expect(page.getByTestId('w1-close-btn')).toBeVisible();
   });
+
+  test('proposal gate is not rendered as canonical import completion', async ({ page }) => {
+    await injectIpcMock(page, {
+      statusResults: [
+        {
+          status: 'awaiting_acceptance', progress: 1.0, errors: [],
+          completed_chunks: 10, total_chunks: 10, current_step: 'proposal_gate',
+          converge_status: 'awaiting_acceptance',
+          import_review_report: { status: 'pass', proposal_counts: { character: 2 } },
+        },
+      ],
+    });
+    await openImportModal(page);
+    await page.getByTestId('w1-file-picker-btn').click();
+
+    await expect(page.getByTestId('w1-proposal-gate-msg')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId('w1-success-msg')).not.toBeVisible();
+  });
 });
 
 test.describe('W1 Import Workflow — error state', () => {
@@ -413,6 +431,46 @@ test.describe('W1 Import Workflow — provider credentials wiring', () => {
     expect(Object.keys(capturedPayload!)).toContain('model');
     expect(Object.keys(capturedPayload!)).toContain('endpoint');
     expect(capturedPayload!.prompt_profile).toBe('balanced');
+    expect(capturedPayload!.budget_policy).toMatchObject({
+      max_cost_usd: 3,
+      max_calls: 100,
+      fail_on_unknown_pricing: true,
+      fail_on_missing_usage: true,
+    });
+  });
+
+  test('hard cost cap is visible and sent as typed budget policy', async ({ page }) => {
+    await page.addInitScript(({ bridgeMethods }) => {
+      const mockIpcRenderer = {
+        invoke: async (channel: string, payload: unknown) => {
+          if (channel === 'sidecar:spawn') return { ok: true, port: 8765 };
+          if (channel === 'dialog:pick-files') return { canceled: false, paths: ['/tmp/novel.txt'] };
+          if (channel === 'w1:start') {
+            (window as any).__lastW1StartPayload = payload;
+            return { session_id: 'budget-test-session', status: 'started', budget_policy: (payload as any).budget_policy };
+          }
+          if (channel === 'w1:status') return { status: 'running', progress: 0.1, errors: [], completed_chunks: 0, total_chunks: 10, current_step: 'split_chunks' };
+          return {};
+        },
+        on: () => {}, removeAllListeners: () => {}, send: () => {},
+      };
+      (window as any).narrativeIDE = Object.fromEntries(
+        Object.entries(bridgeMethods).map(([method, channel]) => [method, (payload: unknown) => mockIpcRenderer.invoke(channel, payload)]),
+      );
+    }, { bridgeMethods: TEST_NARRATIVE_IDE_INVOKE_METHODS });
+
+    await page.goto('http://localhost:3000');
+    await page.getByTestId('activity-btn-workbench').click();
+    await page.getByTestId('open-import-btn').click();
+    await expect(page.getByTestId('w1-budget-cost-input')).toHaveValue('3');
+    await page.getByTestId('w1-budget-cost-input').fill('2.5');
+    await page.getByTestId('w1-file-picker-btn').click();
+    await page.waitForFunction(() => (window as any).__lastW1StartPayload !== undefined);
+    expect(await page.evaluate(() => (window as any).__lastW1StartPayload.budget_policy)).toMatchObject({
+      max_cost_usd: 2.5,
+      max_calls: 100,
+      fail_on_unknown_pricing: true,
+    });
   });
 
   test('custom expert fields affect w1:start payload', async ({ page }) => {

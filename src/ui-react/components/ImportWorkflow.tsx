@@ -260,6 +260,7 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
   const w1ImportMode = useProjectStore((s) => s.w1ImportMode);
   const w1PromptProfile = useProjectStore((s) => s.w1PromptProfile);
   const w1CustomProfileConfig = useProjectStore((s) => s.w1CustomProfileConfig);
+  const w1BudgetPolicy = useProjectStore((s) => s.w1BudgetPolicy);
   const w1RuntimeStatus = useProjectStore((s) => s.w1RuntimeStatus);
   const w1ProposalCount = useProjectStore((s) => s.w1ProposalCount);
   const w1ExtractionCounts = useProjectStore((s) => s.w1ExtractionCounts);
@@ -280,6 +281,7 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
   const setW1CustomProfileConfig = useProjectStore(
     (s) => s.setW1CustomProfileConfig,
   );
+  const setW1BudgetPolicy = useProjectStore((s) => s.setW1BudgetPolicy);
   const startImport = useProjectStore((s) => s.startImport);
   const cancelImport = useProjectStore((s) => s.cancelImport);
   const resetImport = useProjectStore((s) => s.resetImport);
@@ -398,6 +400,9 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
     w1Errors.some((err) =>
       /budget_exhausted|402|insufficient balance/i.test(err),
     ) || w1RuntimeStatus?.converge_status === "budget_exhausted";
+  const budgetCap = Number(w1BudgetPolicy.max_cost_usd ?? 0);
+  const actualCost = w1TokenLedger?.cost_usd;
+  const isProposalGate = w1Status === "awaiting_acceptance";
   const activeStage = importStageFor(
     w1RuntimeStatus?.orchestrator_phase || w1CurrentStep || w1Status,
   );
@@ -445,9 +450,9 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
             testId="w1-import-budget"
             label={t("import.budget", "Budget")}
             value={
-              w1TokenLedger
-                ? `${formatTokens(w1TokenLedger.actual_total_tokens ?? 0)} ${t("import.tokens", "tokens")}`
-                : t("import.awaitingUsage", "Awaiting usage")
+              actualCost != null
+                ? `$${actualCost.toFixed(4)} / $${budgetCap.toFixed(2)}`
+                : `$${budgetCap.toFixed(2)} ${t("import.hardCap", "hard cap")}`
             }
           />
         </div>
@@ -505,6 +510,29 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
                   }
                 />
               </div>
+              <label className="block rounded-lg border border-border bg-card p-3 text-xs text-text-2">
+                <span className="block font-semibold text-text">
+                  {t("import.hardCostCap", "Hard cost cap (USD)")}
+                </span>
+                <span className="mt-1 block text-[10px] text-text-3">
+                  {t("import.hardCostCapHelp", "The sidecar enforces this cap and refuses unlimited runs.")}
+                </span>
+                <input
+                  data-testid="w1-budget-cost-input"
+                  type="number"
+                  min="0"
+                  max="8"
+                  step="0.25"
+                  value={Number.isFinite(budgetCap) ? budgetCap : 3}
+                  onChange={(event) => {
+                    const next = Number(event.target.value);
+                    if (Number.isFinite(next) && next >= 0) {
+                      setW1BudgetPolicy({ max_cost_usd: Math.min(next, 8) });
+                    }
+                  }}
+                  className="mt-2 w-full rounded border border-border bg-bg px-2 py-1.5 text-sm text-text outline-none focus:border-brand"
+                />
+              </label>
               {activePreset !== "manuscript_focused" && (
                 <div className="rounded-xl border border-border bg-bg-elev-1 p-3">
                   <p className="mb-2 text-xs font-semibold text-text-2">
@@ -1125,7 +1153,7 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
         {w1TokenLedger && (
           <div
             data-testid="w1-token-cost-card"
-            className="mt-3 grid gap-2 rounded-xl border border-border bg-bg-elev-1 p-3 text-xs text-text-2 sm:grid-cols-4"
+            className="mt-3 grid gap-2 rounded-xl border border-border bg-bg-elev-1 p-3 text-xs text-text-2 sm:grid-cols-5"
           >
             <RuntimeField
               testId="w1-token-cost-input"
@@ -1151,6 +1179,11 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
               value={String(w1TokenLedger.api_call_count)}
             />
             <RuntimeField
+              testId="w1-token-cost-cap"
+              label={t("import.hardCap", "Hard cap")}
+              value={`$${budgetCap.toFixed(2)}`}
+            />
+            <RuntimeField
               testId="w1-token-cost-estimated-cost"
               label={t("import.estimatedCost", "Est. cost")}
               value={
@@ -1164,7 +1197,7 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
         <ImportConsole
           visible={
             consoleOpen &&
-            ["running", "paused", "done", "error"].includes(w1Status)
+            ["running", "paused", "done", "awaiting_acceptance", "error"].includes(w1Status)
           }
         />
 
@@ -1184,7 +1217,7 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
         )}
 
         {/* Success */}
-        {w1Status === "done" && (
+        {(w1Status === "done" || isProposalGate) && (
           <div
             data-testid="w1-review-step"
             className="mt-4 rounded-xl border border-green/30 bg-green/10 p-4"
@@ -1193,16 +1226,20 @@ export const ImportWorkflow: React.FC<ImportWorkflowProps> = ({ onClose }) => {
               <ClipboardCheck size={18} className="mt-0.5 text-green" />
               <div>
                 <p
-                  data-testid="w1-success-msg"
+                  data-testid={isProposalGate ? "w1-proposal-gate-msg" : "w1-success-msg"}
                   className="text-sm font-semibold text-green"
                 >
-                  {t("import.complete")}
+                  {isProposalGate
+                    ? t("import.proposalGateReady", "Proposal package is ready for review")
+                    : t("import.complete")}
                 </p>
                 <p className="mt-1 text-xs leading-relaxed text-text-2">
-                  {t(
-                    "import.reviewSummary",
-                    "Review report ready. Inspect proposals, failed chunks, duplicates, and safe batch actions before accepting imported changes.",
-                  )}
+                  {isProposalGate
+                    ? t("import.proposalGateBody", "Canonical project data has not changed. Review and accept this package explicitly.")
+                    : t(
+                        "import.reviewSummary",
+                        "Review report ready. Inspect proposals, failed chunks, duplicates, and safe batch actions before accepting imported changes.",
+                      )}
                 </p>
               </div>
             </div>

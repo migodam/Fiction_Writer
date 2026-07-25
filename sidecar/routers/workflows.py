@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import math
 import uuid
 from pathlib import Path
 from typing import Any, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from sidecar.utils.lock import acquire_lock, release_lock, WorkflowBusyError
 
@@ -97,6 +98,10 @@ async def resume_w1_attempt(
         "compatibility_mode": bool(config.get("compatibility_mode", False)),
     })
     budget_policy = dict(config.get("budget_config") or config.get("budget_policy") or context.get("budget_policy") or {})
+    # A historical run may predate persisted W1 budgets. Recovery must still
+    # fail closed rather than resume with an unbounded provider ledger.
+    if not budget_policy:
+        budget_policy = _normalize_w1_budget_policy(str(config.get("model") or context.get("model") or ""), None)
     context["budget_policy"] = budget_policy
     config.update({
         "project_path": project_path,
@@ -284,6 +289,71 @@ async def w3_status() -> W3StatusResponse:
 
 # ── W1 Import models ──────────────────────────────────────────────────────────
 
+_W1_BUDGET_DEFAULTS = {
+    "max_calls": 100,
+    "max_input_tokens": 3_000_000,
+    "max_output_tokens": 500_000,
+    "max_total_tokens": 3_500_000,
+    "fail_on_unknown_pricing": True,
+    "fail_on_missing_usage": True,
+}
+
+
+def _w1_budget_cost_cap(model: str) -> float:
+    """Return the server-owned maximum spend for one interactive W1 attempt."""
+    return 8.0 if "deepseek-v4-pro" in (model or "").lower() else 3.0
+
+
+def _normalize_w1_budget_policy(model: str, requested: "W1BudgetPolicyRequest | None") -> dict[str, Any]:
+    """Fill every safety limit and reject values outside the server-owned envelope."""
+    values = requested.model_dump(exclude_none=True) if requested is not None else {}
+    max_cost_usd = float(values.get("max_cost_usd", _w1_budget_cost_cap(model)))
+    if max_cost_usd > _w1_budget_cost_cap(model):
+        raise HTTPException(status_code=422, detail="budget_max_cost_exceeds_model_cap")
+
+    effective = {
+        "max_cost_usd": max_cost_usd,
+        **_W1_BUDGET_DEFAULTS,
+    }
+    for name in ("max_calls", "max_input_tokens", "max_output_tokens", "max_total_tokens"):
+        if name in values:
+            requested_value = int(values[name])
+            if requested_value > _W1_BUDGET_DEFAULTS[name]:
+                raise HTTPException(status_code=422, detail=f"budget_{name}_exceeds_server_cap")
+            effective[name] = requested_value
+    for name in ("fail_on_unknown_pricing", "fail_on_missing_usage"):
+        if values.get(name) is False:
+            raise HTTPException(status_code=422, detail=f"budget_{name}_must_be_true")
+    return effective
+
+
+class W1BudgetPolicyRequest(BaseModel):
+    """Public, bounded W1 spend controls. The server fills all omitted limits."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_cost_usd: float | None = None
+    max_input_tokens: int | None = None
+    max_output_tokens: int | None = None
+    max_total_tokens: int | None = None
+    max_calls: int | None = None
+    fail_on_unknown_pricing: bool | None = None
+    fail_on_missing_usage: bool | None = None
+
+    @field_validator("max_cost_usd")
+    @classmethod
+    def _finite_cost(cls, value: float | None) -> float | None:
+        if value is not None and (not math.isfinite(value) or value < 0):
+            raise ValueError("max_cost_usd must be a finite non-negative value")
+        return value
+
+    @field_validator("max_input_tokens", "max_output_tokens", "max_total_tokens", "max_calls")
+    @classmethod
+    def _non_negative_limit(cls, value: int | None) -> int | None:
+        if value is not None and value < 0:
+            raise ValueError("budget limits must be non-negative")
+        return value
+
 class W1StartRequest(BaseModel):
     project_path: str
     source_file_path: str
@@ -299,11 +369,13 @@ class W1StartRequest(BaseModel):
     compatibility_mode: bool = False
     custom_profile_config: Optional[dict[str, Any]] = None
     orchestrator_overrides: Optional[dict[str, Any]] = None
+    budget_policy: W1BudgetPolicyRequest | None = None
 
 
 class W1StartResponse(BaseModel):
     session_id: str
     status: str
+    budget_policy: dict[str, Any] = {}
 
 
 class W1CancelRequest(BaseModel):
@@ -342,6 +414,7 @@ class W1StatusResponse(BaseModel):
     cancel_requested: bool = False
     token_budget_exhausted: bool = False
     token_ledger: dict = {}
+    budget_policy: dict = {}
 
 
 class W1ConsoleResponse(BaseModel):
@@ -518,8 +591,25 @@ async def _run_w1(session_id: str, config: dict) -> None:
                 or current.get("judge_artifact_summary", {}),
                 **activity,
             }
-        # Final state from the last update
+        # A proposal package is ready for human review, not a canonical import.
+        # Keep both the UI session and durable attempt in an explicit gate state.
         final = _w1_sessions.get(session_id, {})
+        if final.get("converge_status") == "awaiting_acceptance":
+            final["status"] = "awaiting_acceptance"
+            final["progress"] = 1.0
+            final["current_step"] = "proposal_gate"
+            final.update(session_status(session_id))
+            append_event(session_id, {
+                "phase": "proposal_gate",
+                "tool": "workflow",
+                "status": "waiting_human",
+                "message": "W1 proposal package is ready for review; canonical import has not run.",
+            })
+            _w1_sessions[session_id] = final
+            runtime_set_status("waiting_human")
+            return
+
+        # Final state from the last update
         final["status"] = "done"
         final["progress"] = 1.0
         final.update(session_status(session_id))
@@ -583,19 +673,27 @@ async def _run_w1(session_id: str, config: dict) -> None:
         runtime_set_status("cancelled")
         raise
     except Exception as e:
+        error_text = str(e)
+        budget_stop = any(marker in error_text.lower() for marker in (
+            "budget_exhausted", "max_cost_usd", "max_calls", "max_input_tokens",
+            "max_output_tokens", "max_total_tokens", "402", "insufficient balance",
+        ))
         append_event(session_id, {
-            "phase": "error",
+            "phase": "budget_stop" if budget_stop else "error",
             "tool": "workflow",
             "status": "fail",
             "level": "error",
-            "message": "W1 import failed.",
-            "error": str(e),
+            "message": "W1 import stopped at its budget limit." if budget_stop else "W1 import failed.",
+            "error": error_text,
         })
+        current = _w1_sessions.get(session_id, {})
         _w1_sessions[session_id] = {
+            **current,
             "status": "error", "progress": 0.0, "errors": [str(e)],
             "completed_chunks": 0, "total_chunks": 0,
             "chunk_log": _chunk_log.get(project_path, []),
             "paused": False, "breakpoint_chunk": None,
+            "converge_status": "budget_exhausted" if budget_stop else current.get("converge_status", ""),
             **session_status(session_id),
         }
         runtime_set_status("failed")
@@ -665,11 +763,13 @@ async def w1_start(body: W1StartRequest, request: Request) -> W1StartResponse:
     )
     effective_use_supervisor = execution_mode == "supervisor"
     effective_use_orchestrator = effective_use_supervisor
+    effective_budget_policy = _normalize_w1_budget_policy(body.model, body.budget_policy)
     safe_config = {
         "project_path": str(Path(body.project_path).resolve()), "provider": "deepseek",
         "model": body.model, "profile": body.prompt_profile, "endpoint": body.endpoint,
         "lineage_id": lineage_id,
-        "source_file_path": str(source_path), "source_hash": source_hash, "budget_config": {},
+        "source_file_path": str(source_path), "source_hash": source_hash,
+        "budget_config": effective_budget_policy,
         "import_mode": body.import_mode, "use_supervisor": effective_use_supervisor,
         "use_orchestrator": effective_use_orchestrator,
         "execution_mode": execution_mode, "compatibility_mode": body.compatibility_mode,
@@ -699,6 +799,7 @@ async def w1_start(body: W1StartRequest, request: Request) -> W1StartResponse:
         "custom_profile_config": custom_profile_config,
         "orchestrator_overrides": orchestrator_overrides,
         "tool_operating_spec_overrides": tool_operating_spec_overrides,
+        "budget_policy": effective_budget_policy,
     }
     config = {
         "project_path": body.project_path,
@@ -712,6 +813,7 @@ async def w1_start(body: W1StartRequest, request: Request) -> W1StartResponse:
         "custom_profile_config": custom_profile_config,
         "orchestrator_overrides": orchestrator_overrides,
         "profile_config": custom_profile_config if body.prompt_profile == "custom" else {},
+        "budget_policy": effective_budget_policy,
         "context": context,
         "session_id": session_id,
         "attempt_id": attempt_id,
@@ -748,6 +850,7 @@ async def w1_start(body: W1StartRequest, request: Request) -> W1StartResponse:
         "breakpoint_chunk": None,
         "project_path": body.project_path,
         "config": config,
+        "budget_policy": effective_budget_policy,
         **session_status(session_id),
     }
     from sidecar.workflows.w1_run_events import bind_runtime
@@ -762,7 +865,7 @@ async def w1_start(body: W1StartRequest, request: Request) -> W1StartResponse:
         ),
     })
     _w1_tasks[session_id] = asyncio.create_task(_run_w1(session_id, config))
-    return W1StartResponse(session_id=session_id, status="started")
+    return W1StartResponse(session_id=session_id, status="started", budget_policy=effective_budget_policy)
 
 
 @router.post("/workflow/w1/cancel", response_model=W1CancelResponse)
@@ -983,6 +1086,7 @@ async def w1_status(session_id: str = "") -> W1StatusResponse:
         cancel_requested=bool(activity.get("cancel_requested", False)),
         token_budget_exhausted=token_budget_exhausted,
         token_ledger=ledger,
+        budget_policy=dict(session.get("budget_policy") or (session.get("config") or {}).get("budget_policy") or {}),
     )
 
 

@@ -57,7 +57,7 @@ import { projectService } from './services/projectService';
 import { appSettingsService, defaultAppSettings } from './services/appSettingsService';
 import * as metadataService from './services/metadataService';
 import { electronApi } from './services/electronApi';
-import type { RuntimeForkResult, W1CustomProfileConfig, W1OrchestratorOverrides, W1PromptProfile } from './services/electronApi';
+import type { RuntimeForkResult, W1BudgetPolicy, W1CustomProfileConfig, W1OrchestratorOverrides, W1PromptProfile } from './services/electronApi';
 import { verifiedRuntimeForkSnapshotRef, type RuntimeCheckpoint, type RuntimeEvent, type RuntimeRun, type RuntimeUnknownCall, type RuntimeUnknownCallDecision } from './components/import-runtime/types';
 
 const UI_SETTINGS_KEY = 'narrative-ide-ui-settings';
@@ -139,6 +139,16 @@ export const defaultW1CustomProfileConfig: W1CustomProfileConfig = {
   extract_relationships: true,
   extract_world: true,
   extract_timeline: true,
+};
+
+export const defaultW1BudgetPolicy: W1BudgetPolicy = {
+  max_cost_usd: 3,
+  max_calls: 100,
+  max_input_tokens: 3_000_000,
+  max_output_tokens: 500_000,
+  max_total_tokens: 3_500_000,
+  fail_on_unknown_pricing: true,
+  fail_on_missing_usage: true,
 };
 
 const buildW1OrchestratorOverrides = (config: W1CustomProfileConfig, enabled = true): W1OrchestratorOverrides => ({
@@ -418,7 +428,7 @@ interface ProjectState {
   resetW3: () => void;
 
   // W1 Import state
-  w1Status: 'idle' | 'running' | 'done' | 'error' | 'cancelled' | 'paused';
+  w1Status: 'idle' | 'running' | 'done' | 'awaiting_acceptance' | 'error' | 'cancelled' | 'paused';
   w1Progress: number;
   w1CompletedChunks: number;
   w1TotalChunks: number;
@@ -439,6 +449,7 @@ interface ProjectState {
   w1BreakpointChunk: number | null;
   w1PromptProfile: W1PromptProfile;
   w1CustomProfileConfig: W1CustomProfileConfig;
+  w1BudgetPolicy: W1BudgetPolicy;
   w1OrchestratorOverrides: W1OrchestratorOverrides;
   w1RuntimeStatus: W1RuntimeStatus | null;
   w1ProposalCount: number;
@@ -475,11 +486,12 @@ interface ProjectState {
   setW1ImportMode: (mode: 'import_content_only' | 'import_all') => void;
   setW1PromptProfile: (profile: W1PromptProfile) => void;
   setW1CustomProfileConfig: (patch: Partial<W1CustomProfileConfig>) => void;
+  setW1BudgetPolicy: (patch: Partial<W1BudgetPolicy>) => void;
   setW1UseSupervisor: (v: boolean) => void;
   setW1Breakpoint: (chunkId: number | null) => Promise<void>;
   resumeW1: () => Promise<void>;
   rewindW1: (toChunkId: number) => Promise<void>;
-  startImport: (payload: { projectRoot: string; sourceFilePath: string; importMode?: 'import_content_only' | 'import_all'; customProfileConfig?: W1CustomProfileConfig; orchestratorOverrides?: W1OrchestratorOverrides }) => Promise<void>;
+  startImport: (payload: { projectRoot: string; sourceFilePath: string; importMode?: 'import_content_only' | 'import_all'; customProfileConfig?: W1CustomProfileConfig; orchestratorOverrides?: W1OrchestratorOverrides; budgetPolicy?: W1BudgetPolicy }) => Promise<void>;
   cancelImport: () => Promise<void>;
   resetImport: () => void;
 
@@ -2048,6 +2060,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   w1BreakpointChunk: null,
   w1PromptProfile: 'balanced',
   w1CustomProfileConfig: defaultW1CustomProfileConfig,
+  w1BudgetPolicy: defaultW1BudgetPolicy,
   w1OrchestratorOverrides: buildW1OrchestratorOverrides(defaultW1CustomProfileConfig),
   w1RuntimeStatus: null,
   w1ProposalCount: 0,
@@ -2092,6 +2105,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       w1OrchestratorOverrides: buildW1OrchestratorOverrides(nextConfig, true),
     };
   }),
+  setW1BudgetPolicy: (patch) => set((state) => ({
+    w1BudgetPolicy: { ...state.w1BudgetPolicy, ...patch },
+  })),
   setW1UseSupervisor: (v) => set({ w1UseSupervisor: v }),
   discoverW1Recovery: async () => {
     const { projectRoot } = get();
@@ -2342,7 +2358,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({ w1ConnectionWarning: 'Immutable runtime recovery is unavailable for this legacy checkpoint. Start a new import or select a durable runtime checkpoint.' });
   },
   startImport: async (payload) => {
-    const { projectRoot, w1ImportMode, w1PromptProfile, w1UseSupervisor, w1CustomProfileConfig, w1OrchestratorOverrides } = get();
+    const { projectRoot, w1ImportMode, w1PromptProfile, w1UseSupervisor, w1CustomProfileConfig, w1OrchestratorOverrides, w1BudgetPolicy } = get();
     const mode = payload.importMode ?? w1ImportMode;
     const effectiveRoot = projectRoot || payload.projectRoot;
     if (!effectiveRoot) {
@@ -2383,6 +2399,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     // deterministic mode and intentionally bypasses extraction orchestration.
     const shouldUseSupervisor = mode === 'import_all';
     const customProfileConfig = payload.customProfileConfig ?? w1CustomProfileConfig;
+    const budgetPolicy = payload.budgetPolicy ?? w1BudgetPolicy;
     const orchestratorOverrides = payload.orchestratorOverrides ?? buildW1OrchestratorOverrides(
       customProfileConfig,
       shouldUseSupervisor,
@@ -2407,6 +2424,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           api_key: providerProfile?.apiKey ?? '',
           model: modelProfile?.model ?? 'deepseek-chat',
           endpoint: providerProfile?.endpoint ?? 'https://api.deepseek.com/v1',
+          budget_policy: budgetPolicy,
         });
         break;
       } catch (e) {
@@ -2420,7 +2438,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
     try {
       sessionId = result.session_id || null;
-      set({ w1SessionId: sessionId });
+      set({
+        w1SessionId: sessionId,
+        w1BudgetPolicy: result.budget_policy ?? budgetPolicy,
+      });
       if (result.status === 'error') {
         set({ w1Status: 'error', w1Errors: [result.error || 'Import failed to start'] });
         return;
@@ -2474,6 +2495,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           w1ElapsedSeconds: s.elapsed_seconds ?? 0,
           w1ActiveApiCalls: s.active_api_calls ?? 0,
           w1TokenLedger: s.token_ledger ?? null,
+          w1BudgetPolicy: s.budget_policy ?? get().w1BudgetPolicy,
           w1CancelRequested: Boolean(s.cancel_requested),
           w1ConnectionWarning: null,
           w1RuntimeStatus: {
@@ -2519,6 +2541,17 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           }
         } catch (consoleError) {
           set({ w1ConnectionWarning: `Console activity feed unavailable: ${String(consoleError)}` });
+        }
+        if (s.status === 'awaiting_acceptance') {
+          set({ w1Status: 'awaiting_acceptance' });
+          try {
+            const { projectRoot } = get();
+            if (projectRoot) {
+              const freshProject = await projectService.openProject(projectRoot);
+              if (freshProject) get().loadProject(freshProject);
+            }
+          } catch { /* proposal review remains available from the sidecar */ }
+          return;
         }
         if (s.status === 'done') {
           set({ w1Status: 'done' });

@@ -165,6 +165,7 @@ test.describe('W1 Import — Token / Cost card', () => {
     await expect(page.getByTestId('w1-token-cost-calls')).toContainText('9');
     // cost_usd 0.0254 → "$0.0254"
     await expect(page.getByTestId('w1-token-cost-estimated-cost')).toContainText('$0.0254');
+    await expect(page.getByTestId('w1-token-cost-cap')).toContainText('$3.00');
   });
 
   test('token/cost card persists on done status with final totals', async ({ page }) => {
