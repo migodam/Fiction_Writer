@@ -511,6 +511,104 @@ def test_span_rehydration_uses_project_staged_source_when_original_is_missing(tm
     assert rebuilt["chunks"][0]["content"] == source_text
 
 
+def test_short_source_prose_uses_spans_while_ids_and_chinese_labels_remain_inline(tmp_path):
+    source_text = "韩立入门"
+    source = tmp_path / "short-source.txt"
+    source.write_text(source_text, encoding="utf-8")
+    span = make_source_span(source_text, 0, len(source_text))
+    snapshot = policy._snapshot_state({
+        "source_text": source_text,
+        "import_run_id": "sup_short_source",
+        "source_language": "zh",
+        "chunks": [{"chunk_id": 0, "title": "入门", "source_span": span, "content": source_text}],
+        "chunk_extractions": [{"chunk_id": 0, "truth": "complete", "domain_receipts": {}}],
+        "entity_registry": {
+            "characters": {
+                "char_han": {
+                    "id": "char_han", "canonical_name": "韩立", "summary": "韩立入门",
+                    "background": "韩立", "notes": ["入门"], "confidence": 0.9,
+                },
+            },
+            "events": {}, "world": {}, "world_detailed": {}, "character_id_map": {},
+        },
+        "relationships": [], "raw_relationships": [],
+        "character_tags": [{
+            "id": "tag_entry", "name": "入门", "description": "韩立", "color": "#38bdf8",
+            "characterIds": ["char_han"], "parentTagId": None, "sortOrder": 0, "collapsed": False,
+        }],
+        "world_settings": {"worldRulesSummary": "韩立入门"}, "world_containers": [],
+        "organizer_output": {}, "timeline_architecture": {},
+        "timeline_branches": [{
+            "id": "branch_main", "name": "入门", "description": "韩立", "sortOrder": 0,
+            "mode": "root", "collapsed": False,
+        }],
+        "reducer_artifact": {}, "cross_validation": {}, "import_review_report": {},
+        "judge_artifact": {}, "gate_failures": [], "proposals": [], "operations": {},
+        "evidence_cards": [], "import_run_manifest": {"import_run_id": "sup_short_source"},
+        "project_structure_digest": {},
+        "manuscript_chapters": [{
+            "chapter_id": "chap_1", "scene_id": "scene_1", "title": "入门", "summary": "韩立入门",
+            "notes": "入门", "chunk_ids": [0], "source_span": span, "manuscript_content": source_text,
+        }],
+    })
+
+    def assert_source_ref(value):
+        assert value["contract_version"] == "W1SourceTextRef/v1"
+        assert set(value) == {"contract_version", "source_span"}
+        assert set(value["source_span"]) == {"raw_source_hash", "absolute_start", "absolute_end", "substring_hash"}
+
+    character = snapshot["entity_registry"]["characters"]["char_han"]
+    assert character["canonical_name"] == "韩立"
+    assert snapshot["resume_context"]["character_tags"][0]["name"] == "入门"
+    assert snapshot["timeline"]["timeline_branches"][0]["name"] == "入门"
+    assert snapshot["resume_context"]["manuscript_chapters"][0]["title"] == "入门"
+    assert_source_ref(character["summary"])
+    assert_source_ref(character["background"])
+    assert_source_ref(character["notes"][0])
+    assert_source_ref(snapshot["resume_context"]["character_tags"][0]["description"])
+    assert_source_ref(snapshot["world"]["world_settings"]["worldRulesSummary"])
+    assert_source_ref(snapshot["timeline"]["timeline_branches"][0]["description"])
+    assert_source_ref(snapshot["resume_context"]["manuscript_chapters"][0]["summary"])
+    assert_source_ref(snapshot["resume_context"]["manuscript_chapters"][0]["notes"])
+
+    staged_relative = "system/imports/lineage_short_source/attempts/attempt_short_source/raw_source.txt"
+    staged_source = tmp_path / staged_relative
+    staged_source.parent.mkdir(parents=True, exist_ok=True)
+    staged_source.write_text(source_text, encoding="utf-8")
+    source_identity, config_identity = build_supervisor_snapshot_identities(
+        {
+            "project_path": str(tmp_path), "source_file_path": str(source),
+            "model": "deepseek-v4-flash", "prompt_profile": "balanced",
+            "execution_mode": "supervisor", "import_mode": "import_all",
+            "w1_supervisor_staged_source_relative_path": staged_relative,
+        },
+        project_path=tmp_path,
+    )
+    ref = write_w1_supervisor_snapshot(
+        tmp_path, lineage_id="lineage_short_source", attempt_id="attempt_short_source",
+        checkpoint_id="checkpoint_short_source", node="reduce_repair", next_node="architect_timeline",
+        source_identity=source_identity, config_identity=config_identity, state=snapshot,
+        completed_nodes=["validate_file", "extract_window", "reduce_repair"],
+    )
+    persisted = load_w1_supervisor_snapshot(tmp_path, ref)["state"]
+    assert_source_ref(persisted["entity_registry"]["characters"]["char_han"]["summary"])
+    assert_source_ref(persisted["entity_registry"]["characters"]["char_han"]["background"])
+    assert persisted["entity_registry"]["characters"]["char_han"]["canonical_name"] == "韩立"
+    assert persisted["resume_context"]["character_tags"][0]["name"] == "入门"
+
+    restored = policy._restore_snapshot_state({}, snapshot)
+    restored = policy._rehydrate_snapshot_chunks(restored, str(source))
+    restored = policy._rehydrate_snapshot_manuscript_chapters(restored, str(source))
+    assert restored["entity_registry"]["characters"]["char_han"]["summary"] == "韩立入门"
+    assert restored["entity_registry"]["characters"]["char_han"]["background"] == "韩立"
+    assert restored["entity_registry"]["characters"]["char_han"]["notes"] == ["入门"]
+    assert restored["character_tags"][0]["description"] == "韩立"
+    assert restored["world_settings"]["worldRulesSummary"] == "韩立入门"
+    assert restored["timeline_branches"][0]["description"] == "韩立"
+    assert restored["manuscript_chapters"][0]["summary"] == "韩立入门"
+    assert restored["manuscript_chapters"][0]["notes"] == "入门"
+
+
 @pytest.mark.parametrize(
     ("boundary", "expected_next", "expected_completed"),
     [
@@ -662,6 +760,11 @@ def test_resume_dto_preserves_writer_dependency_graph_before_and_after_snapshot(
                     "character_ids": ["char_han", "char_teacher"], "linkedSceneIds": ["scene_1"],
                     "linkedWorldItemIds": ["world_qixuan"], "tags": ["导入"],
                 },
+                "event_fork": {
+                    "id": "event_fork", "title": "支线汇合", "branchId": "branch_fork", "orderIndex": 0,
+                    "character_ids": ["char_teacher"], "linkedSceneIds": ["scene_1"],
+                    "linkedWorldItemIds": ["world_qixuan"], "tags": ["支线"],
+                },
             },
             "world": {"七玄门": "organization"},
             "world_detailed": {
@@ -678,13 +781,45 @@ def test_resume_dto_preserves_writer_dependency_graph_before_and_after_snapshot(
             "importConfidence": 0.91,
         }],
         "raw_relationships": [{"id": "rel_teacher", "source_character_name": "韩立", "target_character_name": "墨大夫", "type": "师徒关系"}],
-        "character_tags": [{
-            "id": "tag_cultivator", "name": "修仙者", "color": "#38bdf8",
-            "characterIds": ["character_existing_han", "char_teacher"],
-        }],
+        "character_tags": [
+            {
+                "id": "tag_root", "name": "人物层级", "color": "#f59e0b", "description": "",
+                "characterIds": [], "parentTagId": None, "sortOrder": 0, "collapsed": True,
+            },
+            {
+                "id": "tag_cultivator", "name": "修仙者", "color": "#38bdf8", "description": "",
+                "characterIds": ["character_existing_han", "char_teacher"],
+                "parentTagId": "tag_root", "sortOrder": 1, "collapsed": False,
+            },
+        ],
         "world_containers": [{"id": "world_container_organizations", "name": "门派组织", "importCategoryKey": "organizations", "sortOrder": 0}],
         "organizer_output": {"world_containers": [{"id": "world_container_organizations"}], "world_items": [{"id": "world_qixuan"}]},
-        "timeline_architecture": {}, "timeline_branches": [{"id": "branch_main", "name": "主线", "mode": "root", "isDefault": True}],
+        "timeline_architecture": {},
+        "timeline_branches": [
+            {
+                "id": "branch_main", "name": "主线", "mode": "root", "isDefault": True, "sortOrder": 0,
+                "startAnchor": None, "endAnchor": None, "endMode": "open", "mergeTargetBranchId": None,
+                "geometry": {"laneOffset": 0, "bend": 0.25, "thickness": 2},
+                "rankStart": 0, "rankEnd": 3, "laneId": "lane_main",
+                "layoutHint": {"eventBudget": 36, "clusterOverflow": False, "densityClass": "normal"},
+                "collapsed": False, "anchorStartPos": {"x": 80, "y": 0}, "anchorEndPos": {"x": 1200, "y": 0},
+                "eventCountHint": 1, "topologyHints": {"laneId": "lane_main", "rankStart": 0, "rankEnd": 3},
+                "virtualLength": 1120,
+            },
+            {
+                "id": "branch_fork", "name": "师徒支线", "mode": "forked", "sortOrder": 1,
+                "parentBranchId": "branch_main", "forkEventId": "event_gate", "mergeEventId": "event_fork",
+                "startAnchor": {"branchId": "branch_main", "eventId": "event_gate"},
+                "endAnchor": {"branchId": "branch_main", "eventId": "event_fork"},
+                "endMode": "merge", "mergeTargetBranchId": "branch_main",
+                "geometry": {"laneOffset": 140, "bend": 0.42, "thickness": 2},
+                "rankStart": 1, "rankEnd": 2, "laneId": "lane_mentor",
+                "layoutHint": {"eventBudget": 12, "clusterOverflow": True, "densityClass": "dense"},
+                "collapsed": True, "anchorStartPos": {"x": 320, "y": 140}, "anchorEndPos": {"x": 900, "y": 140},
+                "eventCountHint": 1, "topologyHints": {"laneId": "lane_mentor", "rankStart": 1, "rankEnd": 2},
+                "virtualLength": 580,
+            },
+        ],
         "world_settings": {}, "reducer_artifact": {}, "cross_validation": {}, "import_review_report": {},
         "judge_artifact": {"passed": True}, "gate_failures": [], "proposals": [], "operations": {},
         "evidence_cards": [{"id": "card_han", "kind": "character", "candidate_ids": ["char_han"], "source_span": span, "raw": {"canonical_id": "char_han"}}],
@@ -701,7 +836,13 @@ def test_resume_dto_preserves_writer_dependency_graph_before_and_after_snapshot(
     assert restored["entity_registry"]["characters"]["char_han"]["existing_project_id"] == "character_existing_han"
     assert restored["entity_registry"]["characters"]["char_han"]["open_questions"] == ["后续确认机缘"]
     assert restored["entity_registry"]["events"]["event_gate"]["character_ids"] == ["char_han", "char_teacher"]
-    assert restored["character_tags"][0]["characterIds"] == ["character_existing_han", "char_teacher"]
+    assert restored["character_tags"][1]["characterIds"] == ["character_existing_han", "char_teacher"]
+    assert restored["character_tags"][1]["parentTagId"] == "tag_root"
+    assert restored["character_tags"][0]["collapsed"] is True
+    assert restored["timeline_branches"][1]["startAnchor"] == {"branchId": "branch_main", "eventId": "event_gate"}
+    assert restored["timeline_branches"][1]["endMode"] == "merge"
+    assert restored["timeline_branches"][1]["geometry"] == {"laneOffset": 140, "bend": 0.42, "thickness": 2}
+    assert restored["timeline_branches"][1]["layoutHint"]["densityClass"] == "dense"
 
     def payload(value, project_path):
         return {
@@ -721,14 +862,17 @@ def test_resume_dto_preserves_writer_dependency_graph_before_and_after_snapshot(
         after_ops.append(copy.deepcopy(operation))
         return {"id": f"proposal_{operation['entity_id']}", "status": "pending", "confidence": operation["confidence"]}
 
-    before_project = tmp_path / "before"
-    after_project = tmp_path / "after"
-    before_project.mkdir()
-    after_project.mkdir()
+    writer_project = tmp_path / "writer"
+    writer_project.mkdir()
+
+    class FixedUuid:
+        hex = "1234567890abcdef1234567890abcdef"
+
+    monkeypatch.setattr(w1_import.uuid, "uuid4", lambda: FixedUuid())
     monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", capture_before)
-    asyncio.run(w1_import.node_write_to_project(payload(state, before_project)))
+    asyncio.run(w1_import.node_write_to_project(payload(state, writer_project)))
     monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", capture_after)
-    asyncio.run(w1_import.node_write_to_project(payload(restored, after_project)))
+    asyncio.run(w1_import.node_write_to_project(payload(restored, writer_project)))
 
     def select(operations, entity_type, *, op_type=None):
         return next(
@@ -739,15 +883,31 @@ def test_resume_dto_preserves_writer_dependency_graph_before_and_after_snapshot(
     for operations in (before_ops, after_ops):
         character_update = select(operations, "character", op_type="update")
         assert character_update["entity_id"] == "character_existing_han"
-        event = select(operations, "timeline_event")
+        event = next(op for op in operations if op["entity_type"] == "timeline_event" and op["entity_id"] == "event_gate")
         assert event["data"]["participantCharacterIds"] == ["character_existing_han", "char_teacher"]
-        tag = select(operations, "character_tag")
+        tag = next(op for op in operations if op["entity_type"] == "character_tag" and op["entity_id"] == "tag_cultivator")
         assert tag["data"]["characterIds"] == ["character_existing_han", "char_teacher"]
         world = select(operations, "world_item")
         assert world["data"]["containerId"] == "world_container_organizations"
         relationship = select(operations, "relationship")
         assert relationship["depends_on"] == ["character_existing_han", "char_teacher"]
         assert relationship["data"]["sourceNotes"] == "师徒事实"
+        assert tag["data"]["parentTagId"] == "tag_root"
+        assert tag["data"]["sortOrder"] == 1
+        assert tag["data"]["collapsed"] is False
+        branch = next(op for op in operations if op["entity_type"] == "timeline_branch" and op["entity_id"] == "branch_fork")
+        assert branch["data"]["startAnchor"] == {"branchId": "branch_main", "eventId": "event_gate"}
+        assert branch["data"]["endAnchor"] == {"branchId": "branch_main", "eventId": "event_fork"}
+        assert branch["data"]["endMode"] == "merge"
+        assert branch["data"]["mergeTargetBranchId"] == "branch_main"
+        assert branch["data"]["geometry"] == {"laneOffset": 140, "bend": 0.42, "thickness": 2}
+        assert branch["data"]["rankStart"] == 1
+        assert branch["data"]["rankEnd"] == 2
+        assert branch["data"]["laneId"] == "lane_mentor"
+        assert branch["data"]["layoutHint"]["densityClass"] == "dense"
+        assert branch["data"]["collapsed"] is True
+
+    assert after_ops == before_ops
 
 
 def test_normal_streaming_calls_architect_once_without_a_rerun(tmp_path, monkeypatch):

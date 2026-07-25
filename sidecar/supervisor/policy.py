@@ -26,6 +26,7 @@ from sidecar.models.state import (
     plan_tool_operating_spec,
     select_granularity_profile,
     validate_import_plan,
+    make_source_span,
     reconstruct_source_span,
     validate_source_span,
 )
@@ -149,6 +150,7 @@ _SNAPSHOT_RELATIONSHIP_FIELDS = _SNAPSHOT_COMMON_ENTITY_FIELDS | frozenset({
 _SNAPSHOT_TAG_FIELDS = frozenset({
     "id", "name", "color", "description", "characterIds", "character_ids", "character_names",
     "sourceName", "normalization", "confidence", "source_span", "sourceSpan",
+    "parentTagId", "parent_tag_id", "sortOrder", "orderIndex", "collapsed",
 })
 _SNAPSHOT_WORLD_CONTAINER_FIELDS = frozenset({
     "id", "name", "description", "category", "type", "importCategoryKey", "sortOrder",
@@ -156,7 +158,10 @@ _SNAPSHOT_WORLD_CONTAINER_FIELDS = frozenset({
 })
 _SNAPSHOT_TIMELINE_BRANCH_FIELDS = frozenset({
     "id", "branchId", "name", "description", "mode", "color", "sortOrder", "orderIndex",
-    "isDefault", "parentBranchId", "parent_branch_id", "forkPoint", "source_span",
+    "isDefault", "parentBranchId", "parent_branch_id", "forkPoint", "forkEventId", "mergeEventId",
+    "startAnchor", "endAnchor", "endMode", "mergeTargetBranchId", "geometry", "rankStart", "rankEnd",
+    "laneId", "layoutHint", "collapsed", "anchorStartPos", "anchorEndPos", "eventCountHint",
+    "topologyHints", "virtualLength", "source_span", "sourceSpan",
 })
 _SNAPSHOT_EVIDENCE_CARD_FIELDS = frozenset({
     "id", "kind", "candidate_ids", "source_span", "raw", "confidence", "source_chunk_ids",
@@ -170,6 +175,15 @@ _SNAPSHOT_CHUNK_FIELDS = frozenset({
 _SNAPSHOT_MANUSCRIPT_FIELDS = frozenset({
     "chapter_id", "scene_id", "title", "summary", "goal", "notes", "chunk_ids", "source_span",
     "chapterNumber", "chapter_number", "orderIndex", "order_index", "confidence", "status",
+})
+_SOURCE_TEXT_REF_CONTRACT = "W1SourceTextRef/v1"
+_SNAPSHOT_SOURCE_LABEL_FIELDS = frozenset({
+    "id", "ids", "name", "title", "label", "aliases", "type", "category", "color", "status", "mode",
+    "kind", "field", "contract_version", "source_language", "importcategorykey", "ontologytype",
+    "ontologydirection", "directionality", "eventclass", "timelineclass", "eventtype", "endmode",
+    "densityclass", "projecttype", "narrativepacing", "languagestyle", "narrativeperspective",
+    "lengthstrategy", "tags", "personality_traits", "traits", "character_id_map", "evidence_refs",
+    "evidencerefs", "profile_field_evidence", "candidate_ids", "normalization",
 })
 
 
@@ -186,6 +200,40 @@ class W1ResumeState(TypedDict):
     evidence_cards: list[dict[str, Any]]
 
 
+def _snapshot_field_is_stable_label(field: str) -> bool:
+    """Distinguish identifiers/labels from prose that needs a source proof."""
+    lowered = field.lower()
+    if lowered.startswith("entity_registry.world.") or "character_id_map" in lowered:
+        return True
+    tokens = [token.lower() for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", field)]
+    if not tokens:
+        return False
+    leaf = tokens[-1]
+    if leaf in _SNAPSHOT_SOURCE_LABEL_FIELDS:
+        return True
+    if leaf.endswith(("id", "ids", "_id", "_ids", "hash", "_hash", "name", "_name")):
+        return True
+    # These containers hold stable labels or references even when the final
+    # path component is the generic merge-decision key ``value``.
+    return any(
+        token in {
+            "aliases", "tags", "traits", "personality_traits", "evidence_refs", "evidencerefs",
+            "profile_field_evidence", "candidate_ids", "character_ids", "characternames",
+        }
+        for token in tokens
+    )
+
+
+def _snapshot_source_text_ref(value: str, source_text: str, field: str) -> dict[str, Any]:
+    start = source_text.find(value)
+    if start < 0 or not value:
+        raise ValueError(f"{field}_source_fragment_is_invalid")
+    return {
+        "contract_version": _SOURCE_TEXT_REF_CONTRACT,
+        "source_span": make_source_span(source_text, start, start + len(value)),
+    }
+
+
 def _snapshot_structured_value(value: Any, source_text: str, field: str) -> Any:
     """Permit only JSON evidence metadata; reject prose and hidden reasoning."""
     if value is None or isinstance(value, (bool, int, float)):
@@ -193,8 +241,8 @@ def _snapshot_structured_value(value: Any, source_text: str, field: str) -> Any:
     if isinstance(value, str):
         if value.startswith("/") or re.match(r"^[A-Za-z]:[\\\\/]", value):
             raise ValueError(f"{field}_contains_absolute_path")
-        if len(value.strip()) >= 80 and value.strip() in source_text:
-            raise ValueError(f"{field}_contains_source_substring")
+        if source_text and value and value in source_text and not _snapshot_field_is_stable_label(field):
+            return _snapshot_source_text_ref(value, source_text, field)
         return value
     if isinstance(value, (list, tuple)):
         return [_snapshot_structured_value(item, source_text, f"{field}[{index}]") for index, item in enumerate(value)]
@@ -206,6 +254,29 @@ def _snapshot_structured_value(value: Any, source_text: str, field: str) -> Any:
             result[key] = _snapshot_structured_value(item, source_text, f"{field}.{key}")
         return result
     raise ValueError(f"{field}_is_not_json")
+
+
+def _rehydrate_snapshot_source_text_refs(value: Any, raw_source: str, field: str = "state") -> Any:
+    """Resolve typed prose references only after the raw source hash is verified."""
+    if isinstance(value, list):
+        return [
+            _rehydrate_snapshot_source_text_refs(item, raw_source, f"{field}[{index}]")
+            for index, item in enumerate(value)
+        ]
+    if not isinstance(value, Mapping):
+        return value
+    if value.get("contract_version") == _SOURCE_TEXT_REF_CONTRACT:
+        if set(value) != {"contract_version", "source_span"} or not isinstance(value.get("source_span"), Mapping):
+            raise ValueError(f"{field}_source_text_ref_is_invalid")
+        span = dict(value["source_span"])
+        valid, _errors = validate_source_span(span, raw_source)
+        if not valid:
+            raise ValueError(f"{field}_source_text_ref_mismatch")
+        return reconstruct_source_span(span, raw_source)
+    return {
+        key: _rehydrate_snapshot_source_text_refs(item, raw_source, f"{field}.{key}")
+        for key, item in value.items()
+    }
 
 
 def _snapshot_object(value: Any, allowed: frozenset[str], source_text: str, field: str) -> dict[str, Any]:
@@ -322,6 +393,7 @@ def _rehydrate_snapshot_chunks(state: ImportSupervisorState, source_file_path: s
     """Rebuild transient chunk bodies solely from verified SourceSpan records."""
     source_path = Path(source_file_path)
     raw_source = source_path.read_text(encoding="utf-8")
+    state = _rehydrate_snapshot_source_text_refs(dict(state), raw_source)  # type: ignore[assignment]
     restored_chunks: list[dict[str, Any]] = []
     for compact in state.get("chunks", []):
         if not isinstance(compact, Mapping):
@@ -346,6 +418,7 @@ def _rehydrate_snapshot_manuscript_chapters(state: ImportSupervisorState, source
     """Rebuild chapter bodies only from the verified raw source and SourceSpan."""
     source_path = Path(source_file_path)
     raw_source = source_path.read_text(encoding="utf-8")
+    state = _rehydrate_snapshot_source_text_refs(dict(state), raw_source)  # type: ignore[assignment]
     restored_chapters: list[dict[str, Any]] = []
     for compact in state.get("manuscript_chapters", []):
         if not isinstance(compact, Mapping):
