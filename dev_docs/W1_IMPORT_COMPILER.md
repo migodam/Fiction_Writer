@@ -78,6 +78,26 @@ Unknown outcomes remain human-gated on both cache and network paths. The usage
 ledger is rebuilt from unique cached operations and does not double-count an
 operation within a session.
 
+### Offline Legacy Replay Bridge (2026-07-25)
+
+`tools/w1_offline_replay_attempt.py` is a zero-provider recovery tool for a
+saved supervisor attempt. It validates source hash, continuous source spans,
+attempt/lineage identity, usage ledger, and immutable evidence artifacts before
+rebuilding only staged reviewer/proposal state. A legacy attempt that predates
+per-domain `completed_domains` may bridge to runtime evidence only when exactly
+one W1 runtime run has the same source hash and model, its tool usage exactly
+matches the saved ledger, every tool result has a contained hash-verified
+response artifact, and every expected window/domain has one durable start and
+success event with no matching failure/cancel/unknown event. Differing runtime
+and artifact lineage IDs are allowed solely through a recorded
+`w1-legacy-identity-bridge/v1` receipt. Any missing or ambiguous proof blocks.
+
+Dry-run does not write. `--apply` first writes an isolated backup/receipt and
+may create only a new pending proposal package after the final deterministic
+review and semantic gate pass; it never accepts canonical data. Scene-event
+links require source-span overlap or an exact shared evidence receipt. A shared
+chunk alone is not link evidence because a chunk can contain multiple scenes.
+
 ## Status
 W1 import now uses a Hybrid Compiler spine for long novel imports. The runtime still starts from the existing Import modal and sidecar W1 endpoint, but imported material is staged through deterministic artifacts before proposals are written.
 

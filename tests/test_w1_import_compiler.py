@@ -1787,7 +1787,7 @@ def test_node_write_to_project_proposes_chapter_and_content_scene(tmp_path, monk
     assert scene_op["depends_on"] == ["chap_3"]
 
 
-def test_node_write_to_project_links_scene_and_event_only_with_shared_source_chunk(tmp_path, monkeypatch):
+def test_node_write_to_project_does_not_link_scene_and_event_from_shared_chunk_alone(tmp_path, monkeypatch):
     captured_ops = []
 
     async def fake_propose_write(op, _project_path):
@@ -1817,10 +1817,10 @@ def test_node_write_to_project_links_scene_and_event_only_with_shared_source_chu
 
     event_op = next(op for op in captured_ops if op["entity_type"] == "timeline_event")
     scene_op = next(op for op in captured_ops if op["entity_type"] == "scene")
-    assert event_op["data"]["linkedSceneIds"] == ["scene_1"]
-    assert event_op["data"]["sceneLinkEvidence"] == {"scene_1": "shared_source_chunk"}
-    assert scene_op["data"]["linkedEventIds"] == ["event_1"]
-    assert scene_op["data"]["eventLinkEvidence"] == {"event_1": "shared_source_chunk"}
+    assert event_op["data"]["linkedSceneIds"] == []
+    assert event_op["data"].get("sceneLinkEvidence", {}) == {}
+    assert scene_op["data"]["linkedEventIds"] == []
+    assert scene_op["data"].get("eventLinkEvidence", {}) == {}
 
 
 def test_node_write_to_project_does_not_link_scene_event_without_durable_provenance(tmp_path, monkeypatch):
@@ -1850,6 +1850,29 @@ def test_node_write_to_project_does_not_link_scene_event_without_durable_provena
     scene_op = next(op for op in captured_ops if op["entity_type"] == "scene")
     assert event_op["data"]["linkedSceneIds"] == []
     assert scene_op["data"]["linkedEventIds"] == []
+
+
+def test_scene_event_linking_uses_exact_span_not_shared_chunk_with_multiple_scenes():
+    raw_hash = "source_hash"
+    state = {
+        "entity_registry": {"events": {"event_1": {
+            "chunk_id": 0,
+            "source_span": {"raw_source_hash": raw_hash, "absolute_start": 6, "absolute_end": 8},
+        }}},
+        "manuscript_chapters": [
+            {"chapter_id": "chap_1", "scene_id": "scene_1", "chunk_ids": [0], "source_span": {"raw_source_hash": raw_hash, "absolute_start": 0, "absolute_end": 5}},
+            {"chapter_id": "chap_2", "scene_id": "scene_2", "chunk_ids": [0], "source_span": {"raw_source_hash": raw_hash, "absolute_start": 5, "absolute_end": 10}},
+        ],
+    }
+
+    linked = w1_import._link_scene_events_from_provenance(state)
+
+    event = linked["entity_registry"]["events"]["event_1"]
+    chapters = {chapter["scene_id"]: chapter for chapter in linked["manuscript_chapters"]}
+    assert event["linkedSceneIds"] == ["scene_2"]
+    assert event["sceneLinkEvidence"] == {"scene_2": "source_span_overlap"}
+    assert chapters["scene_1"].get("linkedEventIds", []) == []
+    assert chapters["scene_2"]["linkedEventIds"] == ["event_1"]
 
 
 def test_node_write_to_project_world_containers_before_items_and_skips_people(tmp_path, monkeypatch):

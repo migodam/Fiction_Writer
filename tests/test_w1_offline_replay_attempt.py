@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 
+from sidecar.runtime.agent_runtime import RuntimeStore
 from tools.w1_offline_replay_attempt import replay_attempt
 
 
@@ -22,7 +23,7 @@ def _span(source: str, start: int, end: int) -> dict[str, object]:
     }
 
 
-def _fixture(project: Path, *, completed_domains: bool = True) -> Path:
+def _fixture(project: Path, *, completed_domains: bool = True, runtime_evidence: bool = False) -> Path:
     source_parts = [f"第{i + 1}章 正文。" for i in range(10)]
     source = "".join(source_parts)
     source_path = project / "novel.txt"
@@ -41,9 +42,12 @@ def _fixture(project: Path, *, completed_domains: bool = True) -> Path:
         "lineage_id": lineage, "attempt_id": attempt, "import_run_id": lineage,
         "source_file_path": str(source_path), "source_hash": hashlib.sha256(source.encode("utf-8")).hexdigest(),
         "segment_count": 10, "segments": segments, "prompt_windows": windows, "prompt_profile": "balanced",
+        "model": "offline-fixture",
     })
+    call_count = 15 if runtime_evidence else 5
     _write(attempt_dir / "usage_ledger.json", {
-        "actual_calls": 5, "actual_input_tokens": 100, "actual_output_tokens": 50, "actual_total_tokens": 150,
+        "actual_calls": call_count, "actual_input_tokens": call_count * 10, "actual_output_tokens": call_count * 5,
+        "actual_total_tokens": call_count * 15,
         "cost_usd": 0.01, "model": "offline-fixture",
     })
     completed = ["character", "event", "world", "relationship", "scene"] if completed_domains else []
@@ -77,7 +81,35 @@ def _fixture(project: Path, *, completed_domains: bool = True) -> Path:
         "world_containers": [{"id": "world_container_organizations", "importCategoryKey": "organizations", "name": "门派组织"}],
         "world_items": [{"entity_id": "world_sect", "name": "宗门", "category": "organization", "containerId": "world_container_organizations", "container_key": "organizations"}],
     })
+    if runtime_evidence:
+        _write_runtime_evidence(project, source, source_path, windows, call_count)
     return attempt_dir
+
+
+def _write_runtime_evidence(project: Path, source: str, source_path: Path, windows: list[dict], call_count: int) -> None:
+    store = RuntimeStore(project)
+    run = store.create_run(
+        workflow_id="W1", lineage_id="runtime_legacy_lineage", run_id="runtime_run",
+        config={"source_hash": hashlib.sha256(source.encode("utf-8")).hexdigest(), "model": "offline-fixture", "source_file_path": str(source_path)},
+    )
+    attempt = store.create_attempt(run["run_id"], attempt_id="runtime_attempt")
+    lease = store.acquire_lease(attempt["attempt_id"], "test_worker", ttl_seconds=60)
+    for window in windows:
+        for domain in ("character", "event", "world", "relationship", "scene"):
+            store.append_event(attempt["attempt_id"], "w1_activity", {"phase": "extracting", "status": "start", "message": f"Running {domain} prompt for {window['id']}."}, owner_id="test_worker", fence_token=lease["fence_token"])
+            store.append_event(attempt["attempt_id"], "w1_activity", {"phase": "extracting", "status": "success", "message": f"Finished {domain} prompt for {window['id']}."}, owner_id="test_worker", fence_token=lease["fence_token"])
+    for index in range(call_count):
+        artifact = project / "system/imports/runtime_legacy_lineage/provider_responses" / f"{index}.json"
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_text(json.dumps({"index": index}), encoding="utf-8")
+        call = store.record_tool_intent(attempt["attempt_id"], "provider.chat.completions", {"sequence": index})
+        store.record_tool_result(call["tool_call_id"], {
+            "model": "offline-fixture", "input_tokens": 10, "output_tokens": 5,
+            "artifact_receipt": {
+                "artifact_path": artifact.relative_to(project).as_posix(),
+                "artifact_hash": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+            },
+        })
 
 
 def test_dry_run_validates_and_does_not_write(tmp_path: Path) -> None:
@@ -115,6 +147,44 @@ def test_legacy_metrics_without_completed_domains_fail_closed_and_apply_only_rec
     assert (tmp_path / applied["receipt_path"]).is_file()
 
 
+def test_partial_native_completion_receipt_requires_runtime_bridge(tmp_path: Path) -> None:
+    attempt = _fixture(tmp_path)
+    metrics_path = tmp_path / "system/imports/lineage_replay/window_metrics.json"
+    metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+    metrics["pwin_1"]["completed_domains"] = ["character"]
+    _write(metrics_path, metrics)
+
+    result = replay_attempt(tmp_path, attempt)
+
+    assert result["status"] == "blocked"
+    assert "legacy_bridge_runtime_db_missing" in result["receipt_missing"]
+
+
+def test_runtime_legacy_identity_bridge_backfills_only_verified_domain_receipts(tmp_path: Path) -> None:
+    attempt = _fixture(tmp_path, completed_domains=False, runtime_evidence=True)
+
+    result = replay_attempt(tmp_path, attempt)
+
+    assert result["status"] == "dry_run"
+    bridge = result["legacy_identity_bridge"]
+    assert bridge["verified"] is True
+    assert bridge["runtime_lineage_id"] == "runtime_legacy_lineage"
+    assert bridge["artifact_lineage_id"] == "lineage_replay"
+    assert bridge["completed_domains_by_window"]["pwin_1"] == ["character", "event", "relationship", "scene", "world"]
+
+
+def test_runtime_legacy_identity_bridge_rejects_unknown_tool_outcome(tmp_path: Path) -> None:
+    attempt = _fixture(tmp_path, completed_domains=False, runtime_evidence=True)
+    store = RuntimeStore(tmp_path)
+    call = store.list_tool_calls("runtime_attempt")[0]
+    store.record_tool_unknown_outcome(call["tool_call_id"], "simulated interruption")
+
+    result = replay_attempt(tmp_path, attempt)
+
+    assert result["status"] == "blocked"
+    assert f"legacy_bridge_tool_not_result:{call['tool_call_id']}" in result["receipt_missing"]
+
+
 def test_semantic_gate_blocks_dry_run_and_apply_without_touching_inbox(tmp_path: Path) -> None:
     attempt = _fixture(tmp_path)
     cards_path = attempt / "evidence_cards.json"
@@ -129,6 +199,19 @@ def test_semantic_gate_blocks_dry_run_and_apply_without_touching_inbox(tmp_path:
     assert "major_character_missing_background" in dry_run["semantic_blocking_codes"]
     assert applied["status"] == "blocked"
     assert not (tmp_path / "system/inbox.json").exists()
+
+
+def test_deterministic_finalize_backfills_evidence_bound_identity_background(tmp_path: Path) -> None:
+    attempt = _fixture(tmp_path)
+    cards_path = attempt / "evidence_cards.json"
+    cards = json.loads(cards_path.read_text(encoding="utf-8"))
+    cards[0]["raw"].pop("background")
+    cards[0]["raw"]["summary"] = "农家少年，参加入门测试。"
+    _write(cards_path, cards)
+
+    result = replay_attempt(tmp_path, attempt)
+
+    assert "major_character_missing_background" not in result["semantic_blocking_codes"]
 
 
 def test_source_tampering_fails_before_creating_replay_artifacts(tmp_path: Path) -> None:

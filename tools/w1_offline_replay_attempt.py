@@ -13,7 +13,9 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import shutil
+import sqlite3
 import tempfile
 import uuid
 from pathlib import Path
@@ -31,6 +33,16 @@ _DOMAIN_LABELS = {
     "relationships": "relationship",
     "scenes": "scene",
 }
+_EXTRACTION_EVENT = re.compile(
+    r"^(?P<action>Running|Finished) (?P<domain>character|event|world|relationship|scene) "
+    r"prompt for (?P<window>pwin_[a-z0-9]+)\.$"
+)
+_DOMAIN_EVENT_REFERENCE = re.compile(
+    r"(?P<domain>character|event|world|relationship|scene).*?(?:prompt|extraction).*?"
+    r"(?:for|in) (?P<window>pwin_[a-z0-9]+)",
+    re.IGNORECASE,
+)
+_FORBIDDEN_EVENT_STATUS = {"failed", "failure", "cancelled", "cancel", "unknown", "unknown_outcome"}
 
 
 def _read_json(path: Path) -> Any:
@@ -121,7 +133,154 @@ def _validate_segments(manifest: dict[str, Any], source_text: str, *, expected_c
     return errors
 
 
-def _build_supervisor_receipts(manifest: dict[str, Any], metrics: Any) -> tuple[list[dict[str, Any]], list[str]]:
+def _runtime_legacy_identity_bridge(
+    project: Path,
+    manifest: dict[str, Any],
+    usage_ledger: dict[str, Any],
+) -> tuple[dict[str, set[str]], dict[str, Any], list[str]]:
+    """Verify historical runtime evidence before backfilling old window receipts.
+
+    This is deliberately stricter than the old metrics.  It accepts exactly one
+    W1 runtime run for the source/model/usage identity and proves every prompt
+    result from its durable event and response-artifact trail.  Runtime and
+    artifact lineages may differ only through this recorded legacy bridge.
+    """
+    runtime_path = project / "system" / "runtime" / "agent_runtime.db"
+    errors: list[str] = []
+    expected_source_hash = str(manifest.get("source_hash") or "")
+    expected_model = str(manifest.get("model") or "")
+    ledger_model = str(usage_ledger.get("model") or "")
+    if not expected_source_hash:
+        errors.append("legacy_bridge_manifest_source_hash_missing")
+    if not expected_model or expected_model != ledger_model:
+        errors.append("legacy_bridge_model_usage_mismatch")
+    if not runtime_path.is_file():
+        return {}, {"contract": "w1-legacy-identity-bridge/v1", "verified": False}, [*errors, "legacy_bridge_runtime_db_missing"]
+
+    connection = sqlite3.connect(runtime_path)
+    connection.row_factory = sqlite3.Row
+    try:
+        runs: list[tuple[dict[str, Any], sqlite3.Row]] = []
+        for row in connection.execute("SELECT * FROM agent_runs WHERE workflow_id = 'W1'"):
+            try:
+                config = json.loads(row["config_json"] or "{}")
+            except json.JSONDecodeError:
+                errors.append(f"legacy_bridge_run_config_invalid:{row['run_id']}")
+                continue
+            if isinstance(config, dict) and config.get("source_hash") == expected_source_hash:
+                runs.append((config, row))
+        if len(runs) != 1:
+            errors.append(f"legacy_bridge_runtime_run_count:{len(runs)}")
+            return {}, {"contract": "w1-legacy-identity-bridge/v1", "verified": False}, errors
+        config, run = runs[0]
+        runtime_model = str(config.get("model") or "")
+        if runtime_model != expected_model:
+            errors.append("legacy_bridge_runtime_model_mismatch")
+        attempts = list(connection.execute("SELECT * FROM agent_attempts WHERE run_id = ?", (run["run_id"],)))
+        if len(attempts) != 1:
+            errors.append(f"legacy_bridge_runtime_attempt_count:{len(attempts)}")
+            return {}, {"contract": "w1-legacy-identity-bridge/v1", "verified": False}, errors
+        attempt = attempts[0]
+        calls = list(connection.execute("SELECT * FROM tool_calls WHERE attempt_id = ? ORDER BY created_at", (attempt["attempt_id"],)))
+        if len(calls) != int(usage_ledger.get("actual_calls") or -1):
+            errors.append("legacy_bridge_usage_call_count_mismatch")
+        input_tokens = output_tokens = 0
+        checked_artifacts: list[dict[str, str]] = []
+        for call in calls:
+            if call["status"] != "result":
+                errors.append(f"legacy_bridge_tool_not_result:{call['tool_call_id']}")
+                continue
+            try:
+                result = json.loads(call["result_payload_json"] or "{}")
+            except json.JSONDecodeError:
+                errors.append(f"legacy_bridge_tool_result_invalid:{call['tool_call_id']}")
+                continue
+            if str(result.get("model") or "") != expected_model:
+                errors.append(f"legacy_bridge_tool_model_mismatch:{call['tool_call_id']}")
+            receipt = result.get("artifact_receipt") if isinstance(result, dict) else None
+            if not isinstance(receipt, dict):
+                errors.append(f"legacy_bridge_tool_receipt_missing:{call['tool_call_id']}")
+                continue
+            relative_path = str(receipt.get("artifact_path") or "")
+            artifact_hash = str(receipt.get("artifact_hash") or "")
+            path = project / relative_path
+            try:
+                path.resolve().relative_to(project.resolve())
+            except ValueError:
+                errors.append(f"legacy_bridge_tool_receipt_outside_project:{call['tool_call_id']}")
+                continue
+            if not relative_path or path.is_symlink() or not path.is_file():
+                errors.append(f"legacy_bridge_tool_receipt_path_invalid:{call['tool_call_id']}")
+                continue
+            actual_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+            if not artifact_hash or actual_hash != artifact_hash:
+                errors.append(f"legacy_bridge_tool_receipt_hash_mismatch:{call['tool_call_id']}")
+                continue
+            checked_artifacts.append({"path": relative_path, "sha256": artifact_hash})
+            input_tokens += int(result.get("input_tokens") or 0)
+            output_tokens += int(result.get("output_tokens") or 0)
+        if input_tokens != int(usage_ledger.get("actual_input_tokens") or -1):
+            errors.append("legacy_bridge_usage_input_tokens_mismatch")
+        if output_tokens != int(usage_ledger.get("actual_output_tokens") or -1):
+            errors.append("legacy_bridge_usage_output_tokens_mismatch")
+        if input_tokens + output_tokens != int(usage_ledger.get("actual_total_tokens") or -1):
+            errors.append("legacy_bridge_usage_total_tokens_mismatch")
+
+        expected_windows = {str(window.get("id") or "") for window in manifest.get("prompt_windows", []) if isinstance(window, dict)}
+        observed: dict[tuple[str, str], set[str]] = {}
+        for event in connection.execute("SELECT payload_json FROM run_events WHERE attempt_id = ? ORDER BY sequence", (attempt["attempt_id"],)):
+            try:
+                payload = json.loads(event["payload_json"])
+            except json.JSONDecodeError:
+                errors.append("legacy_bridge_event_payload_invalid")
+                continue
+            if not isinstance(payload, dict):
+                errors.append("legacy_bridge_event_payload_not_object")
+                continue
+            message, status = str(payload.get("message") or ""), str(payload.get("status") or "").lower()
+            match = _EXTRACTION_EVENT.fullmatch(message)
+            if match:
+                domain, window, action = match["domain"], match["window"], match["action"]
+                if window not in expected_windows:
+                    errors.append(f"legacy_bridge_unexpected_window:{window}")
+                observed.setdefault((window, domain), set()).add("start" if action == "Running" else "success")
+                if status not in {"start", "success"}:
+                    errors.append(f"legacy_bridge_event_status_invalid:{window}:{domain}")
+                continue
+            related = _DOMAIN_EVENT_REFERENCE.search(message)
+            if related and status in _FORBIDDEN_EVENT_STATUS:
+                errors.append(f"legacy_bridge_domain_event_not_complete:{related['window']}:{related['domain']}:{status}")
+        completed: dict[str, set[str]] = {}
+        for window in sorted(expected_windows):
+            domains: set[str] = set()
+            for domain in _DOMAIN_LABELS.values():
+                states = observed.get((window, domain), set())
+                if states == {"start", "success"}:
+                    domains.add(domain)
+                else:
+                    errors.append(f"legacy_bridge_domain_evidence_missing:{window}:{domain}")
+            completed[window] = domains
+        bridge = {
+            "contract": "w1-legacy-identity-bridge/v1",
+            "verified": not errors,
+            "runtime_run_id": str(run["run_id"]),
+            "runtime_attempt_id": str(attempt["attempt_id"]),
+            "runtime_lineage_id": str(run["lineage_id"]),
+            "artifact_lineage_id": str(manifest.get("lineage_id") or ""),
+            "source_hash": expected_source_hash,
+            "model": expected_model,
+            "usage": {key: usage_ledger.get(key) for key in ("actual_calls", "actual_input_tokens", "actual_output_tokens", "actual_total_tokens", "cost_usd")},
+            "completed_domains_by_window": {window: sorted(domains) for window, domains in completed.items()},
+            "verified_artifacts": checked_artifacts,
+        }
+        return completed if not errors else {}, bridge, sorted(set(errors))
+    finally:
+        connection.close()
+
+
+def _build_supervisor_receipts(
+    manifest: dict[str, Any], metrics: Any, *, completed_domains_by_window: dict[str, set[str]] | None = None,
+) -> tuple[list[dict[str, Any]], list[str]]:
     receipts: list[dict[str, Any]] = []
     missing: list[str] = []
     if not isinstance(metrics, dict):
@@ -135,7 +294,9 @@ def _build_supervisor_receipts(manifest: dict[str, Any], metrics: Any) -> tuple[
             missing.append(f"window_metric_missing:{window_id}")
             continue
         failed = {str(value).split(":", 1)[0].strip() for value in metric.get("failed_prompts", []) if str(value).strip()}
-        completed = {str(value).strip() for value in metric.get("completed_domains", []) if str(value).strip()}
+        completed = (completed_domains_by_window or {}).get(window_id) or {
+            str(value).strip() for value in metric.get("completed_domains", []) if str(value).strip()
+        }
         gate_passed = metric.get("gate_passed") is True
         if not completed:
             missing.append(f"window_domain_completion_receipt_missing:{window_id}")
@@ -162,6 +323,60 @@ def _build_supervisor_receipts(manifest: dict[str, Any], metrics: Any) -> tuple[
     return receipts, missing
 
 
+def _finalize_for_deterministic_review(state: dict[str, Any]) -> dict[str, Any]:
+    """Run reviewer-equivalent deterministic transforms without writing in dry-run."""
+    finalized = {**state, **w1_import._finalize_registry_for_proposal_staging(state)}
+    finalized = {**finalized, **w1_import._build_supervisor_evidence_cards(finalized)}
+    registry = finalized.get("entity_registry") if isinstance(finalized.get("entity_registry"), dict) else {}
+    characters = {
+        str(character_id): dict(entry)
+        for character_id, entry in (registry.get("characters", {}) or {}).items()
+        if isinstance(entry, dict)
+    }
+    cards = list(finalized.get("evidence_cards", []) or [])
+    for character_id, entry in characters.items():
+        # Reuse the same conservative write-boundary backfill before review so
+        # an evidence-bound identity clause is not falsely treated as missing.
+        enriched = w1_import._attach_character_evidence_card(entry, character_id, cards)
+        experience, background, field_evidence = w1_import._backfill_character_profile_at_write_boundary(character_id, enriched)
+        enriched["experience"] = experience
+        if background:
+            enriched["background"] = background
+        if field_evidence:
+            enriched["profile_field_evidence"] = field_evidence
+        characters[character_id] = enriched
+    finalized = {**finalized, "entity_registry": {**registry, "characters": characters}}
+    return {**finalized, **w1_import._link_scene_events_from_provenance(finalized)}
+
+
+def _replay_counts(project: Path, state: dict[str, Any], semantic: dict[str, Any]) -> tuple[dict[str, int], dict[str, int], dict[str, int]]:
+    registry = state.get("entity_registry") if isinstance(state.get("entity_registry"), dict) else {}
+    proposal_counts = {
+        "characters": len([entry for entry in (registry.get("characters", {}) or {}).values() if isinstance(entry, dict) and not entry.get("skip_create")]),
+        "timeline_events": len(registry.get("events", {}) or {}),
+        "world_items": len(registry.get("world_detailed", {}) or {}),
+        "relationships": len(state.get("relationships", []) or []),
+        "chapters": len(state.get("manuscript_chapters", []) or []),
+    }
+    code_counts: dict[str, int] = {}
+    for finding in semantic.get("blocking_findings", []) or []:
+        if isinstance(finding, dict):
+            code = str(finding.get("code") or "unknown")
+            code_counts[code] = code_counts.get(code, 0) + 1
+    try:
+        snapshot = w1_import._load_existing_project_snapshot(str(project))
+    except Exception:
+        snapshot = {}
+    canonical_counts = {
+        "characters": len(snapshot.get("characters", []) or []),
+        "timeline_events": len(snapshot.get("timeline_events", []) or []),
+        "world_items": len(snapshot.get("world_items", []) or []),
+        "relationships": len(snapshot.get("relationships", []) or []),
+        "chapters": len(snapshot.get("chapters", []) or []),
+    }
+    return proposal_counts, canonical_counts, code_counts
+
+
 def _evidence_by_kind(cards: list[dict[str, Any]], kind: str) -> list[dict[str, Any]]:
     return [card for card in cards if isinstance(card, dict) and card.get("kind") == kind and isinstance(card.get("raw"), dict)]
 
@@ -177,7 +392,7 @@ def _append_unique(target: list[Any], values: list[Any]) -> list[Any]:
 def _rebuild_state(
     project: Path, lineage_dir: Path, attempt_dir: Path, manifest: dict[str, Any], source_text: str,
     cards: list[dict[str, Any]], timeline: dict[str, Any], organizer: dict[str, Any], metrics: Any,
-    replay_attempt_id: str,
+    replay_attempt_id: str, *, completed_domains_by_window: dict[str, set[str]] | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     segments = sorted(manifest["segments"], key=lambda item: int(item["chunk_id"]))
     chunks: list[dict[str, Any]] = []
@@ -258,7 +473,9 @@ def _rebuild_state(
         raw.setdefault("source_chunk_id", card.get("source_chunk_id"))
         relationships.append(raw)
 
-    receipts, receipt_missing = _build_supervisor_receipts(manifest, metrics)
+    receipts, receipt_missing = _build_supervisor_receipts(
+        manifest, metrics, completed_domains_by_window=completed_domains_by_window,
+    )
     replay_manifest = {
         **manifest,
         "attempt_id": replay_attempt_id,
@@ -331,21 +548,52 @@ def replay_attempt(project: Path, attempt_dir: Path, *, apply: bool = False, exp
     loaded, failure = _validate_and_load(project, attempt_dir, expected_chapters)
     if loaded is None:
         return {"contract": TOOL_VERSION, "apply": apply, **failure}
+    expected_windows = [
+        str(window.get("id") or "")
+        for window in loaded["manifest"].get("prompt_windows", [])
+        if isinstance(window, dict) and str(window.get("id") or "")
+    ]
+    native_completed_domains = bool(expected_windows) and all(
+        isinstance((loaded["metrics"] or {}).get(window_id), dict)
+        and set(str(value).strip() for value in (loaded["metrics"] or {})[window_id].get("completed_domains", []) if str(value).strip())
+        >= set(_DOMAIN_LABELS.values())
+        for window_id in expected_windows
+    )
+    completed_domains_by_window: dict[str, set[str]] | None = None
+    legacy_identity_bridge: dict[str, Any] = {
+        "contract": "w1-legacy-identity-bridge/v1",
+        "verified": False,
+        "required": not native_completed_domains,
+    }
+    bridge_errors: list[str] = []
+    if not native_completed_domains:
+        completed_domains_by_window, legacy_identity_bridge, bridge_errors = _runtime_legacy_identity_bridge(
+            loaded["project"], loaded["manifest"], loaded["usage_ledger"],
+        )
+        legacy_identity_bridge = {**legacy_identity_bridge, "required": True}
+    else:
+        legacy_identity_bridge = {**legacy_identity_bridge, "verified": True, "reason": "native_completed_domains"}
+
     replay_attempt_id = f"replay_{uuid.uuid4().hex[:12]}"
     state, receipt_missing = _rebuild_state(
         loaded["project"], loaded["lineage_dir"], loaded["attempt_dir"], loaded["manifest"], loaded["source_text"],
         loaded["cards"], loaded["timeline"], loaded["organizer"], loaded["metrics"], replay_attempt_id,
+        completed_domains_by_window=completed_domains_by_window,
     )
-    linked = w1_import._link_scene_events_from_provenance(state)
-    state = {**state, **linked}
-    payload, migration_status = w1_import._semantic_coverage_input(state)
+    receipt_missing = [*bridge_errors, *receipt_missing]
+    finalized_state = _finalize_for_deterministic_review(state)
+    payload, migration_status = w1_import._semantic_coverage_input(finalized_state)
     semantic = dict(compile_semantic_coverage(payload))
+    proposal_counts, canonical_counts, blocking_code_counts = _replay_counts(loaded["project"], finalized_state, semantic)
     base = {
         "contract": TOOL_VERSION, "apply": apply, "offline": True, "provider_calls": 0,
         "source_attempt_id": loaded["manifest"]["attempt_id"], "replay_attempt_id": replay_attempt_id,
         "lineage_id": loaded["manifest"]["lineage_id"], "expected_chapters": expected_chapters,
         "migration_status": migration_status, "receipt_missing": receipt_missing,
+        "legacy_identity_bridge": legacy_identity_bridge,
         "semantic_verdict": semantic["verdict"], "semantic_blocking_codes": [item["code"] for item in semantic["blocking_findings"]],
+        "semantic_blocking_code_counts": blocking_code_counts,
+        "proposal_counts": proposal_counts, "canonical_counts": canonical_counts,
         "usage": {key: loaded["usage_ledger"].get(key) for key in ("actual_calls", "actual_total_tokens", "cost_usd", "model")},
     }
     if not apply:
@@ -375,8 +623,8 @@ def replay_attempt(project: Path, attempt_dir: Path, *, apply: bool = False, exp
         _atomic_json(receipt_dir / "receipt.json", result)
         return result
 
-    reviewed = asyncio.run(w1_import.node_review_import(state))
-    written = asyncio.run(w1_import.node_write_to_project({**state, **reviewed}))
+    reviewed = asyncio.run(w1_import.node_review_import(finalized_state))
+    written = asyncio.run(w1_import.node_write_to_project({**finalized_state, **reviewed}))
     result = {
         **receipt, "status": "applied" if written.get("status") != "blocked" else "blocked",
         "phase": "completed" if written.get("status") != "blocked" else "blocked",

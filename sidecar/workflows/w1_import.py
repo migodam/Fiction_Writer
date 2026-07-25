@@ -5376,9 +5376,9 @@ def _provenance_values(entry: dict, *keys: str) -> set[str]:
 def _link_scene_events_from_provenance(state: ImportState | dict) -> dict[str, Any]:
     """Link staged scenes/events only when durable provenance establishes it.
 
-    Source-span overlap is strongest, followed by a shared evidence receipt and
-    finally an exact shared source chunk.  This creates reviewer-visible links
-    without guessing from titles, names, or adjacency.
+    Source-span overlap is strongest, followed by a shared evidence receipt.
+    A shared chunk is deliberately not enough: a chunk often contains several
+    scenes, so treating it as a link would fabricate a strong relationship.
     """
     registry = state.get("entity_registry") if isinstance(state.get("entity_registry"), dict) else {}
     events = {
@@ -5407,7 +5407,6 @@ def _link_scene_events_from_provenance(state: ImportState | dict) -> dict[str, A
         existing = _provenance_values(event, "linkedSceneIds", "linked_scene_ids")
         event_span = event.get("source_span") or event.get("sourceSpan")
         event_evidence = _provenance_values(event, "evidence_refs", "evidenceRefs")
-        event_chunks = _provenance_values(event, "source_chunk_ids", "chunk_ids", "chunk_id", "source_chunk_id")
         matched: list[tuple[str, str]] = []
         for scene in scenes:
             reason = ""
@@ -5415,8 +5414,6 @@ def _link_scene_events_from_provenance(state: ImportState | dict) -> dict[str, A
                 reason = "source_span_overlap"
             elif event_evidence and scene["evidence"] and event_evidence.intersection(scene["evidence"]):
                 reason = "shared_evidence_ref"
-            elif event_chunks and scene["chunks"] and event_chunks.intersection(scene["chunks"]):
-                reason = "shared_source_chunk"
             if reason:
                 matched.append((scene["scene_id"], reason))
         if not matched:
