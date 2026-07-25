@@ -113,7 +113,7 @@ export const runtimeCheckpointCapability = (checkpoint: RuntimeCheckpoint): Runt
   const explicitResumable = metadata.resumable ?? checkpoint.resumable;
   const recoveryMode = runtimeString(metadata.recovery_mode);
   const hasSnapshot = snapshotRef !== undefined && snapshotRef !== null;
-  const resumable = explicitResumable === true || (recoveryMode === 'resumable' && hasSnapshot);
+  const resumable = (explicitResumable === true || recoveryMode === 'resumable') && hasSnapshot;
   const reason = runtimeString(metadata.non_resumable_reason)
     ?? runtimeString(checkpoint.non_resumable_reason)
     ?? runtimeString(metadata.preview_reason)

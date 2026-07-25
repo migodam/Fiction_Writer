@@ -2301,7 +2301,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const result: RuntimeForkResult = await electronApi.runtimeFork(projectRoot, w1RuntimeAttemptId, checkpointId, decisionId).catch(() => ({ error: 'runtime_fork_failed', parent_attempt_id: w1RuntimeAttemptId }));
     const forkedAttemptId = result.attempt?.attempt_id;
     const snapshot = result.fork_snapshot ?? result.attempt?.fork_snapshot;
-    const childIsResumable = snapshot?.resumable === true || result.attempt?.resumable === true;
+    const childIsResumable = snapshot?.resumable === true;
     if (!forkedAttemptId || !childIsResumable || result.error || result.attempt?.status === 'error') {
       set({
         w1RuntimeAction: null,

@@ -66,10 +66,16 @@ test('shows preview-only checkpoints with a real details panel and never forks t
       if (channel === 'sidecar:spawn') return { ok: true, port: 8765 };
       if (channel === 'runtime:recoverable') return { runs: [{ lineage_id: 'lineage-preview', attempt_id: 'attempt-preview', status: 'recoverable', source_compatible: true }] };
       if (channel === 'runtime:events') return { events: [] };
-      if (channel === 'runtime:checkpoints') return { checkpoints: [{
-        checkpoint_id: 'checkpoint-preview', sequence: 3, label: 'Legacy checkpoint', summary: 'Source scan completed',
-        metadata: { recovery_mode: 'preview_only', preview_reason: 'legacy_checkpoint_without_snapshot' },
-      }] };
+      if (channel === 'runtime:checkpoints') return { checkpoints: [
+        {
+          checkpoint_id: 'checkpoint-preview', sequence: 3, label: 'Legacy checkpoint', summary: 'Source scan completed',
+          metadata: { recovery_mode: 'preview_only', preview_reason: 'legacy_checkpoint_without_snapshot' },
+        },
+        {
+          checkpoint_id: 'checkpoint-flag-only', sequence: 4, label: 'Missing snapshot reference',
+          metadata: { resumable: true },
+        },
+      ] };
       if (channel === 'runtime:fork') { state.forkCalls += 1; return {}; }
       return {};
     };
@@ -85,6 +91,9 @@ test('shows preview-only checkpoints with a real details panel and never forks t
   const fork = page.getByTestId('w1-checkpoint-fork-checkpoint-preview');
   await expect(fork).toBeDisabled();
   await expect(fork).toHaveAttribute('aria-label', /Preview only/);
+  await expect(page.getByTestId('w1-checkpoint-status-checkpoint-flag-only')).toContainText('Preview only');
+  await expect(page.getByTestId('w1-checkpoint-fork-checkpoint-flag-only')).toBeDisabled();
+  await expect(page.getByTestId('w1-checkpoint-fork-checkpoint-flag-only')).toHaveAttribute('aria-label', /no verified resumable snapshot/);
   await page.getByTestId('w1-checkpoint-preview-checkpoint-preview').click();
   await expect(page.getByTestId('w1-checkpoint-details-checkpoint-preview')).toContainText('Source scan completed');
   await expect.poll(() => page.evaluate(() => (window as any).__previewOnlyState.forkCalls)).toBe(0);
@@ -120,6 +129,40 @@ test('does not switch the active attempt when a fork response contains an error 
   await expect(page.getByTestId('w1-checkpoint-fork-error')).toContainText('active attempt was not changed');
   await page.getByTestId('w1-runtime-pause').click();
   await expect.poll(() => page.evaluate(() => (window as any).__forkFailureState.calls)).toEqual(expect.arrayContaining([
+    expect.objectContaining({ channel: 'runtime:fork', payload: expect.objectContaining({ attempt_id: 'attempt-parent' }) }),
+    expect.objectContaining({ channel: 'runtime:pause', payload: expect.objectContaining({ attempt_id: 'attempt-parent' }) }),
+  ]));
+});
+
+test('does not trust a child resumable flag without a fork snapshot', async ({ page }) => {
+  await page.addInitScript((bridgeMethods) => {
+    const state = { calls: [] as Array<{ channel: string; payload: Record<string, unknown> }> };
+    (window as any).__missingForkSnapshotState = state;
+    const invoke = async (channel: string, payload: Record<string, unknown> = {}) => {
+      if (channel === 'sidecar:spawn') return { ok: true, port: 8765 };
+      if (channel === 'runtime:recoverable') return { runs: [{ lineage_id: 'lineage-parent', attempt_id: 'attempt-parent', status: 'recoverable', source_compatible: true }] };
+      if (channel === 'runtime:events') return { events: [] };
+      if (channel === 'runtime:checkpoints') return { checkpoints: [{ checkpoint_id: 'checkpoint-resumable', sequence: 4, metadata: { resumable: true, snapshot_ref: { contract_version: 'W1SupervisorSnapshot/v1' } } }] };
+      if (channel === 'runtime:fork') {
+        state.calls.push({ channel, payload });
+        return { attempt: { attempt_id: 'attempt-child', status: 'paused', resumable: true } };
+      }
+      if (channel === 'runtime:pause') {
+        state.calls.push({ channel, payload });
+        return { attempt_id: payload.attempt_id, status: 'paused' };
+      }
+      return {};
+    };
+    (window as any).narrativeIDE = Object.fromEntries(Object.entries(bridgeMethods).map(([method, channel]) => [method, (payload: Record<string, unknown>) => invoke(channel, payload)]));
+  }, TEST_NARRATIVE_IDE_INVOKE_METHODS);
+
+  await page.goto('http://localhost:3000');
+  await page.getByTestId('activity-btn-workbench').click();
+  await page.getByTestId('open-import-btn').click();
+  await page.getByTestId('w1-checkpoint-fork-checkpoint-resumable').click();
+  await expect(page.getByTestId('w1-checkpoint-fork-error')).toContainText('active attempt was not changed');
+  await page.getByTestId('w1-runtime-pause').click();
+  await expect.poll(() => page.evaluate(() => (window as any).__missingForkSnapshotState.calls)).toEqual(expect.arrayContaining([
     expect.objectContaining({ channel: 'runtime:fork', payload: expect.objectContaining({ attempt_id: 'attempt-parent' }) }),
     expect.objectContaining({ channel: 'runtime:pause', payload: expect.objectContaining({ attempt_id: 'attempt-parent' }) }),
   ]));
