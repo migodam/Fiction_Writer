@@ -12,7 +12,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, AsyncGenerator, Mapping
+from typing import Any, AsyncGenerator, Mapping, TypedDict
 
 from sidecar.models.state import (
     PROFILE_CONFIGS,
@@ -104,7 +104,7 @@ _SNAPSHOT_FORBIDDEN_FIELD = re.compile(
     r"callback|client|runtime)",
     re.I,
 )
-_SNAPSHOT_ENTITY_FIELDS = frozenset({
+_SNAPSHOT_COMMON_ENTITY_FIELDS = frozenset({
     "id", "name", "canonical_name", "title", "type", "category", "ontologyType", "ontologyDirection",
     "aliases", "summary", "description", "background", "experience", "traits", "notes", "confidence",
     "importance", "importanceScore", "physical_description", "speech_style", "arc_notes", "status",
@@ -117,6 +117,45 @@ _SNAPSHOT_ENTITY_FIELDS = frozenset({
     "importConfidence", "scene_ids", "linked_scene_ids", "goal", "chapter_id", "scene_id", "chunk_ids",
     "chapterNumber", "chapter_number", "order_index", "domain_receipts", "failure_codes", "truth",
 })
+_SNAPSHOT_CHARACTER_FIELDS = _SNAPSHOT_COMMON_ENTITY_FIELDS | frozenset({
+    # These fields decide whether proposal_write creates a draft or updates an
+    # existing project character.  Dropping any of them turns a resumed update
+    # into a duplicate create or severs downstream event/tag references.
+    "skip_create", "existing_project_id", "personality_traits", "tag_ids",
+    "role_in_story", "open_questions", "groupKey", "profile_field_evidence",
+    "evidenceRefs", "source_segment_ids", "source_chunk_ids", "source_prompt_window_ids",
+    "experiences", "goals", "fears", "secrets", "roleInStory",
+})
+_SNAPSHOT_EVENT_FIELDS = _SNAPSHOT_COMMON_ENTITY_FIELDS | frozenset({
+    "character_ids", "character_names", "temporal_hint", "sharedBranchIds",
+    "mergedEventIds", "layoutHints", "source_segment_ids", "source_chunk_ids",
+    "source_prompt_window_ids", "evidenceRefs",
+})
+_SNAPSHOT_WORLD_ITEM_FIELDS = _SNAPSHOT_COMMON_ENTITY_FIELDS | frozenset({
+    "importCategoryKey", "target_folder_id", "source_segment_ids", "source_chunk_ids",
+    "evidenceRefs",
+})
+_SNAPSHOT_RELATIONSHIP_FIELDS = _SNAPSHOT_COMMON_ENTITY_FIELDS | frozenset({
+    "sourceLabel", "strength", "directionality", "sourceNotes", "source_candidate_id",
+    "target_candidate_id", "source_character_name", "target_character_name", "source_chunk_ids",
+    "evidence", "evidenceRefs",
+})
+_SNAPSHOT_TAG_FIELDS = frozenset({
+    "id", "name", "color", "description", "characterIds", "character_ids", "character_names",
+    "sourceName", "normalization", "confidence", "source_span", "sourceSpan",
+})
+_SNAPSHOT_WORLD_CONTAINER_FIELDS = frozenset({
+    "id", "name", "description", "category", "type", "importCategoryKey", "sortOrder",
+    "orderIndex", "parentId", "parent_id", "icon", "color", "attributes", "source_span",
+})
+_SNAPSHOT_TIMELINE_BRANCH_FIELDS = frozenset({
+    "id", "branchId", "name", "description", "mode", "color", "sortOrder", "orderIndex",
+    "isDefault", "parentBranchId", "parent_branch_id", "forkPoint", "source_span",
+})
+_SNAPSHOT_EVIDENCE_CARD_FIELDS = frozenset({
+    "id", "kind", "candidate_ids", "source_span", "raw", "confidence", "source_chunk_ids",
+    "source_segment_ids", "field", "status",
+})
 _SNAPSHOT_CHUNK_FIELDS = frozenset({
     "id", "chunk_id", "segment_id", "chapter_id", "chapter_ids", "chapter_hint", "chapter_number",
     "chapterNumber", "source_span", "raw_source_hash", "substring_hash", "absolute_start", "absolute_end",
@@ -126,6 +165,19 @@ _SNAPSHOT_MANUSCRIPT_FIELDS = frozenset({
     "chapter_id", "scene_id", "title", "summary", "goal", "notes", "chunk_ids", "source_span",
     "chapterNumber", "chapter_number", "orderIndex", "order_index", "confidence", "status",
 })
+
+
+class W1ResumeState(TypedDict):
+    """The only body-free state representation accepted by supervisor resume."""
+
+    contract_version: str
+    import_run_id: str
+    source_language: str
+    character_tags: list[dict[str, Any]]
+    manuscript_chapters: list[dict[str, Any]]
+    raw_relationships: list[dict[str, Any]]
+    organizer_output: dict[str, Any]
+    evidence_cards: list[dict[str, Any]]
 
 
 def _snapshot_structured_value(value: Any, source_text: str, field: str) -> Any:
@@ -161,16 +213,25 @@ def _snapshot_object(value: Any, allowed: frozenset[str], source_text: str, fiel
 
 
 def _snapshot_entities(registry: Any, source_text: str) -> dict[str, Any]:
+    """Project the writer's registry contract without copying arbitrary state."""
     if not isinstance(registry, Mapping):
-        return {"characters": {}, "events": {}, "world": {}, "world_detailed": {}}
+        return {
+            "characters": {}, "events": {}, "world": {}, "world_detailed": {},
+            "character_id_map": {},
+        }
+    domain_fields = {
+        "characters": _SNAPSHOT_CHARACTER_FIELDS,
+        "events": _SNAPSHOT_EVENT_FIELDS,
+        "world_detailed": _SNAPSHOT_WORLD_ITEM_FIELDS,
+    }
     result: dict[str, Any] = {}
-    for domain in ("characters", "events", "world_detailed"):
+    for domain, fields in domain_fields.items():
         entries = registry.get(domain, {})
         if not isinstance(entries, Mapping):
             result[domain] = {}
             continue
         result[domain] = {
-            str(entry_id): _snapshot_object(entry, _SNAPSHOT_ENTITY_FIELDS, source_text, f"entity_registry.{domain}.{entry_id}")
+            str(entry_id): _snapshot_object(entry, fields, source_text, f"entity_registry.{domain}.{entry_id}")
             for entry_id, entry in entries.items()
             if isinstance(entry, Mapping)
         }
@@ -179,6 +240,12 @@ def _snapshot_entities(registry: Any, source_text: str) -> dict[str, Any]:
         str(name): _snapshot_structured_value(category, source_text, f"entity_registry.world.{name}")
         for name, category in world.items()
     } if isinstance(world, Mapping) else {}
+    character_id_map = registry.get("character_id_map", {})
+    result["character_id_map"] = {
+        str(candidate_id): _snapshot_structured_value(str(canonical_id), source_text, f"entity_registry.character_id_map.{candidate_id}")
+        for candidate_id, canonical_id in character_id_map.items()
+        if str(candidate_id).strip() and str(canonical_id).strip()
+    } if isinstance(character_id_map, Mapping) else {}
     return result
 
 
@@ -204,27 +271,28 @@ def _snapshot_state(state: Mapping[str, Any]) -> dict[str, Any]:
     chapters = [_snapshot_object(chapter, _SNAPSHOT_MANUSCRIPT_FIELDS, source_text, "manuscript_chapters") for chapter in state.get("manuscript_chapters", []) if isinstance(chapter, Mapping)]
     if state.get("manuscript_chapters") and any(not chapter.get("source_span") for chapter in chapters):
         raise ValueError("supervisor_snapshot_manuscript_requires_source_spans")
-    resume_context = {
+    resume_context: W1ResumeState = {
         "contract_version": "W1ResumeState/v1",
         "import_run_id": _snapshot_structured_value(str(state.get("import_run_id") or ""), source_text, "resume.import_run_id"),
         "source_language": _snapshot_structured_value(str(state.get("source_language") or ""), source_text, "resume.source_language"),
-        "character_tags": [_snapshot_object(item, _SNAPSHOT_ENTITY_FIELDS, source_text, "character_tags") for item in state.get("character_tags", []) if isinstance(item, Mapping)],
+        "character_tags": [_snapshot_object(item, _SNAPSHOT_TAG_FIELDS, source_text, "character_tags") for item in state.get("character_tags", []) if isinstance(item, Mapping)],
         "manuscript_chapters": chapters,
-        "raw_relationships": [_snapshot_object(item, _SNAPSHOT_ENTITY_FIELDS, source_text, "raw_relationships") for item in state.get("raw_relationships", []) if isinstance(item, Mapping)],
+        "raw_relationships": [_snapshot_object(item, _SNAPSHOT_RELATIONSHIP_FIELDS, source_text, "raw_relationships") for item in state.get("raw_relationships", []) if isinstance(item, Mapping)],
         "organizer_output": _snapshot_object(state.get("organizer_output", {}), frozenset({"world_containers", "world_items", "excluded_items", "merge_candidates", "proposal_packages", "warnings", "candidate_ledger", "relocation_plans"}), source_text, "organizer_output"),
+        "evidence_cards": [_snapshot_object(item, _SNAPSHOT_EVIDENCE_CARD_FIELDS, source_text, "evidence_cards") for item in state.get("evidence_cards", []) if isinstance(item, Mapping)],
     }
     projected = {
         "chunks": chunks,
         "chunk_extractions": extractions,
         "entity_registry": _snapshot_entities(state.get("entity_registry"), source_text),
-        "relationships": [_snapshot_object(item, _SNAPSHOT_ENTITY_FIELDS, source_text, "relationships") for item in state.get("relationships", []) if isinstance(item, Mapping)],
+        "relationships": [_snapshot_object(item, _SNAPSHOT_RELATIONSHIP_FIELDS, source_text, "relationships") for item in state.get("relationships", []) if isinstance(item, Mapping)],
         "world": {
             "world_settings": _snapshot_structured_value(state.get("world_settings", {}), source_text, "world_settings"),
-            "world_containers": [_snapshot_object(item, _SNAPSHOT_ENTITY_FIELDS, source_text, "world_containers") for item in state.get("world_containers", []) if isinstance(item, Mapping)],
+            "world_containers": [_snapshot_object(item, _SNAPSHOT_WORLD_CONTAINER_FIELDS, source_text, "world_containers") for item in state.get("world_containers", []) if isinstance(item, Mapping)],
         },
         "timeline": {
             "timeline_architecture": _snapshot_structured_value(state.get("timeline_architecture", {}), source_text, "timeline_architecture"),
-            "timeline_branches": [_snapshot_object(item, _SNAPSHOT_ENTITY_FIELDS, source_text, "timeline_branches") for item in state.get("timeline_branches", []) if isinstance(item, Mapping)],
+            "timeline_branches": [_snapshot_object(item, _SNAPSHOT_TIMELINE_BRANCH_FIELDS, source_text, "timeline_branches") for item in state.get("timeline_branches", []) if isinstance(item, Mapping)],
         },
         "organizer": {"organizer_output": resume_context["organizer_output"]},
         "reducer": {"reducer_artifact": _snapshot_structured_value(state.get("reducer_artifact", {}), source_text, "reducer_artifact")},
@@ -235,7 +303,7 @@ def _snapshot_state(state: Mapping[str, Any]) -> dict[str, Any]:
             "gate_failures": _snapshot_structured_value(state.get("gate_failures", []), source_text, "gate_failures"),
             "supervisor_iteration": int(state.get("supervisor_iteration", 0) or 0),
         },
-        "proposal": {"proposals": [_snapshot_object(item, _SNAPSHOT_ENTITY_FIELDS, source_text, "proposals") for item in state.get("proposals", []) if isinstance(item, Mapping)]},
+        "proposal": {"proposals": [_snapshot_object(item, _SNAPSHOT_COMMON_ENTITY_FIELDS, source_text, "proposals") for item in state.get("proposals", []) if isinstance(item, Mapping)]},
         "operations": _snapshot_structured_value(state.get("operations", {}), source_text, "operations"),
         "import_manifest": _snapshot_structured_value(state.get("import_run_manifest", {}), source_text, "import_manifest"),
         "project_structure_digest": _snapshot_structured_value(state.get("project_structure_digest", {}), source_text, "project_structure_digest"),
@@ -325,7 +393,7 @@ def _restore_snapshot_state(state: ImportSupervisorState, snapshot_state: Mappin
     resume_context = snapshot_state.get("resume_context")
     if not isinstance(resume_context, Mapping) or resume_context.get("contract_version") != "W1ResumeState/v1":
         raise ValueError("snapshot_resume_context_is_invalid")
-    for key in ("import_run_id", "source_language", "character_tags", "manuscript_chapters", "raw_relationships", "organizer_output"):
+    for key in ("import_run_id", "source_language", "character_tags", "manuscript_chapters", "raw_relationships", "organizer_output", "evidence_cards"):
         if key not in resume_context:
             raise ValueError(f"snapshot_resume_context_missing_{key}")
         restored[key] = resume_context[key]

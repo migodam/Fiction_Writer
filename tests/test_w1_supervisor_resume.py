@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -241,6 +243,134 @@ def test_runtime_child_resume_api_passes_the_validated_snapshot_to_worker(tmp_pa
     assert captured["w1_supervisor_resume_snapshot_ref"] == checkpoint["metadata"]["snapshot_ref"]
 
 
+def test_runtime_fork_api_exposes_the_single_nested_snapshot_reference_contract(tmp_path):
+    _source, _source_text, store, _run, parent, _config, checkpoint = _parent(tmp_path)
+    with TestClient(create_app(str(tmp_path))) as client:
+        client.app.state.runtime_store = store
+        response = client.post(
+            f"/runtime/runs/{parent['attempt_id']}/fork",
+            json={"checkpoint_id": checkpoint["checkpoint_id"], "decision_id": "fork-api-contract"},
+        )
+
+    assert response.status_code == 200
+    fork_snapshot = response.json()["fork_snapshot"]
+    state_reference = fork_snapshot["state_reference"]
+    assert fork_snapshot["resumable"] is True
+    assert state_reference["kind"] == "w1_supervisor_snapshot/v1"
+    assert state_reference["immutable"] is True
+    assert state_reference["resumable"] is True
+    assert state_reference["snapshot_ref"] == checkpoint["metadata"]["snapshot_ref"]
+    assert "snapshot_ref" not in fork_snapshot
+
+
+def test_fork_rejects_snapshot_when_database_parent_chain_is_tampered(tmp_path):
+    _source, _source_text, store, _run, parent, _config, checkpoint = _parent(tmp_path)
+
+    with sqlite3.connect(store.database_path) as connection:
+        connection.execute(
+            "UPDATE checkpoint_metadata SET parent_checkpoint_id = ? WHERE checkpoint_id = ?",
+            ("tampered_parent", checkpoint["checkpoint_id"]),
+        )
+
+    child = store.fork_attempt(
+        parent["attempt_id"], checkpoint_id=checkpoint["checkpoint_id"], decision_id="fork-parent-tamper",
+    )
+    snapshot = store.get_fork_snapshot(child["attempt"]["attempt_id"])
+
+    assert snapshot is not None
+    assert snapshot["resumable"] is False
+    assert snapshot["non_resumable_reason"] == "fork_snapshot_parent_checkpoint_mismatch"
+
+
+def test_resume_rejects_tampered_database_parent_chain_before_launch(tmp_path, monkeypatch):
+    _source, _source_text, store, _run, parent, _config, checkpoint = _parent(tmp_path)
+    child = store.fork_attempt(parent["attempt_id"], checkpoint_id=checkpoint["checkpoint_id"], decision_id="fork-api-parent-tamper")
+    child_id = child["attempt"]["attempt_id"]
+    assert store.get_fork_snapshot(child_id)["resumable"] is True
+
+    with sqlite3.connect(store.database_path) as connection:
+        connection.execute(
+            "UPDATE checkpoint_metadata SET parent_checkpoint_id = ? WHERE checkpoint_id = ?",
+            ("tampered_parent", checkpoint["checkpoint_id"]),
+        )
+
+    from sidecar.routers import workflows
+
+    async def forbidden_resume(**_kwargs):
+        raise AssertionError("resume must not launch after a parent-chain mismatch")
+
+    monkeypatch.setattr(workflows, "resume_w1_attempt", forbidden_resume)
+    with TestClient(create_app(str(tmp_path))) as client:
+        client.app.state.runtime_store = store
+        response = client.post(f"/runtime/runs/{child_id}/resume", json={"api_key": "transient-key"})
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "fork_snapshot_parent_checkpoint_mismatch"
+
+
+def test_authorized_unknown_snapshot_passes_runtime_preflight_without_consuming_call(tmp_path, monkeypatch):
+    _source, _source_text, store, run, parent, config, checkpoint = _parent(tmp_path)
+    intent = store.record_tool_intent(
+        parent["attempt_id"], "provider.chat.completions",
+        {"idempotency_key": "x" * 64, "model": "deepseek-v4-flash", "message_hash": "y" * 64},
+    )
+    store.record_tool_unknown_outcome(intent["tool_call_id"], "runtime_interrupted")
+    state = load_w1_supervisor_snapshot(tmp_path, checkpoint["metadata"]["snapshot_ref"])["state"]
+    source_identity, config_identity = build_supervisor_snapshot_identities(config, project_path=tmp_path)
+    unknown_ref = write_w1_supervisor_snapshot(
+        tmp_path,
+        lineage_id=run["lineage_id"],
+        attempt_id=parent["attempt_id"],
+        checkpoint_id="checkpoint_unknown_authorized",
+        node="reduce_repair",
+        next_node="architect_timeline",
+        source_identity=source_identity,
+        config_identity=config_identity,
+        state=state,
+        parent_checkpoint_id=checkpoint["checkpoint_id"],
+        unknown_tool_call_ids=[intent["tool_call_id"]],
+    )
+    lease = store.acquire_lease(parent["attempt_id"], "resume-test", ttl_seconds=60)
+    store.record_checkpoint_metadata(
+        parent["attempt_id"], "checkpoint_unknown_authorized", node="reduce_repair", sequence=2,
+        parent_checkpoint_id=checkpoint["checkpoint_id"],
+        metadata={"recovery_mode": "resumable", "snapshot_ref": unknown_ref.to_dict()},
+        owner_id="resume-test", fence_token=lease["fence_token"],
+    )
+    store.set_attempt_status(parent["attempt_id"], "waiting_human", owner_id="resume-test", fence_token=lease["fence_token"])
+    captured: dict[str, object] = {}
+
+    async def fake_resume(**kwargs):
+        captured.update(kwargs["persisted_config"])
+        return True
+
+    from sidecar.routers import workflows
+
+    monkeypatch.setattr(workflows, "resume_w1_attempt", fake_resume)
+    decision_key = f"retry_provider_call:{'x' * 64}"
+    with TestClient(create_app(str(tmp_path))) as client:
+        client.app.state.runtime_store = store
+        blocked = client.post(f"/runtime/runs/{parent['attempt_id']}/resume", json={"api_key": "transient-key"})
+        decision = client.post(
+            f"/runtime/decisions/{decision_key}",
+            json={"attempt_id": parent["attempt_id"], "decision": "authorize_retry_once"},
+        )
+        repeated = client.post(
+            f"/runtime/decisions/{decision_key}",
+            json={"attempt_id": parent["attempt_id"], "decision": "authorize_retry_once"},
+        )
+        resumed = client.post(f"/runtime/runs/{parent['attempt_id']}/resume", json={"api_key": "transient-key"})
+
+    calls = {call["tool_call_id"]: call for call in store.list_tool_calls(parent["attempt_id"])}
+    assert blocked.status_code == 409
+    assert decision.status_code == repeated.status_code == 200
+    assert decision.json()["decision_id"] == repeated.json()["decision_id"]
+    assert resumed.status_code == 200
+    assert captured["w1_authorized_unknown_call_ids"] == [intent["tool_call_id"]]
+    assert captured["w1_authorized_unknown_decision_keys"] == [decision_key]
+    assert calls[intent["tool_call_id"]]["status"] == "unknown_outcome"
+
+
 def test_span_rehydration_uses_project_staged_source_when_original_is_missing(tmp_path):
     source, source_text, _store, _run, _parent_attempt, _config, checkpoint = _parent(tmp_path)
     reference = checkpoint["metadata"]["snapshot_ref"]
@@ -252,9 +382,20 @@ def test_span_rehydration_uses_project_staged_source_when_original_is_missing(tm
     assert rebuilt["chunks"][0]["content"] == source_text
 
 
-@pytest.mark.parametrize("boundary", ["reduce_repair", "architect_timeline", "qa_review", "judge_import"])
-def test_body_free_resume_dto_preserves_real_proposal_serializer_inputs(tmp_path, monkeypatch, boundary):
-    """Each resumable boundary can still feed the actual proposal serializer."""
+@pytest.mark.parametrize(
+    ("boundary", "expected_next", "expected_completed"),
+    [
+        ("reduce_repair", "architect_timeline", ["validate_file", "extract_window", "reduce_repair"]),
+        ("architect_timeline", "qa_review", ["validate_file", "extract_window", "reduce_repair", "architect_timeline"]),
+        ("qa_review", "judge_import", ["validate_file", "extract_window", "reduce_repair", "architect_timeline", "qa_review"]),
+        ("judge_import", "proposal_write", ["validate_file", "extract_window", "reduce_repair", "architect_timeline", "qa_review", "judge_import"]),
+        ("proposal_write", None, ["validate_file", "extract_window", "reduce_repair", "architect_timeline", "qa_review", "judge_import", "proposal_write"]),
+    ],
+)
+def test_body_free_resume_dto_preserves_real_proposal_serializer_inputs(
+    tmp_path, monkeypatch, boundary, expected_next, expected_completed,
+):
+    """Each boundary advances differently but retains a real serializer input."""
     source_text = "第1章 星门\n韩立在七玄门拜墨大夫为师，星门于雨夜开启。\n"
     source = tmp_path / "source.txt"
     source.write_text(source_text, encoding="utf-8")
@@ -315,6 +456,169 @@ def test_body_free_resume_dto_preserves_real_proposal_serializer_inputs(tmp_path
     assert {"chapter", "scene", "character_tag", "world_container", "world_item", "relationship"} <= entity_types
     assert result["status"] == "done"
     assert all(operation["data"].get("importRunId") == import_run_id for operation in operations)
+
+    staged_relative = f"system/imports/lineage_{boundary}/attempts/attempt_{boundary}/raw_source.txt"
+    staged_source = tmp_path / staged_relative
+    staged_source.parent.mkdir(parents=True, exist_ok=True)
+    staged_source.write_text(source_text, encoding="utf-8")
+    source_identity, config_identity = build_supervisor_snapshot_identities(
+        {
+            "project_path": str(tmp_path), "source_file_path": str(source),
+            "model": "deepseek-v4-flash", "prompt_profile": "balanced",
+            "execution_mode": "supervisor", "import_mode": "import_all",
+            "w1_supervisor_staged_source_relative_path": staged_relative,
+        },
+        project_path=tmp_path,
+    )
+    ref = write_w1_supervisor_snapshot(
+        tmp_path,
+        lineage_id=f"lineage_{boundary}",
+        attempt_id=f"attempt_{boundary}",
+        checkpoint_id=f"checkpoint_{boundary}",
+        node=boundary,
+        next_node=expected_next,
+        source_identity=source_identity,
+        config_identity=config_identity,
+        state=snapshot_state,
+        completed_nodes=expected_completed,
+    )
+    persisted = load_w1_supervisor_snapshot(tmp_path, ref)["snapshot"]
+    assert persisted["node"] == boundary
+    assert persisted["next_node"] == expected_next
+    assert persisted["completed_nodes"] == expected_completed
+
+
+def test_resume_dto_preserves_writer_dependency_graph_before_and_after_snapshot(tmp_path, monkeypatch):
+    """A matched character must remain an update across a durable resume."""
+    source_text = "第1章 星门\n韩立在七玄门拜墨大夫为师，星门于雨夜开启。\n"
+    source = tmp_path / "source.txt"
+    source.write_text(source_text, encoding="utf-8")
+    span = make_source_span(source_text, 0, len(source_text))
+    import_run_id = "sup_writer_dependency_graph"
+    state = {
+        "source_text": source_text,
+        "source_file_path": str(source),
+        "import_run_id": import_run_id,
+        "source_language": "zh",
+        "chunks": [{"chunk_id": 0, "source_span": span, "content": source_text}],
+        "chunk_extractions": [{"chunk_id": 0, "truth": "complete", "domain_receipts": {}}],
+        "entity_registry": {
+            "characters": {
+                "char_han": {
+                    "id": "char_han", "canonical_name": "韩立", "skip_create": True,
+                    "existing_project_id": "character_existing_han", "confidence": 0.94,
+                    "entity_merge_decision": {
+                        "fields": {
+                            "aliases": {"value": ["韩二愣"]},
+                            "background": {"value": "山村少年"},
+                            "experience": {"value": [{"fact": "拜墨大夫为师"}]},
+                            "personality_traits": {"value": ["谨慎"]},
+                            "confidence": {"value": 0.94},
+                        },
+                        "conflicts": [],
+                    },
+                    "personality_traits": ["谨慎"], "role_in_story": "主角",
+                    "open_questions": ["后续确认机缘"], "tag_ids": ["tag_cultivator"],
+                },
+                "char_teacher": {
+                    "id": "char_teacher", "canonical_name": "墨大夫", "background": "七玄门医师",
+                    "experience": [{"fact": "收韩立为徒"}], "personality_traits": ["冷静"],
+                    "role_in_story": "导师", "open_questions": [], "tag_ids": ["tag_cultivator"], "confidence": 0.83,
+                },
+            },
+            "character_id_map": {"char_han": "character_existing_han"},
+            "events": {
+                "event_gate": {
+                    "id": "event_gate", "title": "星门开启", "branchId": "branch_main", "orderIndex": 0,
+                    "character_ids": ["char_han", "char_teacher"], "linkedSceneIds": ["scene_1"],
+                    "linkedWorldItemIds": ["world_qixuan"], "tags": ["导入"],
+                },
+            },
+            "world": {"七玄门": "organization"},
+            "world_detailed": {
+                "七玄门": {
+                    "id": "world_qixuan", "name": "七玄门", "category": "organization",
+                    "containerId": "world_container_organizations", "parentId": "world_container_organizations",
+                    "description": "修仙门派", "attributes": [{"key": "驻地", "value": "青州"}],
+                },
+            },
+        },
+        "relationships": [{
+            "id": "rel_teacher", "sourceId": "char_han", "targetId": "char_teacher", "type": "师徒关系",
+            "category": "mentor_disciple", "directionality": "source_to_target", "sourceNotes": "师徒事实",
+            "importConfidence": 0.91,
+        }],
+        "raw_relationships": [{"id": "rel_teacher", "source_character_name": "韩立", "target_character_name": "墨大夫", "type": "师徒关系"}],
+        "character_tags": [{
+            "id": "tag_cultivator", "name": "修仙者", "color": "#38bdf8",
+            "characterIds": ["character_existing_han", "char_teacher"],
+        }],
+        "world_containers": [{"id": "world_container_organizations", "name": "门派组织", "importCategoryKey": "organizations", "sortOrder": 0}],
+        "organizer_output": {"world_containers": [{"id": "world_container_organizations"}], "world_items": [{"id": "world_qixuan"}]},
+        "timeline_architecture": {}, "timeline_branches": [{"id": "branch_main", "name": "主线", "mode": "root", "isDefault": True}],
+        "world_settings": {}, "reducer_artifact": {}, "cross_validation": {}, "import_review_report": {},
+        "judge_artifact": {"passed": True}, "gate_failures": [], "proposals": [], "operations": {},
+        "evidence_cards": [{"id": "card_han", "kind": "character", "candidate_ids": ["char_han"], "source_span": span, "raw": {"canonical_id": "char_han"}}],
+        "import_run_manifest": {"import_run_id": import_run_id}, "project_structure_digest": {},
+        "manuscript_chapters": [{"chapter_id": "chap_1", "scene_id": "scene_1", "title": "第1章 星门", "summary": "韩立拜师", "chunk_ids": [0], "source_span": span, "manuscript_content": source_text}],
+    }
+    snapshot = policy._snapshot_state(state)
+    restored = policy._restore_snapshot_state({}, snapshot)
+    restored = policy._rehydrate_snapshot_chunks(restored, str(source))
+    restored = policy._rehydrate_snapshot_manuscript_chapters(restored, str(source))
+
+    assert restored["entity_registry"]["character_id_map"] == {"char_han": "character_existing_han"}
+    assert restored["entity_registry"]["characters"]["char_han"]["skip_create"] is True
+    assert restored["entity_registry"]["characters"]["char_han"]["existing_project_id"] == "character_existing_han"
+    assert restored["entity_registry"]["characters"]["char_han"]["open_questions"] == ["后续确认机缘"]
+    assert restored["entity_registry"]["events"]["event_gate"]["character_ids"] == ["char_han", "char_teacher"]
+    assert restored["character_tags"][0]["characterIds"] == ["character_existing_han", "char_teacher"]
+
+    def payload(value, project_path):
+        return {
+            **copy.deepcopy(value),
+            "project_path": str(project_path), "source_file_path": str(source), "source_text": source_text,
+            "errors": [], "context": {}, "workflow_id": "W1", "checkpoint_path": "",
+        }
+
+    before_ops: list[dict] = []
+    after_ops: list[dict] = []
+
+    async def capture_before(operation, _project_path):
+        before_ops.append(copy.deepcopy(operation))
+        return {"id": f"proposal_{operation['entity_id']}", "status": "pending", "confidence": operation["confidence"]}
+
+    async def capture_after(operation, _project_path):
+        after_ops.append(copy.deepcopy(operation))
+        return {"id": f"proposal_{operation['entity_id']}", "status": "pending", "confidence": operation["confidence"]}
+
+    before_project = tmp_path / "before"
+    after_project = tmp_path / "after"
+    before_project.mkdir()
+    after_project.mkdir()
+    monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", capture_before)
+    asyncio.run(w1_import.node_write_to_project(payload(state, before_project)))
+    monkeypatch.setattr(w1_import.s2_memory_writer, "propose_write", capture_after)
+    asyncio.run(w1_import.node_write_to_project(payload(restored, after_project)))
+
+    def select(operations, entity_type, *, op_type=None):
+        return next(
+            operation for operation in operations
+            if operation["entity_type"] == entity_type and (op_type is None or operation["op_type"] == op_type)
+        )
+
+    for operations in (before_ops, after_ops):
+        character_update = select(operations, "character", op_type="update")
+        assert character_update["entity_id"] == "character_existing_han"
+        event = select(operations, "timeline_event")
+        assert event["data"]["participantCharacterIds"] == ["character_existing_han", "char_teacher"]
+        tag = select(operations, "character_tag")
+        assert tag["data"]["characterIds"] == ["character_existing_han", "char_teacher"]
+        world = select(operations, "world_item")
+        assert world["data"]["containerId"] == "world_container_organizations"
+        relationship = select(operations, "relationship")
+        assert relationship["depends_on"] == ["character_existing_han", "char_teacher"]
+        assert relationship["data"]["sourceNotes"] == "师徒事实"
 
 
 def test_normal_streaming_calls_architect_once_without_a_rerun(tmp_path, monkeypatch):
