@@ -21,6 +21,7 @@ from sidecar.harness.contracts import AgentEvent, Budget, ExecutionPlan, PlanTas
 from sidecar.runtime.agent_runtime import LeaseLostError, RuntimeStore
 from sidecar.runtime.w1_supervisor_snapshot import (
     SnapshotValidationError,
+    load_w1_supervisor_snapshot_for_resume,
     write_w1_supervisor_snapshot,
 )
 
@@ -62,7 +63,6 @@ _SNAPSHOT_BOUNDARY_NEXT_NODE = {
     "judge_import": "proposal_write",
     "proposal_write": None,
 }
-
 
 class W1AgenticTransitionError(RuntimeError):
     """A stream update fell outside the declared W1 Harness route."""
@@ -526,9 +526,18 @@ class W1AgenticAdapter:
         if self.route != SUPERVISOR or not self.project_path or not isinstance(self._resume_snapshot_ref, Mapping):
             return
         try:
-            from sidecar.runtime.w1_supervisor_snapshot import load_w1_supervisor_snapshot
-
-            loaded = load_w1_supervisor_snapshot(self.project_path, self._resume_snapshot_ref)
+            if self._source_identity is None or self._config_identity is None:
+                raise SnapshotValidationError("supervisor_snapshot_identity_unavailable")
+            loaded = load_w1_supervisor_snapshot_for_resume(
+                self.project_path,
+                self._resume_snapshot_ref,
+                expected_source_identity=self._source_identity,
+                expected_config_identity=self._config_identity,
+                artifact_receipt_validator=(
+                    (lambda reference, snapshot: self.runtime_store.validate_w1_snapshot_artifact_receipt(reference, snapshot))
+                    if self.runtime_store is not None else None
+                ),
+            )
             for completed in loaded["snapshot"].get("completed_nodes", []):
                 node = "extract_windows" if completed == "extract_window" else completed
                 if any(task.task_id == node for task in self.plan.tasks):
@@ -586,9 +595,34 @@ class W1AgenticAdapter:
             event, owner_id=self.worker_id, fence_token=self.fence_token,
         )
 
+    def _snapshot_error_code(self, error: BaseException) -> str:
+        if isinstance(error, LeaseLostError):
+            return "snapshot_lease_lost"
+        if isinstance(error, OSError):
+            return "snapshot_io_failed"
+        message = str(error).lower()
+        if "identity" in message or "staged_source" in message:
+            return "snapshot_identity_unavailable"
+        if "unknown" in message:
+            return "snapshot_unknown_outcome_pending"
+        return "snapshot_contract_rejected"
+
+    def _assert_checkpoint_lease(self) -> None:
+        if not self.runtime_store or not self.attempt_id:
+            return
+        if not self.worker_id or self.fence_token is None:
+            raise LeaseLostError("checkpoint_requires_current_worker_lease")
+        self.runtime_store.assert_current_lease(
+            self.attempt_id, self.worker_id, self.fence_token,
+        )
+
     def _record_checkpoint(self, node_name: str, summary: Mapping[str, Any], payload: Mapping[str, Any]) -> None:
         if not self.runtime_store or not self.attempt_id:
             return
+        # A snapshot can be left as an unreachable artifact after a worker loses
+        # its lease.  It may never become a checkpoint unless the same fence is
+        # valid both before and after its file publication.
+        self._assert_checkpoint_lease()
         self._checkpoint_sequence += 1
         checkpoint_id = "w1observer_" + hashlib.sha256(
             f"{self.attempt_id}\0{self._checkpoint_sequence}\0{node_name}".encode()
@@ -634,15 +668,23 @@ class W1AgenticAdapter:
                     "snapshot_node": node_name,
                     "next_node": _SNAPSHOT_BOUNDARY_NEXT_NODE[node_name],
                 })
-            except (OSError, SnapshotValidationError, ValueError, TypeError):
-                metadata.update({"recovery_mode": "preview_only", "snapshot_error": "snapshot_write_failed"})
+            except LeaseLostError:
+                raise
+            except (OSError, SnapshotValidationError, ValueError, TypeError) as error:
+                metadata.update({
+                    "recovery_mode": "preview_only",
+                    "snapshot_error": self._snapshot_error_code(error),
+                })
         elif node_name == "extract_windows":
             metadata["preview_reason"] = "per_window_state_is_not_yet_safe_to_resume"
+        self._assert_checkpoint_lease()
         self.runtime_store.record_checkpoint_metadata(
             self.attempt_id, checkpoint_id, node=node_name,
             sequence=self._checkpoint_sequence,
             parent_checkpoint_id=self._parent_checkpoint_id,
             metadata=metadata,
+            owner_id=self.worker_id,
+            fence_token=self.fence_token,
         )
         self._parent_checkpoint_id = checkpoint_id
 

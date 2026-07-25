@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 
 import pytest
 
@@ -86,6 +87,65 @@ def test_lease_loss_is_never_swallowed(tmp_path):
     )
     with pytest.raises(LeaseLostError):
         adapter.on_node_yielded("validate_file", {"progress": 0.1})
+
+
+def test_snapshot_published_by_a_fenced_worker_never_becomes_a_checkpoint(tmp_path, monkeypatch):
+    """A post-write fence loss may leave GC work, but never a forkable record."""
+    store, run, attempt, lease = _runtime(tmp_path)
+    source = tmp_path / "source.txt"
+    source.write_text("Chapter 1\nFence fixture.", encoding="utf-8")
+    original_write = __import__("sidecar.workflows.w1_agentic_adapter", fromlist=["write_w1_supervisor_snapshot"]).write_w1_supervisor_snapshot
+
+    def publish_then_lose_lease(*args, **kwargs):
+        reference = original_write(*args, **kwargs)
+        store.acquire_lease(attempt["attempt_id"], "replacement-worker", ttl_seconds=60, now=lease["expires_at"] + 1)
+        return reference
+
+    monkeypatch.setattr(
+        "sidecar.workflows.w1_agentic_adapter.write_w1_supervisor_snapshot",
+        publish_then_lose_lease,
+    )
+    adapter = W1AgenticAdapter(
+        import_mode="import_all", runtime_store=store, run_id=run["run_id"],
+        attempt_id=attempt["attempt_id"], lineage_id=run["lineage_id"],
+        worker_id="observer", fence_token=lease["fence_token"], checkpoint_observer=True,
+        project_path=str(tmp_path), source_file_path=str(source),
+        source_hash=hashlib.sha256(source.read_bytes()).hexdigest(),
+        model="deepseek-v4-flash", prompt_profile="balanced",
+    )
+    adapter.on_node_yielded("validate_file", {"current_node": "validate_file"})
+
+    with pytest.raises(LeaseLostError):
+        adapter.on_node_yielded("reduce_repair", {
+            "current_node": "reduce_repair",
+            "_w1_supervisor_snapshot": {
+                "state": {"chunks": []},
+                "completed_nodes": ["validate_file", "reduce_repair"],
+                "unknown_tool_call_ids": [],
+            },
+        })
+
+    checkpoints = store.list_checkpoint_metadata(attempt["attempt_id"])
+    assert [checkpoint["node"] for checkpoint in checkpoints] == ["validate_file"]
+    assert list((tmp_path / "system" / "imports" / run["lineage_id"] / "attempts" / attempt["attempt_id"] / "snapshots").iterdir())
+
+
+def test_snapshot_failure_persists_only_a_safe_reason_code(tmp_path):
+    store, run, attempt, lease = _runtime(tmp_path)
+    adapter = W1AgenticAdapter(
+        import_mode="import_all", runtime_store=store, run_id=run["run_id"],
+        attempt_id=attempt["attempt_id"], lineage_id=run["lineage_id"],
+        worker_id="observer", fence_token=lease["fence_token"], checkpoint_observer=True,
+    )
+    adapter.on_node_yielded("validate_file", {"current_node": "validate_file"})
+    adapter.on_node_yielded("reduce_repair", {
+        "current_node": "reduce_repair",
+        "_w1_supervisor_snapshot": {"state": {"chunks": []}, "unknown_tool_call_ids": []},
+    })
+
+    checkpoint = store.list_checkpoint_metadata(attempt["attempt_id"])[-1]
+    assert checkpoint["metadata"]["recovery_mode"] == "preview_only"
+    assert checkpoint["metadata"]["snapshot_error"] == "snapshot_identity_unavailable"
 
 
 def test_stream_that_stops_before_proposal_gate_is_rejected():

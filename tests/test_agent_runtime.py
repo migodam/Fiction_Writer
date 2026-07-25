@@ -301,15 +301,53 @@ def test_concurrent_v2_migration_is_transactional_and_idempotent(tmp_path):
 
 def test_checkpoint_metadata_is_ordered_and_never_persists_state_blobs(runtime):
     attempt = runtime.create_attempt(runtime.create_run(workflow_id="W1")["run_id"])
+    runtime.record_checkpoint_metadata(attempt["attempt_id"], "checkpoint-1", node="split_chunks", sequence=1, metadata={"diff": {"chunks": 1}})
     runtime.record_checkpoint_metadata(
         attempt["attempt_id"], "checkpoint-2", node="process_chunks", sequence=2,
         parent_checkpoint_id="checkpoint-1", metadata={"summary": "two chunks", "state": {"api_key": "sk-secret"}},
     )
-    runtime.record_checkpoint_metadata(attempt["attempt_id"], "checkpoint-1", node="split_chunks", sequence=1, metadata={"diff": {"chunks": 1}})
 
     checkpoints = runtime.list_checkpoint_metadata(attempt["attempt_id"])
     assert [item["checkpoint_id"] for item in checkpoints] == ["checkpoint-1", "checkpoint-2"]
     assert checkpoints[1]["metadata"] == {"state": {"api_key": "[REDACTED]"}, "summary": "two chunks"}
+
+
+def test_checkpoint_parent_must_belong_to_same_attempt_and_precede_child(runtime):
+    first = runtime.create_attempt(runtime.create_run(workflow_id="W1")["run_id"])
+    second = runtime.create_attempt(runtime.create_run(workflow_id="W1")["run_id"])
+    runtime.record_checkpoint_metadata(first["attempt_id"], "first-parent", node="split", sequence=2)
+    runtime.record_checkpoint_metadata(second["attempt_id"], "second-parent", node="split", sequence=1)
+
+    with pytest.raises(ValueError, match="parent_checkpoint_does_not_belong_to_attempt"):
+        runtime.record_checkpoint_metadata(
+            second["attempt_id"], "wrong-parent", node="reduce", sequence=2,
+            parent_checkpoint_id="first-parent",
+        )
+    with pytest.raises(ValueError, match="parent_checkpoint_must_precede_checkpoint"):
+        runtime.record_checkpoint_metadata(
+            first["attempt_id"], "backwards-parent", node="reduce", sequence=2,
+            parent_checkpoint_id="first-parent",
+        )
+
+
+def test_resumable_checkpoint_requires_current_unexpired_fence(runtime, monkeypatch):
+    attempt = runtime.create_attempt(runtime.create_run(workflow_id="W1")["run_id"])
+    first = runtime.acquire_lease(attempt["attempt_id"], "worker-a", ttl_seconds=1, now=10)
+    current = runtime.acquire_lease(attempt["attempt_id"], "worker-b", ttl_seconds=30, now=12)
+    metadata = {"recovery_mode": "resumable", "snapshot_ref": {"contract_version": "W1SupervisorSnapshot/v1"}}
+
+    with pytest.raises(LeaseLostError):
+        runtime.record_checkpoint_metadata(
+            attempt["attempt_id"], "stale-fence", node="reduce", sequence=1,
+            metadata=metadata, owner_id="worker-a", fence_token=first["fence_token"],
+        )
+
+    monkeypatch.setattr("sidecar.runtime.agent_runtime._now", lambda value=None: 43 if value is None else value)
+    with pytest.raises(LeaseLostError):
+        runtime.record_checkpoint_metadata(
+            attempt["attempt_id"], "expired-fence", node="reduce", sequence=1,
+            metadata=metadata, owner_id="worker-b", fence_token=current["fence_token"],
+        )
 
 
 def test_fork_creates_an_isolated_checkpoint_snapshot_and_scoped_receipt_copy(runtime):
@@ -338,6 +376,7 @@ def test_fork_creates_an_isolated_checkpoint_snapshot_and_scoped_receipt_copy(ru
     unknown = runtime.record_tool_intent(parent_id, "provider.call", {"operation": "unresolved"})
     runtime.record_tool_unknown_outcome(unknown["tool_call_id"], "restart")
     runtime.enqueue_outbox("proposal.publish", {"proposal": "parent"}, attempt_id=parent_id)
+    runtime.set_attempt_status(parent_id, "paused")
 
     fork = runtime.fork_attempt(parent_id, checkpoint_id="checkpoint-1", decision_id="fork-at-one")
     child_id = fork["attempt"]["attempt_id"]
@@ -400,10 +439,21 @@ def test_fork_decision_cannot_be_reused_for_a_different_checkpoint(runtime):
     attempt = runtime.create_attempt(runtime.create_run(workflow_id="W1")["run_id"])
     runtime.record_checkpoint_metadata(attempt["attempt_id"], "checkpoint-1", node="split", sequence=1)
     runtime.record_checkpoint_metadata(attempt["attempt_id"], "checkpoint-2", node="extract", sequence=2)
+    runtime.set_attempt_status(attempt["attempt_id"], "paused")
     runtime.fork_attempt(attempt["attempt_id"], checkpoint_id="checkpoint-1", decision_id="fork-key")
 
     with pytest.raises(ValueError, match="fork_decision_conflict"):
         runtime.fork_attempt(attempt["attempt_id"], checkpoint_id="checkpoint-2", decision_id="fork-key")
+
+
+def test_fork_rejects_running_parent_without_recording_a_decision(runtime):
+    attempt = runtime.create_attempt(runtime.create_run(workflow_id="W1")["run_id"])
+    runtime.record_checkpoint_metadata(attempt["attempt_id"], "checkpoint-1", node="split", sequence=1)
+
+    with pytest.raises(ValueError, match="parent_attempt_must_be_stable_to_fork"):
+        runtime.fork_attempt(attempt["attempt_id"], checkpoint_id="checkpoint-1", decision_id="fork-running")
+
+    assert runtime.list_human_decisions(attempt["attempt_id"]) == []
 
 
 def test_artifact_receipts_require_the_current_worker_lease(runtime):

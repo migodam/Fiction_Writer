@@ -58,7 +58,7 @@ import { appSettingsService, defaultAppSettings } from './services/appSettingsSe
 import * as metadataService from './services/metadataService';
 import { electronApi } from './services/electronApi';
 import type { RuntimeForkResult, W1CustomProfileConfig, W1OrchestratorOverrides, W1PromptProfile } from './services/electronApi';
-import type { RuntimeCheckpoint, RuntimeEvent, RuntimeRun, RuntimeUnknownCall, RuntimeUnknownCallDecision } from './components/import-runtime/types';
+import { verifiedRuntimeSnapshotRef, type RuntimeCheckpoint, type RuntimeEvent, type RuntimeRun, type RuntimeUnknownCall, type RuntimeUnknownCallDecision } from './components/import-runtime/types';
 
 const UI_SETTINGS_KEY = 'narrative-ide-ui-settings';
 const W1_POLL_INTERVAL_MS = 3000;
@@ -2301,11 +2301,15 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const result: RuntimeForkResult = await electronApi.runtimeFork(projectRoot, w1RuntimeAttemptId, checkpointId, decisionId).catch(() => ({ error: 'runtime_fork_failed', parent_attempt_id: w1RuntimeAttemptId }));
     const forkedAttemptId = result.attempt?.attempt_id;
     const snapshot = result.fork_snapshot ?? result.attempt?.fork_snapshot;
-    const childIsResumable = snapshot?.resumable === true;
+    const childIsResumable = snapshot?.resumable === true
+      && verifiedRuntimeSnapshotRef(snapshot?.snapshot_ref) !== undefined;
     if (!forkedAttemptId || !childIsResumable || result.error || result.attempt?.status === 'error') {
+      const errorText = typeof result.error === 'string' ? result.error : '';
       set({
         w1RuntimeAction: null,
-        w1RuntimeError: !forkedAttemptId || result.error || result.attempt?.status === 'error'
+        w1RuntimeError: errorText.includes('parent_attempt_must_be_stable_to_fork')
+          ? 'runtime_fork_parent_running'
+          : !forkedAttemptId || result.error || result.attempt?.status === 'error'
           ? 'runtime_fork_failed'
           : 'runtime_fork_not_resumable',
       });

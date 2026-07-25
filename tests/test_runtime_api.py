@@ -155,6 +155,7 @@ def test_preview_only_fork_cannot_resume_and_never_replays_the_parent(tmp_path):
         parent_id = _attempt(client)
         store = client.app.state.runtime_store
         store.record_checkpoint_metadata(parent_id, "fork-checkpoint", node="process_chunks", sequence=1)
+        store.set_attempt_status(parent_id, "paused")
         fork = client.post(
             f"/runtime/runs/{parent_id}/fork",
             json={"checkpoint_id": "fork-checkpoint", "decision_id": "fork-preview-only"},
@@ -168,6 +169,20 @@ def test_preview_only_fork_cannot_resume_and_never_replays_the_parent(tmp_path):
     assert response.status_code == 409
     assert response.json()["detail"] == "fork_snapshot_not_resumable"
     assert [event["event_type"] for event in child_events] == ["fork_snapshot"]
+
+
+def test_fork_rejects_running_parent_with_a_clear_409_and_no_child(tmp_path):
+    with _client(tmp_path) as client:
+        parent_id = _attempt(client)
+        store = client.app.state.runtime_store
+        store.record_checkpoint_metadata(parent_id, "fork-checkpoint", node="process_chunks", sequence=1)
+        response = client.post(
+            f"/runtime/runs/{parent_id}/fork",
+            json={"checkpoint_id": "fork-checkpoint", "decision_id": "fork-running"},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "parent_attempt_must_be_stable_to_fork"
 
 
 def test_later_pause_after_a_resume_transition_uses_a_new_control_decision(tmp_path):

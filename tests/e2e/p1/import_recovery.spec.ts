@@ -3,6 +3,7 @@ import { TEST_NARRATIVE_IDE_INVOKE_METHODS } from '../helpers/narrativeIdeBridge
 
 test('recovery discovery is attempt-scoped, dedupes reconnect events, and forks checkpoints', async ({ page }) => {
   await page.addInitScript((bridgeMethods) => {
+    const snapshotRef = (checkpointId: string) => ({ contract_version: 'W1SupervisorSnapshot/v1', relative_path: `system/imports/lineage-parent/attempts/attempt-parent/snapshots/${checkpointId}`, manifest_sha256: 'a'.repeat(64), snapshot_sha256: 'b'.repeat(64), source_identity_sha256: 'c'.repeat(64), config_identity_sha256: 'd'.repeat(64), lineage_id: 'lineage-parent', attempt_id: 'attempt-parent', checkpoint_id: checkpointId });
     const state = { resumeCalls: 0, forkCalls: 0, pauseCalls: 0, cancelCalls: 0, eventCalls: 0, actionPayloads: [] as Array<{ channel: string; payload: Record<string, unknown> }> };
     (window as any).__recoveryState = state;
     const invoke = async (channel: string, payload: Record<string, unknown> = {}) => {
@@ -17,7 +18,7 @@ test('recovery discovery is attempt-scoped, dedupes reconnect events, and forks 
           ? [{ event_id: 'event-1', sequence: 1, event_type: 'agent.started', payload: { agent_id: 'scout', summary: 'Scout started' }}, { event_id: 'event-3', sequence: 3, event_type: 'agent.completed', payload: { agent_id: 'scout', summary: 'Scout completed' }}]
           : [{ event_id: 'event-3', sequence: 3, event_type: 'agent.completed', payload: { agent_id: 'scout', summary: 'Scout completed' }}] };
       }
-      if (channel === 'runtime:checkpoints') return { checkpoints: [{ checkpoint_id: 'checkpoint-1', sequence: 1, label: 'After source scan', metadata: { resumable: true, snapshot_ref: { contract_version: 'W1SupervisorSnapshot/v1' } } }] };
+      if (channel === 'runtime:checkpoints') return { checkpoints: [{ checkpoint_id: 'checkpoint-1', sequence: 1, label: 'After source scan', metadata: { resumable: true, snapshot_ref: snapshotRef('checkpoint-1') } }] };
       if (channel.startsWith('runtime:') && ['runtime:resume', 'runtime:fork', 'runtime:pause', 'runtime:cancel'].includes(channel)) state.actionPayloads.push({ channel, payload });
       if (channel === 'runtime:resume') { state.resumeCalls += 1; return { attempt_id: 'attempt-2', status: 'running' }; }
       if (channel === 'runtime:fork') { state.forkCalls += 1; return { attempt: { attempt_id: 'attempt-fork', status: 'running' }, parent_attempt_id: 'attempt-2', fork_snapshot: { resumable: true } }; }
@@ -101,13 +102,14 @@ test('shows preview-only checkpoints with a real details panel and never forks t
 
 test('does not switch the active attempt when a fork response contains an error payload', async ({ page }) => {
   await page.addInitScript((bridgeMethods) => {
+    const snapshotRef = (checkpointId: string) => ({ contract_version: 'W1SupervisorSnapshot/v1', relative_path: `system/imports/lineage-parent/attempts/attempt-parent/snapshots/${checkpointId}`, manifest_sha256: 'a'.repeat(64), snapshot_sha256: 'b'.repeat(64), source_identity_sha256: 'c'.repeat(64), config_identity_sha256: 'd'.repeat(64), lineage_id: 'lineage-parent', attempt_id: 'attempt-parent', checkpoint_id: checkpointId });
     const state = { calls: [] as Array<{ channel: string; payload: Record<string, unknown> }> };
     (window as any).__forkFailureState = state;
     const invoke = async (channel: string, payload: Record<string, unknown> = {}) => {
       if (channel === 'sidecar:spawn') return { ok: true, port: 8765 };
       if (channel === 'runtime:recoverable') return { runs: [{ lineage_id: 'lineage-parent', attempt_id: 'attempt-parent', status: 'recoverable', source_compatible: true }] };
       if (channel === 'runtime:events') return { events: [] };
-      if (channel === 'runtime:checkpoints') return { checkpoints: [{ checkpoint_id: 'checkpoint-resumable', sequence: 4, metadata: { resumable: true, snapshot_ref: { contract_version: 'W1SupervisorSnapshot/v1' } } }] };
+      if (channel === 'runtime:checkpoints') return { checkpoints: [{ checkpoint_id: 'checkpoint-resumable', sequence: 4, metadata: { resumable: true, snapshot_ref: snapshotRef('checkpoint-resumable') } }] };
       if (channel === 'runtime:fork') {
         state.calls.push({ channel, payload });
         return { error: 'snapshot_validation_failed', attempt: { attempt_id: 'attempt-child', status: 'paused' }, fork_snapshot: { resumable: false, non_resumable_reason: 'snapshot_validation_failed' } };
@@ -136,13 +138,14 @@ test('does not switch the active attempt when a fork response contains an error 
 
 test('does not trust a child resumable flag without a fork snapshot', async ({ page }) => {
   await page.addInitScript((bridgeMethods) => {
+    const snapshotRef = (checkpointId: string) => ({ contract_version: 'W1SupervisorSnapshot/v1', relative_path: `system/imports/lineage-parent/attempts/attempt-parent/snapshots/${checkpointId}`, manifest_sha256: 'a'.repeat(64), snapshot_sha256: 'b'.repeat(64), source_identity_sha256: 'c'.repeat(64), config_identity_sha256: 'd'.repeat(64), lineage_id: 'lineage-parent', attempt_id: 'attempt-parent', checkpoint_id: checkpointId });
     const state = { calls: [] as Array<{ channel: string; payload: Record<string, unknown> }> };
     (window as any).__missingForkSnapshotState = state;
     const invoke = async (channel: string, payload: Record<string, unknown> = {}) => {
       if (channel === 'sidecar:spawn') return { ok: true, port: 8765 };
       if (channel === 'runtime:recoverable') return { runs: [{ lineage_id: 'lineage-parent', attempt_id: 'attempt-parent', status: 'recoverable', source_compatible: true }] };
       if (channel === 'runtime:events') return { events: [] };
-      if (channel === 'runtime:checkpoints') return { checkpoints: [{ checkpoint_id: 'checkpoint-resumable', sequence: 4, metadata: { resumable: true, snapshot_ref: { contract_version: 'W1SupervisorSnapshot/v1' } } }] };
+      if (channel === 'runtime:checkpoints') return { checkpoints: [{ checkpoint_id: 'checkpoint-resumable', sequence: 4, metadata: { resumable: true, snapshot_ref: snapshotRef('checkpoint-resumable') } }] };
       if (channel === 'runtime:fork') {
         state.calls.push({ channel, payload });
         return { attempt: { attempt_id: 'attempt-child', status: 'paused', resumable: true } };

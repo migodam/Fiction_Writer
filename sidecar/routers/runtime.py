@@ -69,7 +69,7 @@ def _validate_resume_snapshot(store: Any, attempt: dict[str, Any], config: dict[
     if reference is None:
         return
     from sidecar.runtime.agent_runtime import _snapshot_artifact_refs_are_valid
-    from sidecar.runtime.w1_supervisor_snapshot import SnapshotValidationError, load_w1_supervisor_snapshot
+    from sidecar.runtime.w1_supervisor_snapshot import SnapshotValidationError, load_w1_supervisor_snapshot_for_resume
     from sidecar.workflows.w1_agentic_adapter import build_supervisor_snapshot_identities
 
     lineage_id = str(reference.get("lineage_id") or "")
@@ -86,18 +86,24 @@ def _validate_resume_snapshot(store: Any, attempt: dict[str, Any], config: dict[
         config, project_path=str(config.get("project_path") or store.project_root),
     )
     try:
-        loaded = load_w1_supervisor_snapshot(
+        loaded = load_w1_supervisor_snapshot_for_resume(
             store.project_root,
             reference,
             expected_source_identity=source_identity,
             expected_config_identity=config_identity,
+            artifact_receipt_validator=store.validate_w1_snapshot_artifact_receipt,
         )
     except SnapshotValidationError as exc:
         raise ValueError(f"fork_snapshot_validation_failed:{exc}") from exc
     snapshot = loaded["snapshot"]
     if snapshot.get("attempt_id") != source_attempt_id:
         raise ValueError("fork_snapshot_provenance_mismatch")
-    actual_unknown = sorted(str(item.get("tool_call_id")) for item in store.list_unknown_call_summaries(attempt["attempt_id"]))
+    # A fork owns no inherited tool calls. The immutable source attempt owns
+    # the provider outcomes that produced the snapshot and must be clean too.
+    actual_unknown = sorted(
+        str(item.get("tool_call_id"))
+        for item in store.list_unknown_call_summaries(source_attempt_id)
+    )
     declared_unknown = sorted(str(item) for item in snapshot.get("unknown_tool_call_ids", []))
     if actual_unknown != declared_unknown:
         raise ValueError("fork_snapshot_unknown_tool_calls_mismatch")

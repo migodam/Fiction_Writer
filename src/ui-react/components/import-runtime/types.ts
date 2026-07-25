@@ -58,11 +58,15 @@ export interface RuntimeCheckpoint {
 }
 
 export interface RuntimeSnapshotRef {
-  contract_version?: string;
-  relative_path?: string;
-  sha256?: string;
-  lineage_id?: string;
-  attempt_id?: string;
+  contract_version: 'W1SupervisorSnapshot/v1';
+  relative_path: string;
+  manifest_sha256: string;
+  snapshot_sha256: string;
+  source_identity_sha256: string;
+  config_identity_sha256: string;
+  lineage_id: string;
+  attempt_id: string;
+  checkpoint_id: string;
   [key: string]: unknown;
 }
 
@@ -79,7 +83,7 @@ export interface RuntimeCheckpointMetadata {
 export interface RuntimeCheckpointCapability {
   resumable: boolean;
   reason?: string;
-  snapshotRef?: RuntimeSnapshotRef | Record<string, unknown> | string;
+  snapshotRef?: RuntimeSnapshotRef;
 }
 
 const runtimeObject = (value: unknown): Record<string, unknown> | undefined => {
@@ -98,10 +102,31 @@ const runtimeObject = (value: unknown): Record<string, unknown> | undefined => {
 const runtimeString = (value: unknown): string | undefined =>
   typeof value === 'string' && value.trim() ? value.trim() : undefined;
 
-const runtimeSnapshotRef = (value: unknown): RuntimeCheckpointCapability['snapshotRef'] =>
-  typeof value === 'string' || (value && typeof value === 'object' && !Array.isArray(value))
-    ? value as RuntimeCheckpointCapability['snapshotRef']
-    : undefined;
+const SNAPSHOT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const SNAPSHOT_HASH = /^[0-9a-f]{64}$/;
+
+const safeSnapshotRelativePath = (value: unknown): value is string => {
+  if (typeof value !== 'string' || !value || value.startsWith('/') || value.includes('\\') || value.includes('\0')) return false;
+  const parts = value.split('/');
+  return parts.length > 0 && parts.every((part) => part.length > 0 && part !== '.' && part !== '..');
+};
+
+/** Renderer proof only. The sidecar repeats this verification before resume. */
+export const verifiedRuntimeSnapshotRef = (value: unknown): RuntimeSnapshotRef | undefined => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const reference = value as Record<string, unknown>;
+  if (
+    reference.contract_version !== 'W1SupervisorSnapshot/v1'
+    || !safeSnapshotRelativePath(reference.relative_path)
+    || !SNAPSHOT_ID.test(String(reference.lineage_id ?? ''))
+    || !SNAPSHOT_ID.test(String(reference.attempt_id ?? ''))
+    || !SNAPSHOT_ID.test(String(reference.checkpoint_id ?? ''))
+  ) return undefined;
+  for (const field of ['manifest_sha256', 'snapshot_sha256', 'source_identity_sha256', 'config_identity_sha256'] as const) {
+    if (!SNAPSHOT_HASH.test(String(reference[field] ?? ''))) return undefined;
+  }
+  return reference as RuntimeSnapshotRef;
+};
 
 /**
  * Treat missing capability data as preview-only. That is deliberately
@@ -109,10 +134,10 @@ const runtimeSnapshotRef = (value: unknown): RuntimeCheckpointCapability['snapsh
  */
 export const runtimeCheckpointCapability = (checkpoint: RuntimeCheckpoint): RuntimeCheckpointCapability => {
   const metadata = runtimeObject(checkpoint.metadata) ?? {};
-  const snapshotRef = runtimeSnapshotRef(metadata.snapshot_ref ?? checkpoint.snapshot_ref);
+  const snapshotRef = verifiedRuntimeSnapshotRef(metadata.snapshot_ref ?? checkpoint.snapshot_ref);
   const explicitResumable = metadata.resumable ?? checkpoint.resumable;
   const recoveryMode = runtimeString(metadata.recovery_mode);
-  const hasSnapshot = snapshotRef !== undefined && snapshotRef !== null;
+  const hasSnapshot = snapshotRef !== undefined;
   const resumable = (explicitResumable === true || recoveryMode === 'resumable') && hasSnapshot;
   const reason = runtimeString(metadata.non_resumable_reason)
     ?? runtimeString(checkpoint.non_resumable_reason)

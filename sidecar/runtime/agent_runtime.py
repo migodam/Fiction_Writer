@@ -421,6 +421,13 @@ class RuntimeStore:
             ).fetchone()
             if checkpoint is None:
                 raise ValueError("checkpoint_does_not_belong_to_parent_attempt")
+            # A fork is a stable read of an immutable checkpoint, not a second
+            # writer competing with a still-running parent attempt.
+            if parent["status"] not in {
+                "paused", "interrupted", "waiting_human", "needs_credentials",
+                "failed", "completed", "cancelled",
+            }:
+                raise ValueError("parent_attempt_must_be_stable_to_fork")
             child_id = str(uuid4())
             snapshot_id = str(uuid4())
             now = _now()
@@ -430,7 +437,10 @@ class RuntimeStore:
                 (child_id, parent["run_id"], number, checkpoint_id, attempt_id, checkpoint_id, now, now),
             )
             checkpoint_metadata = json.loads(checkpoint["metadata_json"])
-            run = connection.execute("SELECT workflow_id, lineage_id, thread_id FROM agent_runs WHERE run_id = ?", (parent["run_id"],)).fetchone()
+            run = connection.execute(
+                "SELECT workflow_id, lineage_id, thread_id, config_json FROM agent_runs WHERE run_id = ?",
+                (parent["run_id"],),
+            ).fetchone()
             assert run is not None
             snapshot_ref = checkpoint_metadata.get("snapshot_ref") if isinstance(checkpoint_metadata, dict) else None
             resumable = False
@@ -438,9 +448,28 @@ class RuntimeStore:
             state_reference: dict[str, Any]
             if run["workflow_id"] == "W1" and checkpoint_metadata.get("recovery_mode") == "resumable" and isinstance(snapshot_ref, dict):
                 try:
-                    from sidecar.runtime.w1_supervisor_snapshot import load_w1_supervisor_snapshot
+                    from sidecar.runtime.w1_supervisor_snapshot import load_w1_supervisor_snapshot_for_resume
+                    from sidecar.workflows.w1_agentic_adapter import build_supervisor_snapshot_identities
 
-                    loaded = load_w1_supervisor_snapshot(self.project_root, snapshot_ref)
+                    config = json.loads(run["config_json"]) if run["config_json"] else {}
+                    if not isinstance(config, dict):
+                        raise ValueError("fork_snapshot_run_config_invalid")
+                    config["w1_supervisor_staged_source_relative_path"] = (
+                        f"system/imports/{snapshot_ref.get('lineage_id', '')}/attempts/"
+                        f"{snapshot_ref.get('attempt_id', '')}/raw_source.txt"
+                    )
+                    source_identity, config_identity = build_supervisor_snapshot_identities(
+                        config, project_path=self.project_root,
+                    )
+                    loaded = load_w1_supervisor_snapshot_for_resume(
+                        self.project_root,
+                        snapshot_ref,
+                        expected_source_identity=source_identity,
+                        expected_config_identity=config_identity,
+                        artifact_receipt_validator=lambda reference, snapshot: self.validate_w1_snapshot_artifact_receipt(
+                            reference, snapshot, connection=connection,
+                        ),
+                    )
                     snapshot = loaded["snapshot"]
                     actual_unknown = [
                         row[0]
@@ -616,6 +645,13 @@ class RuntimeStore:
             self._assert_lease(connection, attempt_id, owner_id, fence_token, timestamp)
             connection.execute("UPDATE run_leases SET heartbeat_at = ?, expires_at = ? WHERE attempt_id = ?", (timestamp, timestamp + ttl_seconds, attempt_id))
             return _row(connection.execute("SELECT * FROM run_leases WHERE attempt_id = ?", (attempt_id,)).fetchone())  # type: ignore[return-value]
+
+    def assert_current_lease(
+        self, attempt_id: str, owner_id: str, fence_token: int, *, now: float | None = None,
+    ) -> None:
+        """Fail closed before a worker publishes a durable recovery boundary."""
+        with self.transaction() as connection:
+            self._assert_lease(connection, attempt_id, owner_id, fence_token, _now(now))
 
     def expire_leases(self, *, now: float | None = None) -> list[str]:
         timestamp = _now(now)
@@ -1205,22 +1241,103 @@ class RuntimeStore:
         with self._connect() as connection:
             return [_row(row) for row in connection.execute("SELECT * FROM artifact_receipts WHERE attempt_id = ? ORDER BY created_at", (attempt_id,))]  # type: ignore[misc]
 
+    def validate_w1_snapshot_artifact_receipt(
+        self, reference: dict[str, Any] | Any, snapshot: dict[str, Any] | Any, *,
+        connection: sqlite3.Connection | None = None,
+    ) -> bool:
+        """Verify that a strict W1 snapshot ref is backed by its source attempt receipt."""
+        if not isinstance(reference, dict) or not isinstance(snapshot, dict):
+            return False
+        attempt_id = str(snapshot.get("attempt_id") or "")
+        lineage_id = str(snapshot.get("lineage_id") or "")
+        relative_path = reference.get("relative_path")
+        checksum = reference.get("sha256")
+        if (
+            not attempt_id
+            or reference.get("attempt_id") != attempt_id
+            or reference.get("lineage_id") != lineage_id
+            or not isinstance(relative_path, str)
+            or not isinstance(checksum, str)
+        ):
+            return False
+
+        def matches(active: sqlite3.Connection) -> bool:
+            row = active.execute(
+                "SELECT run_id FROM agent_attempts WHERE attempt_id = ?", (attempt_id,)
+            ).fetchone()
+            if row is None:
+                return False
+            run = active.execute(
+                "SELECT lineage_id FROM agent_runs WHERE run_id = ?", (row["run_id"],)
+            ).fetchone()
+            if run is None or run["lineage_id"] != lineage_id:
+                return False
+            receipts = active.execute(
+                "SELECT checksum, metadata_json FROM artifact_receipts "
+                "WHERE attempt_id = ? AND artifact_uri = ?", (attempt_id, relative_path),
+            ).fetchall()
+            for receipt in receipts:
+                if receipt["checksum"] != checksum:
+                    continue
+                try:
+                    metadata = json.loads(receipt["metadata_json"])
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if isinstance(metadata, dict) and isinstance(metadata.get("metadata"), dict):
+                    metadata = metadata["metadata"]
+                input_hash = reference.get("input_hash")
+                if input_hash is not None and (not isinstance(metadata, dict) or metadata.get("input_hash") != input_hash):
+                    continue
+                return True
+            return False
+
+        if connection is not None:
+            return matches(connection)
+        with self._connect() as active:
+            return matches(active)
+
     def record_checkpoint_metadata(
         self, attempt_id: str, checkpoint_id: str, *, node: str, sequence: int,
         parent_checkpoint_id: str | None = None, metadata: Any | None = None,
+        owner_id: str | None = None, fence_token: int | None = None,
     ) -> dict[str, Any]:
         checkpoint_id = _identifier(checkpoint_id, "checkpoint_id", required=True)
         parent_checkpoint_id = _identifier(parent_checkpoint_id, "parent_checkpoint_id")
         node = _identifier(node, "node", required=True)
         if sequence < 0:
             raise ValueError("sequence must be non-negative")
+        safe_metadata = metadata or {}
+        requires_fencing = isinstance(safe_metadata, dict) and (
+            safe_metadata.get("recovery_mode") == "resumable" or "snapshot_ref" in safe_metadata
+        )
+        if requires_fencing and (owner_id is None or fence_token is None):
+            raise LeaseLostError("resumable_checkpoint_requires_current_lease")
         with self.transaction() as connection:
             if connection.execute("SELECT 1 FROM agent_attempts WHERE attempt_id = ?", (attempt_id,)).fetchone() is None:
                 raise KeyError(attempt_id)
+            self._assert_optional_lease(connection, attempt_id, owner_id, fence_token)
+            if parent_checkpoint_id is not None:
+                parent = connection.execute(
+                    "SELECT attempt_id, sequence FROM checkpoint_metadata WHERE checkpoint_id = ?",
+                    (parent_checkpoint_id,),
+                ).fetchone()
+                if parent is None or parent["attempt_id"] != attempt_id:
+                    raise ValueError("parent_checkpoint_does_not_belong_to_attempt")
+                if int(parent["sequence"]) >= sequence:
+                    raise ValueError("parent_checkpoint_must_precede_checkpoint")
+            existing = connection.execute(
+                "SELECT * FROM checkpoint_metadata WHERE checkpoint_id = ?", (checkpoint_id,)
+            ).fetchone()
+            if existing is not None:
+                if existing["attempt_id"] != attempt_id:
+                    raise ValueError("checkpoint_id_belongs_to_another_attempt")
+                row = _row(existing)
+                assert row is not None
+                return row
             connection.execute(
                 "INSERT INTO checkpoint_metadata(checkpoint_id, attempt_id, parent_checkpoint_id, node, sequence, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(checkpoint_id) DO NOTHING",
-                (checkpoint_id, attempt_id, parent_checkpoint_id, node, sequence, _dump(metadata or {}), _now()),
+                (checkpoint_id, attempt_id, parent_checkpoint_id, node, sequence, _dump(safe_metadata), _now()),
             )
             row = _row(connection.execute("SELECT * FROM checkpoint_metadata WHERE checkpoint_id = ?", (checkpoint_id,)).fetchone())
             if row is None:
