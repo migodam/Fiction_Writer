@@ -4,6 +4,7 @@ import hashlib
 
 from tools.w1_live_smoke_10ch import (
     _artifact_secret_leaks,
+    _normalize_terminal_status,
     _quality_probe,
     _quality_probe_failures,
     _run_live,
@@ -321,6 +322,73 @@ def test_quality_probe_binds_to_expected_import_run_not_newest_old_ledger(tmp_pa
     assert "usage_ledger_missing" in _quality_probe_failures(probe)
 
 
+def test_quality_probe_prefers_canonical_lineage_attempt_directory_over_legacy_run_id(tmp_path):
+    project = tmp_path / "project"
+    lineage_id = "lineage_current"
+    attempt_id = "attempt_current"
+    canonical = project / "system" / "imports" / lineage_id / "attempts" / attempt_id
+    legacy = project / "system" / "imports" / "live_smoke_legacy"
+    canonical.mkdir(parents=True)
+    legacy.mkdir(parents=True)
+    (canonical / "manifest.json").write_text(json.dumps({
+        "lineage_id": lineage_id,
+        "attempt_id": attempt_id,
+        "import_run_id": "legacy_name_must_not_select_this",
+    }), encoding="utf-8")
+    (legacy / "usage_ledger.json").write_text(json.dumps({
+        "actual_input_tokens": 321,
+        "actual_output_tokens": 123,
+        "actual_calls": 4,
+        "cost_usd": 0.045,
+    }), encoding="utf-8")
+
+    probe = _quality_probe(
+        project,
+        expected_lineage_id=lineage_id,
+        expected_attempt_id=attempt_id,
+        expected_import_run_id="live_smoke_legacy",
+    )
+
+    assert probe["latest_import_dir"].endswith(
+        "lineage_current/attempts/attempt_current",
+    )
+    assert probe["artifact_lineage_id"] == lineage_id
+    assert probe["artifact_attempt_id"] == attempt_id
+    assert probe["usage_ledger"] is None
+
+
+def test_quality_probe_rejects_wrong_canonical_attempt_without_falling_back(tmp_path):
+    project = tmp_path / "project"
+    valid = project / "system" / "imports" / "lineage_1" / "attempts" / "attempt_1"
+    valid.mkdir(parents=True)
+    (valid / "manifest.json").write_text("{}", encoding="utf-8")
+
+    probe = _quality_probe(
+        project,
+        expected_lineage_id="lineage_1",
+        expected_attempt_id="attempt_other",
+    )
+
+    assert probe["latest_import_dir"] is None
+    assert "manifest.json" in probe["missing_required_artifacts"]
+
+
+def test_terminal_normalization_accepts_done_passed_and_preserves_safety_gates():
+    assert _normalize_terminal_status({
+        "current_node": "done",
+        "converge_status": "passed",
+    }, unknown_provider_calls=False)["status"] == "completed"
+    assert _normalize_terminal_status({
+        "current_node": "done",
+        "converge_status": "passed",
+    }, unknown_provider_calls=True)["status"] == "waiting_human"
+    assert _normalize_terminal_status({
+        "current_node": "done",
+        "converge_status": "passed",
+        "errors": ["provider failed"],
+    }, unknown_provider_calls=False)["status"] == "error"
+
+
 def test_secret_scan_catches_generated_artifact_leakage_without_real_key(tmp_path):
     (tmp_path / "run_config.safe.json").write_text(json.dumps({"api_key": "***"}), encoding="utf-8")
     (tmp_path / "nested").mkdir()
@@ -562,6 +630,30 @@ def test_runner_uses_product_runtime_identity_harness_and_server_budget(tmp_path
     )["config"]
     assert run_config["budget_config"]["max_cost_usd"] == 3.0
     assert "api_key" not in json.dumps(run_config)
+
+
+def test_runner_marks_done_passed_attempt_and_run_completed(tmp_path, monkeypatch):
+    from sidecar.workflows import w1_import
+
+    source = tmp_path / "source.txt"
+    source.write_text("第一章\n韩立入门。", encoding="utf-8")
+
+    async def done_passed(_project_path, _config):
+        yield {
+            "current_node": "done",
+            "converge_status": "passed",
+        }
+
+    monkeypatch.setattr(w1_import, "run_streaming", done_passed)
+    result = asyncio.run(_run_live(
+        parse_args(["--source", str(source)]),
+        tmp_path / "project",
+        tmp_path / "output",
+    ))
+
+    assert result["terminal"]["status"] == "completed"
+    assert result["runtime"]["attempt"]["status"] == "completed"
+    assert result["runtime"]["run"]["status"] == "completed"
 
 
 def test_runner_cancel_marks_provider_intent_unknown_and_cleans_lock(tmp_path, monkeypatch):

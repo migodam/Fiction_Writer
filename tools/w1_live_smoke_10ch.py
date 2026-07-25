@@ -146,8 +146,44 @@ def _latest_import_dir(project_path: Path) -> Path | None:
     imports_dir = project_path / "system" / "imports"
     if not imports_dir.exists():
         return None
-    dirs = [p for p in imports_dir.iterdir() if p.is_dir()]
-    return max(dirs, key=lambda p: p.stat().st_mtime) if dirs else None
+    # Current durable W1 attempts live below lineage/attempts/attempt.  Prefer
+    # directories that actually contain a manifest, while retaining the legacy
+    # flat import directory as a compatibility fallback.
+    artifact_dirs = [path.parent for path in imports_dir.rglob("manifest.json") if path.parent.is_dir()]
+    if artifact_dirs:
+        return max(artifact_dirs, key=lambda path: path.stat().st_mtime)
+    dirs = [path for path in imports_dir.iterdir() if path.is_dir()]
+    return max(dirs, key=lambda path: path.stat().st_mtime) if dirs else None
+
+
+def _resolve_import_artifact_dir(
+    project_path: Path,
+    *,
+    expected_lineage_id: str | None = None,
+    expected_attempt_id: str | None = None,
+    expected_import_run_id: str | None = None,
+) -> Path | None:
+    """Resolve a W1 artifact directory without confusing run and attempt IDs.
+
+    Durable W1 writes to ``<lineage>/attempts/<attempt>``.  The old flat
+    ``<import_run_id>`` shape is deliberately a fallback for historical smoke
+    fixtures only; new callers must bind the probe to both canonical IDs.
+    """
+    imports_dir = project_path / "system" / "imports"
+    has_canonical_identity = bool(expected_lineage_id or expected_attempt_id)
+    if isinstance(expected_lineage_id, str) and expected_lineage_id and isinstance(expected_attempt_id, str) and expected_attempt_id:
+        candidate = imports_dir / expected_lineage_id / "attempts" / expected_attempt_id
+        if candidate.is_dir():
+            return candidate
+    if has_canonical_identity:
+        # A supplied canonical identity is an exact binding, not a hint.  Never
+        # inspect another attempt merely because it is newer on disk.
+        return None
+    if isinstance(expected_import_run_id, str) and expected_import_run_id:
+        legacy_candidate = imports_dir / expected_import_run_id
+        if legacy_candidate.is_dir():
+            return legacy_candidate
+    return _latest_import_dir(project_path)
 
 
 def _chapter_number(title: str) -> int | None:
@@ -454,17 +490,24 @@ def _find_usage_ledger(payload: Any, source: str, path: str = "$") -> dict[str, 
     return None
 
 
-def _quality_probe(project_path: Path, expected_import_run_id: str | None = None) -> dict[str, Any]:
+def _quality_probe(
+    project_path: Path,
+    expected_import_run_id: str | None = None,
+    *,
+    expected_lineage_id: str | None = None,
+    expected_attempt_id: str | None = None,
+) -> dict[str, Any]:
     manuscript = _read_json(project_path / "manuscript.json", {})
     chapters = manuscript.get("chapters") if isinstance(manuscript, dict) else []
     if not isinstance(chapters, list):
         chapters = []
     inbox = _read_json(project_path / "system" / "inbox.json", [])
     nodes = _read_json(project_path / "writing" / "manuscript" / "nodes.json", [])
-    latest = (
-        project_path / "system" / "imports" / expected_import_run_id
-        if expected_import_run_id
-        else _latest_import_dir(project_path)
+    latest = _resolve_import_artifact_dir(
+        project_path,
+        expected_lineage_id=expected_lineage_id,
+        expected_attempt_id=expected_attempt_id,
+        expected_import_run_id=expected_import_run_id,
     )
     if latest is not None and not latest.is_dir():
         latest = None
@@ -516,7 +559,11 @@ def _quality_probe(project_path: Path, expected_import_run_id: str | None = None
     return {
         "project_path": str(project_path),
         "latest_import_dir": str(latest) if latest else None,
+        "expected_lineage_id": expected_lineage_id,
+        "expected_attempt_id": expected_attempt_id,
         "expected_import_run_id": expected_import_run_id,
+        "artifact_lineage_id": manifest.get("lineage_id") if isinstance(manifest, dict) else None,
+        "artifact_attempt_id": manifest.get("attempt_id") if isinstance(manifest, dict) else None,
         "artifact_import_run_id": manifest.get("import_run_id") if isinstance(manifest, dict) else None,
         "canonical_chapter_count": len(chapters) if isinstance(chapters, list) else 0,
         "canonical_manuscript_nodes_count": len(nodes) if isinstance(nodes, list) else 0,
@@ -590,6 +637,12 @@ def _quality_probe_failures(probe: dict[str, Any]) -> list[str]:
     expected_run_id = probe.get("expected_import_run_id")
     if expected_run_id and probe.get("artifact_import_run_id") != expected_run_id:
         failures.append("import_run_id_mismatch")
+    expected_lineage_id = probe.get("expected_lineage_id")
+    if expected_lineage_id and probe.get("artifact_lineage_id") != expected_lineage_id:
+        failures.append("lineage_id_mismatch")
+    expected_attempt_id = probe.get("expected_attempt_id")
+    if expected_attempt_id and probe.get("artifact_attempt_id") != expected_attempt_id:
+        failures.append("attempt_id_mismatch")
     if probe.get("raw_source_evidence", {}).get("failures"):
         failures.append("raw_source_evidence_invalid")
     if not probe.get("usage_ledger"):
@@ -671,6 +724,45 @@ def _redact_terminal_payload(value: Any, key: str = "") -> Any:
     return value
 
 
+_TERMINAL_FAILURE_STATUSES = frozenset({
+    "error", "failed", "timeout", "stalled", "cleanup_timeout",
+    "budget_exhausted", "auth_failed", "cancelled",
+})
+
+
+def _terminal_has_errors(terminal: dict[str, Any]) -> bool:
+    errors = terminal.get("errors")
+    if isinstance(errors, (list, tuple, set)) and errors:
+        return True
+    if isinstance(errors, str) and errors.strip():
+        return True
+    return bool(terminal.get("error") or terminal.get("error_type"))
+
+
+def _normalize_terminal_status(
+    terminal: dict[str, Any], *, unknown_provider_calls: bool,
+) -> dict[str, Any]:
+    """Map graph completion metadata to one durable runner terminal status."""
+    normalized = dict(terminal)
+    status = str(normalized.get("status") or normalized.get("status_text") or "").lower()
+    converge_status = str(normalized.get("converge_status") or "").lower()
+    current_node = str(normalized.get("current_node") or "").lower()
+
+    if status in _TERMINAL_FAILURE_STATUSES or converge_status in {"hard_fail", "failed"} or _terminal_has_errors(normalized):
+        normalized["status"] = status if status in _TERMINAL_FAILURE_STATUSES else "error"
+    elif converge_status == "awaiting_acceptance":
+        normalized["status"] = "waiting_human"
+    elif unknown_provider_calls:
+        normalized["status"] = "waiting_human"
+    elif status in {"done", "completed", "success"}:
+        normalized["status"] = "completed"
+    elif current_node == "done" and converge_status == "passed":
+        normalized["status"] = "completed"
+    else:
+        normalized["status"] = status or "failed"
+    return normalized
+
+
 def _smoke_result_exit_code(result: dict[str, Any]) -> int:
     terminal = result.get("terminal", {}) if isinstance(result, dict) else {}
     probe = result.get("quality_probe", {}) if isinstance(result, dict) else {}
@@ -681,7 +773,7 @@ def _smoke_result_exit_code(result: dict[str, Any]) -> int:
         or ("error" if terminal.get("current_node") == "error" or errors else "done")
     )
     converge_status = terminal.get("converge_status")
-    if status in {"error", "timeout", "stalled", "cleanup_timeout", "budget_exhausted", "auth_failed"}:
+    if status in _TERMINAL_FAILURE_STATUSES:
         return 1
     if converge_status in {"hard_fail", "failed"}:
         return 1
@@ -796,14 +888,13 @@ class _DurableLiveRun:
             ).get("active_api_calls", 0),
         }
 
-    def finish(self, terminal: dict[str, Any]) -> None:
+    def finish(self, terminal: dict[str, Any]) -> dict[str, Any]:
         """Close ambiguous intents, stabilize the attempt, then release its lease."""
         from sidecar.runtime.agent_runtime import LeaseLostError
         from sidecar.workflows.w1_run_events import append_event
 
         if self.lease_released:
-            return
-        terminal_status = str(terminal.get("status") or "")
+            return terminal
         try:
             for call in self.store.list_tool_calls(self.attempt_id):
                 if call.get("status") == "intent":
@@ -815,11 +906,13 @@ class _DurableLiveRun:
                         fence_token=self.fence_token,
                     )
             unknown = self.store.list_unknown_call_summaries(self.attempt_id)
-            if unknown:
+            terminal = _normalize_terminal_status(
+                terminal, unknown_provider_calls=bool(unknown),
+            )
+            terminal_status = str(terminal["status"])
+            if unknown or terminal_status == "waiting_human":
                 attempt_status = "waiting_human"
-            elif terminal.get("converge_status") == "awaiting_acceptance":
-                attempt_status = "waiting_human"
-            elif terminal_status in {"done", "completed", "success"}:
+            elif terminal_status == "completed":
                 attempt_status = "completed"
             elif terminal_status in {"stalled", "timeout", "cleanup_timeout"}:
                 attempt_status = "interrupted"
@@ -837,6 +930,16 @@ class _DurableLiveRun:
                 owner_id=self.owner_id,
                 fence_token=self.fence_token,
             )
+            # RuntimeStore has no public run-terminal API yet.  The runner owns
+            # exactly one attempt, so keep its enclosing run queryable with the
+            # same status inside the existing transaction boundary.
+            with self.store.transaction() as connection:
+                result = connection.execute(
+                    "UPDATE agent_runs SET status = ?, updated_at = ? WHERE run_id = ?",
+                    (attempt_status, time.time(), self.run_id),
+                )
+                if result.rowcount != 1:
+                    raise RuntimeError(f"durable run missing during finish: {self.run_id}")
         finally:
             try:
                 self.store.release_lease(
@@ -845,6 +948,7 @@ class _DurableLiveRun:
             except LeaseLostError:
                 pass
             self.lease_released = True
+        return terminal
 
     def summary(self) -> dict[str, Any]:
         from sidecar.workflows.w1_run_events import authoritative_usage_ledger
@@ -865,6 +969,7 @@ class _DurableLiveRun:
             "lineage_id": self.lineage_id,
             "attempt_id": self.attempt_id,
             "thread_id": self.thread_id,
+            "run": self.store.get_run(self.run_id),
             "attempt": self.store.get_attempt(self.attempt_id),
             "last_activity": events[-1] if events else {},
             "durable_event_count": len(events),
@@ -1247,9 +1352,13 @@ async def _run_live(args: argparse.Namespace, project_path: Path, output_dir: Pa
             await release_lock(str(project_path))
         except Exception:
             pass
-        runtime.finish(terminal)
+        terminal = runtime.finish(terminal)
 
-    probe = _quality_probe(project_path, expected_import_run_id=import_run_id)
+    probe = _quality_probe(
+        project_path,
+        expected_lineage_id=lineage_id,
+        expected_attempt_id=attempt_id,
+    )
     runtime_summary = runtime.summary()
     runtime_summary.update({
         "workflow_lock_present": (
