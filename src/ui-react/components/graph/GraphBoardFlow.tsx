@@ -9,6 +9,8 @@ import {
   Edge,
   useNodesState,
   useEdgesState,
+  useNodesInitialized,
+  useNodes,
   NodeChange,
   EdgeChange,
   addEdge,
@@ -50,7 +52,7 @@ const GraphBoardNode: React.FC<{ data: { node: ProjectGraphNode } }> = ({ data }
   const bg = kindColors[n.kind] || '#f1f5f9';
   return (
     <div
-      className="rounded-2xl border border-border p-3 shadow-sm"
+      className="graph-node-drag-handle rounded-2xl border border-border p-3 shadow-sm"
       data-testid={`graph-node-${n.id}`}
       style={{ background: bg, width: n.width || 180, minHeight: n.height || 80 }}
     >
@@ -65,6 +67,23 @@ const GraphBoardNode: React.FC<{ data: { node: ProjectGraphNode } }> = ({ data }
 
 const nodeTypes: NodeTypes = { graphBoard: GraphBoardNode };
 
+const GraphInteractionReadiness: React.FC<{
+  expectedNodeIds: string[];
+  onChange: (ready: boolean) => void;
+}> = ({ expectedNodeIds, onChange }) => {
+  const nodesInitialized = useNodesInitialized({ includeHiddenNodes: false });
+  const renderedNodes = useNodes();
+  const expectedSignature = expectedNodeIds.join('|');
+  const renderedSignature = renderedNodes.map((node) => node.id).sort().join('|');
+  const isCurrentBoardReady = nodesInitialized && expectedSignature === renderedSignature;
+
+  React.useEffect(() => {
+    onChange(isCurrentBoardReady);
+  }, [isCurrentBoardReady, onChange]);
+
+  return null;
+};
+
 // Convert our model to React Flow format
 function toRFNodes(nodes: ProjectGraphNode[]): Node[] {
   return nodes.map((n) => ({
@@ -72,6 +91,8 @@ function toRFNodes(nodes: ProjectGraphNode[]): Node[] {
     type: 'graphBoard',
     position: { x: n.x, y: n.y },
     data: { node: n },
+    // Capture the undo snapshot on the real pointer-down event.
+    dragHandle: '.graph-node-drag-handle',
     style: { width: n.width, height: n.height },
   }));
 }
@@ -176,6 +197,28 @@ export const GraphBoardFlow: React.FC<GraphBoardFlowProps> = ({ board }) => {
   const { openContextMenu } = useUIStore();
   const { t } = useI18n();
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
+  const [readyBoardId, setReadyBoardId] = useState<string | null>(null);
+  const [dragEnabledBoardId, setDragEnabledBoardId] = useState<string | null>(null);
+  const [interactionReadyBoardId, setInteractionReadyBoardId] = useState<string | null>(null);
+  const boardNodesReady = readyBoardId === board.id;
+  const dragEnabled = dragEnabledBoardId === board.id;
+  const interactionReady = interactionReadyBoardId === board.id;
+  const handleInteractionReadiness = useCallback((ready: boolean) => {
+    setReadyBoardId(ready ? board.id : null);
+  }, [board.id]);
+
+  React.useEffect(() => {
+    if (!boardNodesReady) return;
+    let readyFrame = 0;
+    const enableFrame = requestAnimationFrame(() => {
+      setDragEnabledBoardId(board.id);
+      readyFrame = requestAnimationFrame(() => setInteractionReadyBoardId(board.id));
+    });
+    return () => {
+      cancelAnimationFrame(enableFrame);
+      cancelAnimationFrame(readyFrame);
+    };
+  }, [board.id, boardNodesReady]);
 
   const initialNodes = useMemo(() => toRFNodes(board.nodes), [board.id]);
   const initialEdges = useMemo(() => toRFEdges(board.edges), [board.id]);
@@ -256,9 +299,20 @@ export const GraphBoardFlow: React.FC<GraphBoardFlowProps> = ({ board }) => {
     useProjectStore.getState().beginUndoTransaction('Move graph node');
   }, []);
 
-  const onNodeDragStop = useCallback(() => {
+  const onNodeDragStop = useCallback((_: React.MouseEvent, node: Node) => {
+    // Controlled React Flow can omit the final `dragging: false` NodeChange.
+    // Its drag-stop callback always carries the authoritative final position.
+    const currentBoard = useProjectStore.getState().graphBoards.find((entry) => entry.id === board.id);
+    const currentNode = currentBoard?.nodes.find((entry) => entry.id === node.id);
+    if (currentNode && (currentNode.x !== node.position.x || currentNode.y !== node.position.y)) {
+      updateGraphNode(board.id, {
+        ...currentNode,
+        x: node.position.x,
+        y: node.position.y,
+      });
+    }
     useProjectStore.getState().commitUndoTransaction();
-  }, []);
+  }, [board.id, updateGraphNode]);
 
   const onEdgeContextMenu = useCallback((e: React.MouseEvent, edge: Edge) => {
     e.preventDefault();
@@ -282,7 +336,11 @@ export const GraphBoardFlow: React.FC<GraphBoardFlowProps> = ({ board }) => {
   }, [board.id, openContextMenu, t, deleteGraphEdge, setEdges]);
 
   return (
-    <div className="relative h-full min-h-0 min-w-0 w-full overflow-hidden" data-testid="graph-board-flow">
+    <div
+      className="relative h-full min-h-0 min-w-0 w-full overflow-hidden"
+      data-testid="graph-board-flow"
+      data-graph-interaction-ready={interactionReady ? 'true' : 'false'}
+    >
       <ReactFlow
         className="relative z-0"
         nodes={nodes}
@@ -291,6 +349,7 @@ export const GraphBoardFlow: React.FC<GraphBoardFlowProps> = ({ board }) => {
         onEdgesChange={handleEdgesChange}
         onConnect={onConnect}
         nodeTypes={nodeTypes}
+        nodesDraggable={dragEnabled}
         minZoom={0.1}
         maxZoom={2}
         onNodeDoubleClick={onNodeDoubleClick}
@@ -298,9 +357,15 @@ export const GraphBoardFlow: React.FC<GraphBoardFlowProps> = ({ board }) => {
         onEdgeContextMenu={onEdgeContextMenu}
         onNodeDragStart={onNodeDragStart}
         onNodeDragStop={onNodeDragStop}
+        nodeDragThreshold={0}
         fitView
         fitViewOptions={{ padding: 0.2 }}
       >
+        <GraphInteractionReadiness
+          key={board.id}
+          expectedNodeIds={board.nodes.map((node) => node.id).sort()}
+          onChange={handleInteractionReadiness}
+        />
         <Background variant={BackgroundVariant.Dots} gap={24} />
         <Controls />
         <MiniMap />

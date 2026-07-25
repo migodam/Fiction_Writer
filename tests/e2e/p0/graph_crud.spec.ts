@@ -99,14 +99,20 @@ test.describe('Graph CRUD', () => {
 
         const node = page.getByTestId('graph-node-drag_node');
         await expect(node).toBeVisible();
-        const box = await node.boundingBox();
-        expect(box).not.toBeNull();
-        if (!box) throw new Error('Graph node did not have a bounding box');
+        const canvas = page.getByTestId('graph-board-flow');
+        await expect(canvas).toHaveAttribute('data-graph-interaction-ready', 'true');
+        const canvasBox = await canvas.boundingBox();
+        expect(canvasBox).not.toBeNull();
+        if (!canvasBox) throw new Error('Graph canvas did not have a bounding box');
 
-        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-        await page.mouse.down();
-        await page.mouse.move(box.x + box.width / 2 + 140, box.y + box.height / 2 + 80, { steps: 8 });
-        await page.mouse.up();
+        // Locator drag resolves the node's box at action time. The graph can still
+        // complete its initial fitView between test setup and the pointer gesture.
+        await node.dragTo(canvas, {
+            targetPosition: {
+                x: Math.max(320, Math.min(canvasBox.width - 80, canvasBox.width * 0.7)),
+                y: Math.max(240, Math.min(canvasBox.height - 80, canvasBox.height * 0.65)),
+            },
+        });
 
         await expect.poll(() => page.evaluate(() => {
             const state = (window as any).__narrativeStore.getState();
