@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import json
 import sqlite3
 from pathlib import Path
 
@@ -607,6 +608,153 @@ def test_short_source_prose_uses_spans_while_ids_and_chinese_labels_remain_inlin
     assert restored["timeline_branches"][0]["description"] == "韩立"
     assert restored["manuscript_chapters"][0]["summary"] == "韩立入门"
     assert restored["manuscript_chapters"][0]["notes"] == "入门"
+
+
+def test_stable_label_source_fragments_become_refs_and_never_reach_snapshot_files(tmp_path):
+    source_text = "第1章\n韩立入门。"
+    source = tmp_path / "stable-label-source.txt"
+    source.write_text(source_text, encoding="utf-8")
+    span = make_source_span(source_text, 0, len(source_text))
+    snapshot = policy._snapshot_state({
+        "source_text": source_text,
+        "import_run_id": "sup_stable_label_guard",
+        "source_language": "zh",
+        "chunks": [{"chunk_id": 0, "title": "第一章 山边小村", "source_span": span, "content": source_text}],
+        "chunk_extractions": [],
+        "entity_registry": {
+            "characters": {
+                "char_han": {
+                    "id": "char_han",
+                    "canonical_name": "韩立",
+                    "aliases": ["韩二愣", source_text],
+                },
+            },
+            "events": {},
+            "world": {},
+            "world_detailed": {},
+            "character_id_map": {},
+        },
+        "relationships": [],
+        "raw_relationships": [],
+        "character_tags": [
+            {"id": "tag_guarded", "name": source_text},
+            {"id": "tag_valid", "name": "核心人物"},
+        ],
+        "world_settings": {},
+        "world_containers": [],
+        "organizer_output": {},
+        "timeline_architecture": {
+            "label": source_text,
+            "valid_display": {"label": "主时间线"},
+        },
+        "timeline_branches": [],
+        "reducer_artifact": {},
+        "cross_validation": {},
+        "import_review_report": {},
+        "judge_artifact": {},
+        "gate_failures": [],
+        "proposals": [],
+        "operations": {},
+        "evidence_cards": [],
+        "import_run_manifest": {"import_run_id": "sup_stable_label_guard"},
+        "project_structure_digest": {},
+        "manuscript_chapters": [
+            {
+                "chapter_id": "chap_guarded",
+                "scene_id": "scene_guarded",
+                "title": source_text,
+                "chunk_ids": [0],
+                "source_span": span,
+                "manuscript_content": source_text,
+            },
+            {
+                "chapter_id": "chap_valid",
+                "scene_id": "scene_valid",
+                "title": "第一章 山边小村",
+                "chunk_ids": [0],
+                "source_span": span,
+                "manuscript_content": source_text,
+            },
+        ],
+    })
+
+    def assert_source_ref(value):
+        assert value["contract_version"] == "W1SourceTextRef/v1"
+        assert set(value) == {"contract_version", "source_span"}
+
+    character = snapshot["entity_registry"]["characters"]["char_han"]
+    assert character["canonical_name"] == "韩立"
+    assert character["aliases"][0] == "韩二愣"
+    assert_source_ref(character["aliases"][1])
+    assert_source_ref(snapshot["resume_context"]["character_tags"][0]["name"])
+    assert snapshot["resume_context"]["character_tags"][1]["name"] == "核心人物"
+    assert_source_ref(snapshot["resume_context"]["manuscript_chapters"][0]["title"])
+    assert snapshot["resume_context"]["manuscript_chapters"][1]["title"] == "第一章 山边小村"
+    assert_source_ref(snapshot["timeline"]["timeline_architecture"]["label"])
+    assert snapshot["timeline"]["timeline_architecture"]["valid_display"]["label"] == "主时间线"
+
+    staged_relative = "system/imports/lineage_stable_label/attempts/attempt_stable_label/raw_source.txt"
+    staged_source = tmp_path / staged_relative
+    staged_source.parent.mkdir(parents=True, exist_ok=True)
+    staged_source.write_text(source_text, encoding="utf-8")
+    source_identity, config_identity = build_supervisor_snapshot_identities(
+        {
+            "project_path": str(tmp_path),
+            "source_file_path": str(source),
+            "model": "deepseek-v4-flash",
+            "prompt_profile": "balanced",
+            "execution_mode": "supervisor",
+            "import_mode": "import_all",
+            "w1_supervisor_staged_source_relative_path": staged_relative,
+        },
+        project_path=tmp_path,
+    )
+    ref = write_w1_supervisor_snapshot(
+        tmp_path,
+        lineage_id="lineage_stable_label",
+        attempt_id="attempt_stable_label",
+        checkpoint_id="checkpoint_stable_label",
+        node="reduce_repair",
+        next_node="architect_timeline",
+        source_identity=source_identity,
+        config_identity=config_identity,
+        state=snapshot,
+        completed_nodes=["validate_file", "extract_window", "reduce_repair"],
+    )
+
+    snapshot_root = tmp_path / ref.relative_path
+    for json_path in snapshot_root.rglob("*.json"):
+        document = json.loads(json_path.read_text(encoding="utf-8"))
+
+        def scan(value):
+            if isinstance(value, str):
+                assert value != source_text, f"source body leaked into {json_path}"
+            elif isinstance(value, list):
+                for item in value:
+                    scan(item)
+            elif isinstance(value, dict):
+                for key, item in value.items():
+                    assert key != source_text, f"source body leaked as key into {json_path}"
+                    scan(item)
+
+        scan(document)
+
+
+def test_obvious_single_line_source_fragments_are_not_treated_as_stable_labels():
+    source_text = "韩立入门，拜墨大夫为师，随后进入七玄门修炼并参加门内选拔。"
+    cases = [
+        ("character_tags[0].name", "韩立入门，拜墨大夫为师"),
+        ("timeline_architecture.label", "韩立入门，拜墨大夫为师"),
+        ("entity_registry.characters.char_han.aliases[0]", "韩立入门，拜墨大夫为师"),
+        ("manuscript_chapters[0].title", source_text[:24]),
+    ]
+
+    for field, value in cases:
+        projected = policy._snapshot_structured_value(value, source_text, field)
+        assert projected["contract_version"] == "W1SourceTextRef/v1"
+
+    with pytest.raises(ValueError, match="invalid_name:multiline"):
+        policy._snapshot_structured_value("伪造\n人物名", source_text, "character_tags[0].name")
 
 
 @pytest.mark.parametrize(

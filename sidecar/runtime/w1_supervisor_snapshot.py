@@ -46,6 +46,15 @@ _BODY_CONTENT_KEY = re.compile(
 _SECRET_VALUE = re.compile(
     r"(?:\bsk-[A-Za-z0-9_-]{8,}\b|\bghp_[A-Za-z0-9]{20,}\b|\bAIza[A-Za-z0-9_-]{20,}\b|\bBearer\s+[A-Za-z0-9._-]{20,}\b)"
 )
+_STABLE_LABEL_MAX_LENGTH = {
+    "name": 80,
+    "alias": 80,
+    "label": 80,
+    "title": 160,
+}
+_STABLE_LABEL_LINE_BREAK = re.compile(r"[\r\n\u2028\u2029]")
+_SOURCE_PROSE_TERMINATOR = re.compile(r"[。！？!?；;]")
+_SOURCE_PROSE_SEPARATOR = re.compile(r"[，,：:]")
 
 SUPPORTED_BOUNDARIES = frozenset(
     {
@@ -308,19 +317,74 @@ def _normalize_state(state: Mapping[str, Any]) -> dict[str, Any]:
     return {key: _safe_json(state[key], f"state.{key}") for key in sorted(state)}
 
 
+def _stable_label_kind(field: str) -> str | None:
+    tokens = [token.lower() for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", field)]
+    if not tokens:
+        return None
+    leaf = tokens[-1]
+    if leaf in {"alias", "aliases"} or ("aliases" in tokens and leaf == "value"):
+        return "alias"
+    if leaf == "title" or leaf.endswith("_title"):
+        return "title"
+    if leaf == "label" or leaf.endswith("_label"):
+        return "label"
+    if (
+        leaf in {"name", "canonical_name", "sourcename", "candidate_names", "character_names", "characternames"}
+        or (leaf.endswith("_name") and not leaf.endswith(("file_name", "filename")))
+    ):
+        return "name"
+    return None
+
+
+def _stable_label_invalid_reason(value: str, kind: str, source_text: str) -> str | None:
+    if value != value.strip():
+        return "surrounding_whitespace"
+    if _STABLE_LABEL_LINE_BREAK.search(value):
+        return "multiline"
+    if any(ord(character) < 32 and character != "\t" for character in value):
+        return "control_character"
+    if "\t" in value:
+        return "tab"
+    if len(value) > _STABLE_LABEL_MAX_LENGTH[kind]:
+        return "too_long"
+    if value:
+        if value == source_text:
+            return "complete_source"
+        if value in source_text:
+            if len(value) >= 24:
+                return "source_prose_fragment"
+            terminators = len(_SOURCE_PROSE_TERMINATOR.findall(value))
+            if kind in {"name", "alias", "label"} and (
+                terminators or _SOURCE_PROSE_SEPARATOR.search(value)
+            ):
+                return "source_prose_fragment"
+            if kind == "title" and terminators >= 2:
+                return "source_prose_fragment"
+            if len(value) >= 24 and len(value.split()) >= 4:
+                return "source_prose_fragment"
+    return None
+
+
 def _reject_embedded_source_substrings(state: Mapping[str, Any], source_text: str) -> None:
     """Reject prose copied verbatim into a snapshot even under an allowed key.
 
-    DTO field names are the primary boundary.  This is a second, content-based
-    guard for accidental future fields.  Short labels and summaries are useful
-    recovery metadata; long continuous source passages are never required.
+    DTO field names are the primary boundary. This independent content guard
+    also validates display-label semantics so direct codec callers cannot
+    bypass the policy projection.
     """
     if not source_text:
         return
 
     def walk(value: Any, field: str) -> None:
         if isinstance(value, str):
-            candidate = value.strip()
+            candidate = value
+            label_kind = _stable_label_kind(field)
+            if label_kind:
+                reason = _stable_label_invalid_reason(candidate, label_kind, source_text)
+                if reason:
+                    raise SnapshotValidationError(f"{field}_invalid_{label_kind}:{reason}")
+                return
+            candidate = candidate.strip()
             if len(candidate) >= 80 and candidate in source_text:
                 raise SnapshotValidationError(f"{field}_must_not_contain_source_substring")
             return
@@ -330,6 +394,8 @@ def _reject_embedded_source_substrings(state: Mapping[str, Any], source_text: st
             return
         if isinstance(value, Mapping):
             for key, item in value.items():
+                if key == source_text or _STABLE_LABEL_LINE_BREAK.search(str(key)):
+                    raise SnapshotValidationError(f"{field}_contains_invalid_key")
                 walk(item, f"{field}.{key}")
 
     walk(state, "state")

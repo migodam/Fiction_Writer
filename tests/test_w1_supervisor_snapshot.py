@@ -182,6 +182,55 @@ def test_hidden_reasoning_and_long_source_substrings_are_rejected(tmp_path: Path
         )
 
 
+@pytest.mark.parametrize(
+    "state",
+    [
+        {"resume_context": {"character_tags": [{"name": "第1章\n韩立入门。"}]}},
+        {"resume_context": {"manuscript_chapters": [{"title": "第1章\n韩立入门。"}]}},
+        {"timeline": {"timeline_architecture": {"label": "第1章\n韩立入门。"}}},
+        {"entity_registry": {"characters": {"char_han": {"aliases": ["第1章\n韩立入门。"]}}}},
+    ],
+)
+def test_snapshot_codec_rejects_stable_label_source_body_bypass(
+    tmp_path: Path, state: dict[str, object],
+) -> None:
+    source_text = "第1章\n韩立入门。"
+    source = tmp_path / "sources" / "novel.txt"
+    source.parent.mkdir(parents=True)
+    source.write_text(source_text, encoding="utf-8")
+    source_identity = _source() | {
+        "source_sha256": _sha(source_text),
+        "source_size": len(source_text.encode("utf-8")),
+    }
+
+    with pytest.raises(SnapshotValidationError, match=r"invalid_(?:name|title|label|alias)"):
+        _write(tmp_path, source_identity=source_identity, state=state)
+
+
+def test_snapshot_codec_preserves_valid_short_chinese_display_labels(tmp_path: Path) -> None:
+    source_text = "第1章 山边小村\n韩立进入七玄门，成为核心人物。"
+    source = tmp_path / "sources" / "novel.txt"
+    source.parent.mkdir(parents=True)
+    source.write_text(source_text, encoding="utf-8")
+    source_identity = _source() | {
+        "source_sha256": _sha(source_text),
+        "source_size": len(source_text.encode("utf-8")),
+    }
+    state = {
+        "resume_context": {
+            "character_tags": [{"name": "核心人物"}],
+            "manuscript_chapters": [{"title": "第1章 山边小村"}],
+        },
+        "timeline": {"timeline_architecture": {"label": "主时间线"}},
+        "entity_registry": {"characters": {"char_han": {"name": "韩立", "aliases": ["韩二愣"]}}},
+    }
+
+    ref = _write(tmp_path, source_identity=source_identity, state=state)
+    persisted = load_w1_supervisor_snapshot(tmp_path, ref)["state"]
+
+    assert persisted == state
+
+
 def test_absolute_paths_and_unsupported_boundaries_are_rejected(tmp_path: Path) -> None:
     absolute_source = _source() | {"source_relative_path": "/Users/unsafe/novel.txt"}
     with pytest.raises(SnapshotValidationError, match="contained"):

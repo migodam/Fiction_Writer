@@ -178,13 +178,22 @@ _SNAPSHOT_MANUSCRIPT_FIELDS = frozenset({
 })
 _SOURCE_TEXT_REF_CONTRACT = "W1SourceTextRef/v1"
 _SNAPSHOT_SOURCE_LABEL_FIELDS = frozenset({
-    "id", "ids", "name", "title", "label", "aliases", "type", "category", "color", "status", "mode",
+    "id", "ids", "type", "category", "color", "status", "mode",
     "kind", "field", "contract_version", "source_language", "importcategorykey", "ontologytype",
     "ontologydirection", "directionality", "eventclass", "timelineclass", "eventtype", "endmode",
     "densityclass", "projecttype", "narrativepacing", "languagestyle", "narrativeperspective",
     "lengthstrategy", "tags", "personality_traits", "traits", "character_id_map", "evidence_refs",
     "evidencerefs", "profile_field_evidence", "candidate_ids", "normalization",
 })
+_SNAPSHOT_LABEL_MAX_LENGTH = {
+    "name": 80,
+    "alias": 80,
+    "label": 80,
+    "title": 160,
+}
+_SNAPSHOT_LABEL_LINE_BREAK = re.compile(r"[\r\n\u2028\u2029]")
+_SNAPSHOT_PROSE_TERMINATOR = re.compile(r"[。！？!?；;]")
+_SNAPSHOT_PROSE_SEPARATOR = re.compile(r"[，,：:]")
 
 
 class W1ResumeState(TypedDict):
@@ -200,28 +209,82 @@ class W1ResumeState(TypedDict):
     evidence_cards: list[dict[str, Any]]
 
 
-def _snapshot_field_is_stable_label(field: str) -> bool:
-    """Distinguish identifiers/labels from prose that needs a source proof."""
+def _snapshot_field_tokens(field: str) -> list[str]:
+    return [token.lower() for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", field)]
+
+
+def _snapshot_label_kind(field: str) -> str | None:
+    """Return the semantic label kind for fields that may hold display text."""
+    tokens = _snapshot_field_tokens(field)
+    if not tokens:
+        return None
+    leaf = tokens[-1]
+    if leaf in {"alias", "aliases"} or ("aliases" in tokens and leaf == "value"):
+        return "alias"
+    if leaf == "title" or leaf.endswith("_title"):
+        return "title"
+    if leaf == "label" or leaf.endswith("_label"):
+        return "label"
+    if (
+        leaf in {"name", "canonical_name", "sourcename", "candidate_names", "character_names", "characternames"}
+        or (leaf.endswith("_name") and not leaf.endswith(("file_name", "filename")))
+    ):
+        return "name"
+    return None
+
+
+def _snapshot_field_is_stable_metadata(field: str) -> bool:
+    """Distinguish identifiers/enums from prose that needs a source proof."""
     lowered = field.lower()
     if lowered.startswith("entity_registry.world.") or "character_id_map" in lowered:
         return True
-    tokens = [token.lower() for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", field)]
+    tokens = _snapshot_field_tokens(field)
     if not tokens:
         return False
     leaf = tokens[-1]
     if leaf in _SNAPSHOT_SOURCE_LABEL_FIELDS:
         return True
-    if leaf.endswith(("id", "ids", "_id", "_ids", "hash", "_hash", "name", "_name")):
+    if leaf.endswith(("id", "ids", "_id", "_ids", "hash", "_hash")):
         return True
-    # These containers hold stable labels or references even when the final
-    # path component is the generic merge-decision key ``value``.
+    # These containers hold stable references or enums even when the final
+    # path component is the generic merge-decision key ``value``. Display
+    # labels are handled separately by ``_snapshot_label_kind``.
     return any(
         token in {
-            "aliases", "tags", "traits", "personality_traits", "evidence_refs", "evidencerefs",
+            "tags", "traits", "personality_traits", "evidence_refs", "evidencerefs",
             "profile_field_evidence", "candidate_ids", "character_ids", "characternames",
         }
         for token in tokens
     )
+
+
+def _snapshot_label_invalid_reason(value: str, kind: str, source_text: str) -> str | None:
+    if value != value.strip():
+        return "surrounding_whitespace"
+    if _SNAPSHOT_LABEL_LINE_BREAK.search(value):
+        return "multiline"
+    if any(ord(character) < 32 and character != "\t" for character in value):
+        return "control_character"
+    if "\t" in value:
+        return "tab"
+    if len(value) > _SNAPSHOT_LABEL_MAX_LENGTH[kind]:
+        return "too_long"
+    if source_text and value:
+        if value == source_text:
+            return "complete_source"
+        if value in source_text:
+            if len(value) >= 24:
+                return "source_prose_fragment"
+            terminators = len(_SNAPSHOT_PROSE_TERMINATOR.findall(value))
+            if kind in {"name", "alias", "label"} and (
+                terminators or _SNAPSHOT_PROSE_SEPARATOR.search(value)
+            ):
+                return "source_prose_fragment"
+            if kind == "title" and terminators >= 2:
+                return "source_prose_fragment"
+            if len(value) >= 24 and len(value.split()) >= 4:
+                return "source_prose_fragment"
+    return None
 
 
 def _snapshot_source_text_ref(value: str, source_text: str, field: str) -> dict[str, Any]:
@@ -241,7 +304,15 @@ def _snapshot_structured_value(value: Any, source_text: str, field: str) -> Any:
     if isinstance(value, str):
         if value.startswith("/") or re.match(r"^[A-Za-z]:[\\\\/]", value):
             raise ValueError(f"{field}_contains_absolute_path")
-        if source_text and value and value in source_text and not _snapshot_field_is_stable_label(field):
+        label_kind = _snapshot_label_kind(field)
+        if label_kind:
+            invalid_reason = _snapshot_label_invalid_reason(value, label_kind, source_text)
+            if invalid_reason:
+                if source_text and value and value in source_text:
+                    return _snapshot_source_text_ref(value, source_text, field)
+                raise ValueError(f"{field}_invalid_{label_kind}:{invalid_reason}")
+            return value
+        if source_text and value and value in source_text and not _snapshot_field_is_stable_metadata(field):
             return _snapshot_source_text_ref(value, source_text, field)
         return value
     if isinstance(value, (list, tuple)):
@@ -251,6 +322,10 @@ def _snapshot_structured_value(value: Any, source_text: str, field: str) -> Any:
         for key, item in value.items():
             if not isinstance(key, str) or _SNAPSHOT_FORBIDDEN_FIELD.search(key):
                 raise ValueError(f"{field}_contains_forbidden_field")
+            if source_text and key and key == source_text:
+                raise ValueError(f"{field}_contains_source_text_key")
+            if _SNAPSHOT_LABEL_LINE_BREAK.search(key):
+                raise ValueError(f"{field}_contains_multiline_key")
             result[key] = _snapshot_structured_value(item, source_text, f"{field}.{key}")
         return result
     raise ValueError(f"{field}_is_not_json")
