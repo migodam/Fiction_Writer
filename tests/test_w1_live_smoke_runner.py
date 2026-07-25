@@ -632,6 +632,44 @@ def test_runner_uses_product_runtime_identity_harness_and_server_budget(tmp_path
     assert "api_key" not in json.dumps(run_config)
 
 
+def test_runner_binds_real_w1_artifact_manifest_to_runtime_identity(tmp_path, monkeypatch):
+    from sidecar.workflows import w1_import
+
+    source = tmp_path / "source.txt"
+    source.write_text("第一章\n韩立入门。", encoding="utf-8")
+    captured = {}
+
+    async def split_with_real_w1_identity(project_path, config):
+        captured["config"] = config
+        split_result = await w1_import.node_split_chunks({
+            "project_path": project_path,
+            "source_file_path": config["source_file_path"],
+            "prompt_profile": config["prompt_profile"],
+            "use_supervisor": False,
+            "runtime_lineage_id": config["runtime_lineage_id"],
+            "context": config["context"],
+            "errors": [],
+        })
+        captured["manifest"] = split_result["import_run_manifest"]
+        yield {"current_node": "done", "converge_status": "passed"}
+
+    monkeypatch.setattr(w1_import, "run_streaming", split_with_real_w1_identity)
+    result = asyncio.run(_run_live(
+        parse_args(["--source", str(source)]),
+        tmp_path / "project",
+        tmp_path / "output",
+    ))
+
+    config = captured["config"]
+    manifest = captured["manifest"]
+    assert config["runtime_lineage_id"] == result["runtime"]["lineage_id"]
+    assert config["w1_attempt_id"] == result["runtime"]["attempt_id"]
+    assert config["context"]["runtime_lineage_id"] == result["runtime"]["lineage_id"]
+    assert config["context"]["w1_attempt_id"] == result["runtime"]["attempt_id"]
+    assert manifest["lineage_id"] == result["runtime"]["lineage_id"]
+    assert manifest["attempt_id"] == result["runtime"]["attempt_id"]
+
+
 def test_runner_marks_done_passed_attempt_and_run_completed(tmp_path, monkeypatch):
     from sidecar.workflows import w1_import
 

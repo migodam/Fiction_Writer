@@ -1261,10 +1261,17 @@ async def _run_live(args: argparse.Namespace, project_path: Path, output_dir: Pa
             "use_orchestrator": True,
             "execution_mode": "supervisor",
             "budget_policy": budget_policy,
+            "runtime_lineage_id": lineage_id,
+            "w1_attempt_id": attempt_id,
         },
         "session_id": attempt_id,
         "attempt_id": attempt_id,
         "lineage_id": lineage_id,
+        # W1 node_split_chunks allocates the durable artifact identity from
+        # these explicit runtime keys.  Keep the generic IDs too for existing
+        # Harness observers, but never rely on that fallback for artifacts.
+        "runtime_lineage_id": lineage_id,
+        "w1_attempt_id": attempt_id,
         "thread_id": thread_id,
         "import_run_id": import_run_id,
     }
@@ -1276,6 +1283,8 @@ async def _run_live(args: argparse.Namespace, project_path: Path, output_dir: Pa
         "profile": args.prompt_profile,
         "endpoint": args.endpoint,
         "lineage_id": lineage_id,
+        "runtime_lineage_id": lineage_id,
+        "w1_attempt_id": attempt_id,
         "source_file_path": str(args.source.resolve()),
         "source_hash": source_hash,
         "budget_config": budget_policy,
