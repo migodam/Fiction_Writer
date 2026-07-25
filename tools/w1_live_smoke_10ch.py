@@ -726,7 +726,7 @@ def _redact_terminal_payload(value: Any, key: str = "") -> Any:
 
 _TERMINAL_FAILURE_STATUSES = frozenset({
     "error", "failed", "timeout", "stalled", "cleanup_timeout",
-    "budget_exhausted", "auth_failed", "cancelled",
+    "budget_exhausted", "auth_failed", "cancelled", "review_failed",
 })
 
 
@@ -888,27 +888,56 @@ class _DurableLiveRun:
             ).get("active_api_calls", 0),
         }
 
-    def finish(self, terminal: dict[str, Any]) -> dict[str, Any]:
-        """Close ambiguous intents, stabilize the attempt, then release its lease."""
+    def prepare_terminal(self, terminal: dict[str, Any]) -> dict[str, Any]:
+        """Close ambiguous calls before quality validation without finalizing."""
+        if self.lease_released:
+            return terminal
+        for call in self.store.list_tool_calls(self.attempt_id):
+            if call.get("status") == "intent":
+                self.store.record_tool_unknown_outcome(
+                    call["tool_call_id"],
+                    "live_canary_interrupted",
+                    attempt_id=self.attempt_id,
+                    owner_id=self.owner_id,
+                    fence_token=self.fence_token,
+                )
+        return _normalize_terminal_status(
+            terminal,
+            unknown_provider_calls=bool(
+                self.store.list_unknown_call_summaries(self.attempt_id),
+            ),
+        )
+
+    def _sync_run_status(self, status: str) -> None:
+        """Keep the CLI run's single durable attempt and enclosing run aligned."""
+        with self.store.transaction() as connection:
+            result = connection.execute(
+                "UPDATE agent_runs SET status = ?, updated_at = ? WHERE run_id = ?",
+                (status, time.time(), self.run_id),
+            )
+            if result.rowcount != 1:
+                raise RuntimeError(f"durable run missing during finish: {self.run_id}")
+
+    def finish(
+        self, terminal: dict[str, Any], *, quality_failures: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Persist a terminal state only after graph and quality gates are known."""
         from sidecar.runtime.agent_runtime import LeaseLostError
         from sidecar.workflows.w1_run_events import append_event
 
         if self.lease_released:
             return terminal
         try:
-            for call in self.store.list_tool_calls(self.attempt_id):
-                if call.get("status") == "intent":
-                    self.store.record_tool_unknown_outcome(
-                        call["tool_call_id"],
-                        "live_canary_interrupted",
-                        attempt_id=self.attempt_id,
-                        owner_id=self.owner_id,
-                        fence_token=self.fence_token,
-                    )
             unknown = self.store.list_unknown_call_summaries(self.attempt_id)
             terminal = _normalize_terminal_status(
                 terminal, unknown_provider_calls=bool(unknown),
             )
+            if quality_failures and terminal["status"] == "completed":
+                terminal = {
+                    **terminal,
+                    "status": "review_failed",
+                    "quality_failures": list(quality_failures),
+                }
             terminal_status = str(terminal["status"])
             if unknown or terminal_status == "waiting_human":
                 attempt_status = "waiting_human"
@@ -922,6 +951,7 @@ class _DurableLiveRun:
                 "phase": "terminal",
                 "tool": "live_canary",
                 "status": attempt_status,
+                "quality_failures": list(quality_failures or []),
                 "message": f"Live canary stopped with status={terminal_status or 'unknown'}.",
             })
             self.store.set_attempt_status(
@@ -930,16 +960,7 @@ class _DurableLiveRun:
                 owner_id=self.owner_id,
                 fence_token=self.fence_token,
             )
-            # RuntimeStore has no public run-terminal API yet.  The runner owns
-            # exactly one attempt, so keep its enclosing run queryable with the
-            # same status inside the existing transaction boundary.
-            with self.store.transaction() as connection:
-                result = connection.execute(
-                    "UPDATE agent_runs SET status = ?, updated_at = ? WHERE run_id = ?",
-                    (attempt_status, time.time(), self.run_id),
-                )
-                if result.rowcount != 1:
-                    raise RuntimeError(f"durable run missing during finish: {self.run_id}")
+            self._sync_run_status(attempt_status)
         finally:
             try:
                 self.store.release_lease(
@@ -1361,15 +1382,20 @@ async def _run_live(args: argparse.Namespace, project_path: Path, output_dir: Pa
             await release_lock(str(project_path))
         except Exception:
             pass
-        terminal = runtime.finish(terminal)
+        terminal = runtime.prepare_terminal(terminal)
 
     probe = _quality_probe(
         project_path,
         expected_lineage_id=lineage_id,
         expected_attempt_id=attempt_id,
     )
+    terminal = runtime.finish(
+        terminal,
+        quality_failures=_quality_probe_failures(probe),
+    )
     runtime_summary = runtime.summary()
     runtime_summary.update({
+        "terminal": _redact_terminal_payload(terminal),
         "workflow_lock_present": (
             project_path / "workflow.lock"
         ).exists(),

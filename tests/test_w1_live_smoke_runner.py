@@ -2,6 +2,8 @@ import json
 import asyncio
 import hashlib
 
+import tools.w1_live_smoke_10ch as live_smoke_runner
+
 from tools.w1_live_smoke_10ch import (
     _artifact_secret_leaks,
     _normalize_terminal_status,
@@ -624,7 +626,10 @@ def test_runner_uses_product_runtime_identity_harness_and_server_budget(tmp_path
     assert captured["runtime_fence_token"] >= 1
     assert captured["budget_policy"]["max_cost_usd"] == 3.0
     assert captured["budget_policy"]["max_calls"] == 100
+    assert result["terminal"]["status"] == "waiting_human"
     assert result["runtime"]["attempt"]["status"] == "waiting_human"
+    assert result["runtime"]["run"]["status"] == "waiting_human"
+    assert result["runtime"]["terminal"]["status"] == "waiting_human"
     run_config = captured["runtime_store"].get_run(
         result["runtime"]["run_id"],
     )["config"]
@@ -670,7 +675,7 @@ def test_runner_binds_real_w1_artifact_manifest_to_runtime_identity(tmp_path, mo
     assert manifest["attempt_id"] == result["runtime"]["attempt_id"]
 
 
-def test_runner_marks_done_passed_attempt_and_run_completed(tmp_path, monkeypatch):
+def test_runner_marks_done_passed_quality_failure_as_review_failed(tmp_path, monkeypatch):
     from sidecar.workflows import w1_import
 
     source = tmp_path / "source.txt"
@@ -689,9 +694,48 @@ def test_runner_marks_done_passed_attempt_and_run_completed(tmp_path, monkeypatc
         tmp_path / "output",
     ))
 
+    assert result["terminal"]["status"] == "review_failed"
+    assert result["terminal"]["quality_failures"]
+    assert result["runtime"]["attempt"]["status"] == "failed"
+    assert result["runtime"]["run"]["status"] == "failed"
+    assert result["runtime"]["terminal"]["status"] == "review_failed"
+    assert _smoke_result_exit_code(result) == 1
+    final_result = json.loads((tmp_path / "output" / "final_result.json").read_text(encoding="utf-8"))
+    assert final_result["terminal"]["status"] == "review_failed"
+
+
+def test_runner_marks_clean_done_passed_attempt_and_run_completed(tmp_path, monkeypatch):
+    from sidecar.workflows import w1_import
+
+    source = tmp_path / "source.txt"
+    source.write_text("第一章\n韩立入门。", encoding="utf-8")
+
+    async def done_passed(_project_path, _config):
+        yield {"current_node": "done", "converge_status": "passed"}
+
+    def clean_probe(_project_path, **kwargs):
+        probe = _passing_probe()
+        probe.update({
+            "expected_lineage_id": kwargs["expected_lineage_id"],
+            "expected_attempt_id": kwargs["expected_attempt_id"],
+            "artifact_lineage_id": kwargs["expected_lineage_id"],
+            "artifact_attempt_id": kwargs["expected_attempt_id"],
+        })
+        return probe
+
+    monkeypatch.setattr(w1_import, "run_streaming", done_passed)
+    monkeypatch.setattr(live_smoke_runner, "_quality_probe", clean_probe)
+    result = asyncio.run(_run_live(
+        parse_args(["--source", str(source)]),
+        tmp_path / "project",
+        tmp_path / "output",
+    ))
+
     assert result["terminal"]["status"] == "completed"
     assert result["runtime"]["attempt"]["status"] == "completed"
     assert result["runtime"]["run"]["status"] == "completed"
+    assert result["runtime"]["terminal"]["status"] == "completed"
+    assert _smoke_result_exit_code(result) == 0
 
 
 def test_runner_cancel_marks_provider_intent_unknown_and_cleans_lock(tmp_path, monkeypatch):
