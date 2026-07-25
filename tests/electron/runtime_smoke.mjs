@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import http from 'node:http';
 import os from 'node:os';
@@ -18,7 +19,7 @@ const fixture = `<!doctype html>
 </script></body></html>`;
 
 const startedAt = process.hrtime.bigint();
-const resources = { app: undefined, vite: undefined, sidecarPid: undefined, userData: undefined };
+const resources = { app: undefined, vite: undefined, sidecarPid: undefined, sidecarPort: undefined, userData: undefined };
 let cleanupPromise;
 
 let providerModelsRequest;
@@ -201,6 +202,143 @@ async function cleanup(tempDirectories = []) {
   return cleanupPromise;
 }
 
+function runRuntimeFixture(stage, script, args = []) {
+  const python = path.join(process.cwd(), 'sidecar', '.venv', 'bin', 'python');
+  const result = spawnSync(python, ['-c', script, ...args], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+    timeout: 20_000,
+  });
+  assert.equal(result.status, 0, `${stage} failed: ${result.stderr || result.stdout}`);
+  return JSON.parse(result.stdout);
+}
+
+const resumableRuntimeFixtureScript = String.raw`
+import hashlib
+import json
+import sqlite3
+import sys
+
+from sidecar.models.state import make_source_span
+from sidecar.runtime.agent_runtime import RuntimeStore
+from sidecar.runtime.w1_supervisor_snapshot import write_w1_supervisor_snapshot
+from sidecar.supervisor import policy
+from sidecar.workflows.w1_agentic_adapter import build_supervisor_snapshot_identities
+
+project = sys.argv[1]
+source_text = "第1章\\n韩立进入七玄门。\\n"
+source_path = f"{project}/runtime-smoke-source.txt"
+with open(source_path, "w", encoding="utf-8") as handle:
+    handle.write(source_text)
+source_hash = hashlib.sha256(source_text.encode("utf-8")).hexdigest()
+store = RuntimeStore(project)
+run = store.create_run(
+    workflow_id="W1",
+    lineage_id="electron-runtime-lineage",
+    thread_id="electron-runtime-thread",
+    config={
+        "project_path": project,
+        "source_file_path": source_path,
+        "source_hash": source_hash,
+        "model": "deepseek-v4-flash",
+        "profile": "balanced",
+        "prompt_profile": "balanced",
+        "execution_mode": "supervisor",
+        "import_mode": "import_all",
+        "budget_config": {"max_cost_usd": 3.0},
+    },
+)
+attempt = store.create_attempt(run["run_id"], attempt_id="electron-runtime-parent")
+lease = store.acquire_lease(attempt["attempt_id"], "electron-runtime-fixture", ttl_seconds=60)
+staged_relative = "system/imports/electron-runtime-lineage/attempts/electron-runtime-parent/raw_source.txt"
+staged_path = f"{project}/{staged_relative}"
+import os
+os.makedirs(os.path.dirname(staged_path), exist_ok=True)
+with open(staged_path, "w", encoding="utf-8") as handle:
+    handle.write(source_text)
+span = make_source_span(source_text, 0, len(source_text))
+state = policy._snapshot_state({
+    "source_text": source_text,
+    "import_run_id": "electron-runtime-import",
+    "source_language": "zh",
+    "chunks": [{"chunk_id": 0, "source_span": span, "content": source_text}],
+    "chunk_extractions": [],
+    "entity_registry": {"characters": {}, "events": {}, "world": {}, "world_detailed": {}},
+    "relationships": [], "raw_relationships": [], "character_tags": [],
+    "world_settings": {}, "world_containers": [], "organizer_output": {},
+    "timeline_architecture": {}, "timeline_branches": [], "reducer_artifact": {},
+    "import_review_report": {}, "judge_artifact": {}, "gate_failures": [],
+    "manuscript_chapters": [], "proposals": [], "evidence_cards": [],
+    "import_run_manifest": {"import_run_id": "electron-runtime-import"},
+    "project_structure_digest": {},
+})
+config = {
+    "project_path": project, "source_file_path": source_path, "source_hash": source_hash,
+    "model": "deepseek-v4-flash", "prompt_profile": "balanced",
+    "execution_mode": "supervisor", "import_mode": "import_all",
+    "budget_config": {"max_cost_usd": 3.0},
+    "w1_supervisor_staged_source_relative_path": staged_relative,
+}
+source_identity, config_identity = build_supervisor_snapshot_identities(config, project_path=project)
+checkpoint_id = "electron-runtime-checkpoint"
+reference = write_w1_supervisor_snapshot(
+    project, lineage_id=run["lineage_id"], attempt_id=attempt["attempt_id"],
+    checkpoint_id=checkpoint_id, node="reduce_repair", next_node="architect_timeline",
+    source_identity=source_identity, config_identity=config_identity, state=state,
+    completed_nodes=["validate_file", "extract_window", "reduce_repair"],
+    budget_snapshot={"budget_limit_usd": 3.0, "spent_usd": 0.0},
+)
+store.record_checkpoint_metadata(
+    attempt["attempt_id"], checkpoint_id, node="reduce_repair", sequence=1,
+    metadata={"recovery_mode": "resumable", "snapshot_ref": reference.to_dict(), "next_node": "architect_timeline"},
+    owner_id="electron-runtime-fixture", fence_token=lease["fence_token"],
+)
+store.set_attempt_status(attempt["attempt_id"], "paused", owner_id="electron-runtime-fixture", fence_token=lease["fence_token"])
+store.append_event(
+    attempt["attempt_id"], "agent.progress", {"summary": "fixture-event-1"},
+    owner_id="electron-runtime-fixture", fence_token=lease["fence_token"],
+    idempotency_key="electron-runtime-event-1", contract_version="AgentEvent/v1",
+    actor={"kind": "system", "id": "electron-runtime-fixture"},
+)
+with sqlite3.connect(store.database_path) as connection:
+    connection.execute("DELETE FROM run_leases WHERE attempt_id = ?", (attempt["attempt_id"],))
+print(json.dumps({"attempt_id": attempt["attempt_id"], "checkpoint_id": checkpoint_id, "lineage_id": run["lineage_id"]}))
+`;
+
+const appendRuntimeEventFixtureScript = String.raw`
+import json
+import sqlite3
+import sys
+
+from sidecar.runtime.agent_runtime import RuntimeStore
+
+store = RuntimeStore(sys.argv[1])
+attempt_id = sys.argv[2]
+lease = store.acquire_lease(attempt_id, "electron-runtime-fixture", ttl_seconds=60)
+event = store.append_event(
+    attempt_id, "agent.progress", {"summary": "fixture-event-2"},
+    owner_id="electron-runtime-fixture", fence_token=lease["fence_token"],
+    idempotency_key="electron-runtime-event-2", contract_version="AgentEvent/v1",
+    actor={"kind": "system", "id": "electron-runtime-fixture"},
+)
+with sqlite3.connect(store.database_path) as connection:
+    connection.execute("DELETE FROM run_leases WHERE attempt_id = ?", (attempt_id,))
+print(json.dumps({"sequence": event["sequence"], "event_id": event["event_id"]}))
+`;
+
+async function assertSidecarPortClosed(port) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 1_000);
+  try {
+    await fetch(`http://127.0.0.1:${port}/health`, { signal: controller.signal });
+    throw new Error(`Sidecar port ${port} remained reachable after Electron quit`);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('remained reachable')) throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function main() {
   const userData = await mkdtemp(path.join(os.tmpdir(), 'narrative-ide-electron-smoke-'));
   resources.userData = userData;
@@ -363,7 +501,86 @@ async function main() {
   const projectIdentity = createHash('sha256').update(canonicalProjectRoot, 'utf8').digest('hex').slice(0, 40);
   const pidFile = path.join(os.homedir(), '.narrative-ide', 'processes', `${projectIdentity}.json`);
   resources.sidecarPid = JSON.parse(await readFile(pidFile, 'utf8')).pid;
+  resources.sidecarPort = runtime.firstSpawn.port;
   assert.equal(typeof resources.sidecarPid, 'number');
+
+  const resumableFixture = await runStage('runtime.seed-resumable-fixture', 30_000, () =>
+    runRuntimeFixture('runtime resumable fixture', resumableRuntimeFixtureScript, [projectRoot]));
+  const runtimeBridge = await runStage('fixture-page.runtime-bridge-real-api', 35_000, () => page.evaluate(async ({ projectRoot, attemptId, checkpointId }) => {
+    const bridge = window.narrativeIDE;
+    const recoverable = await bridge.runtimeRecoverable({ projectRoot });
+    const checkpoints = await bridge.runtimeCheckpoints({ projectRoot, attempt_id: attemptId });
+    const polled = await bridge.runtimeEvents({ projectRoot, attempt_id: attemptId, after_sequence: 0 });
+    const events = [];
+    const statuses = [];
+    const unsubscribeEvents = bridge.onRuntimeEvent((message) => events.push(message));
+    const unsubscribeStatuses = bridge.onRuntimeEventStreamStatus((message) => statuses.push(message));
+    try {
+      const subscription = await bridge.runtimeEventStreamSubscribe({
+        projectRoot, attempt_id: attemptId, after_sequence: 0, subscription_id: 'electron-runtime-resume-1',
+      });
+      if (!subscription.ok) throw new Error(subscription.error || 'initial SSE subscription failed');
+      const deadline = Date.now() + 10_000;
+      while (!events.some((message) => message.event?.sequence === 1)) {
+        if (Date.now() >= deadline) throw new Error('initial real SSE event missing');
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      await bridge.runtimeEventStreamUnsubscribe({ subscription_id: 'electron-runtime-resume-1' });
+    } finally {
+      unsubscribeEvents();
+      unsubscribeStatuses();
+    }
+    const fork = await bridge.runtimeFork({
+      projectRoot, attempt_id: attemptId, checkpoint_id: checkpointId, decision_id: 'electron-runtime-fork-1',
+    });
+    return { recoverable, checkpoints, polled, events, statuses, fork };
+  }, { projectRoot, attemptId: resumableFixture.attempt_id, checkpointId: resumableFixture.checkpoint_id }));
+  assert.equal(runtimeBridge.recoverable.error, undefined, JSON.stringify(runtimeBridge.recoverable));
+  assert(runtimeBridge.recoverable.runs.some((run) => run.attempt_id === resumableFixture.attempt_id), 'recoverable attempt must come from the real sidecar runtime API');
+  assert.equal(runtimeBridge.checkpoints.error, undefined, JSON.stringify(runtimeBridge.checkpoints));
+  assert.equal(runtimeBridge.checkpoints.checkpoints.length, 1);
+  assert.equal(runtimeBridge.checkpoints.checkpoints[0].checkpoint_id, resumableFixture.checkpoint_id);
+  assert.equal(runtimeBridge.polled.events.length, 1);
+  assert.equal(runtimeBridge.polled.events[0].sequence, 1);
+  assert(runtimeBridge.statuses.some((status) => status.status === 'open'), JSON.stringify(runtimeBridge.statuses));
+  assert.deepEqual(runtimeBridge.events.map((message) => message.event.sequence), [1]);
+  assert.equal(runtimeBridge.fork.error, undefined, JSON.stringify(runtimeBridge.fork));
+  assert.equal(runtimeBridge.fork.fork_snapshot.resumable, true);
+  assert.equal(runtimeBridge.fork.fork_snapshot.state_reference.kind, 'w1_supervisor_snapshot/v1');
+  assert.equal(runtimeBridge.fork.fork_snapshot.state_reference.resumable, true);
+  assert.equal(runtimeBridge.fork.fork_snapshot.snapshot_ref, undefined, 'snapshot ref must only exist in state_reference');
+  assert.equal(runtimeBridge.fork.fork_snapshot.state_reference.snapshot_ref.checkpoint_id, resumableFixture.checkpoint_id);
+
+  const secondEvent = await runStage('runtime.append-reconnect-event', 30_000, () =>
+    runRuntimeFixture('runtime reconnect event', appendRuntimeEventFixtureScript, [projectRoot, resumableFixture.attempt_id]));
+  assert(secondEvent.sequence > 1, 'fixture reconnect event must follow the initial durable event');
+  const reconnectedBridge = await runStage('fixture-page.runtime-bridge-sse-reconnect', 30_000, () => page.evaluate(async ({ projectRoot, attemptId, reconnectCursor, expectedSequence }) => {
+    const bridge = window.narrativeIDE;
+    const replayed = [];
+    const statuses = [];
+    const unsubscribeEvents = bridge.onRuntimeEvent((message) => replayed.push(message));
+    const unsubscribeStatuses = bridge.onRuntimeEventStreamStatus((message) => statuses.push(message));
+    try {
+      const subscription = await bridge.runtimeEventStreamSubscribe({
+        projectRoot, attempt_id: attemptId, after_sequence: reconnectCursor, subscription_id: 'electron-runtime-resume-2',
+      });
+      if (!subscription.ok) throw new Error(subscription.error || 'reconnect SSE subscription failed');
+      const deadline = Date.now() + 10_000;
+      while (!replayed.some((message) => message.event?.sequence === expectedSequence)) {
+        if (Date.now() >= deadline) throw new Error('reconnected real SSE event missing');
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      const polled = await bridge.runtimeEvents({ projectRoot, attempt_id: attemptId, after_sequence: reconnectCursor });
+      await bridge.runtimeEventStreamUnsubscribe({ subscription_id: 'electron-runtime-resume-2' });
+      return { replayed, statuses, polled };
+    } finally {
+      unsubscribeEvents();
+      unsubscribeStatuses();
+    }
+  }, { projectRoot, attemptId: resumableFixture.attempt_id, reconnectCursor: secondEvent.sequence - 1, expectedSequence: secondEvent.sequence }));
+  assert(reconnectedBridge.statuses.some((status) => status.status === 'open'), JSON.stringify(reconnectedBridge.statuses));
+  assert.deepEqual(reconnectedBridge.replayed.map((message) => message.event.sequence), [secondEvent.sequence]);
+  assert.deepEqual(reconnectedBridge.polled.events.map((event) => event.sequence), [secondEvent.sequence]);
 
   const portraitSecurity = await runStage('fixture-page.portrait-source-grants', 30_000, () => page.evaluate(async ({ expectedProjectRoot, unauthorizedPath }) => {
     const bridge = window.narrativeIDE;
@@ -529,6 +746,27 @@ async function main() {
   assert.equal(roundtrip.savedName, 'Bridge Roundtrip Saved');
   assert.equal(roundtrip.openedName, 'Bridge Roundtrip Saved');
   assert.match(roundtrip.projectJson, /Bridge Roundtrip Saved/);
+
+  const activeStream = await runStage('fixture-page.runtime-stream-before-close', 20_000, () => page.evaluate(async ({ projectRoot, attemptId }) => {
+    const bridge = window.narrativeIDE;
+    const statuses = [];
+    const unsubscribe = bridge.onRuntimeEventStreamStatus((message) => statuses.push(message));
+    const subscription = await bridge.runtimeEventStreamSubscribe({
+      projectRoot, attempt_id: attemptId, after_sequence: 2, subscription_id: 'electron-runtime-close-cleanup',
+    });
+    if (!subscription.ok) throw new Error(subscription.error || 'close-cleanup SSE subscription failed');
+    const deadline = Date.now() + 5_000;
+    while (!statuses.some((status) => status.status === 'open')) {
+      if (Date.now() >= deadline) throw new Error('close-cleanup SSE stream did not open');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    // Deliberately leave the stream subscribed. Electron shutdown must abort it.
+    return { statuses, unsubscribe: typeof unsubscribe };
+  }, { projectRoot, attemptId: resumableFixture.attempt_id }));
+  assert.equal(activeStream.unsubscribe, 'function');
+  assert(activeStream.statuses.some((status) => status.status === 'open'));
+  await closeElectron();
+  await assertSidecarPortClosed(resources.sidecarPort);
 
   log('result', 'Electron runtime smoke passed.');
   } finally {
