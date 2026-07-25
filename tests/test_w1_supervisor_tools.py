@@ -1671,6 +1671,44 @@ class TestProposalWriteSlimWriteInput(unittest.TestCase):
         self.assertIn("entity_registry", captured_state)
         self.assertIn("project_path", captured_state)
 
+    def test_receipts_fail_closed_when_gate_is_false_or_domain_completion_is_missing(self):
+        import tempfile
+
+        captured_state: dict = {}
+
+        async def _capture_write(state):
+            captured_state.update(state)
+            return {"proposals": [], "import_review_report": {}, "errors": [], "status": "done", "progress": 1.0}
+
+        with tempfile.TemporaryDirectory() as td:
+            state = _make_state(
+                project_path=td,
+                import_run_id="test_receipts",
+                prompt_windows=[
+                    {"id": "pwin_false", "chunk_ids": [0]},
+                    {"id": "pwin_legacy", "chunk_ids": [1]},
+                    {"id": "pwin_complete", "chunk_ids": [2]},
+                ],
+                window_metrics={
+                    "pwin_false": {"gate_passed": False, "failed_prompts": []},
+                    "pwin_legacy": {"gate_passed": True, "failed_prompts": []},
+                    "pwin_complete": {"gate_passed": True, "failed_prompts": [], "completed_domains": ["character", "event", "world", "relationship", "scene"]},
+                },
+            )
+            with (
+                patch("sidecar.supervisor.tools.node_build_manuscript", new=AsyncMock(return_value={"manuscript_chapters": []})),
+                patch("sidecar.supervisor.tools.node_synthesize_relationships", new=AsyncMock(return_value={})),
+                patch("sidecar.supervisor.tools.node_classify_character_tags", new=AsyncMock(return_value={})),
+                patch("sidecar.supervisor.tools.node_infer_world_settings", new=AsyncMock(return_value={})),
+                patch("sidecar.supervisor.tools.node_write_to_project", new=AsyncMock(side_effect=_capture_write)),
+            ):
+                _run(proposal_write(state))
+
+        receipts = {item["chunk_id"]: item for item in captured_state["supervisor_semantic_receipts"]}
+        assert set(receipts[0]["domain_status"].values()) == {"unknown"}
+        assert set(receipts[1]["domain_status"].values()) == {"unknown"}
+        assert set(receipts[2]["domain_status"].values()) == {"complete"}
+
 
 # ── P1: proposal_write preserves evidence-backed character profiles ──────────
 

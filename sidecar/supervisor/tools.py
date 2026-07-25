@@ -625,6 +625,7 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
 
     labels = ["character", "event", "world", "relationship", "scene"]
     outputs: list[dict] = []
+    completed_domains: list[str] = []
     _budget_exhausted_in_window = False
     for i, (label, result) in enumerate(zip(labels, results)):
         if isinstance(result, ProviderCallRequiresHumanConfirmation):
@@ -638,6 +639,7 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
             outputs.append({})
         else:
             outputs.append(result if isinstance(result, dict) else {})
+            completed_domains.append(label)
 
     char_data, event_data, world_data, rel_data, scene_data = outputs
 
@@ -835,6 +837,9 @@ async def extract_window(state: ImportSupervisorState, window_id: str) -> dict:
         "world_count_extracted": len(new_world),
         "relationship_count_extracted": new_relationship_count,
         "failed_prompts": failed_prompts,
+        # This is a receipt of successful prompt return, not an inference from
+        # entity counts. Empty output remains a valid completed domain.
+        "completed_domains": sorted(completed_domains),
         "confidence_distribution": {},
         "missing_majors_count": 0,
         "duplicate_count": 0,
@@ -2149,21 +2154,38 @@ async def proposal_write(state: ImportSupervisorState) -> dict:
             for item in metrics.get("failed_prompts", [])
             if str(item).strip()
         }
+        completed_labels = {
+            str(item).strip()
+            for item in metrics.get("completed_domains", [])
+            if str(item).strip()
+        }
+        gate_passed = metrics.get("gate_passed") is True
+
+        def _domain_status(label: str) -> str:
+            if label in failed_labels:
+                return "failed"
+            if not gate_passed:
+                return "unknown"
+            # Legacy metrics without this receipt cannot prove that an empty
+            # domain was actually returned. Keep the proposal gate closed.
+            return "complete" if label in completed_labels else "unknown"
+
         for chunk_id in window.get("chunk_ids", []) or []:
             supervisor_semantic_receipts.append({
                 "chunk_id": chunk_id,
                 "window_id": window_id,
                 "domain_status": {
-                    "characters": "failed" if "character" in failed_labels else "complete",
-                    "events": "failed" if "event" in failed_labels else "complete",
-                    "world": "failed" if "world" in failed_labels else "complete",
-                    "relationships": "failed" if "relationship" in failed_labels else "complete",
-                    "scenes": "failed" if "scene" in failed_labels else "complete",
+                    "characters": _domain_status("character"),
+                    "events": _domain_status("event"),
+                    "world": _domain_status("world"),
+                    "relationships": _domain_status("relationship"),
+                    "scenes": _domain_status("scene"),
                 },
                 "completion_evidence": {
                     "contract": "w1-supervisor-window-receipt/v1",
                     "failed_prompts": sorted(failed_labels),
-                    "window_gate_passed": bool(metrics.get("gate_passed")),
+                    "completed_domains": sorted(completed_labels),
+                    "window_gate_passed": gate_passed,
                 },
             })
 
