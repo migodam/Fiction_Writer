@@ -2,13 +2,16 @@
 
 > For supervisor-mode operation (`use_supervisor=true`), see [W1_AGENTIC_IMPORT_SUPERVISOR.md](./W1_AGENTIC_IMPORT_SUPERVISOR.md).
 
-## Durable Attempt and Artifact Contract (2026-07-15)
+## Durable Attempt, Resume, and Artifact Contract (Current 2026-07-25)
 
 Each W1 execution has stable input-derived lineage/cache identity and a distinct
 attempt directory under `system/imports/<lineage_id>/attempts/<attempt_id>/`.
 Checkpoint receipts revalidate source and receipt hashes before recovery. A
 legacy import can migrate only from a verified contiguous prefix; stale,
-noncanonical, tampered, or source-mutated state fails closed.
+noncanonical, tampered, or source-mutated state fails closed. Every active
+attempt owns a RuntimeStore lease and fencing token. Snapshot publication,
+checkpoint publication, and resumable metadata require that current fence; a
+stale worker cannot publish state for a later child attempt.
 
 Staged manuscript packages use ArtifactRef v2: relative path, SHA-256, contract
 version, lineage ID, and attempt ID. Workbench acceptance rejects uncontained
@@ -21,7 +24,42 @@ has no `fsync`, so this is not a power-loss guarantee.
 The runtime records tool intents/results and may mark post-restart calls
 `unknown_outcome`. Recovery Center requires a durable, versioned human decision
 to retry exactly once or cancel; recovery never repeats an unknown paid call by
-default.
+default. An authorization is bound to the source attempt and exact provider
+tool-call ID, then consumed atomically immediately before provider I/O. A
+verified receipt is reused instead of calling the provider again.
+
+### W1 Supervisor Snapshot Contract (2026-07-25)
+
+`W1SupervisorSnapshot/v1` is the only resumable W1 snapshot reference. It
+contains immutable lineage/attempt identity, source/config/artifact receipts,
+validated parent checkpoint identity, and typed body-free resume state. The UI
+may show an incomplete, invalid, or source-incompatible checkpoint as a preview
+but cannot fork/resume it.
+
+`W1ResumeState/v1` retains all proposal-writer dependencies: character merge
+maps/updates, tags, relationships, World operations, organizer output,
+chapters/scenes, and the complete timeline branch contract. Source-derived prose
+is `W1SourceTextRef/v1` plus `SourceSpan` and is rebuilt only from verified raw
+source. Snapshot JSON must not contain chapter/scene bodies, prompt text, hidden
+reasoning, API keys, absolute project paths, or arbitrary opaque state.
+
+Time Travel creates a child attempt from a stable parent checkpoint. It does not
+mutate existing history or overwrite accepted canonical data. Resumed W1 output
+returns to the proposal gate and stays `waiting_human`/`awaiting_acceptance`
+until the user accepts a complete package.
+
+### Server Budget and Live-Runner Contract (2026-07-25)
+
+All W1 starts and resumes use the same server-side `W1BudgetPolicy` normalizer.
+Flash is capped at USD 3 and Pro at USD 8; calls, input/output/total tokens,
+pricing, and missing usage fail closed. Client resume configuration can only
+tighten a stored policy and cannot introduce unknown fields or relax a ceiling.
+
+The live 10-chapter runner must bind a durable RuntimeStore run/attempt/lease
+and the product supervisor/Harness observer. It records intent before provider
+I/O and advances its watchdog only on durable work activity. Cancellation or
+timeout at an ambiguous provider boundary becomes `unknown_outcome`, releases
+the lock/lease, and requires a human decision; it is not a completed canary.
 
 ### Provider Response Recovery Contract (2026-07-19)
 
@@ -56,6 +94,10 @@ W1 import now uses a Hybrid Compiler spine for long novel imports. The runtime s
 
 ## Artifact Contracts
 - `ImportRunManifest`: `system/imports/<import_run_id>/manifest.json`; source hash, segments, prompt profile, model, and artifact directory.
+- `W1SupervisorSnapshot`: immutable body-free snapshot directory with manifest,
+  typed `W1ResumeState/v1`, source/config/receipt proofs, and a strict
+  `W1SupervisorSnapshot/v1` reference. Source strings use `W1SourceTextRef/v1`
+  and verified `SourceSpan`, never an embedded chapter body.
 - `ProjectStructureDigest`: `project_structure_digest.json`; compact existing-project context for import prompts, including characters, character groups/tags, relationships, timeline branches, world containers/items, and proposal/issue risk counts.
 - `PromptWindows`: `prompt_windows.json` plus manifest `prompt_windows`; packed chapter-aware prompt input windows with one or more chunk ids, chapter range, total/source budget, estimated tokens, source chars/tokens, fill ratio, digest/validation token estimates, source span, and split reason.
 - `EvidenceCard`: `evidence_cards.json`; raw candidate evidence with source segment, confidence, candidate names/ids, and uncertainty.
@@ -63,7 +105,7 @@ W1 import now uses a Hybrid Compiler spine for long novel imports. The runtime s
 - `CrossValidationArtifact`: `cross_validation.json`; duplicate characters/events, missing major characters, suspicious groups, contradictory aliases, event merge recommendations, and warnings.
 - `TimelineArchitectureArtifact`: `timeline_architecture.json`; branch list, canonical events, event classifications, discarded duplicates, scene beats, background references, fork/merge anchors, density policy, fork/merge-ready branch metadata, and layout hints.
 - `ImportReviewReport`: `review_report.json`; pass/warning/fail status, warnings/errors, proposal counts, safe accept ids, blocked ids, failed chunks, duplicate merges, low-confidence items, model/profile, and artifact paths.
-- `UsageLedger`: `usage_ledger.json`; authoritative non-secret provider usage for the run: actual input/output/total tokens, `actual_calls` and `api_call_count` compatibility alias, cost, model/pricing, and budget-exhaustion status. It is atomically replaced in the run artifact directory. Budget preflight returns a caller-owned reservation token that is settled or released by identity after provider I/O, so differently sized concurrent calls can complete out of order without dropping the wrong in-flight call/token/cost allowance. The legacy boolean preflight API remains task-locally bound for compatibility. Live runs fail closed when a completed provider call omits usage and `fail_on_missing_usage` is enabled.
+- `UsageLedger`: `usage_ledger.json`; authoritative non-secret provider usage for the run: actual input/output/total tokens, `actual_calls` and `api_call_count` compatibility alias, cost, model/pricing, and budget-exhaustion status. It is atomically replaced in the run artifact directory. Budget preflight returns a caller-owned reservation token that is settled or released by identity after provider I/O, so differently sized concurrent calls can complete out of order without dropping the wrong in-flight call/token/cost allowance. The legacy boolean preflight API remains task-locally bound for compatibility. Live runs fail closed when a completed provider call omits usage and `fail_on_missing_usage` is enabled. The effective policy is server-normalized and resume may only tighten it.
 - `PromptPolicyDecision`: `prompt_policy_decision.json`; deterministic Orchestrator policy choice, normalized PromptPolicyPatch knobs, directive keys, and zero-cost rationale for density/topology/world-scope decisions.
 - `PromptProfile`: `fast`, `balanced`, `deep`, or `custom`; controls per-prompt text budget and is recorded in the manifest.
 

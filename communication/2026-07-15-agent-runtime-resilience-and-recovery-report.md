@@ -1,12 +1,20 @@
-# Narrative IDE Agent Runtime Resilience and Recovery Report
+# Narrative IDE Agent Runtime Resilience and Recovery Report (Historical Baseline)
 
-**Final implementation review:** 2026-07-21
+> **Superseded as the current verdict on 2026-07-25.** This file preserves the
+> 2026-07-21 evidence snapshot. It must not be used to claim that the current
+> paid Flash canary completed, that every current diagnostic is green, or that
+> the current Import Text 18 recovery has no unknown provider outcome. Use
+> [`2026-07-25-agent-runtime-harness-reviewer-ready-report.md`](2026-07-25-agent-runtime-harness-reviewer-ready-report.md)
+> for the active reviewer gate and the honest current canary status.
+
+**Historical implementation review:** 2026-07-21
 **Branch:** `codex/agent-runtime-resilience`
 **Backup tag:** `backup/agent-runtime-pre-resilience-20260715` (`c9598dc`)
 
-## Executive Verdict
+## Historical Executive Verdict
 
-The durable Agent Runtime implementation is reviewer-ready. Automated backend,
+The durable Agent Runtime implementation was reviewer-ready for its 2026-07-21
+baseline. Automated backend,
 frontend, Electron lifecycle, crash recovery, real-fixture acceptance,
 original benchmark migration, paid provider recovery, and offline artifact
 repair gates pass. The current W1/runtime suite is **782 passed**.

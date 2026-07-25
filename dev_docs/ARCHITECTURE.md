@@ -33,6 +33,40 @@ Python sidecar (`sidecar`)
   -> W0-W7 workflow execution, lock handling, status endpoints, proposal-producing operations
 ```
 
+## Durable Agent Runtime and Harness (2026-07-25)
+
+W1 uses a constrained durable harness rather than an in-memory free-form agent
+loop.
+
+```text
+React Import Workspace / Agent Dock
+  -> Electron IPC -> sidecar workflow/runtime API
+  -> RuntimeStore SQLite WAL (run, attempt, lease, event, decision, receipt)
+  -> bounded planner + registered tools + W1 supervisor
+  -> intent before provider/cache I/O
+  -> artifact receipt + checkpoint
+  -> semantic coverage + compiled package graph
+  -> explicit human proposal gate -> single-writer canonical transaction
+```
+
+- `system/runtime/agent_runtime.db` is the authoritative control ledger for
+  lineage/run/attempt identity, leases/fencing, durable event sequence, tool
+  intents/results, receipts, human decisions, and checkpoint metadata. W1 graph
+  checkpoints are persisted separately.
+- Electron remains the only native bridge. React reaches runtime state through
+  services, IPC, and API endpoints; it never opens the runtime DB.
+- Planner/Self-Ask/ReAct behavior is bounded by registered typed tools,
+  budget/time/step limits, deterministic validators, and a single-writer
+  proposal/canonical boundary. Agents exchange durable artifacts, not shared
+  memory objects.
+- Recovery validates source/config/artifacts/snapshot/parent-chain and creates
+  a child attempt. A running parent cannot be forked. Accepted canonical data is
+  never silently changed by Time Travel.
+- Provider calls are intent-first and receipt-backed. Ambiguous interruption is
+  `unknown_outcome`, requiring an exact human decision before one retry or
+  cancellation. API keys, prompts, source bodies, and hidden reasoning are not
+  persisted in the runtime ledger or resumable snapshot.
+
 ## Active Module Inventory
 The current route-backed modules are:
 - Workbench
@@ -91,9 +125,14 @@ The shell also includes a persistent Agent Dock and Status Bar.
 ## Known Architectural Gaps
 - W0 Orchestrator has verified backend behavior but lacks a canonical production control surface.
 - W2 Manuscript Sync has verified backend behavior but lacks a stable production trigger in the UI.
-- Proposal acceptance and canonical-data safety need stronger end-to-end closure across Workbench and shared references.
+- Complete P0/P1 browser regression must be rerun after the final UI changes;
+  focused tests and Electron runtime smoke are not a replacement.
+- A fresh-project Flash 10-chapter canary must complete and stop at proposal
+  gate before any larger/Pro run. A legacy unknown provider outcome remains an
+  explicit human cancel/retry decision.
+- Headed Electron user-project package acceptance with reviewer quarantine is
+  still a manual/production validation boundary.
 - Publish/export is present as a workspace but not yet a fully closed delivery subsystem.
-- Sidecar lifecycle, restart ergonomics, and shared runtime surfaces still need hardening.
 - The web bundle is already large enough to justify later code-splitting and scale-minded UI work.
 
 ## Legacy and Reference Paths

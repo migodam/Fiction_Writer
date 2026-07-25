@@ -21,13 +21,16 @@ When adding a new button or feature:
 3. Mark status as 🧪 UNTESTED
 4. After verifying end-to-end, update to ✅ COMPLETE
 
-## Verification Boundary (2026-07-15)
+## Verification Boundary (Current 2026-07-25)
 
 Older rows retain historical implementation notes. They are not proof that a
 live DeepSeek/provider call or real import-fixture acceptance passed in this
 worktree. The resilience work has automated Python and mocked-IPC/Playwright
 coverage only; exact commands and outcomes are in
-`dev_logs/2026-07-15-agent-runtime-resilience.md`.
+`dev_logs/2026-07-15-agent-runtime-resilience.md`. Current runtime/canary truth
+is in `communication/2026-07-25-agent-runtime-harness-reviewer-ready-report.md`:
+the first fresh canary stalled under the old runner and is not a success claim;
+the next fresh Flash run is proposal-gated and pending.
 
 ---
 
@@ -123,9 +126,9 @@ coverage only; exact commands and outcomes are in
 | UI Element | Component File | Store Action | electronApi Method | IPC Channel | Sidecar Endpoint | AI Workflow | Status | Notes |
 |---|---|---|---|---|---|---|---|---|
 | Import novel | ImportWorkflow.tsx + WorkbenchWorkspace.tsx | startImport | w1Start | w1:start | POST /workflow/w1/start | W1 Import Compiler (DeepSeek) | ✅ COMPLETE | Hybrid compiler artifacts added; prompt_profile recorded; see W1_IMPORT_COMPILER.md |
-| W1 status poll | ImportWorkflow.tsx | — | w1Status | w1:status | GET /workflow/w1/status | — | ✅ COMPLETE | Returns current_step and prompt_profile for long-import progress |
+| W1 status poll | ImportWorkflow.tsx | — | w1Status | w1:status | GET /workflow/w1/status | — | ✅ COMPLETE | Returns current stage/profile plus server-normalized budget/usage and proposal-gate status for long imports |
 | Cancel import | ImportWorkflow.tsx | cancelImport | w1Cancel | w1:cancel | POST /workflow/w1/cancel | — | ✅ COMPLETE | Verified by `tests/e2e/p1/import_workflow.spec.ts` on 2026-04-25 final integration |
-| Accept proposal package | WorkbenchWorkspace.tsx | resolveProposals | — | — | — | — | 🔵 FRONTEND_ONLY | W1 proposals, including singleton imports, remain staged and accept only as their complete current import package transaction. `w1-package-graph-v2` supplies the authoritative topological order; validation and application consume the same order. Attempt-isolated staged projections are repaired to relative ArtifactRef v2 and consumed atomically. Covered by 34 focused Playwright cases and real Electron accept/restart replay on Import Text 18. |
+| Accept proposal package | WorkbenchWorkspace.tsx | resolveProposals | — | — | — | — | 🔵 FRONTEND_ONLY | W1 proposals stay staged and accept only as their complete current import package transaction. `w1-package-graph-v2` supplies the authoritative topological order; validation/application consume it in one write-ahead transaction. Semantic coverage failure blocks acceptance. Historical Electron acceptance evidence exists; the current canary does not auto-accept. |
 | Reject proposal package | WorkbenchWorkspace.tsx | resolveProposals | — | — | — | — | 🔵 FRONTEND_ONLY | Reject is scoped to the current package; no cross-run bulk action is exposed. Partial package acceptance is blocked instead of falling through to ordinary batch apply. |
 | Spawn sidecar | main.js / WorkbenchWorkspace | — | sidecarSpawn | sidecar:spawn | — (process) | — | 🔵 FRONTEND_ONLY | |
 | Force-clear workflow lock | WorkbenchWorkspace.tsx | — | — | workflow:force-clear | — | — | 🔵 FRONTEND_ONLY | |
@@ -134,11 +137,11 @@ coverage only; exact commands and outcomes are in
 
 | UI Element | Component File | Store Action | electronApi Method | IPC Channel | Sidecar Endpoint | AI Workflow | Status | Notes |
 |---|---|---|---|---|---|---|---|---|
-| Recoverable-run list and credentials gate | `ImportWorkflow.tsx` + `import-runtime/RecoveryCenter.tsx` | W1 runtime recovery state/actions | `runtimeRecoverable`, `runtimeResume` | `runtime:recoverable`, `runtime:resume` | `GET /runtime/runs/recoverable`; `POST /runtime/runs/{attempt_id}/resume` | W1 recovery | ✅ COMPLETE | API, mocked IPC, and real Electron project-restart discovery are covered; Import Text 18 is detected at 4/10 without exposing credentials. |
+| Recoverable-run list and credentials gate | `ImportWorkflow.tsx` + `import-runtime/RecoveryCenter.tsx` | W1 runtime recovery state/actions | `runtimeRecoverable`, `runtimeResume` | `runtime:recoverable`, `runtime:resume` | `GET /runtime/runs/recoverable`; `POST /runtime/runs/{attempt_id}/resume` | W1 recovery | ✅ COMPLETE | API, mocked IPC, and real Electron restart discovery are covered. Resume revalidates source/artifact/snapshot and normalizes server budget; unknown paid calls remain human-gated. |
 | Pause/cancel a runtime attempt | `import-runtime/RecoveryCenter.tsx` | W1 runtime action | `runtimeAction` | `runtime:pause`, `runtime:cancel` | `POST /runtime/runs/{attempt_id}/pause|cancel` | W1 recovery | ✅ COMPLETE | Commands are idempotent in API and UI tests. |
-| Checkpoint timeline and immutable fork | `import-runtime/CheckpointTimeline.tsx` | W1 runtime checkpoint/fork state | `runtimeCheckpoints`, `runtimeFork` | `runtime:checkpoints`, `runtime:fork` | `GET /runtime/runs/{attempt_id}/checkpoints`; `POST /runtime/runs/{attempt_id}/fork` | W1 recovery | ✅ COMPLETE | Fork validates checkpoint ownership, creates a child attempt, and preserves the parent. |
+| Checkpoint timeline and immutable fork | `import-runtime/CheckpointTimeline.tsx` | W1 runtime checkpoint/fork state | `runtimeCheckpoints`, `runtimeFork` | `runtime:checkpoints`, `runtime:fork` | `GET /runtime/runs/{attempt_id}/checkpoints`; `POST /runtime/runs/{attempt_id}/fork` | W1 recovery | ✅ COMPLETE | Full `W1SupervisorSnapshot/v1` proof, attempt/parent chain, source/config/receipt, lease/fence, and stable parent are required. Incomplete references are preview-only; valid fork creates a child attempt. |
 | Durable runtime-event replay | `ImportWorkflow.tsx` + `ImportConsole.tsx` | W1 runtime event cursor | `runtimeEvents` | `runtime:events` | `GET /runtime/runs/{attempt_id}/events?afterSequence=N` | W1 recovery | ✅ COMPLETE | Monotonic sequence, deduplication, cursor replay, and gap handling are covered. |
-| SSE bridge with polling fallback | `ImportWorkflow.tsx` | W1 runtime event cursor | `runtimeEventStreamSubscribe` | `runtime:event-stream-subscribe` | `GET /workflow/stream?attempt_id=...` | W1 recovery | ✅ COMPLETE | Electron Last-Event-ID replay and polling fallback are covered by `import_runtime_sse.spec.ts`; the durable runtime API remains the replay source. |
+| SSE bridge with polling fallback | `ImportWorkflow.tsx` | W1 runtime event cursor | `runtimeEventStreamSubscribe` | `runtime:event-stream-subscribe` | `GET /workflow/stream?attempt_id=...` | W1 recovery | ✅ COMPLETE | Electron Last-Event-ID replay, polling fallback, and sidecar shutdown cleanup are covered. The durable RuntimeStore sequence remains replay source. |
 
 ### Metadata Library
 
@@ -202,7 +205,8 @@ _(none currently tracked in this file)_
 ### 🧪 UNTESTED items (need runtime verification)
 
 - Full Agent execution replay in a user-project headed Electron session (deterministic runtime smoke passed).
-- Real Workbench package acceptance with reviewer quarantine and relocation visible.
+- Complete P0/P1 browser regression after the final UI changes (focused post-fix suite passed).
+- Fresh-project 10-chapter Flash canary and headed Workbench package acceptance with reviewer quarantine/relocation visible.
 
 ### Historical Phase 7 Record (2026-04-06)
 

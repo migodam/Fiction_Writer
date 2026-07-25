@@ -8,7 +8,7 @@ This is the status source of truth for W0-W7. Use `FRONTEND_BACKEND_CHECKLIST.md
 - `partial`: usable path exists, but known gaps remain open
 - `reference`: historical or diagnostic only
 
-## Runtime Resilience Baseline (2026-07-21)
+## Runtime Resilience and Harness Status (Current 2026-07-25)
 
 The current implementation adds a per-project SQLite WAL `RuntimeStore` at
 `system/runtime/agent_runtime.db` for durable run/attempt, lease/fence, event,
@@ -19,7 +19,10 @@ the runtime store deliberately holds metadata rather than graph-state blobs.
 W1 now has stable lineage/cache identity and isolated attempt artifacts,
 atomic checkpoint receipts, conservative legacy-progress recovery, runtime
 recovery endpoints/IPC/UI, immutable checkpoint forks, and a provider response
-recovery contract. Provider operation keys are stable and sequence-independent,
+recovery contract. Resumable supervisor checkpoints use
+`W1SupervisorSnapshot/v1` and body-free typed state; source-derived text is
+reconstructed from verified spans. Snapshot/checkpoint publication is lease and
+fence protected, and invalid references are preview-only. Provider operation keys are stable and sequence-independent,
 excluding `attemptId`; project-local response artifacts use content addressing
 with `0700` directories and `0600` files, and verified artifacts are reusable
 across attempts. Per-process singleflight prevents duplicate provider calls.
@@ -34,20 +37,19 @@ Durable event polling is available through the runtime API. Electron also has
 an SSE bridge to legacy `/workflow/stream`, with cursor replay and polling
 fallback; no separately verified `/runtime` SSE endpoint exists. API, mocked
 IPC, real Electron restart recovery, disposable real-fixture acceptance, and
-provider recovery are covered. The authorized Import Text 18 resume completed
-10/10 with 8 calls costing `$0.014351`. On 2026-07-25 its 108-proposal package
-was migrated to package graph contract v2, repaired, accepted, and verified
-after Electron restart with no additional provider call or cost. The final
-project has 0 pending proposals, 10 chapters, 10 scenes, and 20 manuscript
-nodes. Exact commands and receipts are in the 2026-07-21 and 2026-07-25 dev
-logs. The 2026-07-25 package-compiler gate passed 805 targeted backend tests,
-279 browser P0/P1/smoke tests, UI lint/build, and Electron runtime smoke.
+provider recovery are covered. A legacy Import Text 18 paid attempt retains a
+human-gated unknown provider boundary. The first fresh Flash canary stalled in
+the pre-hardened runner and is not a completed import result; the repaired
+runner owns RuntimeStore binding, provider heartbeat, lock/lease cleanup, and
+fail-closed unknown-outcome handling. A fresh-project 10-chapter Flash canary
+is allowed by zero-cost gates but remains pending execution and review. Exact
+commands and receipts are in the 2026-07-15 and 2026-07-25 dev logs.
 
 ## Workflow Matrix
 | Workflow | Purpose | Backend status | UI status | Current status | Integration source | Open gaps |
 |---|---|---|---|---|---|---|
 | W0 Orchestrator | Multi-step workflow planner/executor | Durable project checkpointer wired; automated coverage exists | Agents workspace control surface present for goal entry, status, permissions, and results | `partial` | `FRONTEND_BACKEND_CHECKLIST.md` | No live provider regression recorded for this baseline |
-| W1 Import | Novel/file import into proposals and project structure | Durable attempts, provider-response recovery, package graph v2, legacy artifact repair, and completed 10/10 paid recovery covered | Import modal includes Recovery Center/runtime event and checkpoint surfaces alongside import observability; Workbench executes compiled package order atomically | `partial` | `FRONTEND_BACKEND_CHECKLIST.md` | Import Text 18 accepted 108/108 and persisted after restart; thin supporting-character cards remain non-blocking |
+| W1 Import | Novel/file import into proposals and project structure | Durable attempts, provider-response recovery, package graph v2, body-free supervisor snapshots, server budgets, and legacy artifact repair covered | Import modal includes Recovery Center/runtime event and checkpoint surfaces; Workbench executes compiled package order atomically | `partial` | `FRONTEND_BACKEND_CHECKLIST.md` | Fresh 10-chapter Flash canary is pending; legacy unknown provider call remains an explicit human decision |
 | W2 Manuscript Sync | Sync writing content back into canonical/project data proposals | Verified in backend | Writing Chapters trigger with status/result path to Workbench Inbox | `active` | `FRONTEND_BACKEND_CHECKLIST.md` | Proposal acceptance safety remains owned by Workbench |
 | W3 Writing Assistant | Continue/rewrite/expand/improve-dialogue flows | Verified and wired | Available in writing flows | `active` | `FRONTEND_BACKEND_CHECKLIST.md` | Occasional preamble text still needs prompt hardening |
 | W4 Consistency Check | Detect contradictions and consistency issues | Verified and wired | Audit button and polling present | `active` | `FRONTEND_BACKEND_CHECKLIST.md` | Issue review/queue-fix closure still lighter than target product loop |
@@ -83,7 +85,7 @@ is committed and verified in Playwright plus an actual 1280px browser pass.
 - W0 now has a canonical Agents workspace control surface for goal composition, permissions, status, and results.
 - Proposal acceptance now blocks unsupported canonical operations instead of accepting no-ops. Package graph v2 closes the compiler/executor ordering split and partial package bypass; dedicated link/unlink canonical mutators remain future work.
 - Publish/export remains present as a workspace but is not yet a fully closed delivery surface.
-- Sidecar lifecycle now has durable runtime/checkpointer shutdown handling and restart lease invalidation. Real Electron restart recovery, the paid Import Text 18 resume, and its 108-proposal package acceptance have passed.
+- Sidecar lifecycle has durable runtime/checkpointer shutdown handling and restart lease invalidation. Electron runtime recovery/fork/SSE smoke passes. The prior first fresh canary stalled because its old runner bypassed the durable harness; do not treat it as a paid-success result.
 
 ## Workflow Ownership Boundaries
 - Status changes update this file.
